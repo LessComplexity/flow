@@ -5,8 +5,8 @@ Living document per HANDOFF §7.1.5 — written before code, updated every sessi
 
 Increment map:
 
-- **§1–§11 (this session): the lexer.** Token model, lexical grammar, diagnostics, API, tests.
-- **Parser (next increment):** recursive-descent, statement-level flow chains (ADR-0005), error-recovering (ADR-0008). Parser-design notes that fell out of lexer design are collected in §12 so they are not lost; they are *not yet binding*.
+- **§1–§11 (Session 02): the lexer.** Token model, lexical grammar, diagnostics, API, tests.
+- **§13–§21 (Session 03): the parser.** Two-tier grammar (ADR-0005), parse-tree data structures, P-code diagnostics + recovery (ADR-0008), `Ident {` law (ADR-0011), tests + bench. §12's pre-collected questions are resolved here.
 
 ## 0. Spec basis and binding constraints
 
@@ -267,7 +267,12 @@ Char literals (`char` is v0.2 but not Core; no literal *form* appears anywhere i
 - **Trivia for LSP semantic tokens** (ADR-0008 ladder v2): if needed post-M1, add a `lex_with_trivia` variant rather than changing `lex`.
 - **Core+1 pattern guards** (`-Some(x)->`, `-[head, ...tail]->`): cannot be single lexemes (nested structure). Expected resolution: keep Core discriminants as single Guard tokens; pattern arms become parser-level compositions with span-adjacency checks, decided in the Core+1 coproducts ADR. Flagged now so the Guard token design isn't treated as accidentally closed.
 
-## 12. Parser-increment notes (recorded, not yet binding)
+## 12. Parser-increment notes (RESOLVED in Session 03 — see §13–§21)
+
+Every item below was resolved by the parser design: two-tier grammar → §14; stray/spaced
+guard hints → §16 (P0004/P0005); `Ident {` disambiguation and loop labels → ADR-0011 +
+§14/§17; `KwCategory` recovery → §16; out-of-Core P-codes → §16. Kept verbatim for the
+record:
 
 - Two-tier grammar per ADR-0005: expression parser (precedence 1–7) + statement-level flow-chain parser (`->`/`<-` over expression operands; `?` reserved at level 9).
 - Stray `Guard` token outside a guard block → targeted diagnostic with the W1 add-a-space hint.
@@ -275,3 +280,513 @@ Char literals (`char` is v0.2 but not Core; no literal *form* appears anywhere i
 - `Ident {` ambiguity: struct literal (`Pixel { r: … }`) vs labeled loop (`outer { … }`) — disambiguation strategy is a parser-design question; Core may restrict loop labels to the `loop` keyword (HANDOFF §4.1 shows only `loop`), making custom labels an out-of-Core rejection. Decide next increment.
 - `KwCategory` recovery: parse the declaration as if `type` so field diagnostics still fire (L0004 already reported).
 - Out-of-Core keyword rejections (`KwExecutor`, `KwPub`, `KwUse`, `KwVoid`, `Question`, `At`, `DotDotDot`) get dedicated P-codes with "out of Flow-Core (HANDOFF §4) — Core+1/post-M5" messages.
+
+---
+
+# Parser increment (Session 03)
+
+## 13. Spec basis and binding constraints
+
+Sources, in authority order: **ADR-0005** (two-tier grammar: expressions levels 1–7,
+`->`/`<-` at statement level; a flow is a statement) · **ADR-0008** (a: error-recovering —
+always a tree *and* diagnostics; b: structured diagnostics, no rendering; d: pure
+`fn(source) -> artifacts`) · **ADR-0009** (map/fold postfix block; block is never an
+argument) · **ADR-0010** (Guard tokens are authoritative; parser owes the two hint
+diagnostics) · **ADR-0011** (loop labels; `Ident {` semicolon-scan) · `user-guide.md` §2–§3
+(syntax reference as patched), §3.6 precedence table (E4), §5 (`seq`), §8.3/§10.4 exhibits ·
+`architecture.md` §2.2.2 ("recursive descent. Produces a small parse tree", "no type
+inference, name resolution, or constant propagation") · HANDOFF §4 (Core scope; C8
+default-reject) · `examples/*.flow` (the acceptance corpus: must parse with **zero**
+diagnostics).
+
+Additional constraints binding this increment:
+
+| # | Constraint | Source |
+|---|---|---|
+| C10 | The tree is **thin**: syntax + names + spans + literal values + flags only — no name resolution, no type inference, no effect classification | architecture.md §2.2.2; category-ir.md §1.3 |
+| C11 | Chains stay **flat ordered stage lists** (no arrow nesting); arithmetic operands keep precedence-correct lhs/rhs nesting | category-ir.md §4.3/§2.1.2 vs §4.1 |
+| C12 | Every node carries a `SourceLoc` span | category-ir.md §3.2; ADR-0008 |
+| C13 | Out-of-Core v0.2 surface is parsed precisely and rejected with a **dedicated** P-code naming the construct and horizon — never a generic parse error | HANDOFF §4; ADR-0001 |
+| C14 | Lexer diagnostics are never duplicated (L0004 `category`, L0005/6 Error tokens, L0008 overflow); `Error` tokens are skipped, not re-reported | DESIGN §2; crate inventory |
+| C15 | The parser is a module of `flow-syntax` (reuses `pub(crate)` `Diagnostic::error`/`with_fix`) | diag.rs visibility |
+
+## 14. Grammar
+
+Two tiers per ADR-0005. Notation: `*` zero+, `+` one+, `?` optional, `|` alternatives;
+UPPERCASE = token kinds; `⟦P…⟧` = parsed-then-rejected with that P-code (tree is still
+built; C13).
+
+### 14.1 Items
+
+```
+program    := item* EOF
+item       := fn-decl | type-decl
+            | ⟦P0102⟧ '@' IDENT ( '(' …balanced… ')' )?  item     -- annotation skipped, item kept
+            | ⟦P0111⟧ 'executor' IDENT '{' …balanced… '}'
+            | ⟦P0112⟧ ('pub' | 'use') …to ';' or item start…
+            | ⟦P0012⟧ statement                                    -- top-level statement
+type-decl  := ('type' | KwCategory⟦no new diag; L0004 already emitted⟧)
+              IDENT '{' field-list? '}'
+field-list := field (',' field)* ','?
+field      := IDENT ':' type
+            | ⟦P0105⟧ '-' IDENT ( '{' …balanced… '}' | '(' …balanced… ')' )   -- enum variant
+fn-decl    := 'fn' IDENT '(' params? ')' ( '->' type )? block
+params     := param (',' param)* ','?
+param      := 'mut'? IDENT ':' type
+```
+
+### 14.2 Types
+
+```
+type := IDENT
+      | ⟦P0103⟧ IDENT '<' …balanced… '>'        -- generics; base name kept in tree
+      | '[' type ';' INT ']'                     -- fixed array; length must be an INT literal
+      | ⟦P0104⟧ '[' type ']'                     -- dynamic array/slice
+      | '(' type (',' type)+ ','? ')'            -- tuple type, ≥2 elements
+```
+
+The parser does **not** validate scalar names (`i8`, `usize`, `String` parse as `Named`) —
+whether a named type exists/is Core is flow-check's job (C10).
+
+### 14.3 Statements, chains, blocks
+
+```
+block      := '{' block-item* tail? '}'
+block-item := statement | guard-arm            -- mixing arms and statements → P0006
+tail       := chain                             -- unterminated chain ending at '}' (block value)
+statement  := chain ';'                         -- ';' OPTIONAL when the chain's last stage is a
+                                                --   block form (guard/fanout/seq/map/fold/stmt-block)
+            | bind-stmt ';'
+            | loop-stmt
+            | ';'  ⟦P0001⟧                      -- empty statement, skipped
+loop-stmt  := 'loop' block
+            | ⟦P0110⟧ IDENT block               -- custom label, via the §14.5 Ident-{ law
+bind-stmt  := 'mut'? IDENT (':' type)? '<-' expr
+                                                -- second '<-' in one statement → P0008
+chain      := expr stage* | stage+              -- headed | headless (e.g. '-> loop;', fanout branches)
+stage      := '->' stage-body
+stage-body := 'ret' ('.' INT)?                  -- return target / projection (ret.0)
+            | 'loop'                            -- back-edge jump, innermost loop (ADR-0011)
+            | 'mut'? IDENT ':' type             -- typed binding stage  (5 -> x: i32)
+            | 'mut' IDENT                       -- mut binding stage (untyped; uniformity)
+            | op-shorthand
+            | 'seq' block                       -- branches classified like fanout
+            | ⟦P0113⟧ 'void' block
+            | ('map' | 'fold') op-block
+            | block                             -- classified by content, §14.4
+            | expr                              -- general expression stage (ADR-0005: a -> b + c -> d)
+op-shorthand := BINOP hole-expr                 -- BINOP ∈ {+ - * / % == != < > <= >= && ||}
+op-block   := '{' IDENT (',' IDENT)* '->' block-item* tail? '}'
+            -- params: plain idents only; '(' pattern → ⟦P0116⟧. No param trailing comma.
+guard-arm  := GUARD arm-payload
+            | ⟦P0005, recovered as the meant arm⟧ '-' ('true'|'false'|IDENT‹_›) '->' arm-payload
+            | ⟦P0106⟧ '-'⊕(IDENT|'[') …balanced ()/[]… ⊕'->' arm-payload   -- pattern guard; ⊕ = span-adjacent
+arm-payload := chain (';' per statement rule)   -- incl. bare expr ('-true-> x;') and headless ('-false-> -> ret;')
+             | block                            -- plain payload block (statements + tail; NOT classified)
+```
+
+**Block-item disambiguation for leading `Minus` (normative; arm-vs-statement precedence).**
+A clean `Guard` token only exists where the lexer's gate passed; spaced and pattern arms
+arrive as plain token runs that are *also* parseable as unary-minus expressions, so the
+choice is fixed here, by bounded lookahead at block-item-initial position, in this order:
+
+1. `Minus (KwTrue | KwFalse | Ident‹_›) Arrow` (any spacing) → **P0005 arm** (guard-arm
+   wins; a negated bool/`_` heading a flow is never sensible, so this shape is claimed
+   unconditionally — even in a block with no other arms, so a block written entirely with
+   spaced arms still classifies as a GuardBlock and gets the targeted hints).
+2. `Minus` **span-adjacent** to `Ident‹≠_›` or `[`, followed by a balanced `(…)`/`[…]`
+   group (possibly empty), followed by a **span-adjacent** `Arrow` → **P0106 pattern arm**
+   (`-Some(x)->`, `-None->`, `-[]->`, `-[head, ...tail]->`; the adjacency requirement is
+   exactly ADR-0010's anticipated span-adjacency composition, and any `...` inside the
+   pattern is covered by the arm's single P0106).
+3. Otherwise → expression statement (`- 7 -> x;` stays the negative-seven flow that
+   ADR-0010 fixes; `- count -> y;` stays a negated-variable flow). If such a statement
+   sits in a block that also contains arms, P0006 fires with the bidirectional hint.
+
+**Termination rule (uniform):** after parsing a chain inside a block — if next is `;`,
+consume (statement); else if next is `}`, the chain is the block's **tail**; else if the
+chain's last stage was a block form, it is a statement without `;` (exhibited:
+fanout.flow `6 -> { … }` followed by `sq -> print;`; `};` also legal, user-guide §5.2);
+else → P0001 expected `;`. A bare-expression chain (zero stages) is legal **only** as a
+tail or an arm payload; as a `;`-terminated statement it is P0003.
+
+**Hole expressions (op-shorthand).** After `->`, a leading binary operator starts an
+expression whose left operand is the **hole** (the piped value): parse by the §14.6
+precedence climber with a synthetic `Hole` lhs at the leading operator's level. `-> + 5`
+⇒ `· + 5`; `-> * 2 + 1` ⇒ `(· * 2) + 1`; `-> + 2 * 3` ⇒ `· + (2 * 3)`. A leading `-`
+after `->` is always the subtraction shorthand, never unary minus (a constant stage is
+meaningless; ledger W12). A leading `!` is **not** a shorthand (unary, no hole) — it
+starts a general expression stage.
+
+### 14.4 Block-stage classification
+
+A `{` in **stage position** (immediately after `->`, or after `seq`/`void`) parses as a
+generic block, then classifies:
+
+| Content | Class | Notes |
+|---|---|---|
+| ≥1 item and all items guard arms | **GuardBlock** | arm order preserved (lowering: Phi slots) |
+| ≥1 item, all items headless chains, no tail | **Fanout** (plain / `seq` / `void`⟦P0113⟧) | branches = the chains |
+| anything else (headed statements and/or tail) | **StmtBlock** ⟦P0115⟧ | the user-guide §8.3 anonymous-block form; not in HANDOFF §4.1 |
+| arms mixed with non-arms | GuardBlock + **P0006** | the spaced-int case gets the bidirectional hint (§16) |
+| empty `{}` | Fanout(0) + **P0010** | |
+
+Arm-payload braces and `map`/`fold` bodies are **not** classified — they are plain
+payload blocks (`-true-> { n -> print; … -> loop; }` legally mixes headed and headless
+statements).
+
+A stage-position `IDENT '{'` where the brace content matches the op-block prefix
+(`IDENT (',' IDENT)* '->'`) is an out-of-Core collection operator (`filter`, `for_each`,
+…) → **P0114**, parsed like an op-block for recovery. Otherwise `IDENT '{'` in any
+expression position is a struct literal (§14.6) — no scan needed outside statement-initial
+position (ADR-0011).
+
+Note (scope boundary, not a defect): the user-guide §5.2 / getting-started §3.2 `seq`
+exhibits wrap each branch payload in an anonymous block (`-> { "Step 1" -> log };`) and
+therefore draw P0115 (plus check-level rejections for `log`) — those exhibits are
+full-language, not Core; none of the six acceptance examples uses the form (J4
+unaffected). Flagged to Sapir with P0115's scope reading.
+
+### 14.5 Statement-initial `Ident {` (ADR-0011)
+
+Scan from the `{` to its matching `}` (depth count). Any **`Semi`, `Arrow`, `BackArrow`,
+or `Guard`** inside (at any depth) ⇒ labeled loop (**P0110**, parse body as loop). None
+⇒ struct literal heading a chain. Sound: struct-literal field initializers are
+expressions, and expressions contain no `;`, no blocks, and — flows being statements
+(ADR-0005) — no arrow/guard tokens; conversely a loop body containing none of the four
+is operationally empty (`outer { x }`) and reads as a struct literal (W13). The scan runs
+only at statement-initial position and only for a plain `Ident`; keyword-introduced
+blocks (`loop`, `seq`, `map`, `fold`, `void`) are dispatched by their keyword token
+before the scan is considered.
+
+### 14.6 Expressions (levels 1–7, §3.6 table)
+
+```
+expr     := or
+or       := and ( '||' and )*                       -- level 7, left-assoc
+and      := cmp ( '&&' cmp )*                        -- level 6, left-assoc
+cmp      := add ( CMPOP add )?                       -- level 5, NON-ASSOCIATIVE: a second
+                                                     --   CMPOP at this level → P0007 (W14)
+add      := mul ( ('+'|'-') mul )*                   -- level 4, left-assoc
+mul      := unary ( ('*'|'/'|'%') unary )*           -- level 3, left-assoc
+unary    := ('-'|'!') unary | postfix                -- not in the §3.6 table; binds tighter
+                                                     --   than '*', looser than postfix (W15)
+postfix  := primary ( '.' IDENT                      -- member access (level 2)
+                    | '.' INT                        -- tuple projection (x.0)
+                    | '[' expr ']'                   -- index (fir: coeffs[k], signal[4 + k])
+                    | ⟦P0108⟧ '(' args? ')'          -- call expression; use (args) -> f
+                    | ⟦P0101⟧ '?' )*
+primary  := INT | FLOAT | STR | 'true' | 'false'
+          | IDENT
+          | IDENT '{' field-inits? '}'               -- struct literal
+          | '(' expr ')'                             -- grouping (no Paren node; nesting carries it;
+                                                     --   the inner expr's SPAN widens to include the
+                                                     --   parens, so J2 child⊆parent holds)
+          | '(' expr (',' expr)+ ','? ')'            -- tuple, ≥2  ('(e,)' → P0001)
+          | '[' array-elem (',' array-elem)* ','? ']'  -- array literal ('[]' → P0001: no type, not exhibited)
+array-elem  := expr
+             | ⟦P0107⟧ '...' expr                    -- rest element, parsed-then-rejected precisely
+field-inits := field-init (',' field-init)* ','?
+field-init  := IDENT (':' expr)?                     -- pun shorthand allowed (RGB { r, g, b }, §8.3)
+```
+
+`BackArrow` encountered inside an expression → **P0009** with the W2 hint (`i<-1` lexes as
+`i <- 1`; "for a comparison write `i < -1`"). Two adjacent `Colon` tokens (span-adjacent)
+in any position → **P0109** (`::` paths): consume both, then consume the following token
+as the path segment if it is an `Ident` **or any keyword** (`List::map` ends at `KwMap`),
+and continue the postfix loop on the base expression — so the chain after a rejected path
+still parses and the fixture's net P-code set stays exactly {P0109}. `ret`/`loop`
+keywords are not expressions; they are stage forms only (a `ret`/`loop` chain **head** is
+P0001).
+
+**`?` placement (deliberate deviation, W23).** The §3.6 table lists `?` at rank 9 (looser
+than `->`), but every corpus exhibit binds `?` to the stage target (`File.open? ->
+read_contents?`, `f? -> g?` — never `(x -> f -> g)?`), so the grammar parses `?` as an
+expression postfix (level 2) and `Question` spans the target expression. `?` is rejected
+(P0101) either way; the binding grammar decision belongs to the Core+1 error-handling ADR
+(LC-1 territory). Recorded so the P0101 span is contractual.
+
+Trailing commas: allowed in `{}` field lists (decl + literal, exhibited), array literals
+(exhibited, sepia), tuple exprs/types (≥2 elems), and param lists; **not** in op-block
+params. `(e,)` is not a 1-tuple (P0001).
+
+## 15. Parse-tree data structures (`src/ast.rs`)
+
+Thin tree (C10), `Debug` derived everywhere, no `Display` (C3/I5/J5). All `Box`/`Vec`
+based — no arena at Core scale. Every node has `span: SourceLoc` (C12); `Name` is a bare
+span (text via `&source[span]`, same single-source-of-truth rule as tokens).
+
+```rust
+pub struct ParseOutput { pub program: Program, pub diagnostics: Vec<Diagnostic> }
+pub fn parse(source: &str) -> ParseOutput   // total; lexes internally; diags = lex ++ parse,
+                                            // stably sorted by (span.start, span.end)
+
+pub struct Program { pub items: Vec<Item>, pub span: SourceLoc }
+pub enum Item { Fn(FnDecl), Type(TypeDecl), Error(SourceLoc) }
+pub struct FnDecl  { pub name: Name, pub params: Vec<Param>, pub ret_ty: Option<Ty>,
+                     pub body: Block, pub span: SourceLoc }
+pub struct Param   { pub mut_span: Option<SourceLoc>, pub name: Name, pub ty: Ty, pub span: SourceLoc }
+pub struct TypeDecl{ pub name: Name, pub fields: Vec<Field>, pub span: SourceLoc }
+pub struct Field   { pub name: Name, pub ty: Ty, pub span: SourceLoc }
+pub struct Name    { pub span: SourceLoc }
+
+pub struct Ty { pub kind: TyKind, pub span: SourceLoc }
+pub enum TyKind {
+    Named(Name),                       // i32, Pixel, …; also the kept base of ⟦P0103⟧ generics
+    Tuple(Vec<Ty>),
+    Array { elem: Box<Ty>, len: u64, len_span: SourceLoc },
+    Dynamic(Box<Ty>),                  // [T] — kept, P0104 reported
+    Error,
+}
+
+pub struct Block { pub items: Vec<BlockItem>, pub tail: Option<Chain>, pub span: SourceLoc }
+pub enum BlockItem { Stmt(Stmt), Arm(GuardArm) }
+pub struct Stmt { pub kind: StmtKind, pub span: SourceLoc }
+pub enum StmtKind {
+    Chain(Chain),
+    Bind(BindStmt),                    // place <- expr
+    Loop(LoopStmt),
+    Error,                             // recovery region
+}
+pub struct LoopStmt { pub label: LoopLabel, pub body: Block, pub span: SourceLoc }
+pub enum LoopLabel { Loop(SourceLoc), Custom(Name) }   // Custom ⇒ P0110 was reported
+pub struct BindStmt { pub mut_span: Option<SourceLoc>, pub name: Name,
+                      pub ty: Option<Ty>, pub value: Expr, pub span: SourceLoc }
+
+pub struct Chain { pub head: Option<Expr>, pub stages: Vec<Stage>, pub span: SourceLoc }
+pub struct Stage { pub arrow_span: SourceLoc, pub kind: StageKind, pub span: SourceLoc }
+pub enum StageKind {
+    Expr(Expr),                                        // targets, tuple stages, ADR-0005 expr stages
+    Bind { mut_span: Option<SourceLoc>, name: Name, ty: Option<Ty> },   // -> x: i32 / -> mut y
+    Ret { proj: Option<(u64, SourceLoc)> },            // -> ret / -> ret.0
+    LoopJump,                                          // -> loop   (innermost; ADR-0011)
+    OpShorthand { expr: Expr },                        // hole-expression: contains exactly one
+        // Expr::Hole leaf, as the leftmost leaf. `-> + 5` ⇒ Binary(Add, Hole, Int 5);
+        // `-> * 2 + 1` ⇒ Binary(Add, Binary(Mul, Hole, Int 2), Int 1)
+    Guard(Vec<GuardArm>),                              // ordered; lowering selects Phi (pure
+        // value-select, §4.4) vs Trace routing (arm reaches -> loop / exit, §4.5)
+    Fanout { kind: FanoutKind, branches: Vec<Chain> }, // branches are headless chains
+    MapFold { op: CollOp, params: Vec<Name>, body: Block },
+    StmtBlock(Block),                                  // ⟦P0115⟧ anonymous block stage — kept
+    Error(SourceLoc),
+}
+pub enum FanoutKind { Plain, Seq(SourceLoc), Void(SourceLoc) }  // Void ⇒ P0113 reported
+pub enum CollOp { Map, Fold }
+
+pub struct GuardArm { pub discr: GuardDiscr, pub discr_span: SourceLoc,
+                      pub payload: ArmPayload, pub span: SourceLoc }
+pub enum GuardDiscr { True, False, Default, Int(u64), OutOfCore }  // OutOfCore ⇒ P0106
+pub enum ArmPayload { Chain(Chain), Block(Block) }
+
+pub struct Expr { pub kind: ExprKind, pub span: SourceLoc }
+pub enum ExprKind {
+    Int(u64),                          // value clamped like L0008 (re-parse of span digits; no new diag)
+    Float,                             // value is type-directed (f32 vs f64) — parsed later from span
+    Str,                               // unescaping is the consumer's job (unescape_string)
+    Bool(bool),
+    Var(Name),
+    Hole,                              // the piped value inside an OpShorthand rhs — never
+                                       //   constructible from ordinary expression syntax
+    Unary  { op: UnOp,  op_span: SourceLoc, operand: Box<Expr> },
+    Binary { op: BinOp, op_span: SourceLoc, lhs: Box<Expr>, rhs: Box<Expr> },
+    Member { base: Box<Expr>, field: MemberField },
+    Index  { base: Box<Expr>, index: Box<Expr> },
+    Tuple(Vec<Expr>),
+    Array(Vec<Expr>),
+    Struct { name: Name, fields: Vec<FieldInit> },
+    Call { callee: Box<Expr>, args: Vec<Expr> },       // ⟦P0108⟧ — kept for precision
+    Question(Box<Expr>),                               // ⟦P0101⟧ — kept
+    Error,
+}
+pub enum MemberField { Named(Name), Index { value: u64, span: SourceLoc } }
+pub struct FieldInit { pub name: Name, pub value: Option<Expr>, pub span: SourceLoc }  // None = pun
+pub enum UnOp  { Neg, Not }
+pub enum BinOp { Add, Sub, Mul, Div, Mod, Eq, Ne, Lt, Gt, Le, Ge, And, Or }
+```
+
+Design notes:
+
+- **`Hole`** makes the op-shorthand lowering obligation explicit (piped value = left
+  operand, category-ir §4.3). Normative rule: after `->`, a leading binary operator
+  starts the §14.6 climber with `Hole` as the initial lhs at that operator's level; the
+  resulting single `Expr` is stored in `StageKind::OpShorthand`. Invariants: the
+  hole-expression contains **exactly one** `Hole`, it is the leftmost leaf, and `Hole`
+  never occurs anywhere else in a tree. One representation, zero special cases; the
+  exhibited simple form `-> + 5` is `Binary(Add, Hole, Int 5)` (operator and right
+  operand are the Binary node's fields — lowering obligation 2 satisfied).
+- **Int values** carried (array lengths, guard discriminants need them; clamping mirrors
+  L0008 with no duplicate diagnostic — C14). **Float values** are not parsed (type-directed,
+  f32 vs f64 unknown until check; lexer DESIGN §3 rationale).
+- `Call`/`Question`/`Dynamic`/`StmtBlock`/`LoopLabel::Custom`/`GuardDiscr::OutOfCore` are
+  *rejected-but-kept* forms: the P-code is in `diagnostics`, the structure stays for
+  span-precise downstream messages (C13).
+
+## 16. Parser diagnostics (P-codes) and recovery
+
+All severity Error. Messages are plain text naming the construct; out-of-Core messages
+end with the horizon, e.g. "out of Flow-Core (HANDOFF §4); planned for Core+1".
+
+**Syntax class:**
+
+| Code | Trigger | Recovery / fix |
+|---|---|---|
+| P0001 | expected X, found Y (generic: missing `;`, `(e,)`, `[]`, non-INT array length, ascription on non-name, `ret`/`loop` as chain head, empty statement, …) | sync per §16.1 |
+| P0002 | unclosed delimiter at EOF | span = the open token |
+| P0003 | bare expression used as a `;`-terminated statement | hint: flow it (`-> target`) or make it the block tail; tree keeps the chain |
+| P0004 | stray guard arrow outside a guard block (W1) | message: `-7-> x` is a guard arm; **fix**: built by *slicing the source lexeme* — `&source[span]` minus the trailing `->`, plus `" ->"` (never re-rendered from the clamped `GuardKind::Int`, which would rewrite an over-`u64` literal); recover: Int discr ⇒ chain head `Unary(Neg, Int)` + implicit arrow; other discrs ⇒ `Expr::Error` head |
+| P0005 | the shape `Minus (true\|false\|_) Arrow` at block-item-initial position (§14.3 rule 1 — claimed unconditionally; a block of only spaced arms still becomes a GuardBlock) | **fix**: remove interior whitespace (`-true->`); recover as the meant arm |
+| P0006 | a genuinely non-arm statement (per the §14.3 precedence rules) in a block that also contains arms | for a `Minus Int Arrow` statement among arms, message adds: "if you meant a guard arm, remove the space: `-7->`". Note: at *stage* position the Guard node holds arms only (§15), so the offending statement is reported and then dropped from the tree |
+| P0007 | chained comparison (`a < b < c`) — level 5 is non-associative; enforced on **both** expression paths (plain `cmp` and the op-shorthand hole climber) | parenthesize hint; lhs kept; recovery absorbs **all** further `CMPOP add` pairs at this level (one P0007 per chain, no P0001 cascade) |
+| P0008 | second `<-` in one statement | consume to `;` |
+| P0009 | `<-` inside an expression (W2) — gated on bracket-nesting depth > 0 (`(i<-1)`), so statement-level stray `<-` stays with P0008/P0001 (W17/W18) | hint: `i<-1` is `i <- 1`; "for a comparison write `i < -1`"; **fix**: `< -` |
+| P0010 | empty block `{}` in stage position | classify Fanout(0) |
+| P0011 | nesting depth > 128 (expressions or blocks) | unwind to statement sync — **totality guard, J1** |
+| P0012 | statement at top level | parse it for spans, store `Item::Error` |
+
+**Out-of-Core class (C8/C13):**
+
+| Code | Construct (exhibit) | Notes |
+|---|---|---|
+| P0101 | `?` operator (`f? -> g?`) | one per `?`; `Question` node kept |
+| P0102 | `@` annotation (`@executor(…)`, `data @device`) | annotation tokens skipped; annotated item kept |
+| P0103 | generic type args (`Result<T, E>`, `channel<i32>` in type position) | base `Named` kept |
+| P0104 | dynamic array type `[T]`, incl. `[[f32]]` | `Dynamic` kept |
+| P0105 | enum/coproduct variant in `type` body (`-Circle { … }`) | variant skipped, decl kept |
+| P0106 | pattern guard arm (`-Some(x)->`, `-[]->`, `-[h, ...t]->`) | one per arm; `OutOfCore` discr; payload parsed |
+| P0107 | `...` rest pattern outside guard arms (`[head, ...tail]` exprs) | |
+| P0108 | call expression `f(args)` / `arr.len()` | message: "use tuple-input flow: `(args) -> f`" |
+| P0109 | `::` path (`List::map`) | detected by adjacent `Colon Colon` |
+| P0110 | custom loop label (`search { … }`) | ADR-0011; parsed as loop |
+| P0111 | `executor` declaration | skipped |
+| P0112 | `pub` / `use` | skipped |
+| P0113 | `void` — both the fanout stage (`-> void { … }`) and statement-initial `void` (with or without block, e.g. bare `void;` in full_surface.flow) | parsed as fanout when a block follows; bare keyword ⇒ skip + `Stmt::Error` |
+| P0114 | collection operator beyond map/fold (`filter { x -> … }`) | op-block-shaped `Ident {` heuristic, §14.4 |
+| P0115 | anonymous block stage (`-> { expr } -> r`, user-guide §8.3) | parsed as StmtBlock; flagged to Sapir (scope reading) |
+| P0116 | destructuring op-block parameter (`map { (x, y) -> … }`) | |
+
+In expression position, generic-argument syntax (`channel<i32>` as an *expression*) is
+indistinguishable from comparisons and surfaces as P0007/P0001 — documented imprecision
+(W16); the type-position case (the one in the corpus that matters) gets P0103.
+
+### 16.1 Recovery strategy
+
+Panic-mode with per-production sync sets; always build a node (ADR-0008a):
+
+- **Item level:** sync to `fn` / `type` / `executor` / `@` / EOF.
+- **Statement level:** on error, emit one diagnostic, then skip to `;` (consume) or `}`
+  (leave) or a statement-start keyword (`loop`, `fn`, `type` — leave); insert
+  `StmtKind::Error` spanning the skipped region.
+- **Cooldown:** after a diagnostic, no further diagnostics until the cursor advances ≥1
+  token (prevents cascades from one defect).
+- **`Error` tokens** (lexer-diagnosed): skipped silently wherever encountered (C14); they
+  end the current expression atom.
+- **Depth guard:** expression, block, **and type** recursion share one depth counter,
+  limit 128 (examples nest ≤ 8); exceeding ⇒ P0011 + unwind. Every recursive production
+  is covered — a single unguarded one (e.g. nested `[[[…` array types) re-opens the
+  stack-overflow panic and voids J1. This is what makes `parse` total on adversarial
+  input (J1) — a recursive-descent stack overflow would be a panic.
+- **Progress lemma (J1's other half):** every iteration of every `*`-loop (`item*`,
+  `block-item*`, `stage*`, list elements) either consumes ≥ 1 token or exits the loop; on
+  a token no production accepts, emit one diagnostic (under cooldown) and **skip exactly
+  one token**. Enforced by a `debug_assert!` on cursor monotonicity per iteration and a
+  proptest asserting termination.
+
+Multi-error proof: the `parse_errors.flow` fixture contains ≥ 6 independent defects and
+the golden snapshot shows all of them reported with correct spans (no masking).
+
+## 17. Decision ledger (parser warts & calls — made once, not re-litigated)
+
+| # | Case | Decision |
+|---|---|---|
+| W10 | `};` vs `}` after a block-final stage | Both legal: `;` optional after a chain whose last stage is a block (both exhibited: fanout.flow / user-guide §5.2). Uniform termination rule §14.3 |
+| W11 | Block tail | A chain without `;` ending at `}` is the block's value (`bounded`, `Pixel {…}`, `acc + px.r`); applies uniformly, even where a value is meaningless (loop bodies) — semantic rejection is check's job |
+| W12 | `-> - 5` | Always subtraction shorthand, never a negative-literal stage (constant stages are meaningless). Write `0 - 5` or `(-5)` as an expression stage if ever needed |
+| W13 | `X { }` / flow-free `X { x }` statement-initial | Struct literal (no `;`/arrow/guard token inside ⇒ not a loop; ADR-0011 scan) — a "loop" with no flows is operationally empty, so the struct reading is the useful one; empty `type X { }` body likewise allowed — all are check's concern |
+| W14 | `a == b == c` | Comparisons are non-associative → P0007 (parenthesize). Avoids the silent `(a==b)==c : bool` surprise |
+| W15 | Unary `- !` precedence | Not in the §3.6 table (spec gap). Bind tighter than `*` , looser than postfix: `x * -1` ⇒ `x * (-1)` ✓ (abs.flow), `-x.f` ⇒ `-(x.f)`, `!a && b` ⇒ `(!a) && b`. Flagged to Sapir; standard resolution, no ADR |
+| W16 | `Ident<Ident>` in expression position | Surfaces as P0007/P0001, not P0103 — documented imprecision (type-position generics get P0103; no expression exhibit exists in the corpus) |
+| W17 | `<-` chains | One binding per statement (`a <- b <- c` → P0008). Only single-step `<-` is exhibited |
+| W18 | Mixed-direction chains (`a -> b <- c`) | Rejected: `<-` after a `->` stage is P0001 (not exhibited, meaningless under ADR-0005) |
+| W19 | op-block param arity | Parser accepts ≥1 params for both map and fold; the map=1/fold=2 positional law (ADR-0009) is arity/type checking — flow-check's job |
+| W20 | `ret`/`loop` in expressions | Stage forms only. `ret -> f;` / `loop + 1` → P0001 |
+| W21 | Named-param partial application (`15 -> add.a;`) | Parses as a member-expression stage (grammatically indistinguishable from member access); Core legality is flow-check's call (HANDOFF §4.1 omits it). No parser special case |
+| W22 | Statement-initial `seq` / `map` / `fold` / `void` / stray `Guard` | `seq`/`map`/`fold`: targeted P0001 ("must follow `->`"); `void`: P0113 (out-of-Core keyword, §16); stray `Guard`: P0004. Recover by parsing the block/arm where present |
+| W23 | `?` parsed as expression postfix (level 2), not §3.6 rank 9 | Matches every corpus exhibit (`f? -> g?` binds per stage); rejected via P0101 either way; the real grammar call belongs to the Core+1 error-handling ADR (LC-1). See §14.6 |
+| W24 | All-spaced guard blocks (`{ - true -> x; - false -> y; }`) | Classified GuardBlock via §14.3 rule 1 (P0005 per arm) — the targeted hints fire even with zero clean `Guard` tokens |
+
+## 18. Public API (additions to `flow-syntax`)
+
+```rust
+// lib.rs gains:
+pub use ast::*;                      // the §15 node types
+pub use parser::{parse, ParseOutput};
+```
+
+Module layout: `src/ast.rs` (nodes; ~no logic), `src/parser.rs` (the recursive-descent
+parser over `(&[Token], &str)`, in-module unit tests). `parse(source)` runs `lex`
+internally and merges diagnostics (§15 signature); there is no public token-level parse
+entry point (consumers hold source text; ADR-0008d full-reparse model).
+
+Implementation shape: cursor over the token slice (`Eof` guaranteed last ⇒ no bounds
+checks), single forward pass + the two bounded look-ahead scans (§14.4 op-block sniff,
+§14.5 semicolon-scan), shared depth counter, `debug_assert!` span-nesting checks in node
+constructors (J2), no allocation beyond the tree and diagnostic strings. O(n) except the
+pathological nested-`Ident {` scan (ADR-0011, documented).
+
+## 19. Invariants (and where enforced)
+
+| # | Invariant | Enforcement |
+|---|---|---|
+| J1 | `parse` is total: any `&str` → `ParseOutput`, never panics, never hangs | depth guard (P0011) + the §16.1 progress lemma (every `*`-loop iteration consumes ≥1 token or exits; `debug_assert!` cursor monotonicity); proptest over arbitrary strings + flow-soup |
+| J2 | Span sanity: every node span within source; child spans ⊆ parent span; sibling statements non-overlapping and ordered | `debug_assert!` in constructors + recursive walker in tests/proptest |
+| J3 | Zero diagnostics ⇒ no `Error` nodes and no rejected-but-kept forms in the tree | golden tests + proptest walker |
+| J4 | Acceptance: all six `examples/*.flow` parse with **zero** diagnostics | golden parse-tree tests |
+| J5 | Presentation-free (C3): no `Display` anywhere in the crate | review; grep |
+| J6 | Lex-diagnostic preservation: `parse(s).diagnostics` ⊇ `lex(s).diagnostics` (same values) | unit + proptest |
+
+## 20. Test plan (this increment)
+
+Renderer: `tests/support/mod.rs` gains `render_tree(source, &Program) -> String` — one
+node per line, two-space indent, pre-order; every line starts `{line}:{col}` (span start
+via `LineIndex`); names and literals show their lexeme in `‹…›`; binary operators and
+member fields render as bare canonical symbols (`Binary +`, `Member .r`); stages render
+as `-> Kind`; arms as `arm ‹-true->›`. Deterministic, lexeme-faithful — same review
+discipline as token snapshots (read the `.snap` against the source; wrong-but-stable is
+the failure mode).
+
+1. **Golden parse trees** (`tests/golden_trees.rs`): all six examples; assert zero
+   diagnostics + snapshot `tree_{name}`. The acceptance surface (J4).
+2. **Golden parse errors** (`tests/parse_errors.rs` + `tests/fixtures/parse_errors.flow`):
+   ≥6 independent syntax defects exercising P0001–P0012 (incl. stray guard W1 with its
+   SuggestedFix, spaced guard P0005, mixing P0006, chained comparison P0007, `i<-1` P0009,
+   bare-expr statement P0003); snapshot = rendered tree + `Debug` diagnostics. Proves
+   multi-error recovery (ADR-0008a).
+3. **Golden out-of-Core** (`tests/out_of_core.rs` + `tests/fixtures/out_of_core.flow`):
+   every P01xx code fires exactly where intended, incl. parsing the existing
+   `full_surface.flow` lexer fixture and asserting its P-code set (C8 end-to-end: lexer
+   tokenizes cleanly → parser rejects precisely).
+4. **Unit tests** (`parser.rs` `#[cfg(test)]`): the §3.6 examples verbatim (`a + b -> c`,
+   `a -> b + c -> d`, `x -> f.method`); precedence/associativity table; hole-expression
+   shapes; every §17 ledger row; §14.4 classification table incl. arm-after-`}` lexer
+   gate interplay; ADR-0011 scan cases (`Pixel {…} -> ret;` vs `search { x -> y; }`,
+   `X { }`); termination-rule matrix (`;`, `}`, block-final, `};`); trailing commas;
+   `ret.0` targets; guard payload forms F-matrix (expr / chain / block / headless /
+   nested-guard payload); `category` decl recovery (no double-report, C14); the design-
+   review counterexamples pinned as regressions: all-spaced guard block (W24), pattern-
+   arm-only block (`opt -> { -Some(x)-> y; -None-> 0; }` ⇒ P0106 ×2, no spurious P0108),
+   `search`-labeled loop whose body has arrows but no top-level `;` (⇒ P0110 via the
+   four-token scan), `- 7 -> x;` among arms (statement + P0006 bidirectional hint),
+   `[head, ...tail]` (⇒ exactly P0107), `List::map -> out;` (⇒ exactly P0109, chain
+   continues), over-`u64` stray guard (P0004 fix slices the source lexeme verbatim).
+5. **Property tests** (`tests/proptest_parser.rs`): J1/J2/J3/J6 over arbitrary strings
+   and the flow-soup generator; determinism (`parse(s) == parse(s)`).
+
+## 21. Benchmarks (deferral expires)
+
+`benches/lex_parse.rs` (criterion, dev-dep; workspace's first bench): (a) `parse` of each
+example, (b) a ~100× synthetic concatenation of sepia-shaped functions (uniquely renamed)
+for an O(n) sanity curve. Mechanics: `criterion` as a plain `[dev-dependencies]` line
+(there is no `[workspace.dependencies]` table; mirror insta/proptest) **plus** a
+`[[bench]] name = "lex_parse" harness = false` stanza in the crate manifest (criterion
+supplies its own main). Record numbers + date in component STATUS per HANDOFF §7.2
+step 6. No optimization without profile evidence.
