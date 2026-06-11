@@ -1,13 +1,13 @@
 # Flow — Global Status
 
-Last updated: 2026-06-11 · Session 01
+Last updated: 2026-06-11 · Session 02
 Current phase: P1 — Frontend Current milestone: M1 — sepia, abs, sum_to_n, pipeline, fanout run correctly on CPU via the interpreter (oracle established)
 
 ## Components
 
 | Component      | Status      | Tests | One-line state                                              | Docs                                          |
 | -------------- | ----------- | ----- | ---------------------------------------------------------- | --------------------------------------------- |
-| syntax         | not-started | —     | Lexer + recursive-descent parser for Flow-Core; next: lexer (P1).  | [status](components/syntax/STATUS.md)         |
+| syntax         | building    | 74 ✅ | Lexer done (ADR-0010 guard lexing; all examples golden, zero diags); next: parser. | [status](components/syntax/STATUS.md)         |
 | ir             | not-started | —     | Graph IR with builder-enforced invariants; not begun.      | [status](components/ir/STATUS.md)             |
 | lower          | not-started | —     | Parse tree → IR per category-ir §4; not begun.             | [status](components/lower/STATUS.md)          |
 | check          | not-started | —     | Type / effect / lifetime checks for Core; not begun.       | [status](components/check/STATUS.md)          |
@@ -54,9 +54,11 @@ None.
 | ADR-0007 | Tech stack                                     | accepted                    | n/a              |
 | ADR-0008 | Editor tooling & LSP plan                      | accepted                    | n/a              |
 | ADR-0009 | Collection-operator syntax — postfix inline block; input tuple ↔ block params positionally (`(init, array) -> fold { acc, item -> ... }`) | accepted | yes (LC-2) |
+| ADR-0010 | Guard arrows are single lexemes — adjacency + statement-initial context gate; `-7->x;` is a guard arm, write `-7 -> x;` | accepted — flagged to Sapir (next-session.md), revisable by superseding ADR | n/a (spec silent; no text patched) |
 
 ## Session log (newest first)
 
 | NN | date       | focus        | outcome                       |
 | -- | ---------- | ------------ | ----------------------------- |
+| 02 | 2026-06-11 | P1 lexer     | flow-syntax lexer complete (74 tests green): full-surface token set, ADR-0010 guard lexing, L0001–L0008 diagnostics, golden snapshots for all 6 examples + C8 fixture, proptest totality. Design + implementation each adversarially review-verified. |
 | 01 | 2026-06-11 | M0 bootstrap | M0 complete — skeleton green, E1–E5 applied + ERRATA, ADR-0001…0007, docs system, 6 examples. |
