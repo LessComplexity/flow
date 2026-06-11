@@ -1,0 +1,57 @@
+// out_of_core.flow — exercises every out-of-Core P-code P0101..P0116 (DESIGN
+// §20 item 3, C8/C13). Each construct lexes cleanly and is parsed precisely,
+// then rejected with a dedicated P-code naming the construct and horizon.
+
+// P0102: an `@` annotation on a fn (annotation skipped, fn kept).
+@executor(ThreadPool)
+fn annotated(x: i32) -> i32 {
+    x -> ret;
+}
+
+// P0111: an `executor` declaration.
+executor ThreadPool {
+    seq;
+}
+
+// P0112: `pub` / `use` items.
+pub use thing;
+
+// P0103 + P0104: generic type args and a dynamic array type.
+fn types(a: Result<T, E>, b: [i32]) -> i32 {
+    a -> ret;
+}
+
+// P0105: an enum/coproduct variant in a `type` body.
+type Shape {
+    kind: i32,
+    -Circle { r: f32 }
+}
+
+fn ops() {
+    // P0101: the `?` operator (two of them, one per `?`).
+    x -> f? -> g?;
+    // P0108: a call expression.
+    arr.len() -> n;
+    // P0109: a `::` path.
+    data -> List::map -> out;
+    // P0107: a `...` rest element in an array literal.
+    [head, ...tail] -> rest;
+    // P0113: a `void` stage and a bare `void;`.
+    z -> void { -> sink; };
+    void;
+    // P0114: a collection operator beyond map/fold.
+    items -> filter { x -> x -> keep } -> kept;
+    // P0116: a destructuring op-block parameter.
+    pairs -> map { (x, y) -> x -> ret } -> firsts;
+    // P0115: an anonymous block stage with a tail.
+    w -> { w -> tmp; tmp } -> r;
+    // P0106: a pattern guard arm (two of them).
+    opt -> {
+        -Some(v)-> v;
+        -None-> 0;
+    } -> ret;
+    // P0110: a custom-labeled loop.
+    search {
+        cond -> ret;
+    }
+}

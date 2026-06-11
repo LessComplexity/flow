@@ -1,0 +1,46 @@
+---
+source: crates/flow-syntax/tests/out_of_core.rs
+expression: "render_tree(&src, &out.program)"
+---
+8:1 Program
+10:1   Fn ‹pipeline›
+10:13     Param ‹x›
+10:16       Ty::Named ‹i32›
+10:24     ret_ty
+10:24       Ty::Named ‹i32›
+10:28     Block
+11:5       Stmt::Chain
+11:5         Chain
+11:5           head
+11:5             Var ‹x›
+11:7           -> Expr
+11:10             Question
+11:10               Var ‹f›
+11:13           -> Expr
+11:16             Question
+11:16               Var ‹g›
+14:1   Item::Error
+16:1   Fn ‹over›
+16:9     Param ‹data›
+16:15       Ty::Named ‹channel›
+16:32     ret_ty
+16:32       Ty::Named ‹Result›
+16:45     Block
+17:5       Stmt::Chain
+17:5         Chain
+17:5           head
+17:5             Var ‹data›
+17:10           -> Expr
+17:13             Var ‹List›
+17:23           -> Expr
+17:26             Var ‹out›
+18:5       Stmt::Chain
+18:5         Chain
+18:5           head
+18:5             Array (2)
+18:6               Var ‹head›
+18:15               Var ‹tail›
+18:21           -> Expr
+18:24             Var ‹rest›
+19:5       Stmt::Error
+22:1   Item::Error

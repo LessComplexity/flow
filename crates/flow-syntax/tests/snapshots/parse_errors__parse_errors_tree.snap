@@ -1,0 +1,100 @@
+---
+source: crates/flow-syntax/tests/parse_errors.rs
+expression: "render_tree(&src, &out.program)"
+---
+10:1 Program
+10:1   Item::Error
+13:1   Fn ‹p0003›
+13:12     Block
+14:5       Stmt::Chain
+14:5         Chain
+14:5           head
+14:5             Var ‹lonely›
+15:5       Stmt::Chain
+15:5         Chain
+15:5           head
+15:5             Var ‹ok›
+15:8           -> Ret
+20:1   Fn ‹p0004›
+20:12     Block
+21:5       Stmt::Chain
+21:5         Chain
+21:5           head
+21:5             Unary Neg
+21:5               Int 18446744073709551615 ‹-99999999999999999999->›
+21:5           -> Expr
+21:29             Var ‹x›
+25:1   Fn ‹p0005›
+25:12     Block
+26:5       Stmt::Chain
+26:5         Chain
+26:5           head
+26:5             Var ‹c›
+26:9           -> Guard
+27:9             arm ‹- true ->› (true)
+27:19               Chain
+27:19                 head
+27:19                   Var ‹a›
+28:9             arm ‹-false->› (false)
+28:18               Chain
+28:18                 head
+28:18                   Var ‹b›
+29:7           -> Ret
+33:1   Fn ‹p0006›
+33:12     Block
+34:5       Stmt::Chain
+34:5         Chain
+34:5           head
+34:5             Var ‹c›
+34:9           -> Guard
+35:9             arm ‹-true->› (true)
+35:17               Chain
+35:17                 head
+35:17                   Var ‹a›
+37:7           -> Ret
+41:1   Fn ‹p0007›
+41:12     Block
+42:5       Stmt::Chain
+42:5         Chain
+42:5           head
+42:5             Binary <
+42:5               Var ‹a›
+42:9               Var ‹b›
+42:15           -> Ret
+46:1   Fn ‹p0008›
+46:12     Block
+47:5       Stmt::Bind ‹x›
+47:10         Var ‹a›
+51:1   Fn ‹p0009›
+51:12     Block
+52:5       Stmt::Chain
+52:5         Chain
+52:5           head
+52:5             Binary <
+52:6               Var ‹i›
+52:7               Unary Neg
+52:9                 Int 1 ‹1›
+52:12           -> Ret
+56:1   Fn ‹p0010›
+56:12     Block
+57:5       Stmt::Chain
+57:5         Chain
+57:5           head
+57:5             Var ‹x›
+57:7           -> Fanout plain (0)
+61:1   Fn ‹p0001›
+61:10     Param ‹a›
+61:11       Ty::Error
+61:13     Block
+62:5       Stmt::Chain
+62:5         Chain
+62:5           head
+62:5             Var ‹a›
+62:7           -> Ret
+66:1   Fn ‹p0002›
+66:12     Block
+67:5       Stmt::Chain
+67:5         Chain
+67:5           head
+67:5             Var ‹a›
+67:7           -> Ret

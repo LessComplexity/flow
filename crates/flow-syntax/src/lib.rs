@@ -18,12 +18,16 @@
 //!
 //! [`Error`]: TokenKind::Error
 
+mod ast;
 mod diag;
 mod lexer;
 mod loc;
+mod parser;
 mod token;
 
+pub use ast::*;
 pub use diag::{DiagCode, Diagnostic, Severity, SuggestedFix};
 pub use lexer::{LexOutput, lex};
 pub use loc::{LineCol, LineIndex, SourceLoc};
+pub use parser::{ParseOutput, parse};
 pub use token::{GuardKind, Token, TokenKind, unescape_string};

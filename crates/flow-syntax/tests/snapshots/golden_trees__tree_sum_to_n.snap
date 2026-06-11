@@ -1,0 +1,68 @@
+---
+source: crates/flow-syntax/tests/golden_trees.rs
+expression: rendered
+---
+12:1 Program
+12:1   Fn ‹sum_to_n›
+12:13     Param ‹n›
+12:16       Ty::Named ‹i32›
+12:24     ret_ty
+12:24       Ty::Named ‹i32›
+12:28     Block
+13:5       Stmt::Bind mut ‹i›
+13:12         Ty::Named ‹i32›
+13:21         Int 1 ‹1›
+14:5       Stmt::Bind mut ‹acc›
+14:14         Ty::Named ‹i32›
+14:21         Int 0 ‹0›
+16:5       Stmt::Loop loop
+16:10         Block
+17:9           tail
+17:9             Chain
+17:9               head
+17:9                 Binary <=
+17:10                   Var ‹i›
+17:15                   Var ‹n›
+17:18               -> Guard
+18:13                 arm ‹-true->› (true)
+18:21                   Block
+19:17                     Stmt::Chain
+19:17                       Chain
+19:17                         head
+19:17                           Binary +
+19:17                             Var ‹acc›
+19:23                             Var ‹i›
+19:25                         -> Expr
+19:28                           Var ‹acc›
+20:17                     Stmt::Chain
+20:17                       Chain
+20:17                         head
+20:17                           Binary +
+20:17                             Var ‹i›
+20:21                             Int 1 ‹1›
+20:25                         -> Expr
+20:28                           Var ‹i›
+21:17                     Stmt::Chain
+21:17                       Chain
+21:17                         -> LoopJump
+23:13                 arm ‹-false->› (false)
+23:22                   Chain
+23:22                     head
+23:22                       Var ‹acc›
+23:26                     -> Ret
+28:1   Fn ‹main›
+28:11     Block
+29:5       Stmt::Chain
+29:5         Chain
+29:5           head
+29:5             Int 10 ‹10›
+29:8           -> Expr
+29:11             Var ‹sum_to_n›
+29:20           -> Expr
+29:23             Var ‹total›
+30:5       Stmt::Chain
+30:5         Chain
+30:5           head
+30:5             Var ‹total›
+30:11           -> Expr
+30:14             Var ‹print›

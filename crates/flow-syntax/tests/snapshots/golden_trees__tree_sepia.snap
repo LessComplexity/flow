@@ -1,0 +1,292 @@
+---
+source: crates/flow-syntax/tests/golden_trees.rs
+expression: rendered
+---
+25:1 Program
+25:1   Type ‹Pixel›
+26:5     Field ‹r›
+26:8       Ty::Named ‹f32›
+27:5     Field ‹g›
+27:8       Ty::Named ‹f32›
+28:5     Field ‹b›
+28:8       Ty::Named ‹f32›
+31:1   Fn ‹clamp›
+31:10     Param ‹v›
+31:13       Ty::Named ‹f32›
+31:18     Param ‹lo›
+31:22       Ty::Named ‹f32›
+31:27     Param ‹hi›
+31:31       Ty::Named ‹f32›
+31:39     ret_ty
+31:39       Ty::Named ‹f32›
+31:43     Block
+32:5       Stmt::Chain
+32:5         Chain
+32:5           head
+32:5             Binary >
+32:6               Var ‹v›
+32:10               Var ‹hi›
+32:14           -> Guard
+33:9             arm ‹-true->› (true)
+33:18               Chain
+33:18                 head
+33:18                   Var ‹hi›
+34:9             arm ‹-false->› (false)
+34:18               Block
+35:13                 Stmt::Chain
+35:13                   Chain
+35:13                     head
+35:13                       Binary <
+35:14                         Var ‹v›
+35:18                         Var ‹lo›
+35:22                     -> Guard
+36:17                       arm ‹-true->› (true)
+36:26                         Chain
+36:26                           head
+36:26                             Var ‹lo›
+37:17                       arm ‹-false->› (false)
+37:26                         Chain
+37:26                           head
+37:26                             Var ‹v›
+38:15                     -> Expr
+38:18                       Var ‹bounded›
+39:13                 tail
+39:13                   Chain
+39:13                     head
+39:13                       Var ‹bounded›
+41:7           -> Ret
+44:1   Fn ‹main›
+44:11     Block
+45:5       Stmt::Chain
+45:5         Chain
+45:5           head
+45:5             Array (16)
+46:9               Struct ‹Pixel›
+46:17                 FieldInit ‹r›
+46:20                   Float ‹200.0›
+46:27                 FieldInit ‹g›
+46:30                   Float ‹200.0›
+46:37                 FieldInit ‹b›
+46:40                   Float ‹200.0›
+47:9               Struct ‹Pixel›
+47:17                 FieldInit ‹r›
+47:20                   Float ‹200.0›
+47:27                 FieldInit ‹g›
+47:30                   Float ‹200.0›
+47:37                 FieldInit ‹b›
+47:40                   Float ‹200.0›
+48:9               Struct ‹Pixel›
+48:17                 FieldInit ‹r›
+48:20                   Float ‹200.0›
+48:27                 FieldInit ‹g›
+48:30                   Float ‹200.0›
+48:37                 FieldInit ‹b›
+48:40                   Float ‹200.0›
+49:9               Struct ‹Pixel›
+49:17                 FieldInit ‹r›
+49:20                   Float ‹200.0›
+49:27                 FieldInit ‹g›
+49:30                   Float ‹200.0›
+49:37                 FieldInit ‹b›
+49:40                   Float ‹200.0›
+50:9               Struct ‹Pixel›
+50:17                 FieldInit ‹r›
+50:20                   Float ‹200.0›
+50:27                 FieldInit ‹g›
+50:30                   Float ‹200.0›
+50:37                 FieldInit ‹b›
+50:40                   Float ‹200.0›
+51:9               Struct ‹Pixel›
+51:17                 FieldInit ‹r›
+51:20                   Float ‹200.0›
+51:27                 FieldInit ‹g›
+51:30                   Float ‹200.0›
+51:37                 FieldInit ‹b›
+51:40                   Float ‹200.0›
+52:9               Struct ‹Pixel›
+52:17                 FieldInit ‹r›
+52:20                   Float ‹200.0›
+52:27                 FieldInit ‹g›
+52:30                   Float ‹200.0›
+52:37                 FieldInit ‹b›
+52:40                   Float ‹200.0›
+53:9               Struct ‹Pixel›
+53:17                 FieldInit ‹r›
+53:20                   Float ‹200.0›
+53:27                 FieldInit ‹g›
+53:30                   Float ‹200.0›
+53:37                 FieldInit ‹b›
+53:40                   Float ‹200.0›
+54:9               Struct ‹Pixel›
+54:17                 FieldInit ‹r›
+54:20                   Float ‹200.0›
+54:27                 FieldInit ‹g›
+54:30                   Float ‹200.0›
+54:37                 FieldInit ‹b›
+54:40                   Float ‹200.0›
+55:9               Struct ‹Pixel›
+55:17                 FieldInit ‹r›
+55:20                   Float ‹200.0›
+55:27                 FieldInit ‹g›
+55:30                   Float ‹200.0›
+55:37                 FieldInit ‹b›
+55:40                   Float ‹200.0›
+56:9               Struct ‹Pixel›
+56:17                 FieldInit ‹r›
+56:20                   Float ‹200.0›
+56:27                 FieldInit ‹g›
+56:30                   Float ‹200.0›
+56:37                 FieldInit ‹b›
+56:40                   Float ‹200.0›
+57:9               Struct ‹Pixel›
+57:17                 FieldInit ‹r›
+57:20                   Float ‹200.0›
+57:27                 FieldInit ‹g›
+57:30                   Float ‹200.0›
+57:37                 FieldInit ‹b›
+57:40                   Float ‹200.0›
+58:9               Struct ‹Pixel›
+58:17                 FieldInit ‹r›
+58:20                   Float ‹200.0›
+58:27                 FieldInit ‹g›
+58:30                   Float ‹200.0›
+58:37                 FieldInit ‹b›
+58:40                   Float ‹200.0›
+59:9               Struct ‹Pixel›
+59:17                 FieldInit ‹r›
+59:20                   Float ‹200.0›
+59:27                 FieldInit ‹g›
+59:30                   Float ‹200.0›
+59:37                 FieldInit ‹b›
+59:40                   Float ‹200.0›
+60:9               Struct ‹Pixel›
+60:17                 FieldInit ‹r›
+60:20                   Float ‹200.0›
+60:27                 FieldInit ‹g›
+60:30                   Float ‹200.0›
+60:37                 FieldInit ‹b›
+60:40                   Float ‹200.0›
+61:9               Struct ‹Pixel›
+61:17                 FieldInit ‹r›
+61:20                   Float ‹200.0›
+61:27                 FieldInit ‹g›
+61:30                   Float ‹200.0›
+61:37                 FieldInit ‹b›
+61:40                   Float ‹200.0›
+62:7           -> Bind ‹image›
+62:17             Ty::Array len=16
+62:18               Ty::Named ‹Pixel›
+65:5       Stmt::Chain
+65:5         Chain
+65:5           head
+65:5             Var ‹image›
+65:11           -> map [‹px›]
+65:18             Block
+66:9               Stmt::Chain
+66:9                 Chain
+66:9                   head
+66:9                     Tuple (3)
+66:10                       Binary +
+66:10                         Binary +
+66:10                           Binary *
+66:10                             Member .r
+66:10                               Var ‹px›
+66:17                             Float ‹0.393›
+66:25                           Binary *
+66:25                             Member .g
+66:25                               Var ‹px›
+66:32                             Float ‹0.769›
+66:40                         Binary *
+66:40                           Member .b
+66:40                             Var ‹px›
+66:47                           Float ‹0.189›
+66:54                       Float ‹0.0›
+66:59                       Float ‹255.0›
+66:66                   -> Expr
+66:69                     Var ‹clamp›
+66:75                   -> Expr
+66:78                     Var ‹nr›
+67:9               Stmt::Chain
+67:9                 Chain
+67:9                   head
+67:9                     Tuple (3)
+67:10                       Binary +
+67:10                         Binary +
+67:10                           Binary *
+67:10                             Member .r
+67:10                               Var ‹px›
+67:17                             Float ‹0.349›
+67:25                           Binary *
+67:25                             Member .g
+67:25                               Var ‹px›
+67:32                             Float ‹0.686›
+67:40                         Binary *
+67:40                           Member .b
+67:40                             Var ‹px›
+67:47                           Float ‹0.168›
+67:54                       Float ‹0.0›
+67:59                       Float ‹255.0›
+67:66                   -> Expr
+67:69                     Var ‹clamp›
+67:75                   -> Expr
+67:78                     Var ‹ng›
+68:9               Stmt::Chain
+68:9                 Chain
+68:9                   head
+68:9                     Tuple (3)
+68:10                       Binary +
+68:10                         Binary +
+68:10                           Binary *
+68:10                             Member .r
+68:10                               Var ‹px›
+68:17                             Float ‹0.272›
+68:25                           Binary *
+68:25                             Member .g
+68:25                               Var ‹px›
+68:32                             Float ‹0.534›
+68:40                         Binary *
+68:40                           Member .b
+68:40                             Var ‹px›
+68:47                           Float ‹0.131›
+68:54                       Float ‹0.0›
+68:59                       Float ‹255.0›
+68:66                   -> Expr
+68:69                     Var ‹clamp›
+68:75                   -> Expr
+68:78                     Var ‹nb›
+69:9               tail
+69:9                 Chain
+69:9                   head
+69:9                     Struct ‹Pixel›
+69:17                       FieldInit ‹r›
+69:20                         Var ‹nr›
+69:24                       FieldInit ‹g›
+69:27                         Var ‹ng›
+69:31                       FieldInit ‹b›
+69:34                         Var ‹nb›
+70:7           -> Bind ‹sepia_image›
+70:23             Ty::Array len=16
+70:24               Ty::Named ‹Pixel›
+73:5       Stmt::Chain
+73:5         Chain
+73:5           head
+73:5             Tuple (2)
+73:6               Float ‹0.0›
+73:11               Var ‹sepia_image›
+73:24           -> fold [‹acc›, ‹px›]
+73:32             Block
+74:9               tail
+74:9                 Chain
+74:9                   head
+74:9                     Binary +
+74:9                       Var ‹acc›
+74:15                       Member .r
+74:15                         Var ‹px›
+75:7           -> Expr
+75:10             Var ‹total_r›
+77:5       Stmt::Chain
+77:5         Chain
+77:5           head
+77:5             Var ‹total_r›
+77:13           -> Expr
+77:16             Var ‹print›

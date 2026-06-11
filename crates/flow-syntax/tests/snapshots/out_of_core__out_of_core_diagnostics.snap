@@ -1,0 +1,23 @@
+---
+source: crates/flow-syntax/tests/out_of_core.rs
+expression: "render_diagnostics(&src, &out.diagnostics)"
+---
+P0102 302..303 6:1 annotations (`@…`) are out of Flow-Core (HANDOFF §4); planned for Core+1
+P0111 408..416 12:1 `executor` declarations are out of Flow-Core (HANDOFF §4); planned for post-M5
+P0112 473..476 17:1 `pub` is out of Flow-Core (HANDOFF §4); planned for post-M5
+P0103 563..575 20:13 generic type arguments are out of Flow-Core (HANDOFF §4); planned for Core+1
+P0104 580..585 20:30 dynamic array / slice types (`[T]`) are out of Flow-Core (HANDOFF §4); planned for Core+1
+P0105 699..717 27:5 enum/coproduct variants in a `type` body are out of Flow-Core (HANDOFF §4); planned for Core+1 coproducts
+P0101 801..802 32:11 the `?` operator is out of Flow-Core (HANDOFF §4); planned for Core+1 error handling
+P0101 807..808 32:17 the `?` operator is out of Flow-Core (HANDOFF §4); planned for Core+1 error handling
+P0108 847..856 34:5 call expressions are out of Flow-Core (HANDOFF §4); use a tuple-input flow: `(args) -> f`
+P0109 906..908 36:17 `::` paths are out of Flow-Core (HANDOFF §4); planned for Core+1 modules
+P0107 987..994 38:12 rest elements (`...tail`) in array literals are out of Flow-Core (HANDOFF §4); planned for Core+1 slices
+P0113 1063..1067 40:10 `void` is out of Flow-Core (HANDOFF §4); planned for Core+1
+P0113 1086..1090 41:5 `void` is out of Flow-Core (HANDOFF §4); planned for Core+1
+P0114 1158..1164 43:14 `filter` is out of Flow-Core (HANDOFF §4): only `map`/`fold` are Core collection operators. Planned for Core+1
+P0116 1262..1263 45:20 destructuring op-block parameters (`(x, y)`) are out of Flow-Core (HANDOFF §4); planned for Core+1
+P0115 1355..1372 47:10 anonymous block stage (`-> { … }` with statements/tail) is out of Flow-Core (HANDOFF §4); user-guide §8.3 full-language form. Planned for Core+1
+P0106 1449..1459 50:9 pattern guard arms (`-Some(x)->`, `-[h, ...t]->`) are out of Flow-Core (HANDOFF §4); planned for Core+1 coproducts
+P0106 1471..1478 51:9 pattern guard arms (`-Some(x)->`, `-[h, ...t]->`) are out of Flow-Core (HANDOFF §4); planned for Core+1 coproducts
+P0110 1537..1543 54:5 custom loop labels are out of Flow-Core (HANDOFF §4); Flow-Core's only loop introducer is `loop`. Planned for Core+1
