@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/flow-syntax",
+    "crates/flow-ir",
+    "crates/flow-lower",
+    "crates/flow-check",
+    "crates/flow-interp",
+    "crates/flow-rewrite",
+    "crates/flow-backend-llvm",
+    "crates/flow-backend-cuda",
+    "crates/flow-backend-verilog",
+    "crates/flow-cli",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"

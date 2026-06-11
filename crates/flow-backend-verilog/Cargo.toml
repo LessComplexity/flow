@@ -1,0 +1,4 @@
+[package]
+name = "flow-backend-verilog"
+version.workspace = true
+edition.workspace = true

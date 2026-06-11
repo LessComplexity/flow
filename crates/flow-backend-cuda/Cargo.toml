@@ -1,0 +1,4 @@
+[package]
+name = "flow-backend-cuda"
+version.workspace = true
+edition.workspace = true

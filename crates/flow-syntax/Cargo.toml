@@ -1,0 +1,4 @@
+[package]
+name = "flow-syntax"
+version.workspace = true
+edition.workspace = true

@@ -1,0 +1,4 @@
+[package]
+name = "flow-interp"
+version.workspace = true
+edition.workspace = true
