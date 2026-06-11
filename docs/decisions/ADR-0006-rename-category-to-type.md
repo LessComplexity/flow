@@ -1,6 +1,8 @@
 # ADR-0006: Rename the surface keyword `category` to `type` (E5)
 
-Date: 2026-06-11 · Status: accepted (pending Sapir veto at bootstrap review)
+Date: 2026-06-11 · Status: accepted
+
+Sapir reviewed at the bootstrap review; the veto window closed 2026-06-11 with no veto — the rename is final.
 
 ## Context (what forced the decision; spec refs)
 
@@ -21,11 +23,11 @@ Rename the surface keyword `category` to `type` now, while no code exists. Decla
 product types with `type Point { x: f32, y: f32 }`. Reserve the old keyword `category` and
 reject it with a helpful diagnostic that points at `type`, so existing-in-the-wild examples
 fail loudly rather than silently. Perform the rename across `user-guide.md`,
-`getting-started.md`, and all `examples/` during bootstrap unless Sapir vetoes; the
+`getting-started.md`, and all `examples/` during bootstrap; the
 historical `flow-language-design.docx` is deferred (referenced, not edited). The IR keeps its
-already-neutral `Ty` naming. This decision is accepted but explicitly subject to Sapir's veto
-at the bootstrap review (flagged in `docs/next-session.md`); if vetoed, the rename and the
-reserved-word rejection are both reverted.
+already-neutral `Ty` naming. This decision was accepted at bootstrap subject to Sapir's veto
+at the bootstrap review; the veto window closed 2026-06-11 with no veto, so the rename and the
+reserved-word rejection are final.
 
 ## Consequences (tradeoffs, implementation impact)
 
@@ -37,8 +39,8 @@ reserved-word rejection are both reverted.
 - The rename touches user-facing docs and every example, so it must land in bootstrap before
   those files are treated as the acceptance surface — doing it later would invalidate golden
   snapshots.
-- Because the decision is veto-pending, the next-session handoff must surface it as an open
-  question for Sapir so the bootstrap review can confirm or reverse it cheaply.
+- The decision was surfaced as an open question for Sapir at the bootstrap review; the veto
+  window closed 2026-06-11 with no veto, confirming the rename.
 
 ## Spec impact (exact files/sections to patch; patched? yes — Session 01)
 

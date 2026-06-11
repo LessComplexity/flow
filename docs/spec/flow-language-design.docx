@@ -1,0 +1,1201 @@
+**Flow**
+ 
+A Dataflow Programming Language
+ 
+Language Design Document
+ 
+Version 0.1
+ 
+December 2025
+ 
+Table of Contents
+ 
+1\. Philosophy and Vision
+ 
+2\. Language Goals
+ 
+3\. Language Internals
+ 
+4\. Syntax Reference
+ 
+5\. Examples with Flowcharts
+ 
+6\. Future Directions
+ 
+1\. Philosophy and Vision
+ 
+1.1 The Core Insight
+ 
+Flow is built on a fundamental observation: programs are graphs of data
+transformations, yet we write them as sequential text and struggle to
+parallelize them. Flow inverts this relationship---the textual
+representation directly encodes the dataflow graph, making parallelism
+structural rather than accidental.
+ 
+**The graph IS the program.** Every Flow program can be visualized as a
+directed graph where nodes represent data and edges represent
+transformations. This isn\'t a debugging tool bolted on after the
+fact---it\'s the fundamental representation from which all else derives.
+ 
+1.2 Problems Flow Solves
+ 
+The Parallelism Problem
+ 
+Modern hardware is parallel: multi-core CPUs, GPUs with thousands of
+cores, FPGAs with massive parallelism. Yet most programming languages
+are fundamentally sequential, requiring programmers to explicitly manage
+threads, locks, and synchronization. This leads to:
+ 
+-   Race conditions and deadlocks
+ 
+-   Underutilized hardware
+ 
+-   Code that\'s hard to reason about
+ 
+Flow makes parallelism the default. Independent operations automatically
+execute in parallel; the programmer opts into sequential execution when
+ordering matters.
+ 
+The Hardware Gap
+ 
+Writing efficient GPU code requires CUDA expertise. FPGA development
+demands hardware engineering knowledge. This creates a barrier between
+software developers and hardware acceleration. Flow compiles the same
+source code to CPU, GPU, and FPGA backends, democratizing access to
+hardware acceleration.
+ 
+The Visualization Gap
+ 
+Visual programming tools (LabVIEW, node-based editors) prove that
+developers want to see dataflow. But visual-first languages don\'t scale
+to large programs. Flow\'s approach---text that directly represents
+graphs---provides the best of both worlds: scalable text editing with
+instant visual representation.
+ 
+1.3 Design Principles
+ 
+1.  **Simplicity:** One uniform representation for all constructs. The
+    syntax should be learnable in hours, not weeks.
+ 
+2.  **Parallel-First:** Independent operations parallelize
+    automatically. Sequential execution is the exception, not the rule.
+ 
+3.  **Safe by Default:** Memory safety without garbage collection. No
+    data races by construction.
+ 
+4.  **Visual Equivalence:** Code and graph are the same thing viewed
+    differently. No information is lost in either representation.
+ 
+5.  **Hardware Portability:** Write once, compile to CPU, GPU, or FPGA.
+    The dataflow model maps naturally to all three.
+ 
+2\. Language Goals
+ 
+2.1 Primary Goals
+ 
+1.  **General-Purpose Programming:** Flow is not a domain-specific
+    language. It should be capable of building system utilities, web
+    services, CLI applications, and data processing pipelines.
+ 
+2.  **Automatic Parallelization:** The compiler derives parallelism from
+    program structure. Programmers don\'t manage threads explicitly.
+ 
+3.  **Memory Safety:** No null pointer dereferences, no use-after-free,
+    no data races. Safety is guaranteed at compile time.
+ 
+4.  **Performance:** Generated code should match hand-written code for
+    the target platform (90-95% of optimal CUDA, matching Verilog
+    efficiency).
+ 
+5.  **Multi-Target Compilation:** Single source compiles to LLVM (CPU),
+    CUDA (GPU), and Verilog (FPGA).
+ 
+2.2 Secondary Goals
+ 
+-   Fast compilation (\< 1 second for small projects)
+ 
+-   Excellent error messages with visual context
+ 
+-   Seamless C/C++ interoperability
+ 
+-   Integrated visual debugger showing live dataflow
+ 
+-   Package ecosystem with dependency management
+ 
+2.3 Non-Goals
+ 
+-   Replacing all existing languages---Flow targets specific use cases
+    where dataflow shines
+ 
+-   Maximum abstraction---Flow prefers explicitness over magic
+ 
+-   Backward compatibility with any existing language
+ 
+3\. Language Internals
+ 
+3.1 Compilation Pipeline
+ 
+Flow uses a unique compilation strategy that leverages its dataflow
+nature:
+ 
+> Source Code (.flow)
+>
+> │
+>
+> ▼
+>
+> ┌─────────────┐
+>
+> │ Lexer │ Tokenization
+>
+> └──────┬──────┘
+>
+> │
+>
+> ▼
+>
+> ┌─────────────┐
+>
+> │ Parser │ Minimal surface parsing
+>
+> └──────┬──────┘
+>
+> │
+>
+> ▼
+>
+> ┌─────────────────┐
+>
+> │ Category IR │ Direct graph construction
+>
+> │ (Graph) │ ← Visual representation lives here
+>
+> └──────┬──────────┘
+>
+> │
+>
+> ▼
+>
+> ┌─────────────────┐
+>
+> │ Analysis │ Type checking, lifetime analysis
+>
+> └──────┬──────────┘
+>
+> │
+>
+> ▼
+>
+> ┌─────────────────┐
+>
+> │ Optimization │ Fusion, parallelism detection
+>
+> └──────┬──────────┘
+>
+> │
+>
+> ▼
+>
+> ┌────┬────┬────┬────┐
+>
+> │LLVM│CUDA│Verilog│WASM│ Backend code generation
+>
+> └────┴────┴────┴────┘
+ 
+The key insight is that Flow skips the traditional AST phase. The parser
+produces a minimal structure that is immediately lowered to the Category
+IR---a graph representation based on category theory. This graph is the
+canonical representation; both optimization and visualization operate on
+it directly.
+ 
+3.2 The Category IR
+ 
+The Category IR represents programs as directed graphs:
+ 
+-   **Objects** (nodes) represent values, variables, and data
+ 
+-   **Morphisms** (edges) represent operations and transformations
+ 
+-   **Compositions** chain morphisms together (pipelines)
+ 
+This representation enables:
+ 
+-   Automatic parallelism detection (independent subgraphs)
+ 
+-   Lifetime analysis (finding terminal uses in the graph)
+ 
+-   Visual debugging (the IR IS the visualization)
+ 
+-   Provably correct optimizations via category laws
+ 
+3.3 Parallelism Model
+ 
+Flow\'s parallelism is structural---derived from the dataflow
+graph---but controllable via execution models.
+ 
+Automatic Parallelism
+ 
+Operations at the same topological level with no shared dependencies
+execute in parallel automatically:
+ 
+> data -\> {
+>
+> -\> expensive_operation_a -\> r1;
+>
+> -\> expensive_operation_b -\> r2;
+>
+> }
+>
+> // Both operations run in parallel
+>
+> // Implicit join: continues when both complete
+>
+> (r1, r2) -\> combine -\> result;
+ 
+Explicit Sequential Execution
+ 
+The seq keyword forces sequential execution when ordering matters:
+ 
+> data -\> seq {
+>
+> -\> { \"Step 1\" -\> log };
+>
+> -\> { \"Step 2\" -\> log };
+>
+> -\> { \"Step 3\" -\> log };
+>
+> }
+>
+> // Output guaranteed: \"Step 1\", \"Step 2\", \"Step 3\"
+ 
+Execution Models
+ 
+Like allocators in C++, Flow allows defining custom execution models
+that control how parallelism is realized:
+ 
+> executor ThreadPool {
+>
+> max_threads: 8,
+>
+> work_stealing: true,
+>
+> spawn_threshold: 1000, // Don\'t spawn for tiny tasks
+>
+> }
+>
+> executor Sequential {
+>
+> // Forces everything sequential
+>
+> }
+>
+> executor Hardware {
+>
+> // For FPGA: true parallel hardware paths
+>
+> }
+>
+> // Apply to a function
+>
+> \@executor(ThreadPool)
+>
+> fn process_data(input: \[Data\]) -\> \[Result\] {
+>
+> input -\> map { item -\> item -\> transform } -\> ret;
+>
+> }
+ 
+Parallelism Decision Rules
+ 
+  -----------------------------------------------------------------------
+  **Condition**          **Result**
+  ---------------------- ------------------------------------------------
+  In seq block           Sequential execution
+ 
+  Data dependencies      Sequential execution
+ 
+  Independent + pure     Parallel execution
+ 
+  Independent + impure   Executor decides (may parallelize with
+                         non-deterministic order)
+  -----------------------------------------------------------------------
+ 
+3.4 Memory Model
+ 
+Flow provides automatic memory management without garbage collection,
+based on graph-derived lifetimes.
+ 
+Core Principle: Reference by Default, Free at Last Use
+ 
+The compiler analyzes the dataflow graph to determine:
+ 
+-   When data is created
+ 
+-   All places it flows to (all uses)
+ 
+-   The frontier of last uses (terminal nodes for that data)
+ 
+-   Insert free operations after the frontier completes
+ 
+> fn example(data: Buffer) -\> Result {
+>
+> data -\> {
+>
+> -\> process_a -\> r1; // data referenced here
+>
+> -\> process_b -\> r2; // data referenced here
+>
+> }
+>
+> // Join point: both branches complete
+>
+> // FREE(data) automatically inserted here
+>
+> (r1, r2) -\> combine -\> ret;
+>
+> }
+ 
+Copy vs Reference
+ 
+Primitive types (i32, f32, bool) are copied implicitly---they\'re small
+and cheap. Heap-allocated types (Buffer, String, Vec) are passed by
+reference. Explicit cloning is available when independent copies are
+needed:
+ 
+> // Primitives copy automatically
+>
+> x: i32 \<- 5;
+>
+> x -\> { -\> add_one; -\> add_two; } // Both get copies
+>
+> // Heap data is referenced
+>
+> buffer: Buffer \<- allocate(1024);
+>
+> buffer -\> { -\> read_start; -\> read_end; } // Both get references
+>
+> // FREE(buffer) after join
+>
+> // Explicit clone when needed
+>
+> buffer -\> { -\> clone -\> process_copy; -\> process_original; }
+>
+> // Two independent buffers, freed separately
+ 
+Escape Analysis
+ 
+Data that escapes (returned, stored in structures, sent to channels) is
+not freed locally:
+ 
+> fn create_buffer() -\> Buffer {
+>
+> buffer \<- allocate(1024);
+>
+> buffer -\> fill_data -\> ret;
+>
+> // buffer escapes via return - NO free inserted
+>
+> // Caller owns it now
+>
+> }
+ 
+3.5 Error Handling
+ 
+Errors are values that flow through the graph like any other data. This
+maintains the dataflow model and makes error paths visible.
+ 
+The Result Type
+ 
+> category Result\<T, E\> {
+>
+> Ok(value: T),
+>
+> Err(error: E),
+>
+> }
+ 
+Error Propagation with ?
+ 
+The ? operator propagates errors through the dataflow:
+ 
+> fn read_and_process(path: String) -\> Result\<Data\> {
+>
+> path -\> File.open? -\> read_contents? -\> parse? -\> ret;
+>
+> }
+>
+> // Equivalent to:
+>
+> fn read_and_process(path: String) -\> Result\<Data\> {
+>
+> path -\> File.open -\> {
+>
+> -Ok(file)-\> file -\> read_contents -\> {
+>
+> -Ok(contents)-\> contents -\> parse -\> {
+>
+> -Ok(data)-\> Ok(data) -\> ret;
+>
+> -Err(e)-\> Err(e) -\> ret;
+>
+> }
+>
+> -Err(e)-\> Err(e) -\> ret;
+>
+> }
+>
+> -Err(e)-\> Err(e) -\> ret;
+>
+> }
+>
+> }
+ 
+Errors in Parallel Branches
+ 
+If any branch of a parallel fanout fails, the entire fanout fails. Other
+branches are cancelled or their results discarded:
+ 
+> data -\> {
+>
+> -\> process_a?; // might fail
+>
+> -\> process_b?; // might fail
+>
+> } -\> (r1, r2) -\> combine -\> ret;
+>
+> // If either fails, the whole expression fails
+ 
+4\. Syntax Reference
+ 
+4.1 The Flow Operator
+ 
+The arrow operator -\> is the fundamental syntax element. It represents
+data flowing from source to destination:
+ 
+> source -\> destination;
+ 
+**Reasoning:** The arrow visually represents data movement, matching the
+mental model of dataflow. Reading left-to-right follows the direction of
+data transformation.
+ 
+4.2 Variables
+ 
+> // Declaration with type
+>
+> x: i32 \<- 5;
+>
+> mut y: i32 \<- 10;
+>
+> // Left-to-right style
+>
+> 5 -\> x: i32;
+>
+> 10 -\> mut y: i32;
+>
+> // Type inference
+>
+> value \<- 42; // Inferred as i32
+>
+> // Mutation (only for mut variables)
+>
+> mut counter: i32 \<- 0;
+>
+> counter + 1 -\> counter;
+ 
+**Reasoning:** Both \<- and -\> are valid for assignment, supporting
+both traditional and dataflow mental models. Immutability by default
+prevents accidental mutation and enables safe parallelism.
+ 
+4.3 Functions
+ 
+> fn name(param1: Type1, param2: Type2) -\> ReturnType {
+>
+> // Function body
+>
+> result -\> ret;
+>
+> }
+>
+> // Example
+>
+> fn add(a: i32, b: i32) -\> i32 {
+>
+> a + b -\> ret;
+>
+> }
+>
+> // Calling with tuple input
+>
+> (15, 20) -\> add -\> result;
+>
+> // Multiple inputs always use tuples
+>
+> (x, 0, 255) -\> clamp -\> clamped;
+ 
+**Reasoning:** Functions receive all inputs as a tuple. This maintains
+consistency---data always flows as a unit. The ret keyword makes the
+return point explicit in the dataflow graph.
+ 
+4.4 Pipelines
+ 
+> // Chained operations
+>
+> data \* 2 -\> + 5 -\> \* 3 -\> ret;
+>
+> // Equivalent explicit form
+>
+> (data, 2) -\> multiply -\> v1;
+>
+> (v1, 5) -\> add -\> v2;
+>
+> (v2, 3) -\> multiply -\> ret;
+>
+> // Combining piped value with other inputs
+>
+> x \* 2 + 5 -\> v -\> (v, 0, 255) -\> clamp -\> result;
+ 
+**Reasoning:** Pipeline syntax mirrors shell piping and functional
+composition. The shorthand \* 2 and + 5 are syntactic sugar for common
+binary operations, keeping pipelines readable.
+ 
+4.5 Parallel Fanout
+ 
+> // Parallel execution (default)
+>
+> data -\> {
+>
+> -\> process_a -\> r1;
+>
+> -\> process_b -\> r2;
+>
+> -\> process_c -\> r3;
+>
+> }
+>
+> // All three run in parallel, implicit join
+>
+> // Results can be combined
+>
+> (r1, r2, r3) -\> combine -\> final_result;
+ 
+**Reasoning:** The braces create a scope where multiple flows originate
+from the same source. This naturally represents parallel
+computation---data fans out to independent operations.
+ 
+4.6 Conditionals
+ 
+> // Pattern matching with guards
+>
+> condition -\> {
+>
+> -true-\> handle_true;
+>
+> -false-\> handle_false;
+>
+> } -\> result;
+>
+> // Value matching
+>
+> status_code -\> {
+>
+> -0-\> \"success\";
+>
+> -1-\> \"warning\";
+>
+> -2-\> \"error\";
+>
+> -\_-\> \"unknown\"; // Default case
+>
+> } -\> message;
+>
+> // Pattern destructuring
+>
+> optional_value -\> {
+>
+> -Some(x)-\> x \* 2;
+>
+> -None-\> 0;
+>
+> } -\> result;
+ 
+**Reasoning:** Guards (-pattern-\>) visually distinguish conditional
+branches from parallel flows. The leading dash indicates \'if this
+pattern matches.\' This syntax scales naturally from simple boolean
+conditions to complex pattern matching.
+ 
+4.7 Loops
+ 
+> // Label-based loop
+>
+> loop {
+>
+> (i \< 10) -\> {
+>
+> -true-\> {
+>
+> i + 1 -\> i;
+>
+> -\> loop; // Continue
+>
+> }
+>
+> -false-\> -\> ret; // Exit
+>
+> }
+>
+> }
+>
+> // Processing collections
+>
+> items -\> {
+>
+> -\[\]-\> total -\> ret; // Empty: done
+>
+> -\[head, \...tail\]-\> {
+>
+> total + head -\> total;
+>
+> tail -\> items;
+>
+> -\> loop;
+>
+> }
+>
+> }
+ 
+**Reasoning:** Loops are labeled blocks with explicit control flow. The
+-\> loop syntax for continue and -\> ret for exit makes control flow
+visible in the graph as edges. This maps directly to back-edges in the
+dataflow graph.
+ 
+4.8 Categories (Types)
+ 
+> // Primitive categories
+>
+> i8, i16, i32, i64 // Signed integers
+>
+> u8, u16, u32, u64 // Unsigned integers
+>
+> f32, f64 // Floating point
+>
+> bool // Boolean
+>
+> char // Character
+>
+> // Compound categories
+>
+> \[T; N\] // Fixed-size array: \[i32; 10\]
+>
+> \[T\] // Dynamic array/slice: \[f32\]
+>
+> (T1, T2, \...) // Tuple: (i32, f32, bool)
+>
+> // Custom categories
+>
+> category Point {
+>
+> x: f32,
+>
+> y: f32,
+>
+> }
+>
+> category RGB {
+>
+> r: u8,
+>
+> g: u8,
+>
+> b: u8,
+>
+> }
+ 
+**Reasoning:** Types are called \'categories\' to reflect the
+category-theoretic foundation. This isn\'t just naming---it reminds
+developers that types have associated operations (morphisms) and laws
+governing composition.
+ 
+4.9 Modules
+ 
+> // File = Module
+>
+> // src/utils.flow becomes module \'utils\'
+>
+> // Visibility
+>
+> pub fn public_function() { \... } // Accessible from other modules
+>
+> fn private_function() { \... } // Module-private (default)
+>
+> // Imports
+>
+> use utils.helper;
+>
+> use image.filter.{blur, sharpen};
+>
+> // Usage
+>
+> data -\> helper -\> blur -\> result;
+ 
+5\. Examples with Flowcharts
+ 
+This section presents complete examples with their corresponding
+dataflow graph representations using Mermaid syntax.
+ 
+5.1 Simple Pipeline
+ 
+Code
+ 
+> fn process(data: i32) -\> i32 {
+>
+> data \* 2 -\> + 5 -\> \* 3 -\> ret;
+>
+> }
+ 
+Flowchart (Mermaid)
+ 
+> graph LR
+>
+> data\[data: i32\] \--\> \|\"× 2\"\| temp1\[temp1\]
+>
+> temp1 \--\> \|\"+ 5\"\| temp2\[temp2\]
+>
+> temp2 \--\> \|\"× 3\"\| ret\[ret: i32\]
+ 
+Visual Representation
+ 
+> ┌──────┐ ┌───────┐ ┌───────┐ ┌─────┐
+>
+> │ data │──×2──│ temp1 │──+5──│ temp2 │──×3──│ ret │
+>
+> └──────┘ └───────┘ └───────┘ └─────┘
+ 
+5.2 Parallel Processing
+ 
+Code
+ 
+> fn parallel_transform(data: i32) -\> i32 {
+>
+> data -\> {
+>
+> -\> \* 2 -\> doubled;
+>
+> -\> + 10 -\> increased;
+>
+> -\> square -\> squared;
+>
+> }
+>
+> (doubled, increased, squared) -\> sum -\> ret;
+>
+> }
+ 
+Flowchart (Mermaid)
+ 
+> graph TD
+>
+> data\[data: i32\] \--\> \|\"× 2\"\| doubled\[doubled\]
+>
+> data \--\> \|\"+ 10\"\| increased\[increased\]
+>
+> data \--\> \|\"square\"\| squared\[squared\]
+>
+> doubled \--\> sum\[sum\]
+>
+> increased \--\> sum
+>
+> squared \--\> sum
+>
+> sum \--\> ret\[ret: i32\]
+ 
+Visual Representation
+ 
+> ┌──×2───\> doubled ──┐
+>
+> │ │
+>
+> ┌──────┐ │ │ ┌─────┐ ┌─────┐
+>
+> │ data │────┼──+10──\> increased ─┼────│ sum │────│ ret │
+>
+> └──────┘ │ │ └─────┘ └─────┘
+>
+> │ │
+>
+> └─square─\> squared ──┘
+ 
+5.3 Conditional Branch
+ 
+Code
+ 
+> fn absolute_value(x: i32) -\> i32 {
+>
+> (x, 0) -\> greater_than -\> {
+>
+> -true-\> x;
+>
+> -false-\> (x, -1) -\> multiply;
+>
+> } -\> ret;
+>
+> }
+ 
+Flowchart (Mermaid)
+ 
+> graph TD
+>
+> x\[x: i32\] \--\> cmp{\"\> 0?\"}
+>
+> cmp \--\>\|true\| pos\[x\]
+>
+> cmp \--\>\|false\| neg\[\"× -1\"\]
+>
+> pos \--\> phi\[φ\]
+>
+> neg \--\> phi
+>
+> phi \--\> ret\[ret: i32\]
+ 
+Visual Representation
+ 
+> ┌─true──\> x ─────────┐
+>
+> │ │
+>
+> ┌───┐ ┌─┴──┐ ┌─┴─┐ ┌─────┐
+>
+> │ x │────│\>0? │ │ φ │────│ ret │
+>
+> └───┘ └─┬──┘ └─┬─┘ └─────┘
+>
+> │ │
+>
+> └─false─\> × -1 ───────┘
+ 
+5.4 Loop with Counter
+ 
+Code
+ 
+> fn sum_to_n(n: i32) -\> i32 {
+>
+> mut i: i32 \<- 0;
+>
+> mut total: i32 \<- 0;
+>
+> loop {
+>
+> (i, n) -\> less_than -\> {
+>
+> -true-\> {
+>
+> total + i -\> total;
+>
+> i + 1 -\> i;
+>
+> -\> loop;
+>
+> }
+>
+> -false-\> total -\> ret;
+>
+> }
+>
+> }
+>
+> }
+ 
+Flowchart (Mermaid)
+ 
+> graph TD
+>
+> start\[i=0, total=0\] \--\> loop
+>
+> loop{i \< n?} \--\>\|true\| body\[total += i; i += 1\]
+>
+> body \--\> loop
+>
+> loop \--\>\|false\| ret\[ret: total\]
+ 
+Visual Representation
+ 
+> ┌───────────────────────────┐
+>
+> │ │
+>
+> ▼ │
+>
+> ┌───────┐ ┌───────┐ ┌─────┴─────┐
+>
+> │ i \< n │────│ true │────│ total += i│
+>
+> └───┬───┘ └───────┘ │ i += 1 │
+>
+> │ └───────────┘
+>
+> │ false
+>
+> ▼
+>
+> ┌───────┐
+>
+> │ ret │
+>
+> └───────┘
+ 
+5.5 Image Filter (Sepia)
+ 
+Code
+ 
+> fn sepia(px: RGB) -\> RGB {
+>
+> {
+>
+> -\> {
+>
+> px.r \* 0.393 + px.g \* 0.769 + px.b \* 0.189
+>
+> -\> v -\> (v, 0, 255) -\> clamp
+>
+> } -\> r;
+>
+> -\> {
+>
+> px.r \* 0.349 + px.g \* 0.686 + px.b \* 0.168
+>
+> -\> v -\> (v, 0, 255) -\> clamp
+>
+> } -\> g;
+>
+> -\> {
+>
+> px.r \* 0.272 + px.g \* 0.534 + px.b \* 0.131
+>
+> -\> v -\> (v, 0, 255) -\> clamp
+>
+> } -\> b;
+>
+> }
+>
+> RGB { r, g, b } -\> ret;
+>
+> }
+ 
+Flowchart (Mermaid)
+ 
+> graph TD
+>
+> px\[px: RGB\] \--\> r_calc\[\"r×0.393 + g×0.769 + b×0.189\"\]
+>
+> px \--\> g_calc\[\"r×0.349 + g×0.686 + b×0.168\"\]
+>
+> px \--\> b_calc\[\"r×0.272 + g×0.534 + b×0.131\"\]
+>
+> r_calc \--\> r_clamp\[clamp 0-255\] \--\> r\[r\]
+>
+> g_calc \--\> g_clamp\[clamp 0-255\] \--\> g\[g\]
+>
+> b_calc \--\> b_clamp\[clamp 0-255\] \--\> b\[b\]
+>
+> r \--\> construct\[RGB constructor\]
+>
+> g \--\> construct
+>
+> b \--\> construct
+>
+> construct \--\> ret\[ret: RGB\]
+ 
+Note: All three channel calculations execute in parallel, demonstrating
+how the dataflow model naturally exposes parallelism for GPU/FPGA
+targets.
+ 
+5.6 Producer-Consumer with Channels
+ 
+Code
+ 
+> fn producer_consumer() {
+>
+> channel\<i32\> -\> (tx, rx);
+>
+> {
+>
+> // Producer (parallel)
+>
+> -\> seq {
+>
+> -\> { 1 -\> tx.send };
+>
+> -\> { 2 -\> tx.send };
+>
+> -\> { 3 -\> tx.send };
+>
+> -\> tx.close;
+>
+> };
+>
+> // Consumer (parallel)
+>
+> -\> {
+>
+> rx -\> for_each { item -\>
+>
+> item -\> process -\> print
+>
+> }
+>
+> };
+>
+> }
+>
+> }
+ 
+Flowchart (Mermaid)
+ 
+> graph LR
+>
+> subgraph Producer
+>
+> p1\[1\] \--\> tx\[tx.send\]
+>
+> p2\[2\] \--\> tx
+>
+> p3\[3\] \--\> tx
+>
+> end
+>
+> subgraph Channel
+>
+> tx -.-\> buffer\[(buffer)\]
+>
+> buffer -.-\> rx\[rx.recv\]
+>
+> end
+>
+> subgraph Consumer
+>
+> rx \--\> process\[process\]
+>
+> process \--\> print\[print\]
+>
+> end
+ 
+6\. Future Directions
+ 
+6.1 Planned Language Features
+ 
+Effect System
+ 
+Track side effects in the type system, enabling the compiler to reason
+about purity:
+ 
+> fn pure_function(x: i32) -\> i32 { \... } // No effects
+>
+> fn io_function(path: String) -\> IO\<Data\> { \... } // IO effect
+>
+> fn state_function() -\> State\<Config, ()\> { \... } // State effect
+ 
+Dependent Types
+ 
+Types that depend on values, enabling compile-time size checking:
+ 
+> fn matrix_multiply(
+>
+> a: Matrix\<m, n\>,
+>
+> b: Matrix\<n, p\>
+>
+> ) -\> Matrix\<m, p\> { \... }
+>
+> // Compiler verifies dimensions match
+ 
+Linear Types
+ 
+Types that must be used exactly once, perfect for hardware resources:
+ 
+> fn use_hardware_resource(resource: Linear\<GPUBuffer\>) {
+>
+> resource -\> process;
+>
+> // resource is consumed, cannot be used again
+>
+> // Compiler error if not used or used twice
+>
+> }
+ 
+6.2 Tooling Roadmap
+ 
+-   **Visual Debugger:** Step through the dataflow graph, see values at
+    each node in real-time
+ 
+-   **IDE Integration:** VSCode extension with syntax highlighting,
+    completion, inline graph preview
+ 
+-   **Package Manager:** flow pkg for dependency management and
+    publishing
+ 
+-   **Profiler:** Visualize execution time on the dataflow graph
+ 
+6.3 Backend Priorities
+ 
+-   **Phase 1:** LLVM backend (CPU) - establish core language
+ 
+-   **Phase 2:** CUDA backend (GPU) - prove multi-target story
+ 
+-   **Phase 3:** Verilog backend (FPGA) - hardware synthesis
+ 
+-   **Phase 4:** WebAssembly backend (Browser) - web deployment
+ 
+6.4 Research Directions
+ 
+-   **Quantum Computing Backend:** Category theory extends naturally to
+    quantum operations
+ 
+-   **AI-Assisted Optimization:** ML models for optimization decisions
+    based on hardware characteristics
+ 
+-   **Formal Verification:** Leverage category laws for proving program
+    properties
+ 
+Appendix A: Quick Reference
+ 
+Operators
+ 
+  -----------------------------------------------------------------------
+  **Operator**       **Meaning**                **Example**
+  ------------------ -------------------------- -------------------------
+  -\>                Flow (left to right)       data -\> process
+ 
+  \<-                Assignment (right to left) x \<- 5
+ 
+  -\> { }            Parallel fanout            data -\> { -\> a; -\> b;
+                                                }
+ 
+  -pattern-\>        Guard / pattern match      -true-\> handle
+ 
+  ?                  Error propagation          file -\> read?
+  -----------------------------------------------------------------------
+ 
+Keywords
+ 
+  -----------------------------------------------------------------------
+  **Keyword**        **Purpose**
+  ------------------ ----------------------------------------------------
+  fn                 Function definition
+ 
+  mut                Mutable variable declaration
+ 
+  ret                Return value target
+ 
+  loop               Loop label (for continue)
+ 
+  seq                Force sequential execution
+ 
+  category           Type definition
+ 
+  pub                Public visibility
+ 
+  use                Import from module
+ 
+  executor           Define execution model
+  -----------------------------------------------------------------------
+ 
+*--- End of Document ---*

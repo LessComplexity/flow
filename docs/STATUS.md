@@ -49,9 +49,10 @@ None.
 | E2       | Parallel effects rule — no effects in parallel fanout; seq or KPN channels | accepted (ADR-0003) | yes |
 | E3       | Memory-model guarantee scoped to first-order non-cyclic core | accepted (ADR-0004) | yes |
 | E4       | Operator-precedence example fixed; a flow is a statement, not a value | accepted (ADR-0005) | yes |
-| E5       | Rename surface keyword `category` → `type`     | accepted, pending Sapir veto (ADR-0006) | yes |
+| E5       | Rename surface keyword `category` → `type`     | accepted (ADR-0006) — veto window closed 2026-06-11, no veto; rename final | yes |
 | ADR-0001 | Flow-Core scope                                | accepted                    | n/a              |
 | ADR-0007 | Tech stack                                     | accepted                    | n/a              |
+| ADR-0008 | Editor tooling & LSP plan                      | accepted                    | n/a              |
 
 ## Session log (newest first)
 
