@@ -161,8 +161,10 @@ The graph is not a separate artifact — it's exactly what the compiler holds in
 | Branch on a condition | `cond -> { -true-> A; -false-> B; } -> ret;` |
 | Loop with a counter | `loop { (i < n) -> { -true-> {... -> loop;} -false-> -> ret; } }` |
 | Propagate errors | `x -> step1? -> step2? -> ret;` |
-| Declare a type | `category Point { x: f32, y: f32 }` |
+| Declare a type | `type Point { x: f32, y: f32 }` |
 | Call with multiple args | `(a, b) -> f -> result;` |
+
+> **Erratum E5 applied — see docs/spec/ERRATA.md and ADR-0006.**
 
 ---
 

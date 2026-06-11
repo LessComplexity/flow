@@ -75,6 +75,8 @@ This section defines **Flow-Cat**, the category in which Flow IR graphs are inte
 
 ### 2.1 Flow-Cat
 
+> **Erratum E1 applied — see docs/spec/ERRATA.md and ADR-0002.**
+
 **Definition (Flow-Cat).** The category whose
 
 - **objects** are Flow types (categories in the surface-language sense — see appendix A for the terminological note),
@@ -82,7 +84,9 @@ This section defines **Flow-Cat**, the category in which Flow IR graphs are inte
 - **composition** `g ∘ f : A → C` for `f : A → B`, `g : B → C` is the graph obtained by connecting the output of `f` to the input of `g`,
 - **identity** `id_A : A → A` is the empty-transformation morphism on `A`.
 
-Pure means: no observable side effects. Total means: terminates and produces a value of the target type on every input. Partial and effectful operations are handled in §2.6 via Kleisli categories over appropriate monads — they do not live directly in Flow-Cat.
+Pure means: no observable side effects. Total means: terminates and produces a value of the target type on every input. Totality holds for this **loop-free core**: Flow-Cat as defined here is the total core, and the total core has **no trace**. Partial and effectful operations are handled in §2.6 via Kleisli categories over appropriate monads — they do not live directly in this total core.
+
+**Loops and iteration are not total** and therefore do not live in the total core. They live in the **Kleisli category of the partiality (divergence) monad** — the same §2.6 machinery already used for I/O and errors — where the trace operator is interpreted by **least-fixpoint / Elgot-iteration semantics**. An unbounded loop such as `loop { -> loop; }` is legal and diverges; divergence is a defined outcome of that monad, not an excluded case. See §2.7 and §2.8 for the traced structure on this partial extension, and §4.5 for the lowering.
 
 #### 2.1.1 Identity
 
@@ -191,6 +195,9 @@ Monads used in Flow:
 | `IO` | external world | file, network, console |
 | `State<S, _>` | mutable state | `mut` variables within a region |
 | `Err` (same as Result) | partial functions | division, array bounds |
+| `Divergence` (partiality), carrier `A_⊥` (flat lifting) | possible nontermination of unbounded loops / iteration | loop semantics (least fixpoint / Elgot iteration); introduced by Erratum E1 |
+
+> **Erratum E1 applied — see docs/spec/ERRATA.md and ADR-0002.**
 
 The `?` operator is Kleisli composition in the `Result`-monad. Given `f : A → Result<B, E>` and `g : B → Result<C, E>`, writing
 
@@ -210,7 +217,11 @@ The copair `[g, ι₂]` means: on `Ok(b)` call `g`; on `Err(e)` re-inject `e` un
 
 ### 2.7 Traced monoidal structure — the meaning of loops
 
+> **Erratum E1 applied — see docs/spec/ERRATA.md and ADR-0002.**
+
 Loops and recursion don't fit into a plain category; they require **feedback**. The standard formal account is a **traced monoidal category**: for any morphism `f : A ⊗ U → B ⊗ U`, the trace `Tr^U(f) : A → B` "loops back" the `U` wire.
+
+The traced structure described below lives on the **partial extension** of Flow-Cat (the Kleisli category of the divergence monad, §2.1, §2.6), **not on the total core**. This is forced: a traced cartesian category is equivalent to one carrying a Conway fixed-point operator (Hasegawa 1997), and total functions lack fixpoints in general — `not : Bool → Bool` has no fixpoint — so the total core cannot be traced. Tracing the partial extension is exactly right, because tracing back the `U` wire is where divergence can enter, and the divergence monad already accounts for it via least-fixpoint / Elgot-iteration semantics.
 
 ```mermaid
 flowchart LR
@@ -220,21 +231,26 @@ flowchart LR
     fb -- U --> f
 ```
 
-In Flow-Cat, the monoidal product is the categorical product (×), `U` is the loop-carried state type, and `Tr^U(f)` is the meaning of a loop whose body transforms `(input, state) ↦ (output, next_state)`.
+In the partial extension of Flow-Cat, the monoidal product is the categorical product (×), `U` is the loop-carried state type, and `Tr^U(f)` is the meaning of a loop whose body transforms `(input, state) ↦ (output, next_state)`. (The trace lives on the partial extension, never on the total core — see the note above.)
 
 **Consequence for the IR.** The "back edge" in the graph representation of a loop is not a special field on a Branch morphism — it is literally an edge in the graph, targeting the merge object that plays the role of `U`. See §4.5 for the worked lowering.
 
-**Consequence for Verilog.** Synchronous digital circuits are morphisms in a traced monoidal category where the trace is register feedback. The same formalism handles software loops and hardware state machines; see §8.3.
+**Consequence for Verilog.** Synchronous digital circuits are morphisms in a traced monoidal category where the trace is register feedback. That circuit trace is **guarded** (every register is a unit delay, hence always productive and total), which is a *different* traced structure from the iteration trace of the partial extension here. Relating the two is therefore not automatic — it is a theorem mediated by the done-signal protocol; see §8.3.
 
 ### 2.8 Summary of structure on Flow-Cat
 
-Flow-Cat is a **bicartesian closed traced category**:
+> **Erratum E1 applied — see docs/spec/ERRATA.md and ADR-0002.**
+
+The **total core** of Flow-Cat is a **bicartesian closed category**:
 
 - bicartesian: has both products (tuples) and coproducts (tagged unions),
-- closed: has exponentials (function types),
-- traced: has trace operators for loops and feedback.
+- closed: has exponentials (function types).
 
-Every formal property the compiler relies on comes from this structure. The next sections define the IR data structures that realize morphisms in this category as concrete graphs.
+The total core is **not** traced. The trace lives one level out, on the **partial extension** (the Kleisli category of the divergence monad, §2.1, §2.6, §2.7), which is **traced cartesian** with least-fixpoint / Elgot-iteration semantics:
+
+- traced: has trace operators for loops and feedback, on the partial extension only.
+
+The earlier v0.2 claim that Flow-Cat is jointly *total* and *traced cartesian* was inconsistent: by the Hasegawa 1997 correspondence a traced cartesian category carries a Conway fixed-point operator, and total functions have no fixpoints in general (`not : Bool → Bool` has none). Splitting the structure — total core without trace, partial extension with trace — removes the inconsistency without losing any property the compiler relies on. The next sections define the IR data structures that realize morphisms as concrete graphs.
 
 ---
 
@@ -800,7 +816,9 @@ Functoriality is checked by a pass that confirms every primitive has the declare
 
 ### 8.3 Verilog backend: `F_Verilog : Flow-Cat → Clocked-Cat`
 
-Clocked-Cat is the traced monoidal category of synchronous digital circuits: objects are bundles of wires, morphisms are combinational blocks plus registers, the monoidal product is wire-side-by-side, and the trace is register feedback.
+> **Erratum E1 applied — see docs/spec/ERRATA.md and ADR-0002.**
+
+Clocked-Cat is the traced monoidal category of synchronous digital circuits: objects are bundles of wires, morphisms are combinational blocks plus registers, the monoidal product is wire-side-by-side, and the trace is register feedback. Crucially, Clocked-Cat's trace is **guarded**: every register is a **unit delay**, so feedback through a register is **always productive** and the traced morphism is **total** — these are ordinary **Mealy-machine** semantics. This is a *different* traced structure from the **iteration trace** on the partial extension of Flow-Cat (§2.7, §2.8), whose semantics is least-fixpoint / Elgot iteration and which may diverge.
 
 ```mermaid
 flowchart LR
@@ -816,7 +834,15 @@ flowchart LR
     fltrace -. F_Verilog .-> cctrace
 ```
 
-Because both categories are traced, the functor commutes with `Tr`: a software loop becomes a hardware state machine with a register on the loop-carried variable. **This is why the same IR targets both CPU loops and FPGA feedback: they are the same categorical construct.**
+`F_Verilog` therefore maps an **iteration trace** (Flow-Cat partial extension) to a **guarded trace** (Clocked-Cat). Because these are *different* traced structures, "F commutes with `Tr`" is **not free** — it is a **theorem with content**, and its content is carried by a **done-signal protocol** (`valid_in / busy / done / result` handshake) that lets a circuit that is always total simulate an iteration that may diverge.
+
+**Theorem (trace preservation / done protocol).** Let `body : A×U → B×U` be a loop body, let `Tr^U(body) : A → B` be its iteration trace in the partial extension of Flow-Cat, and let `F_Verilog(Tr^U(body))` be the synthesized circuit with the done-signal protocol. Then for every input `a : A`:
+
+> the iteration `Tr^U(body)(a)` **terminates in `n` steps with value `v`** **⟺** the circuit, started on `a`, **asserts `done` at cycle `n` with output `result = v`**.
+
+Equivalently: the iteration diverges on `a` **⟺** the circuit never asserts `done` on `a`. This is exactly the sense in which `F_Verilog` "commutes with `Tr`" — not as a free consequence of both categories being traced (their traces differ), but as a correspondence between iteration-trace termination and the guarded circuit's `done` handshake.
+
+This theorem is **discharged informally for now**; its mechanization (Lean/Coq) is **deferred** (HANDOFF §5 item 8) and reserved for the write-up of this trace-preservation result.
 
 Pipeline depth for FPGAs comes from counting register hops along the longest combinational path in the image of the functor — a graph-theoretic property of the output of `F_Verilog`.
 

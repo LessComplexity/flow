@@ -49,13 +49,15 @@ fn main() {
 
 ## 2. Core concepts
 
-### 2.1 Categories (types)
+### 2.1 Types
 
-In Flow, types are called **categories** — a deliberate nod to the category-theoretic foundation. Every value belongs to exactly one category.
+In Flow, types are declared with the **`type`** keyword. Every value belongs to exactly one type.
 
-> **Note on terminology.** The keyword `category` in Flow declares a *type*, which is an object in Flow-Cat (the category of Flow types and pure functions). The two senses of "category" are disambiguated in appendix A of `category-ir.md`.
+> **Note on terminology.** The keyword `type` in Flow declares a *type*, which is an object in Flow-Cat (the category of Flow types and pure functions). The category-theoretic sense of "category" (as in Flow-Cat) is disambiguated in appendix A of `category-ir.md`.
 
-**Primitive categories.**
+> **Erratum E5 applied — see docs/spec/ERRATA.md and ADR-0006.**
+
+**Primitive types.**
 
 ```flow
 i8, i16, i32, i64      // signed integers
@@ -65,7 +67,7 @@ bool                   // boolean
 char                   // Unicode scalar (UTF-8 internally)
 ```
 
-**Compound categories.**
+**Compound types.**
 
 ```flow
 [T; N]                 // fixed-size array, e.g. [i32; 10]
@@ -73,25 +75,25 @@ char                   // Unicode scalar (UTF-8 internally)
 (T1, T2, ...)          // tuple — the canonical categorical product
 ```
 
-**User-defined categories.**
+**User-defined types.**
 
 ```flow
-category Point {
+type Point {
     x: f32,
     y: f32,
 }
 
-category Color {
+type Color {
     r: u8,
     g: u8,
     b: u8,
 }
 ```
 
-User-defined categories come in two shapes: **struct-like** (products — tuples with named fields) and **enum-like** (coproducts — tagged unions):
+User-defined types come in two shapes: **struct-like** (products — tuples with named fields) and **enum-like** (coproducts — tagged unions):
 
 ```flow
-category Shape {
+type Shape {
     -Circle { radius: f32 }
     -Square { side: f32 }
     -Rectangle { width: f32, height: f32 }
@@ -285,7 +287,7 @@ fn fibonacci(n: i32) -> i32 {
 }
 ```
 
-Internally, guards lower to coproduct injection and copairing; see §2.3 of `category-ir.md`. The `-variant->` syntax is consistent with the variant declaration syntax in enum-like categories (§2.1).
+Internally, guards lower to coproduct injection and copairing; see §2.3 of `category-ir.md`. The `-variant->` syntax is consistent with the variant declaration syntax in enum-like types (§2.1).
 
 ### 3.5 Loops
 
@@ -370,9 +372,13 @@ Examples:
 
 ```flow
 a + b -> c         // (a + b) -> c
-a -> b + c -> d    // (a -> b) + (c -> d)  — rarely what you want
+a -> b + c -> d    // a -> (b + c) -> d  — per the precedence table, -> is looser than +
 x -> f.method      // x -> (f.method)
 ```
+
+A flow is a statement, not a value-producing expression; `->`/`<-` chains are parsed at statement level.
+
+> **Erratum E4 applied — see docs/spec/ERRATA.md and ADR-0005.**
 
 ---
 
@@ -584,7 +590,11 @@ fn process_data(input: [Data]) -> [Result] {
 | Inside `seq` block | Sequential |
 | Has data dependencies | Sequential (forced by graph) |
 | Independent + pure | Parallel |
-| Independent + effectful | Executor decides (may parallelize with non-deterministic order) |
+| Independent + effectful | **Not permitted in parallel fanout** — must `seq` or use channels |
+
+Effectful morphisms are **not permitted in parallel fanout**. Effects either (a) sequence via `seq`, or (b) communicate via channels with **Kahn process network semantics** — blocking reads, unbounded FIFOs — under which scheduling-independent determinism is a theorem (Kahn 1974). Channels are out of Flow-Core scope, but the rule is fixed now.
+
+> **Erratum E2 applied — see docs/spec/ERRATA.md and ADR-0003.**
 
 ---
 
@@ -662,6 +672,10 @@ fn create_buffer() -> Buffer {
 
 ### 6.5 What the compiler guarantees
 
+The memory guarantee is **scoped**. It is **PROVEN for the first-order, non-cyclic dataflow core** (which contains Flow-Core entirely) and **OPEN for the full language** (closures, channels, cyclic structures; cf. the Tofte–Talpin region pathologies — cycles fall back to refcounting).
+
+Within the proven core:
+
 - No use-after-free. (Every use is in the graph, and frees are after last uses.)
 - No double-free. (Exactly one free per allocation's frontier.)
 - No data races on heap data. (References flow through the graph; concurrent writes would require explicit synchronization primitives.)
@@ -669,16 +683,18 @@ fn create_buffer() -> Buffer {
 
 Cyclic data structures are the one case that needs extra attention. In v0.2, cyclic types require an explicit annotation that switches to reference-counting; the type system will report an error if you try to create a cycle without it.
 
+> **Erratum E3 applied — see docs/spec/ERRATA.md and ADR-0004.**
+
 ---
 
 ## 7. Error handling
 
 Errors are values that flow through the graph like any other data. The Result type is a coproduct.
 
-### 7.1 The Result category
+### 7.1 The Result type
 
 ```flow
-category Result<T, E> {
+type Result<T, E> {
     -Ok(value: T)
     -Err(error: E)
 }
@@ -989,7 +1005,7 @@ s3 -> ret;
 | Kind | Convention | Example |
 |---|---|---|
 | Variable | `snake_case` | `pixel_value`, `total_sum` |
-| Category (type) | `PascalCase` | `Point`, `ColorRGB` |
+| Type | `PascalCase` | `Point`, `ColorRGB` |
 | Function | `snake_case` | `process_image` |
 | Constant | `SCREAMING_SNAKE_CASE` | `MAX_SIZE` |
 
