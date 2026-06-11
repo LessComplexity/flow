@@ -1,41 +1,46 @@
 # Component: syntax
 
-Status: building
-Last updated: 2026-06-11 · Session 02
-Spec references: user-guide.md §3 (Syntax reference) + ADR-0005 (a flow is a statement; E4) + ADR-0010 (guard-arrow lexing). Supporting: architecture.md §2.2.1–§2.2.2 (lexer + recursive-descent parser), ADR-0008 (error recovery + structured diagnostics, binding), ADR-0009 (map/fold postfix block), ADR-0006 (`type` keyword, `category` reserved).
+Status: tested
+Last updated: 2026-06-12 · Session 03
+Spec references: user-guide.md §3 (Syntax reference) + ADR-0005 (a flow is a statement; E4) + ADR-0009 (map/fold postfix block) + ADR-0010 (guard-arrow lexing) + ADR-0011 (loop labels; `Ident {` scan). Supporting: architecture.md §2.2.1–§2.2.2 (lexer + recursive-descent parser, minimal parse tree), ADR-0008 (error recovery + structured diagnostics, binding), ADR-0006 (`type` keyword, `category` reserved).
 Depends on: (none) Depended on by: lower, cli
 
 ## What works
 
-- **Lexer complete** (`lex(source) -> LexOutput`): full v0.2-surface token set, byte-offset spans (`SourceLoc`) + `LineIndex`, structured diagnostics L0001–L0008 with recovery (total function — never panics, never bails).
-- Guard arrows lex as single tokens per ADR-0010 (adjacency + `{`/`;`/`}`-or-start context gate); all six `examples/*.flow` lex with zero diagnostics.
-- `category` reserved-and-rejected at the lexer with L0004 + SuggestedFix → `type` (ADR-0006); `executor`/`pub`/`use`/`void` lex as reserved keywords for parser-side Core rejection.
-- Out-of-Core v0.2 surface (`@`, `?`, `::`, `...`, `channel<i32>`, generics) tokenizes cleanly (no Error tokens) so the parser can reject with precision.
+- **P1 frontend complete: lexer + parser.** `lex(source) -> LexOutput` and `parse(source) -> ParseOutput` (total, pure, error-recovering; merged span-sorted diagnostics).
+- **Lexer** (Session 02): full v0.2-surface token set, spans + `LineIndex`, L0001–L0008 with recovery, ADR-0010 single-lexeme guard arrows.
+- **Parser** (Session 03): two-tier grammar per ADR-0005 (expressions 1–7; `->`/`<-` chains at statement level), thin spanned parse tree (DESIGN §15, `Expr::Hole` for operator shorthand), guard blocks/fanout/`seq`/`map`/`fold` postfix blocks (ADR-0009), loop statements with `-> loop;` back-edges, struct/array/tuple literals, typed `mut` bindings both directions.
+- **Diagnostics:** P0001–P0012 (syntax/recovery incl. ADR-0010's two guard hints with machine-applicable fixes) + P0101–P0116 (out-of-Core rejections, each naming construct + horizon). All six `examples/*.flow` parse with **zero** diagnostics; `full_surface.flow` yields exactly {P0101×2, P0102×2, P0103×2, P0107, P0109, P0111, P0112, P0113} and zero L-codes — the C8 story end-to-end.
+- Recovery: panic-mode with sync sets, diagnostic cooldown, shared depth guard (128) over expressions/blocks/**types**, progress lemma — `parse` is total on adversarial input (≈490K-case proptest run during review).
 
 ## What does not / known issues
 
-- **No parser yet** — next increment (recursive-descent, statement-level flow chains per ADR-0005; design notes pre-collected in DESIGN.md §12).
-- Documented lexical warts W1–W9 (DESIGN.md §6): notably `-7->x;` statement-initial tight negation lexes as a guard arm (ADR-0010 accepted tradeoff; parser will hint), `i<-1` is `i <- 1` by maximal munch.
-- Char literals are not lexed (`'` → L0001) — known C8 soft-spot, corpus-empty (DESIGN.md §10).
+- Parser-level imprecision, deliberate (DESIGN §16/§17): expression-position generics surface as P0007/P0001 not P0103 (W16); `filter` recovery renders as `map` in the tree (P0114 diagnostic carries the name); stage-position P0006 statements are reported then dropped from the arm-only Guard node.
+- Semantic/scope checks deferred to flow-check by design (C10): scalar-type validity, string-as-data, mut/arity/exhaustiveness, `print` placement, recursion, named-param partial application (W21).
+- Char literals still unlexed (`'` → L0001) — corpus-empty soft spot (DESIGN §10).
 
 ## Invariants enforced (and where in code)
 
-- I1 lex is total, always advances, ends with Eof — scanner structure (`lexer.rs` run loop) + proptest over arbitrary strings.
-- I2 spans strictly ascending, in-bounds, char-boundary aligned — debug_asserts in `push_token` + proptest.
-- I3 every byte is exactly one token span or trivia region — `tests/support/mod.rs::assert_gap_is_trivia`, wired into every fixture suite and proptest; negative regression `tests/coverage.rs`.
-- I4 every Error token overlaps ≥1 diagnostic — per-L-code unit tests + proptest.
-- I5 no rendering in this crate (`Diagnostic` is Debug-only, no Display) — ADR-0008(b); grep-verified.
+- Lexer I1–I5 — unchanged (see Session 02 entry; `lexer.rs`, proptests).
+- J1 parse total: depth guard (P0011, limit 128, shared incl. type recursion) + progress lemma `debug_assert`s — `parser.rs`; proptests over arbitrary strings/unicode/flow-soup.
+- J2 span sanity (child ⊆ parent, in-bounds): `debug_assert`s in node constructors + recursive walkers in unit & property tests (incl. Bind.ty, MapFold params, arm/discr spans).
+- J3 zero diagnostics ⟹ no Error nodes / rejected-kept forms: walkers in goldens + proptests.
+- J4 acceptance: six examples parse with zero diagnostics (`tests/golden_trees.rs`).
+- J5 presentation-free: no `Display` in crate (C3); render helpers live in `tests/support/`.
+- J6 lex-diagnostic preservation: `parse(s).diagnostics ⊇ lex(s).diagnostics` — unit + proptest.
 
 ## Test coverage (golden / property / differential / skipped+why)
 
-74 tests, all green (`cargo test -p flow-syntax`): 58 unit (DESIGN §5 worked-consequences table, §6 wart ledger W1–W9, munch boundaries, strings, CRLF, LineIndex multi-byte) · 6 golden token-stream snapshots (one per example; zero diagnostics asserted) · 2 golden diagnostics (all L-codes incl. guard-discriminant overflow) · 2 full-surface C8 fixtures · 3 coverage-invariant tests · 3 proptest properties (4096 cases: totality, span invariants, determinism). Snapshots were verified token-by-token against sources by independent review (reference re-tokenization), not merely accepted.
+165 tests, all green (`cargo test -p flow-syntax`): 131 lib (95 parser units — precedence/§3.6 verbatim, W10–W24 ledger, F-matrix payloads, ADR-0011 scan, classification, every P-code, design-review regression pins; 36 lexer) · 6 golden token streams · 6 golden parse trees (zero diags asserted) · 2+3+6 diagnostics/error/out-of-Core fixtures · 3 coverage · 3+3 proptests (lexer/parser, 2048 cases each). Golden trees were verified by **independent re-derivation** (one reviewer per example, node-by-node against source + grammar); implementation passed 2 adversarial reviews + a fix round (stack-overflow totality fix, P0007 climber path).
 
 ## Performance notes (numbers + bench name + date; regressions flagged)
 
-None yet. Criterion bench deliberately deferred to the parser increment — the component (lexer+parser) is not yet functional as a unit and a lexer-only microbench has no consumer (DESIGN.md §9; HANDOFF §7.2 step 6).
+`benches/lex_parse.rs` (criterion 0.5.1), 2026-06-12, Apple-silicon dev machine: parse abs 1.24 µs · pipeline 1.07 µs · fanout 1.51 µs · sum_to_n 1.79 µs · fir 3.03 µs · sepia 7.45 µs · ~100× sepia synthetic 740 µs (≈100× single sepia ⇒ linear, no superlinear blowup from the ADR-0011 scan on real shapes). No baseline regressions to flag (first recording).
 
 ## Open questions (→ ADR candidates)
 
-- String escape set (`\\ \" \n \t`) and single-line-string rule are design decisions where the spec is silent (DESIGN.md §11) — revisit only if an example needs more.
-- Core+1 pattern guards (`-Some(x)->`) cannot be single lexemes; resolution parked for the Core+1 coproducts ADR (ADR-0010 records the expected shape).
-- Parser: `Ident {` disambiguation (struct literal vs loop label) and whether Core restricts loop labels to `loop` — decide in the parser design (DESIGN.md §12).
+- ADR-0011 flagged to Sapir (veto window): custom loop labels out of Core; `Ident {` four-token scan (`;`/`->`/`<-`/guard ⇒ loop).
+- P0115 scope reading: anonymous block stages (user-guide §8.3 fanout form, §5.2 `seq` branches) rejected as out-of-Core — HANDOFF §4.1 silence read as default-reject; flip = lift P0115.
+- W15 unary-minus/`!` precedence: §3.6 table omits unary; bound tighter than `*`, looser than postfix (standard). Spec gap, no ADR.
+- W23: `?` parsed as expression postfix (per exhibits) not §3.6 rank 9 — final call belongs to the Core+1 error-handling ADR.
+- Lexer items unchanged (string escape set; Core+1 pattern guards).
