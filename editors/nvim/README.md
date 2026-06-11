@@ -15,22 +15,45 @@ keywords, loop labels and label jumps, primitive and named types, builtins
   any `*.flow` file.
 - `syntax/flow.vim` — a classic Vimscript syntax file (regex-based).
 
-Highlight groups link to standard groups (`Statement`, `Conditional`, `Keyword`,
-`Type`, `Function`, `String`, `Number`, `Float`, `Comment`, `Label`, `Special`,
-`Error`) via `hi default link`, so your colorscheme drives the actual colors and
-can override any of them.
+Highlight groups link to standard groups (`Statement`, `Keyword`, `Type`,
+`Function`, `String`, `Number`, `Float`, `Boolean`, `Operator`, `Comment`,
+`Label`, `Special`, `Error`) via `hi default link`, so your colorscheme drives
+the actual colors and can override any of them.
 
 Design highlights:
 
 - **`->` / `<-`** (`flowArrow`) link to `Statement` — composition *is* the
   language, so flow arrows are deliberately prominent.
-- **Guard arrows** (`flowGuardArrow`) — `-true->`, `-false->`, `-_->`,
-  integer guards (`-0->`, `-42->`), variant guards (`-Some(x)->`, `-None->`),
-  and destructuring guards (`-[]->`, `-[head, ...tail]->`) link to
-  `Conditional`. They are defined *after* the plain arrows and the `-` operator
-  so Vim's "last match wins" rule lets the full guard win.
-- **`ret`** links to `Special` (the graph sink); loop-label declarations and
-  `-> label;` jump targets link to `Label`.
+- **Guard arrows** — split coloring. The **chrome** (the leading `-` and the
+  trailing `->`, group `flowGuardArrow`) links to `Statement`, identical to a
+  plain flow arrow, so a guard reads as flow plumbing. The **discriminant**
+  inside gets the color of *what it is*, via contained overlay groups:
+  `true`/`false` (`flowGuardBool`) → `Boolean`; integer guards `-0->`/`-42->`
+  (`flowGuardInt`) → `Number`; the default `_` (`flowGuardWild`) → `Special`;
+  variant and destructuring pattern heads `-Some(x)->`/`-None->`/`-[…]->`
+  (`flowGuardVariant`) → `Type` (inner binder names stay plain). Guards are
+  defined *after* the plain arrows and the `-` operator so Vim's "last match
+  wins" rule lets the full guard win; the contained groups overlay only the
+  discriminant span.
+- **Functions in flows** — an identifier that sits *between two arrows*
+  (`-> clamp ->`, `data -> f -> g ->`; group `flowFlowFn`) links to `Function`.
+  This is a lexical heuristic: `syn keyword` builtins/keywords (`map`, `fold`,
+  `print`, `ret`, `loop`, …) outrank it automatically, and it is defined before
+  `flowTypeName` so a PascalCase head still wins as `Type`. Terminal bindings
+  and sinks (`-> nr;`, `-> total_r;`) have no trailing `->`, so this rule does
+  *not* fire on them. True call-vs-binding resolution arrives with LSP semantic
+  tokens (ADR-0008).
+- **`ret`** links to `Special` (the graph sink); loop-label declarations
+  (`outer {`, `inner {`, …) and `-> label;` jump targets link to `Label`.
+  A jump target `-> outer;` and a terminal binding `-> out;` are lexically
+  identical, so the syntax file **scans the buffer for label declarations**
+  (lowercase-initial identifiers before `{`, excluding the `loop` keyword and
+  primitive return types) and restricts the jump match to that exact set. Only
+  declared labels become `Label`; terminal bindings/sinks (`-> out;`,
+  `-> diff;`, `-> nr;`, `-> total;`) are **not** declared labels and stay
+  unhighlighted. The back-edge `-> loop;` stays a keyword and `-> ret;` stays
+  the `ret` sink. This is a single-buffer lexical heuristic; cross-file and
+  true target resolution arrive with LSP semantic tokens (ADR-0008).
 - **`category`** links to `Error` — it is reserved-and-rejected under ADR-0006
   (errata E5: the type keyword is `type`). The editor teaches E5 by flagging it.
 
