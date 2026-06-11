@@ -4,7 +4,7 @@ Written: 2026-06-11 · end of Session 01 · by: Claude (Fable 5 orchestrator + O
 
 ## Where things stand (≤5 lines)
 
-M0 bootstrap is complete: Cargo workspace skeleton (10 crates, no deps, `cargo test` green), E1–E5 patched into the spec with markers, `docs/spec/ERRATA.md`, ADR-0001…0007, the docs/ status system instantiated, and six Flow-Core examples written as the acceptance surface. Every artifact was independently review-verified. No code beyond stubs exists yet.
+M0 bootstrap is complete: Cargo workspace skeleton (10 crates, no deps, `cargo test` green), E1–E5 patched into the spec with markers, `docs/spec/ERRATA.md` (+ LC-1/LC-2), ADR-0001…0009, the docs/ status system instantiated, and six Flow-Core examples written as the acceptance surface. Session 01 also shipped the `editors/nvim/` syntax plugin, the ADR-0008 LSP plan (binding error-recovery/diagnostics constraints on the P1 parser), and ADR-0009 fixing collection-operator syntax. Every artifact was independently review-verified. No compiler code beyond stubs exists yet.
 
 ## Test state: ALL GREEN
 
