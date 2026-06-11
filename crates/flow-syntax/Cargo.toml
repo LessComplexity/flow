@@ -2,3 +2,7 @@
 name = "flow-syntax"
 version.workspace = true
 edition.workspace = true
+
+[dev-dependencies]
+insta = "1.47.2"
+proptest = "1.11.0"

@@ -1,0 +1,24 @@
+// full_surface.flow — out-of-Core v0.2 surface (DESIGN §9.3, C8 evidence).
+//
+// Everything here must lex to NON-Error tokens with ZERO diagnostics: the
+// lexer tokenizes the full surface so the PARSER can reject these constructs
+// with precision later. None of this is valid Flow-Core, but none of it is a
+// lexical error.
+
+@executor(ThreadPool)
+@target_frequency(200MHz)
+fn pipeline(x: i32) -> i32 {
+    x -> f? -> g?;
+}
+
+pub use channel<i32>;
+
+fn over(data: channel<i32>) -> Result<T, E> {
+    data -> List::map -> out;
+    [head, ...tail] -> rest;
+    void;
+}
+
+executor ThreadPool {
+    seq;
+}

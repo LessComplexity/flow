@@ -1,0 +1,241 @@
+---
+source: crates/flow-syntax/tests/lex_errors.rs
+expression: out
+---
+LexOutput {
+    tokens: [
+        Token {
+            kind: Error,
+            span: SourceLoc {
+                start: 208,
+                end: 211,
+            },
+        },
+        Token {
+            kind: Str,
+            span: SourceLoc {
+                start: 279,
+                end: 288,
+            },
+        },
+        Token {
+            kind: Str,
+            span: SourceLoc {
+                start: 347,
+                end: 360,
+            },
+        },
+        Token {
+            kind: KwCategory,
+            span: SourceLoc {
+                start: 432,
+                end: 440,
+            },
+        },
+        Token {
+            kind: Ident,
+            span: SourceLoc {
+                start: 441,
+                end: 444,
+            },
+        },
+        Token {
+            kind: Error,
+            span: SourceLoc {
+                start: 466,
+                end: 467,
+            },
+        },
+        Token {
+            kind: Error,
+            span: SourceLoc {
+                start: 502,
+                end: 503,
+            },
+        },
+        Token {
+            kind: Error,
+            span: SourceLoc {
+                start: 504,
+                end: 505,
+            },
+        },
+        Token {
+            kind: Int,
+            span: SourceLoc {
+                start: 605,
+                end: 631,
+            },
+        },
+        Token {
+            kind: Semi,
+            span: SourceLoc {
+                start: 631,
+                end: 632,
+            },
+        },
+        Token {
+            kind: Guard(
+                Int(
+                    18446744073709551615,
+                ),
+            ),
+            span: SourceLoc {
+                start: 742,
+                end: 765,
+            },
+        },
+        Token {
+            kind: Ident,
+            span: SourceLoc {
+                start: 766,
+                end: 767,
+            },
+        },
+        Token {
+            kind: Semi,
+            span: SourceLoc {
+                start: 767,
+                end: 768,
+            },
+        },
+        Token {
+            kind: Eof,
+            span: SourceLoc {
+                start: 769,
+                end: 769,
+            },
+        },
+    ],
+    diagnostics: [
+        Diagnostic {
+            code: DiagCode(
+                "L0001",
+            ),
+            severity: Error,
+            span: SourceLoc {
+                start: 208,
+                end: 211,
+            },
+            message: "unexpected character(s): `$$$`",
+            fix: None,
+        },
+        Diagnostic {
+            code: DiagCode(
+                "L0002",
+            ),
+            severity: Error,
+            span: SourceLoc {
+                start: 279,
+                end: 288,
+            },
+            message: "unterminated string literal (reached end of line or end of input before the closing `\"`)",
+            fix: None,
+        },
+        Diagnostic {
+            code: DiagCode(
+                "L0003",
+            ),
+            severity: Error,
+            span: SourceLoc {
+                start: 351,
+                end: 353,
+            },
+            message: "unknown escape sequence; character taken literally",
+            fix: None,
+        },
+        Diagnostic {
+            code: DiagCode(
+                "L0004",
+            ),
+            severity: Error,
+            span: SourceLoc {
+                start: 432,
+                end: 440,
+            },
+            message: "`category` is not a keyword in Flow; the type-definition keyword is `type`",
+            fix: Some(
+                SuggestedFix {
+                    span: SourceLoc {
+                        start: 432,
+                        end: 440,
+                    },
+                    replacement: "type",
+                    label: "replace `category` with `type`",
+                },
+            ),
+        },
+        Diagnostic {
+            code: DiagCode(
+                "L0005",
+            ),
+            severity: Error,
+            span: SourceLoc {
+                start: 466,
+                end: 467,
+            },
+            message: "unexpected `=`; use `<-` for binding or `==` for comparison",
+            fix: None,
+        },
+        Diagnostic {
+            code: DiagCode(
+                "L0006",
+            ),
+            severity: Error,
+            span: SourceLoc {
+                start: 502,
+                end: 503,
+            },
+            message: "unexpected `&`; Flow uses `&&` for logical and",
+            fix: None,
+        },
+        Diagnostic {
+            code: DiagCode(
+                "L0006",
+            ),
+            severity: Error,
+            span: SourceLoc {
+                start: 504,
+                end: 505,
+            },
+            message: "unexpected `|`; Flow uses `||` for logical or",
+            fix: None,
+        },
+        Diagnostic {
+            code: DiagCode(
+                "L0007",
+            ),
+            severity: Error,
+            span: SourceLoc {
+                start: 551,
+                end: 564,
+            },
+            message: "block comments (`/* */`) are not Flow syntax; use line comments (`//`)",
+            fix: None,
+        },
+        Diagnostic {
+            code: DiagCode(
+                "L0008",
+            ),
+            severity: Error,
+            span: SourceLoc {
+                start: 605,
+                end: 631,
+            },
+            message: "integer literal exceeds the maximum value (u64::MAX); value clamped",
+            fix: None,
+        },
+        Diagnostic {
+            code: DiagCode(
+                "L0008",
+            ),
+            severity: Error,
+            span: SourceLoc {
+                start: 742,
+                end: 765,
+            },
+            message: "guard discriminant exceeds the maximum value (u64::MAX); value clamped",
+            fix: None,
+        },
+    ],
+}

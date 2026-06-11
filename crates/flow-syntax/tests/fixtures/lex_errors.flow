@@ -1,0 +1,31 @@
+// lex_errors.flow — exercises every lexer diagnostic L0001..L0008.
+// One construct per concern; comments are trivia and produce no tokens.
+
+// L0001: unknown character(s), coalesced into one Error token.
+$$$
+
+// L0002: unterminated string (EOF/newline before closing quote).
+"no close
+
+// L0003: unknown escape sequence; char taken literally.
+"bad\qescape"
+
+// L0004: reserved keyword `category` (points at `type`, with a fix).
+category Foo
+
+// L0005: lone `=`.
+=
+
+// L0006: lone `&` and lone `|`.
+&
+|
+
+// L0007: block comment is not Flow syntax.
+/* skip me */
+
+// L0008: integer literal exceeds u64.
+99999999999999999999999999;
+
+// L0008: over-u64 guard discriminant (statement-initial after `;`; must not
+// panic; clamps to u64::MAX).
+-99999999999999999999-> f;
