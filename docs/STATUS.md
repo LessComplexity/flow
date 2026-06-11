@@ -53,6 +53,7 @@ None.
 | ADR-0001 | Flow-Core scope                                | accepted                    | n/a              |
 | ADR-0007 | Tech stack                                     | accepted                    | n/a              |
 | ADR-0008 | Editor tooling & LSP plan                      | accepted                    | n/a              |
+| ADR-0009 | Collection-operator syntax — postfix inline block; input tuple ↔ block params positionally (`(init, array) -> fold { acc, item -> ... }`) | accepted | yes (LC-2) |
 
 ## Session log (newest first)
 

@@ -1036,11 +1036,13 @@ array -> map { item -> item -> transform }
 array -> filter { item -> item > threshold }
 
 // fold / reduce
-array -> fold(0, { acc, item -> acc + item })
+(0, array) -> fold { acc, item -> acc + item }
 
 // pipeline
 data -> stage1 -> stage2 -> stage3 -> ret;
 ```
+
+> **Corrected per ADR-0009 — see docs/spec/ERRATA.md (LC-2).**
 
 ---
 

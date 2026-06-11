@@ -29,6 +29,7 @@ Both prior questions are RESOLVED: the E5 `category` → `type` rename is final 
 - The examples are syntax-checked against the patched user-guide by review only — the parser is the real arbiter. Expect small example fixes during P1; record them (ERRATA or example header), never silently drift.
 - Float print formatting is unpinned (sepia expects `4080` from an f32 total). Decide formatting when building the interpreter and record it in `interp`'s DESIGN.md.
 - An `editors/nvim/` syntax plugin exists; update it when surface syntax changes (it is a tooling artifact, not normative).
+- Collection-operator syntax is fixed by ADR-0009 (ERRATA LC-2): the inline block is a **postfix operator suffix, never a call argument**, and the input tuple corresponds positionally to the block params — `(init, array) -> fold { acc, item -> ... }` (and `array -> map { item -> ... }`). The P1 lexer/parser must implement the postfix-block form for both `map` and `fold`; there is no block-in-argument-position case.
 
 ## Commands (build/test/bench invocations that currently work)
 

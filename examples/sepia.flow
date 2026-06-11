@@ -70,9 +70,9 @@ fn main() {
     } -> sepia_image: [Pixel; 16];
 
     // Summarize: total of the transformed r channel (pure fold).
-    sepia_image -> fold(0.0, { acc, px ->
+    (0.0, sepia_image) -> fold { acc, px ->
         acc + px.r
-    }) -> total_r;
+    } -> total_r;
 
     total_r -> print;
 }
