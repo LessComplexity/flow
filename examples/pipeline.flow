@@ -1,0 +1,21 @@
+// pipeline.flow
+//
+// Demonstrates: an operator-shorthand pipeline (HANDOFF §4.1 / user-guide §3.3).
+//   Each shorthand stage takes the piped value as its left operand and the
+//   literal as its right: `data * 2` then `-> + 5` then `-> ret`. The whole
+//   pipeline is composition `(+5) ∘ (×2) : i32 → i32`.
+//
+// Expected output (interpreted):
+//   f(10) = 25
+
+fn f(data: i32) -> i32 {
+    data * 2
+        -> + 5
+        -> ret;
+}
+
+fn main() {
+    10 -> f -> result;
+    "f(10) = " -> print;
+    result -> print;
+}

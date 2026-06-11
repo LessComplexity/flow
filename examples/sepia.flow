@@ -1,0 +1,78 @@
+// sepia.flow  —  the M5 thesis artifact
+//
+// Demonstrates the whole Flow-Core surface working together, idiomatically:
+//   - a named product type `type Pixel { r, g, b: f32 }`  (E5: keyword is `type`)
+//   - a fixed-size array `[Pixel; 16]` used as a 4x4 test image
+//   - a pure `clamp` written with a guard block (-true-> / -false->, Phi lowering)
+//   - `map` with an INLINE BLOCK that applies the sepia weights per channel
+//     (the block is not a first-class value — HANDOFF §4.1)
+//   - `fold` with an inline block summarizing the transformed image
+//   - everything PURE except the final `print`, which runs sequentially (E2)
+//
+// Sepia transform (channels in a 0..255 f32 scale, each clamped to [0, 255]):
+//   r' = 0.393*r + 0.769*g + 0.189*b
+//   g' = 0.349*r + 0.686*g + 0.168*b
+//   b' = 0.272*r + 0.534*g + 0.131*b
+//
+// Test image: 16 identical gray pixels (200, 200, 200).
+//   For one pixel: r' = 0.393*200 + 0.769*200 + 0.189*200 = 270.2
+//   270.2 > 255  =>  clamp fires  =>  r' = 255.0   (the clamp is load-bearing)
+//   Summary = total r' channel over all 16 pixels = 255.0 * 16 = 4080.0  (exact f32)
+//
+// Expected output (interpreted):
+//   4080
+
+type Pixel {
+    r: f32,
+    g: f32,
+    b: f32,
+}
+
+fn clamp(v: f32, lo: f32, hi: f32) -> f32 {
+    (v > hi) -> {
+        -true->  hi;
+        -false-> {
+            (v < lo) -> {
+                -true->  lo;
+                -false-> v;
+            } -> bounded;
+            bounded
+        }
+    } -> ret;
+}
+
+fn main() {
+    [
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+        Pixel { r: 200.0, g: 200.0, b: 200.0 },
+    ] -> image: [Pixel; 16];
+
+    // Apply the sepia weights to every pixel (pure data-parallel map).
+    image -> map { px ->
+        (px.r * 0.393 + px.g * 0.769 + px.b * 0.189, 0.0, 255.0) -> clamp -> nr;
+        (px.r * 0.349 + px.g * 0.686 + px.b * 0.168, 0.0, 255.0) -> clamp -> ng;
+        (px.r * 0.272 + px.g * 0.534 + px.b * 0.131, 0.0, 255.0) -> clamp -> nb;
+        Pixel { r: nr, g: ng, b: nb }
+    } -> sepia_image: [Pixel; 16];
+
+    // Summarize: total of the transformed r channel (pure fold).
+    sepia_image -> fold(0.0, { acc, px ->
+        acc + px.r
+    }) -> total_r;
+
+    total_r -> print;
+}
