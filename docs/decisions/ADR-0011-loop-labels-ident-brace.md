@@ -1,6 +1,10 @@
 # ADR-0011: Flow-Core loop labels are the keyword `loop` only; statement-initial `Ident {` is resolved by semicolon-scan
 
-Date: 2026-06-11 · Status: accepted
+Date: 2026-06-11 · Status: accepted · **amended by ADR-0012 (2026-06-12):** decision (2)'s
+four-token scan is superseded as a disambiguation law — statement-initial `Ident {` is now
+always a struct literal, labeled blocks are written `:label { … }` (sigiled), and the scan
+survives only as a recovery heuristic for the "did you mean `:name { … }`" hint. Decision
+(1) — Core loops are the `loop` keyword only, custom labels Core+1 (P0110) — stands.
 
 ## Context (what forced the decision; spec refs)
 

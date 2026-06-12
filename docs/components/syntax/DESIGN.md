@@ -292,7 +292,9 @@ Sources, in authority order: **ADR-0005** (two-tier grammar: expressions levels 
 always a tree *and* diagnostics; b: structured diagnostics, no rendering; d: pure
 `fn(source) -> artifacts`) · **ADR-0009** (map/fold postfix block; block is never an
 argument) · **ADR-0010** (Guard tokens are authoritative; parser owes the two hint
-diagnostics) · **ADR-0011** (loop labels; `Ident {` semicolon-scan) · `user-guide.md` §2–§3
+diagnostics) · **ADR-0011** (Core loops are `loop` only) as amended by **ADR-0012**
+(labeled blocks are `:label { … }`, jumps `-> :label;`; `Ident {` is always a struct
+literal) · `user-guide.md` §2–§3
 (syntax reference as patched), §3.6 precedence table (E4), §5 (`seq`), §8.3/§10.4 exhibits ·
 `architecture.md` §2.2.2 ("recursive descent. Produces a small parse tree", "no type
 inference, name resolution, or constant propagation") · HANDOFF §4 (Core scope; C8
@@ -360,13 +362,16 @@ statement  := chain ';'                         -- ';' OPTIONAL when the chain's
             | loop-stmt
             | ';'  ⟦P0001⟧                      -- empty statement, skipped
 loop-stmt  := 'loop' block
-            | ⟦P0110⟧ IDENT block               -- custom label, via the §14.5 Ident-{ law
+            | ⟦P0110⟧ ':' IDENT block           -- labeled block (ADR-0012); parsed, Core+1
+                                                -- (un-sigiled `IDENT block` is NOT a loop form —
+                                                --  see the §14.5 heuristic)
 bind-stmt  := 'mut'? IDENT (':' type)? '<-' expr
                                                 -- second '<-' in one statement → P0008
 chain      := expr stage* | stage+              -- headed | headless (e.g. '-> loop;', fanout branches)
 stage      := '->' stage-body
 stage-body := 'ret' ('.' INT)?                  -- return target / projection (ret.0)
             | 'loop'                            -- back-edge jump, innermost loop (ADR-0011)
+            | ⟦P0110⟧ ':' IDENT                 -- labeled jump `-> :search` (ADR-0012); Core+1
             | 'mut'? IDENT ':' type             -- typed binding stage  (5 -> x: i32)
             | 'mut' IDENT                       -- mut binding stage (untyped; uniformity)
             | op-shorthand
@@ -447,17 +452,22 @@ therefore draw P0115 (plus check-level rejections for `log`) — those exhibits 
 full-language, not Core; none of the six acceptance examples uses the form (J4
 unaffected). Flagged to Sapir with P0115's scope reading.
 
-### 14.5 Statement-initial `Ident {` (ADR-0011)
+### 14.5 Statement-initial `Ident {` and labeled blocks (ADR-0011 as amended by ADR-0012)
 
-Scan from the `{` to its matching `}` (depth count). Any **`Semi`, `Arrow`, `BackArrow`,
-or `Guard`** inside (at any depth) ⇒ labeled loop (**P0110**, parse body as loop). None
-⇒ struct literal heading a chain. Sound: struct-literal field initializers are
-expressions, and expressions contain no `;`, no blocks, and — flows being statements
-(ADR-0005) — no arrow/guard tokens; conversely a loop body containing none of the four
-is operationally empty (`outer { x }`) and reads as a struct literal (W13). The scan runs
-only at statement-initial position and only for a plain `Ident`; keyword-introduced
+Statement-initial `Ident {` is **always a struct literal** heading a chain — labeled
+blocks carry the prefix sigil (`:label { … }`, `Colon Ident LBrace`, dispatched on the
+`Colon` with one token of lookahead; `:` before an identifier occurs nowhere else in the
+grammar). Both the labeled-block statement and the `-> :label` jump stage are parsed
+precisely and rejected with **P0110** (Core+1; jumps may only target lexically enclosing
+labels — enforcement is lower/check's job once Core+1 lifts P0110).
+
+**Recovery heuristic (demoted ADR-0011 scan):** when a statement-initial `Ident {`'s
+braces contain any of `Semi`, `Arrow`, `BackArrow`, or `Guard` (at any depth — a struct
+literal's field initializers, being expressions, can contain none of them), the form is
+loop-shaped, not a struct literal: emit **P0110** with the hint "labels are written
+`:NAME { … }`" and parse the body as a labeled block for recovery. Keyword-introduced
 blocks (`loop`, `seq`, `map`, `fold`, `void`) are dispatched by their keyword token
-before the scan is considered.
+before any of this is considered.
 
 ### 14.6 Expressions (levels 1–7, §3.6 table)
 
@@ -656,7 +666,7 @@ end with the horizon, e.g. "out of Flow-Core (HANDOFF §4); planned for Core+1".
 | P0107 | `...` rest pattern outside guard arms (`[head, ...tail]` exprs) | |
 | P0108 | call expression `f(args)` / `arr.len()` | message: "use tuple-input flow: `(args) -> f`" |
 | P0109 | `::` path (`List::map`) | detected by adjacent `Colon Colon` |
-| P0110 | custom loop label (`search { … }`) | ADR-0011; parsed as loop |
+| P0110 | labeled block / labeled jump (ADR-0012): `:search { … }`, `-> :search` — and the un-sigiled loop-shaped `Ident {` heuristic (§14.5) with the "labels are written `:NAME { … }`" hint | parsed as a labeled block / Error stage; Core+1 lifts this code |
 | P0111 | `executor` declaration | skipped |
 | P0112 | `pub` / `use` | skipped |
 | P0113 | `void` — both the fanout stage (`-> void { … }`) and statement-initial `void` (with or without block, e.g. bare `void;` in full_surface.flow) | parsed as fanout when a block follows; bare keyword ⇒ skip + `Stmt::Error` |
@@ -701,7 +711,7 @@ the golden snapshot shows all of them reported with correct spans (no masking).
 | W10 | `};` vs `}` after a block-final stage | Both legal: `;` optional after a chain whose last stage is a block (both exhibited: fanout.flow / user-guide §5.2). Uniform termination rule §14.3 |
 | W11 | Block tail | A chain without `;` ending at `}` is the block's value (`bounded`, `Pixel {…}`, `acc + px.r`); applies uniformly, even where a value is meaningless (loop bodies) — semantic rejection is check's job |
 | W12 | `-> - 5` | Always subtraction shorthand, never a negative-literal stage (constant stages are meaningless). Write `0 - 5` or `(-5)` as an expression stage if ever needed |
-| W13 | `X { }` / flow-free `X { x }` statement-initial | Struct literal (no `;`/arrow/guard token inside ⇒ not a loop; ADR-0011 scan) — a "loop" with no flows is operationally empty, so the struct reading is the useful one; empty `type X { }` body likewise allowed — all are check's concern |
+| W13 | `X { }` / flow-free `X { x }` statement-initial | Struct literal — under ADR-0012 this is no longer a fork at all: `Ident {` is always a struct literal; labeled blocks are sigiled (`:X { … }`). Empty `type X { }` body likewise allowed — all are check's concern |
 | W14 | `a == b == c` | Comparisons are non-associative → P0007 (parenthesize). Avoids the silent `(a==b)==c : bool` surprise |
 | W15 | Unary `- !` precedence | Not in the §3.6 table (spec gap). Bind tighter than `*` , looser than postfix: `x * -1` ⇒ `x * (-1)` ✓ (abs.flow), `-x.f` ⇒ `-(x.f)`, `!a && b` ⇒ `(!a) && b`. Flagged to Sapir; standard resolution, no ADR |
 | W16 | `Ident<Ident>` in expression position | Surfaces as P0007/P0001, not P0103 — documented imprecision (type-position generics get P0103; no expression exhibit exists in the corpus) |
@@ -713,6 +723,7 @@ the golden snapshot shows all of them reported with correct spans (no masking).
 | W22 | Statement-initial `seq` / `map` / `fold` / `void` / stray `Guard` | `seq`/`map`/`fold`: targeted P0001 ("must follow `->`"); `void`: P0113 (out-of-Core keyword, §16); stray `Guard`: P0004. Recover by parsing the block/arm where present |
 | W23 | `?` parsed as expression postfix (level 2), not §3.6 rank 9 | Matches every corpus exhibit (`f? -> g?` binds per stage); rejected via P0101 either way; the real grammar call belongs to the Core+1 error-handling ADR (LC-1). See §14.6 |
 | W24 | All-spaced guard blocks (`{ - true -> x; - false -> y; }`) | Classified GuardBlock via §14.3 rule 1 (P0005 per arm) — the targeted hints fire even with zero clean `Guard` tokens |
+| W25 | The three roles of `:` | Ascription (`x: i32`, after-ident), struct fields (`r: 1.0`, after-ident inside braces), labels (`:outer`, before-ident; ADR-0012) — all position-distinguished, no lookahead conflict. An *un-sigiled* `-> search;` is a plain name stage (variable flow), never a jump |
 
 ## 18. Public API (additions to `flow-syntax`)
 

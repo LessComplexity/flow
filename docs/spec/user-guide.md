@@ -337,19 +337,24 @@ Destructuring guards (`-[]-`, `-[head, ...tail]-`) make head/tail iteration natu
 **Nested loops with explicit control targets.**
 
 ```flow
-outer {
+:outer {
     // outer body
-    inner {
+    :inner {
         // inner body
         cond -> {
-            -true-> -> inner;     // continue inner
-            -false-> -> outer;    // break inner, restart outer
+            -true-> -> :inner;     // continue inner
+            -false-> -> :outer;    // break inner, restart outer
         }
     }
     // after inner completes
-    -> outer;
+    -> :outer;
 }
 ```
+
+> **Corrected per ADR-0012 — see docs/spec/ERRATA.md (LC-3).** Custom labels carry a
+> prefix `:` sigil on both the block (`:outer { … }`) and the jump (`-> :outer;`); jumps
+> target lexically enclosing labels only. The keyword form `loop { … -> loop; }` is
+> unchanged.
 
 Formally, each `loop` denotes a `Tr^U` in the traced monoidal structure of Flow-Cat, where `U` is the loop-carried state; see §2.7 and §4.5 of `category-ir.md`.
 
@@ -852,7 +857,7 @@ fn binary_search(arr: [i32], target: i32) -> Option<usize> {
     mut left: usize  <- 0;
     mut right: usize <- arr.len();
 
-    search {
+    :search {
         (left < right) -> {
             -false-> None -> ret;
             -true-> {
@@ -864,11 +869,11 @@ fn binary_search(arr: [i32], target: i32) -> Option<usize> {
                     -false-> (mid_value < target) -> {
                         -true-> {
                             mid + 1 -> left;
-                            -> search;
+                            -> :search;
                         }
                         -false-> {
                             mid -> right;
-                            -> search;
+                            -> :search;
                         }
                     }
                 }
@@ -877,6 +882,9 @@ fn binary_search(arr: [i32], target: i32) -> Option<usize> {
     }
 }
 ```
+
+> **Corrected per ADR-0012 — see docs/spec/ERRATA.md (LC-3).** Labeled block + jumps now
+> carry the prefix `:` sigil.
 
 ### 8.6 Producer-consumer with channels
 
