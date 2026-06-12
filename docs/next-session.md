@@ -1,46 +1,44 @@
 # Next Session
 
-Written: 2026-06-12 · end of Session 04 · by: Claude (Fable 5 orchestrator + Opus 4.8 workflow agents)
+Written: 2026-06-12 · end of Session 05 · by: Claude (Fable 5 orchestrator + Opus 4.8 workflow agents; Fable reviewers/attacker, Sonnet verifiers)
 
 ## Where things stand (≤5 lines)
 
-**flow-ir is complete and tested** (P2 first half). **ADR-0013 + ERRATA LC-4** resolve the spec's internal dataflow conflict (Pair-metadata/`rhs_const` vs the adjacency-only analyses) in favor of **edges-only**: per-slot `Pair{slot,arity}`, constants-as-objects, loops as inline SCC-visible cycles (no materialized `Trace`), IO as a **linear world token** with three pinned laws (signature synthesis `main : IoToken → IoToken`; token-sink I4b; token-in⇒token-out for loops). The sealed builder + an independent `validate()` enforce the I-ledger (`ir/DESIGN.md` §9); design got 3 adversarial reviews (26 findings applied), implementation got 2 reviews + a soundness attack (3 real breaches found and fixed with regressions: Str-param seal/validate gap, I5 route-vs-state SCC hole, u64→u32 arity truncation). `lower/DESIGN.md` §0.1 now holds **5 pinned lowering obligations** the IR golden tests already encode. The interpreter still does not exist.
+**P2 is complete: flow-lower is designed, implemented, and tested** — all six `examples/*.flow` lower to sealed, `validate()`-empty, lint-clean IR whose shapes match the ir goldens (sum_to_n exit reads the merge view; sepia's `0.0` fold seed unifies to f32; countdown = golden h; effectful calls thread the token incl. the degenerate `tok := r`). The binding `lower/DESIGN.md` (passes A–E, 46 L-codes, ledger LD1–LD24, OQ1–OQ8) survived a 3-way adversarial design review (38 confirmed findings applied) and the implementation survived 2 reviews + a soundness attack (21 distinct confirmed findings fixed, headline: effectful-*call* loops now carry the token — ATK-02). flow-ir's empty-struct seal/validate hole (TY-1) was found by the review and fixed (+4 tests). **The interpreter still does not exist** — every semantic contract is pinned structurally, not by execution.
 
 ## Test state: ALL GREEN
 
-`cargo test --workspace`: 32 targets all ok, 0 failed. flow-ir 87 tests (46 unit rejection-matrix · 16 builder_rejections · 13 golden Mermaid, every snap hand-verified + linted · 4 proptests incl. headline "seal Ok ⇒ validate empty" @256 · 8 algos incl. 100k-chain J1 test). flow-syntax 174 unchanged. `cargo fmt --check` + `clippy -p flow-ir --all-targets` clean. Bench `ir_scale` recorded (chain 100k: build+seal 65ms / dump 69ms / sccs 7.9ms — near-linear).
+`cargo test --workspace`: 365 passed, 0 failed (flow-syntax 174 · flow-ir 91 · flow-lower 100: 8 golden snaps hand-verified against DESIGN §9 + 8 structural + 82 rejection-matrix + 2 proptests). `cargo fmt --check` + `cargo clippy --workspace --all-targets` clean. Benches recorded: `lower_scale` (pipeline_32 ≈ 43.6 µs, vmatch_16 ≈ 40.9 µs), `ir_scale` unchanged.
 
 ## Do next (ordered, smallest-first)
 
-1. **P2 second half: `flow-lower` design.** Write the real `docs/components/lower/DESIGN.md`: parse tree (`flow-syntax::ast`, syntax DESIGN §15) → `flow-ir` builder calls per category-ir §4 + the §0 obligations extract (re-verify, it's non-binding) + **§0.1's five pinned rules** (token synthesis; canonical ret-write `Dest::Ret` vs `output()`; negative-literal folding; right-folded value-guard Phi chains; loop exit reads merge-state view — `sum_to_n(10)` exits **55**). Key open design work: symbol table / `mut`-SSA discipline (each update = fresh object; back edge routes to merge), guard-arm classification (Phi §4.4 vs Trace routing §4.5 — an arm reaching `-> loop;` is routing, never Phi), loop-state packing (multiple `mut` vars → tuple U), Hole substitution (piped value = leftmost left operand), L-code diagnostics for lower-stage rejections.
-2. **Implement `flow-lower`** with golden IR dumps for all six examples (the 13 ir goldens show the expected shapes — e.g. `golden_mermaid` (d′) is sum_to_n's loop; `cargo run -p flow-ir --example dump_demo` prints the pipeline-`f` and sum_to_n shapes ready to paste into a Mermaid renderer) + lex→parse→lower round-trip tests. The interpreter (P3) is next after that; differential tests wait for it.
-3. If time remains: start `check`/`interp` DESIGN reading (interp pins float print formatting + multi-ret-writer exclusivity — both parked for it).
+1. **P3 first half: `flow-interp` design** (the oracle — HANDOFF §5 item 4, priority per the closing line "build the interpreter; it will find the next five bugs"). Write `docs/components/interp/DESIGN.md`: fueled evaluation over the sealed `CategoryIr` (E1: divergence is a defined outcome; every loop eval carries fuel), value domain (`flow_ir::Value` + tuples/structs/arrays + the world token as an opaque effect log), traps (div/mod-zero, OOB Index — defined runtime outcomes per ADR-0013), token-ordered effects (the IO log IS the print order — E2 determinism falls out of dataflow), entry protocol (`main : IoToken → IoToken` vs pure `Unit → Unit`, lower/DESIGN §6.2 table). **Interp must pin the two parked items:** float print formatting and multi-ret-writer exclusivity (ir/DESIGN §17, lower OQ3). Expected outputs are written in each example's header comment (abs 7, sum_to_n 55, pipeline "f(10) = " 25, fanout 36/12, fir 5.375, sepia 4080).
+2. **Implement `flow-interp`** + golden interpreter-output tests for all six examples (the acceptance line of M1) + the lower 55-contract's value half (`sum_to_n(10) == 55` by execution) + fueled-divergence tests.
+3. **`flow-check` design** can start after (or interleaved): its ledger of owed checks is already written down — lower/DESIGN §12 (E2 surface seq-context rule, full type check, lifetime/E3) — plus exclusivity once interp pins it.
+4. If time remains: wire `flow-cli` (`flow dump-ir --mermaid` + `flow run` via interp) — it makes every later session's debugging cheaper.
 
 ## Open questions for Sapir
 
-- **ADR-0013 review** (accepted autonomously, revisable): the IR realization decisions — esp. (a) IO as linear world-token threading (vs a looser effect ordering), (b) trap semantics for div/mod-by-zero + OOB `Index` until Core+1 coproducts, (c) `Operation::Trace` not materialized. All argued in the ADR + `ir/DESIGN.md`; nothing downstream is built on them yet, so now is the cheap moment to veto.
-- **Cross-builder id mixing is UB with no defense** (DESIGN §10, pinned by test): slotmap keys collide across `IrBuilder` instances; a foreign `FuncId` can seal+validate clean against the wrong callee. Fine while flow-lower is the only constructor — say the word if you want the builder-nonce ADR now rather than later.
-- Carried over: P0115 anonymous-block stages; W15 unary binding (flag only if you want different).
+- **lower/DESIGN.md §16 OQ1–OQ8** (all chosen conservatively, each a one-line swap if vetoed): OQ1 infinite loops rejected (E1 says legal, IR requires an exit — real tension, ADR-worthy); OQ7 routing guards restricted to two bool arms + nested loops to inner-exits-via-ret (L1409/L1504 — lifting needs an flow-ir ADR on the I4 token fork and per-arm conds); OQ8 fn-body tails return their value (`fn f(x: i32) -> i32 { x + 1 }` works — veto = require explicit `-> ret`); OQ2/OQ3/OQ4/OQ5/OQ6 as written.
+- **Carried over:** ADR-0013 review (IO-as-token, traps, no-Trace — now load-bearing under lower, so a veto is costlier than last session); cross-builder id nonce (ir STATUS); P0115 anonymous-block stages; W15 unary binding.
 
 ## Gotchas / warnings (things that will waste the next session's time)
 
-- **Don't re-litigate the ledgers:** syntax W1–W25, ir **D1–D10** (`ir/DESIGN.md` §18) + the I-invariant ledger (§9). In particular: loops are ALWAYS two routes (even `B = U`); `LoopBack` fires on **true**, `LoopExit` on **false**; exit reads the **merge-state view** (55, not 54/65); `Output` only for bare pre-existing `x -> ret`.
-- **I5 checks the carried STATE's SCC membership, not the route's** — the route is always pulled into the SCC by its cond slot (review SND-1). If you touch `check_loops`, keep builder and validate copies in lock-step (they are deliberately independent code).
-- **I9/I10 intake runs on synthesized tys too** (pack/binop/routes) — adding a builder primitive without the intake call reopens the Str-smuggling hole (review L2-04/F1).
-- **Token rules are load-bearing for lower:** every print-bearing fn declares token-threaded (`main : IoToken → IoToken`), final token → Return; loop-carried tokens must exit via every `LoopExit` (`TokenNotEscaping` otherwise).
-- **Snapshot discipline unchanged** (insta; read every .snap against the DESIGN — wrong-but-stable is the failure mode). Golden tests read `examples/*.flow` live — `git status examples/` before trusting (clean as of this commit).
-- **J1 stands crate-wide:** all recursion in flow-ir is iterative/depth-guarded (Tarjan explicit stack, Ty walks bounded). New graph algorithms must follow; the 100k-chain test will catch you.
-- A legal "two merges in one SCC" graph (Verilog-reject shape) cannot seed the inner loop from the outer merge (I5 rejects) — fuse via cross-feeding next-states from external seeds (see `tests/algos.rs` nested test).
-- `verilator`/`nvcc` still not installed; `clang` is. LC-1 (`?` in fanout) still parked for the Core+1 error-handling ADR.
+- **Don't re-litigate the ledgers:** syntax W1–W25, ir D1–D10 + I-ledger, and now **lower LD1–LD24** (`lower/DESIGN.md` §15) + the L1xxx catalogue (§4). In particular: routing-guard arms lower against a **snapshot** (that's what makes sum_to_n exit 55 — regression-pinned); Phi arms may not assign enclosing muts (L1408); effectful fns have ≤1 surface return site, full-tuple writers (LD18); map/fold body names share one per-owner counter (`main::map@0`, `main::fold@1`).
+- **lower's L1503/L1306 etc. are deliberately stricter than seal** (LD22) — a graph that seals is not automatically a graph lower may emit; don't "fix" a rejection test by weakening the D1 checks.
+- **The builder is lower's second-line type checker by design** (LD12, implementer note): user-diagnosable `IrError`s map to L-codes; L1901 must stay unreachable — if you see it, it is a lower bug, full stop.
+- **interp must read the merge-state semantics from ir/DESIGN §7 (D7), not invent**: LoopBack fires on true / LoopExit on false; exit payload = merge view; tokens: I4 fork is exactly back+exit.
+- **Snapshot discipline unchanged** (insta not installed as cargo-insta — accept by `mv x.snap.new x.snap` after reading; wrong-but-stable is the failure mode). Golden tests read `examples/*.flow` live — `git status examples/` before trusting (clean at this commit).
+- The countdown/effectful-call goldens live in `crates/flow-lower/tests/golden.rs` as inline sources (not `examples/`) — they are DESIGN §9 regressions, not acceptance examples; don't promote them.
+- `verilator`/`nvcc` still not installed; `clang` is. LC-1 (`?` in fanout) still parked.
 
 ## Commands (build/test/bench invocations that currently work)
 
 ```sh
-cargo test --workspace                          # green — 174 flow-syntax + 87 flow-ir + empty crates
-cargo test -p flow-ir                           # full IR suite (<2s; proptests bounded)
-cargo insta review                              # review pending snapshot changes (none pending)
-cargo run -p flow-ir --example dump_demo        # hand-built pipeline + sum_to_n IR → Mermaid on stdout (see expected IR shapes)
-cargo bench -p flow-ir --bench ir_scale         # criterion build/seal+dump+sccs bench (chains + grids)
-cargo bench -p flow-syntax --bench lex_parse    # lex+parse bench (unchanged)
+cargo test --workspace                          # green — 174 syntax + 91 ir + 100 lower
+cargo test -p flow-lower                        # full lower suite (<10s incl. proptests)
+cargo run -p flow-ir --example dump_demo        # hand-built IR shapes → Mermaid (compare: lower's snaps)
+cargo bench -p flow-lower --bench lower_scale   # criterion lower bench (recorded in STATUS)
+cargo bench -p flow-ir --bench ir_scale         # IR bench (unchanged)
 cargo run -p flow-cli                           # still the not-implemented stub, exits 1
 ```

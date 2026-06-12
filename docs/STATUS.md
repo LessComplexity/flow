@@ -1,15 +1,15 @@
 # Flow — Global Status
 
-Last updated: 2026-06-12 · Session 04
-Current phase: P2 — IR + lowering (flow-ir **tested**; lower next) Current milestone: M1 — sepia, abs, sum_to_n, pipeline, fanout run correctly on CPU via the interpreter (oracle established)
+Last updated: 2026-06-12 · Session 05
+Current phase: **P2 complete** — IR + lowering both tested; P3 (interp + check, → M1) next. Current milestone: M1 — sepia, abs, sum_to_n, pipeline, fanout run correctly on CPU via the interpreter (oracle established)
 
 ## Components
 
 | Component      | Status      | Tests | One-line state                                              | Docs                                          |
 | -------------- | ----------- | ----- | ---------------------------------------------------------- | --------------------------------------------- |
 | syntax         | tested      | 174 ✅ | P1 complete: lexer + parser (ADR-0005/0009/0010/0011/0012); golden trees for all 6 examples, zero diags; P-code out-of-Core rejection; bench recorded. | [status](components/syntax/STATUS.md)         |
-| ir             | tested      | 87 ✅ | Core graph IR per ADR-0013/LC-4: edge-only dataflow, sealed builder + independent validate, inline-trace loops, IO token, SCC/topo, linted Mermaid; bench recorded. | [status](components/ir/STATUS.md)             |
-| lower          | not-started | —     | Parse tree → IR per category-ir §4; not begun.             | [status](components/lower/STATUS.md)          |
+| ir             | tested      | 91 ✅ | Core graph IR per ADR-0013/LC-4: edge-only dataflow, sealed builder + independent validate, inline-trace loops, IO token, SCC/topo, linted Mermaid; bench recorded. S05: empty-struct intake hole fixed (+4 tests). | [status](components/ir/STATUS.md)             |
+| lower          | tested      | 100 ✅ | P2 second half complete: full Core surface lowers to sealed validate-empty IR; all 6 examples golden (+countdown/effectful-call); 46 L-codes with rejection matrix; literal-width unification; token laws; bench recorded. | [status](components/lower/STATUS.md)          |
 | check          | not-started | —     | Type / effect / lifetime checks for Core; not begun.       | [status](components/check/STATUS.md)          |
 | interp         | not-started | —     | Fueled reference interpreter (the oracle); not begun.      | [status](components/interp/STATUS.md)         |
 | rewrite        | not-started | —     | Layer 1–4 rewrite passes + property harness; not begun.    | [status](components/rewrite/STATUS.md)        |
@@ -63,6 +63,7 @@ None.
 
 | NN | date       | focus        | outcome                       |
 | -- | ---------- | ------------ | ----------------------------- |
+| 05 | 2026-06-12 | P2 flow-lower | flow-lower complete — **P2 done** (workspace 365 tests green: 174 syntax + 91 ir + 100 lower). Binding lower/DESIGN.md written (passes A–E, literal-width unification, derives-from-merge tags, 46-code L1xxx catalogue, LD1–LD24 ledger) + 3-way Fable adversarial design review with per-finding Sonnet verification (38 confirmed findings applied; killed three would-be miscompiles: Phi-arm mut leaks, the 55→66 snapshot bug, Block-tail routing guards). Implementation by Opus agents + 2 impl reviews + Fable soundness attack (19 attack findings; all real ones fixed with named regressions — headline ATK-02: effectful-*call* loops now carry the token). flow-ir empty-struct seal/validate hole (TY-1) fixed (+4 tests). All 8 golden snaps hand-read against §9 shape contracts (incl. orchestrator re-read after the head-naming fix). `lower_scale` bench recorded. Open: DESIGN §16 OQ1–OQ8 for Sapir. |
 | 04 | 2026-06-12 | P2 flow-ir   | flow-ir complete (87 tests green; workspace 32 targets all ok): ADR-0013 + ERRATA LC-4 (spec's Pair-metadata/rhs_const dataflow conflict resolved → edges-only), DESIGN.md written + 3-way adversarial design review (26 findings applied — incl. the three token laws and exit-value pin, `sum_to_n` exits 55), implementation by Opus workflow agents + 2-way impl review + soundness attack (3 real breaches found: Str-param seal/validate gap, I5 route-vs-state SCC hole, u64→u32 arity truncation) + fix round with regressions. `ir_scale` bench recorded (100k morphisms: build+seal 65ms). lower/DESIGN §0.1 seeded with 5 pinned lowering obligations. Cross-builder id mixing pinned as UB — flagged to Sapir (nonce ADR if ever needed). |
 | 03 | 2026-06-12 | P1 parser    | flow-syntax parser complete — **P1 done** (174 tests green incl. the ADR-0012 amendment): two-tier grammar (ADR-0005), thin spanned parse tree, P0001–P0012 + P0101–P0116 diagnostics with recovery, ADR-0011 (loop labels / `Ident {` scan), golden parse trees for all 6 examples (zero diags, independently re-derived), full_surface precise rejection, criterion lex+parse bench (1–7.5 µs/example). Design 3-way + impl 2-way adversarially reviewed; totality stack-overflow defect found & fixed pre-merge. Post-review with Sapir: ADR-0012 labeled-block sigil (`:label`) decided + implemented (LC-3 spec patch); lower/DESIGN.md seeded with the parse-tree-obligations extract. |
 | 02 | 2026-06-11 | P1 lexer     | flow-syntax lexer complete (74 tests green): full-surface token set, ADR-0010 guard lexing, L0001–L0008 diagnostics, golden snapshots for all 6 examples + C8 fixture, proptest totality. Design + implementation each adversarially review-verified. |

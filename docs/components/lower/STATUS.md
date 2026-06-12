@@ -1,18 +1,72 @@
 # Component: lower
 
-Status: not-started (pre-design notes recorded — DESIGN.md §0 holds the Session 03 parse-tree-obligations extract; binding design still unwritten)
-Last updated: 2026-06-12 · Session 03
-Spec references: category-ir.md §4 (Lowering from surface syntax: §4.1 binary ops via Pair, §4.3 pipelines, §4.4 conditionals → Phi, §4.5 loops → Trace under E1, §4.6 effectful branches → honest coproduct). Supporting: category-ir.md §11.1 (parser-to-IR-builder sketch); architecture.md §2.2.3 (IR builder — lowering).
+Status: tested
+Last updated: 2026-06-12 · Session 05
+Spec references: category-ir.md §4 (lowering rules, as corrected by ERRATA LC-4) + §11.1; ERRATA LC-2 (map/fold law); ADR-0013 (realization: edges-only, inline-cycle loops, IO token laws); user-guide §3/§5; lower/DESIGN.md §0.1 pins 1–5 (binding).
 Depends on: syntax, ir Depended on by: check, interp, rewrite, backend-llvm, backend-cuda, backend-verilog, cli
 
 ## What works
 
+`pub fn lower(source, &Program) -> Result<CategoryIr, Vec<Diagnostic>>` — the full
+Flow-Core surface, end to end: all six `examples/*.flow` lower to sealed,
+validate-empty, lint-clean IR matching the ir-golden shapes (DESIGN §9 contracts hold:
+sum_to_n's exit reads the merge view — the 55-not-66 snapshot regression is pinned;
+abs folds `-1` with no `Neg`; sepia's `0.0` fold seed resolves f32 via literal-width
+unification; countdown reproduces ir golden h; effectful calls thread the token with
+the degenerate `tok := r` when B is absent). Five passes per DESIGN §2 (type table →
+effects/call-graph → declare → per-fn typing walk + body emission + outer emission →
+seal). 46 L-codes (L1000–L1901) with ≥1 rejection test each (except L1901, internal by
+construction).
+
 ## What does not / known issues
+
+- The interpreter does not exist yet — all semantic contracts are pinned structurally
+  (graph shape), not by execution. The 55-contract's value half waits for interp.
+- Core-minimal restrictions chosen over invented semantics (each an OQ in DESIGN §16):
+  routing guards = exactly two bool arms (L1409); nested loops only in the
+  inner-exits-via-ret shape (L1504); no general-expression stages (L1302); no
+  infinite loops (L1501, the E1 tension); ≤1 surface return site in effectful fns
+  (L1307).
+- D1 is deliberately not a full type checker: the builder is the second-line type
+  authority and user-diagnosable `IrError`s map to L-codes (TypeMismatch→L1201 etc.);
+  emission keeps a `BTreeMap<ObjectId, Ty>` side table only for recipe dispatch.
 
 ## Invariants enforced (and where in code)
 
+- Clean-tree precondition J3 → L1000 defensively (`lib.rs`).
+- One-definition `mut`-SSA, scope/snapshot discipline (LD8): `scope.rs` + `emit.rs`
+  (routing-guard arms lower against a snapshot; Phi-arm enclosing-mut writes L1408).
+- Token laws TL-1/2/3: signature synthesis table (`effects.rs`/`emit.rs` declare);
+  current-token register with consume-once (`emit.rs`, L1307 on reuse); loop token
+  carried last + exits via every LoopExit (loop recipe).
+- Canonical ret-writes (pin 2) via one-stage-lookahead `lookahead_dest` (heads
+  included — names surface-bound objects per LD17); effectful full-tuple writers LD18.
+- Derives-from-merge tags (L1503) and L1306 return completeness in `typing.rs` —
+  every user-reachable seal error is pre-checked; L1901 is internal-only.
+- Determinism: no HashMap anywhere in emission paths; span-keyed BTree side tables.
+
 ## Test coverage (golden / property / differential / skipped+why)
+
+100 tests: 8 golden Mermaid snaps (6 examples + countdown + effectful-call, every snap
+hand-read against DESIGN §9 — including by the orchestrating session after the
+label-naming fix), 8 structural shape assertions (55-contract, token order, Phi
+counts, signature table), 82 rejection-matrix tests (all L-codes + ATK-finding
+regressions from the soundness attack), 2 bounded proptests (never-panics +
+Ok⇒validate-empty+lint-clean; literal-width vs annotations). Differential tests wait
+for the interpreter (P3). Implementation survived 2 adversarial code reviews + a
+soundness attack: 21 distinct confirmed findings, all fixed with named regressions
+(highlights: ATK-02 effectful-call loops now carry the token; ATK-05 loop-exit
+bindings land in the enclosing scope; LOWER-RETK-TRUNC u64→u32 ret.k truncation).
 
 ## Performance notes (numbers + bench name + date; regressions flagged)
 
+`lower_scale` (criterion, 2026-06-12): lower_pipeline_32 ≈ 43.6 µs,
+lower_vmatch_16 ≈ 40.9 µs. Baseline only; nothing to flag.
+
 ## Open questions (→ ADR candidates)
+
+DESIGN §16 OQ1–OQ8, headline ones: OQ1 infinite loops are IR-unconstructible
+(`end_loop` requires an exit) though E1 calls them legal; OQ7 multi-route routing
+guards + general nested loops need an flow-ir ADR (I4 token-fork widening, per-arm
+cond composition); OQ2 E4 general-expression-stage semantics; OQ8 fn-body tails as
+return values (W11 reading — implemented, one-line swap if vetoed).
