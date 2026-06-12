@@ -309,6 +309,8 @@ struct CategoryIR {
 
 The `Operation` enum is the set of primitive morphisms. Every multi-ary operation takes a *product* as its source.
 
+> **Note (ADR-0013, Session 04).** This enum is the long-horizon shape. The Core-realized operation set differs: `Identity`/`Const`/`Trace` are not materialized (identities are implicit per §2.1.1; constants are `Constant`-kind objects; the trace is the inline cycle per CHANGES §1.3), out-of-Core variants await their features, and Core adds `Neg`, `Index`, `Map`/`Fold`, `Print`, and the loop-edge operations. See ADR-0013 and `docs/components/ir/DESIGN.md` §5.
+
 ```rust
 enum Operation {
     // --- Structural (product & coproduct) ---
@@ -434,6 +436,8 @@ flowchart LR
 | m2 | 2 | 3 | Add |
 
 The Pair operation's metadata records *which projections* of the ambient environment to bundle — in this case, the morphisms for `a` and `b`. Every morphism is single-source, single-target; the invariant holds.
+
+> **Erratum LC-4 applied — see docs/spec/ERRATA.md and ADR-0013.** Pair carries no dataflow metadata: each component arrives on its own in-edge (`Pair { slot, arity }` from the component's object), and constants enter the graph as `Constant`-kind source objects (`value: Some`, §3.2) rather than riding in payloads. The compact tables above elide those component edges; the realized graph contains them explicitly — which is what §5.1's merge detection and the §9/§10 analyses read.
 
 ### 4.2 Array access
 
@@ -590,6 +594,8 @@ Within a single SCC, topological order is undefined (it's a cycle), but Flow's l
 ```
 
 A graph in this form renders directly to Mermaid, Graphviz, or the visualizer — there is no separate "visualization format."
+
+> **Erratum LC-4 applied — see docs/spec/ERRATA.md and ADR-0013.** The `{"Mul": {"rhs_const": 2}}` form above is superseded: constants are serialized as `Constant`-kind objects and reach the primitive through explicit `Pair`-slot edges; operation payloads never carry value flow. The serializer (when implemented) emits the edge form.
 
 
 ---
