@@ -13,7 +13,7 @@ Written: 2026-06-12 · end of Session 04 · by: Claude (Fable 5 orchestrator + O
 ## Do next (ordered, smallest-first)
 
 1. **P2 second half: `flow-lower` design.** Write the real `docs/components/lower/DESIGN.md`: parse tree (`flow-syntax::ast`, syntax DESIGN §15) → `flow-ir` builder calls per category-ir §4 + the §0 obligations extract (re-verify, it's non-binding) + **§0.1's five pinned rules** (token synthesis; canonical ret-write `Dest::Ret` vs `output()`; negative-literal folding; right-folded value-guard Phi chains; loop exit reads merge-state view — `sum_to_n(10)` exits **55**). Key open design work: symbol table / `mut`-SSA discipline (each update = fresh object; back edge routes to merge), guard-arm classification (Phi §4.4 vs Trace routing §4.5 — an arm reaching `-> loop;` is routing, never Phi), loop-state packing (multiple `mut` vars → tuple U), Hole substitution (piped value = leftmost left operand), L-code diagnostics for lower-stage rejections.
-2. **Implement `flow-lower`** with golden IR dumps for all six examples (the 13 ir goldens show the expected shapes — e.g. `golden_mermaid` (d′) is sum_to_n's loop) + lex→parse→lower round-trip tests. The interpreter (P3) is next after that; differential tests wait for it.
+2. **Implement `flow-lower`** with golden IR dumps for all six examples (the 13 ir goldens show the expected shapes — e.g. `golden_mermaid` (d′) is sum_to_n's loop; `cargo run -p flow-ir --example dump_demo` prints the pipeline-`f` and sum_to_n shapes ready to paste into a Mermaid renderer) + lex→parse→lower round-trip tests. The interpreter (P3) is next after that; differential tests wait for it.
 3. If time remains: start `check`/`interp` DESIGN reading (interp pins float print formatting + multi-ret-writer exclusivity — both parked for it).
 
 ## Open questions for Sapir
@@ -39,6 +39,7 @@ Written: 2026-06-12 · end of Session 04 · by: Claude (Fable 5 orchestrator + O
 cargo test --workspace                          # green — 174 flow-syntax + 87 flow-ir + empty crates
 cargo test -p flow-ir                           # full IR suite (<2s; proptests bounded)
 cargo insta review                              # review pending snapshot changes (none pending)
+cargo run -p flow-ir --example dump_demo        # hand-built pipeline + sum_to_n IR → Mermaid on stdout (see expected IR shapes)
 cargo bench -p flow-ir --bench ir_scale         # criterion build/seal+dump+sccs bench (chains + grids)
 cargo bench -p flow-syntax --bench lex_parse    # lex+parse bench (unchanged)
 cargo run -p flow-cli                           # still the not-implemented stub, exits 1
