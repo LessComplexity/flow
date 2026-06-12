@@ -2,7 +2,7 @@
 
 Status: tested
 Last updated: 2026-06-12 · Session 03
-Spec references: user-guide.md §3 (Syntax reference) + ADR-0005 (a flow is a statement; E4) + ADR-0009 (map/fold postfix block) + ADR-0010 (guard-arrow lexing) + ADR-0011 (loop labels; `Ident {` scan). Supporting: architecture.md §2.2.1–§2.2.2 (lexer + recursive-descent parser, minimal parse tree), ADR-0008 (error recovery + structured diagnostics, binding), ADR-0006 (`type` keyword, `category` reserved).
+Spec references: user-guide.md §3 (Syntax reference) + ADR-0005 (a flow is a statement; E4) + ADR-0009 (map/fold postfix block) + ADR-0010 (guard-arrow lexing) + ADR-0011 (Core loops are `loop` only) as amended by ADR-0012 (labeled blocks `:label { … }` / jumps `-> :label;`; `Ident {` is always a struct literal). Supporting: architecture.md §2.2.1–§2.2.2 (lexer + recursive-descent parser, minimal parse tree), ADR-0008 (error recovery + structured diagnostics, binding), ADR-0006 (`type` keyword, `category` reserved).
 Depends on: (none) Depended on by: lower, cli
 
 ## What works
@@ -31,7 +31,7 @@ Depends on: (none) Depended on by: lower, cli
 
 ## Test coverage (golden / property / differential / skipped+why)
 
-165 tests, all green (`cargo test -p flow-syntax`): 131 lib (95 parser units — precedence/§3.6 verbatim, W10–W24 ledger, F-matrix payloads, ADR-0011 scan, classification, every P-code, design-review regression pins; 36 lexer) · 6 golden token streams · 6 golden parse trees (zero diags asserted) · 2+3+6 diagnostics/error/out-of-Core fixtures · 3 coverage · 3+3 proptests (lexer/parser, 2048 cases each). Golden trees were verified by **independent re-derivation** (one reviewer per example, node-by-node against source + grammar); implementation passed 2 adversarial reviews + a fix round (stack-overflow totality fix, P0007 climber path).
+174 tests, all green (`cargo test -p flow-syntax`): 140 lib (104 parser units — precedence/§3.6 verbatim, W10–W24 ledger, F-matrix payloads, ADR-0011 scan, classification, every P-code, design-review regression pins; 36 lexer) · 6 golden token streams · 6 golden parse trees (zero diags asserted) · 2+3+6 diagnostics/error/out-of-Core fixtures · 3 coverage · 3+3 proptests (lexer/parser, 2048 cases each). Golden trees were verified by **independent re-derivation** (one reviewer per example, node-by-node against source + grammar); implementation passed 2 adversarial reviews + a fix round (stack-overflow totality fix, P0007 climber path).
 
 ## Performance notes (numbers + bench name + date; regressions flagged)
 
@@ -39,7 +39,7 @@ Depends on: (none) Depended on by: lower, cli
 
 ## Open questions (→ ADR candidates)
 
-- ADR-0011 flagged to Sapir (veto window): custom loop labels out of Core; `Ident {` four-token scan (`;`/`->`/`<-`/guard ⇒ loop).
+- ADR-0012 (decided with Sapir, Session 03): labeled blocks `:label { … }`, jumps `-> :label;`, enclosing-targets-only; Core+1 lifts P0110. Break-to-after-a-loop deliberately undecided — the Core+1 ADR must decide or re-defer.
 - P0115 scope reading: anonymous block stages (user-guide §8.3 fanout form, §5.2 `seq` branches) rejected as out-of-Core — HANDOFF §4.1 silence read as default-reject; flip = lift P0115.
 - W15 unary-minus/`!` precedence: §3.6 table omits unary; bound tighter than `*`, looser than postfix (standard). Spec gap, no ADR.
 - W23: `?` parsed as expression postfix (per exhibits) not §3.6 rank 9 — final call belongs to the Core+1 error-handling ADR.
