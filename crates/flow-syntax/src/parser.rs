@@ -1119,6 +1119,15 @@ impl<'a> Parser<'a> {
         let start = self.cur_span().start;
         match self.kind() {
             TokenKind::KwLoop => StmtOrTail::Stmt(self.parse_loop_stmt()),
+            // ⟦P0110⟧ statement-initial labeled block `:label { … }` (ADR-0012).
+            // Recognized on the `Colon` with one token of lookahead; a second
+            // `Colon` (a `::` path) is NOT a label, so require `Colon Ident LBrace`.
+            TokenKind::Colon
+                if self.peek_kind(1) == TokenKind::Ident
+                    && self.peek_kind(2) == TokenKind::LBrace =>
+            {
+                StmtOrTail::Stmt(self.parse_sigiled_labeled_block())
+            }
             TokenKind::KwVoid => {
                 // ⟦P0113⟧ statement-initial `void` (with or without block).
                 StmtOrTail::Stmt(self.parse_void_stmt())
@@ -1191,17 +1200,57 @@ impl<'a> Parser<'a> {
         false
     }
 
-    /// ⟦P0110⟧ `IDENT block` — a custom-labeled loop (ADR-0011), parsed as a loop.
+    /// ⟦P0110⟧ statement-initial labeled block `:label { … }` (ADR-0012). The
+    /// `Custom` label `Name` span covers **just the identifier** (so its text is a
+    /// valid name); the `:` sigil is folded into the diagnostic span and the
+    /// `LoopStmt` span (which begins at the `Colon`). Parsed as a loop for
+    /// recovery; the body goes through `parse_block` (depth guard, J1/J2).
+    fn parse_sigiled_labeled_block(&mut self) -> Stmt {
+        let start = self.cur_span().start; // the `:`
+        let colon = self.bump().span; // `:`
+        let name = Name {
+            span: self.bump().span, // IDENT
+        };
+        // Diagnostic span covers `:label` (sigil + ident).
+        let sigil_span = self.span(colon.start, name.span.end);
+        self.diag(
+            "P0110",
+            sigil_span,
+            "labeled blocks (`:label { … }`, ADR-0012) are out of Flow-Core (HANDOFF §4); \
+             Flow-Core's only loop introducer is `loop`. Planned for Core+1",
+        );
+        let body = self.parse_block();
+        let span = self.node_span_covering(start, body.span);
+        Stmt {
+            kind: StmtKind::Loop(LoopStmt {
+                label: LoopLabel::Custom(name),
+                body,
+                span,
+            }),
+            span,
+        }
+    }
+
+    /// ⟦P0110⟧ recovery heuristic (demoted ADR-0011 scan, §14.5): a
+    /// statement-initial `IDENT block` whose braces are loop-shaped (contain
+    /// `Semi`/`Arrow`/`BackArrow`/`Guard`). Under ADR-0012 un-sigiled `Ident {`
+    /// is *always* a struct literal grammatically; this path survives only to
+    /// improve the error — it parses the body as a labeled block and points at
+    /// the sigiled spelling.
     fn parse_labeled_loop(&mut self) -> Stmt {
         let start = self.cur_span().start;
         let name = Name {
             span: self.bump().span,
         };
+        let ident = self.text(name.span).to_string();
         self.diag(
             "P0110",
             name.span,
-            "custom loop labels are out of Flow-Core (HANDOFF §4); Flow-Core's only loop \
-             introducer is `loop`. Planned for Core+1",
+            format!(
+                "labeled blocks are written `:{ident} {{ … }}` (ADR-0012) and are out of \
+                 Flow-Core (HANDOFF §4); Flow-Core's only loop introducer is `loop`. \
+                 Planned for Core+1"
+            ),
         );
         let body = self.parse_block();
         let span = self.node_span_covering(start, body.span);
@@ -1540,6 +1589,21 @@ impl<'a> Parser<'a> {
             // `-> IDENT : T` typed binding stage, OR a general expression stage,
             // OR an out-of-Core `Ident {` collection operator.
             TokenKind::Ident => self.parse_ident_stage(),
+            // ⟦P0110⟧ labeled jump `-> :label` (ADR-0012). Recognized on the
+            // `Colon` followed by an `Ident`; a `::` path (`Colon Colon`) is NOT a
+            // label and falls through to the general expression stage below.
+            TokenKind::Colon if self.peek_kind(1) == TokenKind::Ident => {
+                let colon = self.bump().span; // `:`
+                let name_span = self.bump().span; // IDENT
+                let span = self.span(colon.start, name_span.end);
+                self.diag(
+                    "P0110",
+                    span,
+                    "labeled jumps (`-> :label`, ADR-0012) are out of Flow-Core (HANDOFF §4); \
+                     Flow-Core's only back-edge jump is `-> loop`. Planned for Core+1",
+                );
+                StageKind::Error(span)
+            }
             _ => {
                 // General expression stage (ADR-0005: a -> b + c -> d).
                 let expr = self.parse_expr();

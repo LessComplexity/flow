@@ -559,6 +559,152 @@ fn flow_free_labeled_body_is_struct_w13() {
     no_diags(src);
 }
 
+#[test]
+fn demoted_scan_hint_mentions_sigil() {
+    // The demoted ADR-0011 scan (§14.5) still parses a loop-shaped un-sigiled
+    // `Ident {` as a labeled block for recovery, but its P0110 message now points
+    // at the sigiled spelling `:search { … }`.
+    let src = "fn m() { search { x -> y; } }";
+    assert_eq!(pcodes(src), vec!["P0110"]);
+    let out = parse(src);
+    let d = out
+        .diagnostics
+        .iter()
+        .find(|d| d.code.0 == "P0110")
+        .expect("a P0110");
+    assert!(
+        d.message.contains(":search { … }"),
+        "demoted-scan P0110 should hint the sigiled spelling, got {:?}",
+        d.message
+    );
+}
+
+// ======================================================================
+// ADR-0012 sigiled labeled blocks (`:label { … }`) and jumps (`-> :label`)
+// ======================================================================
+
+#[test]
+fn sigiled_labeled_block_p0110() {
+    // `:search { x -> y; }` statement ⇒ P0110, parsed as a custom-labeled loop.
+    let src = "fn m() { :search { x -> y; } }";
+    assert_eq!(pcodes(src), vec!["P0110"]);
+    let f = parse_one_fn(src);
+    match &f.body.items[0] {
+        BlockItem::Stmt(Stmt {
+            kind:
+                StmtKind::Loop(LoopStmt {
+                    label: LoopLabel::Custom(name),
+                    span,
+                    ..
+                }),
+            ..
+        }) => {
+            // Span convention: the `Custom` Name span is the bare identifier
+            // (`search`), while the `LoopStmt` span begins at the `:` sigil.
+            assert_eq!(
+                &src[name.span.start as usize..name.span.end as usize],
+                "search"
+            );
+            assert_eq!(&src[span.start as usize..span.start as usize + 1], ":");
+        }
+        other => panic!("expected a custom-labeled loop, got {other:?}"),
+    }
+}
+
+#[test]
+fn sigiled_labeled_block_diag_covers_sigil() {
+    // The P0110 diagnostic span covers `:search` (sigil + ident).
+    let src = "fn m() { :search { x -> y; } }";
+    let out = parse(src);
+    let d = out
+        .diagnostics
+        .iter()
+        .find(|d| d.code.0 == "P0110")
+        .expect("a P0110");
+    assert_eq!(&src[d.span.start as usize..d.span.end as usize], ":search");
+}
+
+#[test]
+fn labeled_jump_p0110_chain_terminates() {
+    // `-> :search;` in a chain ⇒ one P0110; the `;` terminates the chain normally
+    // and the surrounding fn body keeps parsing.
+    let src = "fn m() { x -> :search; y -> ret; }";
+    assert_eq!(pcodes(src), vec!["P0110"]);
+    let f = parse_one_fn(src);
+    // Two statements survived: the jump chain and the `y -> ret;` chain.
+    assert_eq!(f.body.items.len(), 2, "chain terminated, both stmts parsed");
+    // The jump stage is an Error stage; the `;` terminated the chain.
+    let c = first_chain(&f);
+    assert!(matches!(c.stages.last().unwrap().kind, StageKind::Error(_)));
+}
+
+#[test]
+fn labeled_jump_diag_covers_sigil() {
+    let src = "fn m() { x -> :search; }";
+    let out = parse(src);
+    let d = out
+        .diagnostics
+        .iter()
+        .find(|d| d.code.0 == "P0110")
+        .expect("a P0110");
+    assert_eq!(&src[d.span.start as usize..d.span.end as usize], ":search");
+}
+
+#[test]
+fn statement_initial_colon_non_ident_is_generic_error() {
+    // A statement-initial `:` NOT followed by `Ident {` is NOT a label: keep the
+    // pre-existing generic-error behavior (P0001), never P0110.
+    let src = "fn m() { : 5 -> x; }";
+    let codes = pcodes(src);
+    assert!(
+        !codes.contains(&"P0110"),
+        "no P0110 for non-label `:`, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&"P0001"),
+        "generic error expected, got {codes:?}"
+    );
+}
+
+#[test]
+fn path_colons_after_arrow_not_a_label() {
+    // `x -> ::weird;` — a `::` path (P0109), NOT a labeled jump (no P0110). The
+    // label form requires `Colon Ident`; a second `Colon` excludes it.
+    let src = "fn m() { x -> ::weird; }";
+    let codes = pcodes(src);
+    assert!(
+        !codes.contains(&"P0110"),
+        "`::` is not a label, got {codes:?}"
+    );
+}
+
+#[test]
+fn nested_labeled_blocks_and_jump() {
+    // `:outer { :inner { -> :inner; } }` — P0110 per labeled block (×2) plus
+    // P0110 per labeled jump (×1) = three, and no panic. The headless `-> :inner;`
+    // chain is the inner block's content.
+    let src = "fn m() { :outer { :inner { -> :inner; } } }";
+    assert_eq!(pcodes(src), vec!["P0110", "P0110", "P0110"]);
+    assert_spans(src);
+}
+
+#[test]
+fn unsigiled_jump_is_plain_var_stage_w25() {
+    // W25: an un-sigiled `-> search;` is a plain name stage (variable flow), never
+    // a jump — zero diagnostics.
+    let src = "fn m() { x -> search; }";
+    no_diags(src);
+    let f = parse_one_fn(src);
+    let c = first_chain(&f);
+    match &c.stages.last().unwrap().kind {
+        StageKind::Expr(Expr {
+            kind: ExprKind::Var(_),
+            ..
+        }) => {}
+        other => panic!("expected a plain Var stage, got {other:?}"),
+    }
+}
+
 // ======================================================================
 // termination-rule matrix (W10, W11): `;`, `}`, block-final, `};`
 // ======================================================================

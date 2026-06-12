@@ -50,8 +50,13 @@ fn ops() {
         -Some(v)-> v;
         -None-> 0;
     } -> ret;
-    // P0110: a custom-labeled loop.
+    // P0110: the demoted ADR-0011 scan — an un-sigiled loop-shaped `Ident {`
+    // (arrows inside) parsed as a labeled block for recovery, hinting `:search`.
     search {
         cond -> ret;
+    }
+    // P0110: a sigiled labeled block (ADR-0012) plus a sigiled labeled jump.
+    :labeled {
+        cond -> :labeled;
     }
 }

@@ -38,6 +38,14 @@ fn out_of_core_every_p01xx() {
     // `?` operators yield exactly two P0101.
     assert_eq!(counts.get("P0106").copied(), Some(2), "P0106 ×2 (two arms)");
     assert_eq!(counts.get("P0101").copied(), Some(2), "P0101 ×2 (two `?`)");
+    // P0110 ×3 (ADR-0012): the demoted ADR-0011 scan on the un-sigiled
+    // `search { … }`, the sigiled `:labeled { … }` block, and the `-> :labeled`
+    // jump inside it.
+    assert_eq!(
+        counts.get("P0110").copied(),
+        Some(3),
+        "P0110 ×3 (scan + block + jump)"
+    );
     // No spurious bare-expression statements leaked into the fixture.
     assert!(
         !counts.contains_key("P0003"),

@@ -137,10 +137,17 @@ expression: "render_tree(&src, &out.program)"
 51:17                 head
 51:17                   Int 0 ‹0›
 52:7           -> Ret
-54:5       Stmt::Loop custom ‹search›
-54:12         Block
-55:9           Stmt::Chain
-55:9             Chain
-55:9               head
-55:9                 Var ‹cond›
-55:14               -> Ret
+55:5       Stmt::Loop custom ‹search›
+55:12         Block
+56:9           Stmt::Chain
+56:9             Chain
+56:9               head
+56:9                 Var ‹cond›
+56:14               -> Ret
+59:5       Stmt::Loop custom ‹labeled›
+59:14         Block
+60:9           Stmt::Chain
+60:9             Chain
+60:9               head
+60:9                 Var ‹cond›
+60:17               -> Error

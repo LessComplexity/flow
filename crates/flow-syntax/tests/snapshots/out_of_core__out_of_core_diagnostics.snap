@@ -20,4 +20,6 @@ P0116 1262..1263 45:20 destructuring op-block parameters (`(x, y)`) are out of F
 P0115 1355..1372 47:10 anonymous block stage (`-> { … }` with statements/tail) is out of Flow-Core (HANDOFF §4); user-guide §8.3 full-language form. Planned for Core+1
 P0106 1449..1459 50:9 pattern guard arms (`-Some(x)->`, `-[h, ...t]->`) are out of Flow-Core (HANDOFF §4); planned for Core+1 coproducts
 P0106 1471..1478 51:9 pattern guard arms (`-Some(x)->`, `-[h, ...t]->`) are out of Flow-Core (HANDOFF §4); planned for Core+1 coproducts
-P0110 1537..1543 54:5 custom loop labels are out of Flow-Core (HANDOFF §4); Flow-Core's only loop introducer is `loop`. Planned for Core+1
+P0110 1662..1668 55:5 labeled blocks are written `:search { … }` (ADR-0012) and are out of Flow-Core (HANDOFF §4); Flow-Core's only loop introducer is `loop`. Planned for Core+1
+P0110 1780..1788 59:5 labeled blocks (`:label { … }`, ADR-0012) are out of Flow-Core (HANDOFF §4); Flow-Core's only loop introducer is `loop`. Planned for Core+1
+P0110 1807..1815 60:17 labeled jumps (`-> :label`, ADR-0012) are out of Flow-Core (HANDOFF §4); Flow-Core's only back-edge jump is `-> loop`. Planned for Core+1
