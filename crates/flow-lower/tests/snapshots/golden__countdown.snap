@@ -1,0 +1,62 @@
+---
+source: crates/flow-lower/tests/golden.rs
+assertion_line: 13
+expression: dump
+---
+flowchart LR
+    subgraph f0["fn countdown"]
+        f0o0(("(io, i32)"))
+        f0o1(("ret: io"))
+        f0o2(("io"))
+        f0o3(("i32"))
+        f0o4(("(i32, io)"))
+        f0o5(("⟲ (i32, io)"))
+        f0o6(("n: i32"))
+        f0o7(("io"))
+        f0o8(("(io, i32)"))
+        f0o9(("io"))
+        f0o10(("0: i32"))
+        f0o11(("(i32, i32)"))
+        f0o12(("bool"))
+        f0o13(("1: i32"))
+        f0o14(("(i32, i32)"))
+        f0o15(("n: i32"))
+        f0o16(("(i32, io)"))
+        f0o17(("((i32, io), bool)"))
+        f0o18(("(io, bool)"))
+        f0o0 -- "Proj 0" --> f0o2
+        f0o0 -- "Proj 1" --> f0o3
+        f0o3 -- "Pair 0/2" --> f0o4
+        f0o2 -- "Pair 1/2" --> f0o4
+        f0o4 -- "LoopEnter" --> f0o5
+        f0o5 -- "Proj 0" --> f0o6
+        f0o5 -- "Proj 1" --> f0o7
+        f0o7 -- "Pair 0/2" --> f0o8
+        f0o6 -- "Pair 1/2" --> f0o8
+        f0o8 -- "Print" --> f0o9
+        f0o6 -- "Pair 0/2" --> f0o11
+        f0o10 -- "Pair 1/2" --> f0o11
+        f0o11 -- "Gt" --> f0o12
+        f0o6 -- "Pair 0/2" --> f0o14
+        f0o13 -- "Pair 1/2" --> f0o14
+        f0o14 -- "Sub" --> f0o15
+        f0o15 -- "Pair 0/2" --> f0o16
+        f0o9 -- "Pair 1/2" --> f0o16
+        f0o16 -- "Pair 0/2" --> f0o17
+        f0o12 -- "Pair 1/2" --> f0o17
+        f0o17 -- "LoopBack ↩" --> f0o5
+        f0o9 -- "Pair 0/2" --> f0o18
+        f0o12 -- "Pair 1/2" --> f0o18
+        f0o18 -- "LoopExit" --> f0o1
+    end
+    subgraph f1["fn main"]
+        f1o0(("io"))
+        f1o1(("ret: io"))
+        f1o2(("5: i32"))
+        f1o3(("(io, i32)"))
+        f1o4(("io"))
+        f1o0 -- "Pair 0/2" --> f1o3
+        f1o2 -- "Pair 1/2" --> f1o3
+        f1o3 -- "Call" --> f1o4
+        f1o4 -- "Output" --> f1o1
+    end

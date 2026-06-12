@@ -2,3 +2,16 @@
 name = "flow-lower"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+flow-syntax = { path = "../flow-syntax" }
+flow-ir = { path = "../flow-ir" }
+
+[dev-dependencies]
+insta = "1.47.2"
+proptest = "1.11.0"
+criterion = "0.5.1"
+
+[[bench]]
+name = "lower_scale"
+harness = false

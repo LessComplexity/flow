@@ -1,0 +1,42 @@
+---
+source: crates/flow-lower/tests/golden.rs
+expression: dump
+---
+flowchart LR
+    subgraph f0["fn square"]
+        f0o0(("i32"))
+        f0o1(("ret: i32"))
+        f0o2(("(i32, i32)"))
+        f0o0 -- "Pair 0/2" --> f0o2
+        f0o0 -- "Pair 1/2" --> f0o2
+        f0o2 -- "Mul" --> f0o1
+    end
+    subgraph f1["fn double"]
+        f1o0(("i32"))
+        f1o1(("ret: i32"))
+        f1o2(("2: i32"))
+        f1o3(("(i32, i32)"))
+        f1o0 -- "Pair 0/2" --> f1o3
+        f1o2 -- "Pair 1/2" --> f1o3
+        f1o3 -- "Mul" --> f1o1
+    end
+    subgraph f2["fn main"]
+        f2o0(("io"))
+        f2o1(("ret: io"))
+        f2o2(("6: i32"))
+        f2o3(("sq: i32"))
+        f2o4(("db: i32"))
+        f2o5(("(io, i32)"))
+        f2o6(("io"))
+        f2o7(("(io, i32)"))
+        f2o8(("io"))
+        f2o2 -- "Call" --> f2o3
+        f2o2 -- "Call" --> f2o4
+        f2o0 -- "Pair 0/2" --> f2o5
+        f2o3 -- "Pair 1/2" --> f2o5
+        f2o5 -- "Print" --> f2o6
+        f2o6 -- "Pair 0/2" --> f2o7
+        f2o4 -- "Pair 1/2" --> f2o7
+        f2o7 -- "Print" --> f2o8
+        f2o8 -- "Output" --> f2o1
+    end
