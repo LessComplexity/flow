@@ -3,6 +3,33 @@
 (Not yet designed — the binding DESIGN is written in the session that first codes this
 component, per HANDOFF §7.1.5. This file currently holds **pre-design notes only**.)
 
+## §0.1 Pre-design pins from the IR increment (recorded Session 04, 2026-06-12)
+
+These five rules were pinned during the flow-ir design review (ADR-0013; ir/DESIGN §7–§10)
+because leaving them "lowering's choice" would let two lower authors produce different
+graphs for the same program. They are obligations on lower, decided already:
+
+1. **Effect signature synthesis (law, ADR-0013):** a function containing `print` (or
+   calling an effectful fn) declares token-threaded: surface `A → B` ⇒ IR
+   `(IoToken × A) → (IoToken × B)`, degenerating to `IoToken → IoToken`; surface
+   `fn main()` declares as `main : IoToken → IoToken`, `input()` is the seed token, and
+   the final token is written to Return. Tokens never die (I4b); loop-carried tokens exit
+   via every `LoopExit` of that merge.
+2. **Canonical ret-write (ir/DESIGN §10):** the producing primitive targets Return via
+   `Dest::Ret`; `output()` only for bare `x -> ret` / `x -> ret.k` of pre-existing
+   objects. Never `Fresh` + `output()` where `Dest::Ret` suffices.
+3. **Negative literals fold at lower time:** `Unary(Neg, <literal>)` becomes one negated
+   `Constant` object; `Neg` morphisms are emitted only for non-constant operands (the
+   IEEE `fneg` case ADR-0013 keeps `Neg` for).
+4. **Value-match guards lower as a right-folded Phi chain:** for arms `-k_i-> e_i` with
+   default `-_-> e_d`: `cond_i = Eq(scrutinee, k_i)`; chain = `phi(e_1, phi(e_2, …
+   phi(e_n, e_d, cond_n) …, cond_2), cond_1)` — arm order preserved, default innermost.
+   (3-way golden pinned in ir/DESIGN §16.)
+5. **Loop exit values read the merge-state view** of the iteration in which the guard
+   fails (Proj of the LoopMerge or pre-update derivations), never the recomputed next
+   state; back edges carry the recomputed state. `sum_to_n(10)` exits 55 — the contract
+   test. Both routes share the loop guard's single `cond` object in the canonical form.
+
 ## §0 Pre-design notes: parse-tree obligations (recorded Session 03, 2026-06-12)
 
 Provenance: extracted from `category-ir.md` §3/§4 (+§2/§5/§10/§11) and `ERRATA.md` by an
