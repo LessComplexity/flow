@@ -209,6 +209,24 @@ fn non_core_singleton_tuple_ty() {
 }
 
 #[test]
+fn non_core_zero_field_struct_ty() {
+    // TY-1 (layer 1): a zero-field `Ty::Struct` is product `1` whose literal mints
+    // an in-edge-less Temporary — it seals but fails validate (BadInEdges). Intake
+    // rejects it as NonCoreType (mirrors Tuple arity ≥ 2 / Array size ≥ 1), making
+    // it unconstructible anywhere a ty enters the builder. Asserted at the declare
+    // entry point (input ty here; the output path shares `intake_ty`).
+    let mut b = IrBuilder::new();
+    let bad = Ty::Struct {
+        name: "Empty".into(),
+        fields: vec![],
+    };
+    let e = b
+        .declare(FuncKind::Named, "m", bad, Ty::Unit, L)
+        .unwrap_err();
+    assert_eq!(e, IrError::NonCoreType);
+}
+
+#[test]
 fn ty_too_deep() {
     let mut t = Ty::i32();
     for _ in 0..MAX_TY_DEPTH + 2 {
@@ -272,6 +290,25 @@ fn arity_mismatch_pack_struct() {
     let x = fb.input();
     let e = fb.pack_struct(sty, &[x], Dest::Fresh(None), L).unwrap_err();
     assert_eq!(e, IrError::ArityMismatch);
+}
+
+#[test]
+fn empty_product_pack_struct() {
+    // TY-1 (layer 2): zero components → EmptyProduct, mirroring `pack`. This is the
+    // defense-in-depth guard for the in-edge-less-Temporary hole. The EmptyProduct
+    // check precedes both the arity check and `intake_ty`, so it fires for ANY zero
+    // component list regardless of the named struct's declared field count — here
+    // the struct ty even has fields (a genuine arity mismatch), yet the empty
+    // component list is reported first as EmptyProduct. (A zero-FIELD struct ty is
+    // already unconstructible via layer 1's intake; this guard is independent of it.)
+    let sty = Ty::Struct {
+        name: "P".into(),
+        fields: vec![("a".into(), Ty::i32())],
+    };
+    let (mut b, f) = one_fn(Ty::i32(), Ty::i32());
+    let mut fb = b.build_fn(f).unwrap();
+    let e = fb.pack_struct(sty, &[], Dest::Fresh(None), L).unwrap_err();
+    assert_eq!(e, IrError::EmptyProduct);
 }
 
 #[test]

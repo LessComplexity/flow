@@ -1,7 +1,7 @@
 # Component: ir
 
 Status: tested
-Last updated: 2026-06-12 · Session 04
+Last updated: 2026-06-12 · Session 05
 Spec references: category-ir.md §3 (IR data structures) + §5 (Graph representation) + CHANGES.md §1 (structural fixes: single-source/single-target morphisms, first-class Phi, loops as trace + LoopMerge, back-edges as real adjacency edges) + **ADR-0013 / ERRATA LC-4** (dataflow-is-edges realization). Supporting: architecture.md §3. Authoritative design: DESIGN.md (this folder) — 3-way adversarially reviewed, then implementation 2-way reviewed + soundness-attacked + fix round, Session 04.
 Depends on: (none — defines its own `SourceLoc`, D8) Depended on by: lower, check, interp, rewrite, backend-llvm, backend-cuda, backend-verilog, cli
 
@@ -21,6 +21,11 @@ Depends on: (none — defines its own `SourceLoc`, D8) Depended on by: lower, ch
 - Well-formedness ≠ unique meaning: multiple unconditional full-value Return writers seal clean; exclusivity is flow-check/interp's obligation (DESIGN §17).
 - Deliberately out (P4/later): JSON serialization (§5.3), mutation/removal API (CSE/DCE need it; additive rewrites fit v1), bifunctor-image tagging (§9.5 — recomputable from adjacency).
 - `ValueTyMismatch` is declared but unreachable via the public API (constant() derives ty from value) — kept as defense for future direct-value APIs, documented by test.
+- **Session 05 fix (lower design-review finding TY-1):** zero-field `Struct` tys sealed
+  clean but failed `validate()` with `BadInEdges` (a 0-component `pack_struct` minted an
+  in-edge-less Temporary), breaching the headline "seal Ok ⇒ validate empty" property.
+  Fixed two-layer: I9 intake now rejects zero-field `Struct` (`NonCoreType`, mirroring
+  Tuple ≥2 / Array ≥1) and `pack_struct(&[])` is `EmptyProduct`; +4 regression tests.
 
 ## Invariants enforced (and where in code)
 
@@ -28,7 +33,7 @@ DESIGN §9 ledger I1–I12 + I-RET + I4b + I9s. Mapping: I1/I11 type-level (`Mor
 
 ## Test coverage (golden / property / differential / skipped+why)
 
-87 tests green (`cargo test -p flow-ir`): 46 unit (rejection matrix — every reachable `IrError` variant driven + ty predicates) · 16 builder_rejections integration (reviewer-named holes: Eq-on-Bool vs Lt-on-Bool, Str-in-product, SingletonTuple, RetNotProduct, LoopBackOutsideScc-with-real-guard, TokenInPhi nested, TokenNotEscaping, TokenDropped, StructNameConflict, oversize-array slots, cross-builder UB pin) · 13 golden Mermaid (the §16 graphs (a)–(i) incl. §4.5 two-route loop B=U and B≠U, fanout no-join vs join, print-inside-loop token-U, 3-way value-guard Phi chain; every snapshot hand-verified + linted; 2 lint-regression goldens) · 4 proptests (headline interleaved valid+invalid seal⇒validate-empty @256, positive generator @128, Str-bearing-ty property, determinism byte-identical dumps + identical topo/sccs) · 8 algos (SCC contents, cycle-breakers, topo ordering incl. body<LoopExit<consumers, nested multi-merge, 100k-chain no stack overflow — J1). Differential: n/a until interp (P3). Nothing skipped.
+91 tests green (`cargo test -p flow-ir`; 87 from Session 04 + 4 Session-05 empty-struct regressions split between unit and builder_rejections): 46 unit (rejection matrix — every reachable `IrError` variant driven + ty predicates) · 16 builder_rejections integration (reviewer-named holes: Eq-on-Bool vs Lt-on-Bool, Str-in-product, SingletonTuple, RetNotProduct, LoopBackOutsideScc-with-real-guard, TokenInPhi nested, TokenNotEscaping, TokenDropped, StructNameConflict, oversize-array slots, cross-builder UB pin) · 13 golden Mermaid (the §16 graphs (a)–(i) incl. §4.5 two-route loop B=U and B≠U, fanout no-join vs join, print-inside-loop token-U, 3-way value-guard Phi chain; every snapshot hand-verified + linted; 2 lint-regression goldens) · 4 proptests (headline interleaved valid+invalid seal⇒validate-empty @256, positive generator @128, Str-bearing-ty property, determinism byte-identical dumps + identical topo/sccs) · 8 algos (SCC contents, cycle-breakers, topo ordering incl. body<LoopExit<consumers, nested multi-merge, 100k-chain no stack overflow — J1). Differential: n/a until interp (P3). Nothing skipped.
 
 ## Performance notes (numbers + bench name + date; regressions flagged)
 

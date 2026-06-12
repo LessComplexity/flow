@@ -427,6 +427,70 @@ fn cross_builder_funcid_mixing_is_unsupported_ub() {
     assert!(validate(&ir).is_empty());
 }
 
+/// TY-1: a zero-field `Ty::Struct` is product `1` whose literal mints a Temporary
+/// with ZERO in-edges — `seal` returned Ok while `validate` flagged `BadInEdges`,
+/// breaking the headline "seal Ok ⇒ validate empty" property (DESIGN §16 item 3).
+///
+/// Layer 1 (intake / the I9 path): a zero-field struct ty is `NonCoreType` wherever
+/// a ty enters the builder, so it is unconstructible at the source. We assert this
+/// from BOTH `declare` entry points (input and output ty), since both flow through
+/// the same `intake_ty`.
+#[test]
+fn zero_field_struct_ty_rejected_at_intake() {
+    let empty = Ty::Struct {
+        name: "Empty".into(),
+        fields: vec![],
+    };
+    // As a declared INPUT ty.
+    let mut b = IrBuilder::new();
+    assert_eq!(
+        b.declare(FuncKind::Named, "a", empty.clone(), Ty::Unit, L),
+        Err(IrError::NonCoreType)
+    );
+    // As a declared OUTPUT ty.
+    let mut b = IrBuilder::new();
+    assert_eq!(
+        b.declare(FuncKind::Named, "b", Ty::Unit, empty.clone(), L),
+        Err(IrError::NonCoreType)
+    );
+    // Nested inside a tuple (the iterative intake walk reaches it).
+    let mut b = IrBuilder::new();
+    assert_eq!(
+        b.declare(
+            FuncKind::Named,
+            "c",
+            Ty::Tuple(vec![Ty::i32(), empty]),
+            Ty::Unit,
+            L
+        ),
+        Err(IrError::NonCoreType)
+    );
+}
+
+/// TY-1 layer 2 (defense in depth): `pack_struct` with zero components is
+/// `EmptyProduct`, mirroring `pack`. Layer 1 makes a zero-FIELD struct ty
+/// unconstructible, so a well-typed `(zero-field ty, &[])` pair is unreachable
+/// through intake; this guard instead fires on the empty COMPONENT list directly,
+/// independent of the named struct's field count — so it is reachable and tested
+/// with a fielded struct ty (the empty component list is reported before the
+/// arity mismatch).
+#[test]
+fn pack_struct_zero_components_is_empty_product() {
+    let mut b = IrBuilder::new();
+    let f = b
+        .declare(FuncKind::Named, "m", Ty::i32(), Ty::i32(), L)
+        .unwrap();
+    let mut fb = b.build_fn(f).unwrap();
+    let sty = Ty::Struct {
+        name: "P".into(),
+        fields: vec![("a".into(), Ty::i32())],
+    };
+    assert_eq!(
+        fb.pack_struct(sty, &[], Dest::Fresh(None), L),
+        Err(IrError::EmptyProduct)
+    );
+}
+
 #[test]
 fn token_double_consumption_is_unconstructible() {
     // Reusing a token in two independent prints → the second makes the token

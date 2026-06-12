@@ -360,6 +360,14 @@ impl IrBuilder {
                     }
                 }
                 Ty::Struct { fields, .. } => {
+                    // Field count ≥ 1 (mirrors Tuple arity ≥ 2 / Array size ≥ 1).
+                    // A zero-field Struct is a product `1` whose literal mints a
+                    // Temporary with zero in-edges — it seals but fails validate
+                    // (BadInEdges). Reject it at intake so it is unconstructible
+                    // anywhere (declare, pack_struct, constants; review TY-1).
+                    if fields.is_empty() {
+                        return Err(IrError::NonCoreType);
+                    }
                     for (_, inner) in fields {
                         stack.push(inner);
                     }
@@ -1202,6 +1210,15 @@ impl FnBuilder<'_> {
             Ty::Struct { fields, .. } => fields.clone(),
             _ => return Err(IrError::NotAProduct),
         };
+        // Defense in depth (mirrors `pack`): a zero-component struct literal would
+        // mint a Temporary with zero in-edges. `intake_ty` already rejects a
+        // zero-field `Ty::Struct` as `NonCoreType` (so this is unreachable via a
+        // well-typed `(ty, components)` pair where the arities agree), but the
+        // `EmptyProduct` guard makes the empty-product rejection local and explicit
+        // here too, independent of the arity-vs-ty agreement (review TY-1).
+        if components.is_empty() {
+            return Err(IrError::EmptyProduct);
+        }
         if components.len() != fields.len() {
             return Err(IrError::ArityMismatch);
         }
