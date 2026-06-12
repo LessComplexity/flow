@@ -1,45 +1,45 @@
 # Next Session
 
-Written: 2026-06-12 · end of Session 03 · by: Claude (Fable 5 orchestrator + Opus 4.8 workflow agents)
+Written: 2026-06-12 · end of Session 04 · by: Claude (Fable 5 orchestrator + Opus 4.8 workflow agents)
 
 ## Where things stand (≤5 lines)
 
-**P1 Frontend is complete.** `flow-syntax` lexes *and parses* the full Flow-Core surface: two-tier grammar per ADR-0005, thin spanned parse tree (DESIGN §15; `Expr::Hole` for operator shorthand), error recovery + P0001–P0012 syntax diagnostics and P0101–P0116 out-of-Core rejections (C8: `full_surface.flow` rejects precisely, zero L-codes). **ADR-0011** (Core loops are `loop` only) was amended in-session by **ADR-0012, decided live with Sapir**: labeled blocks are `:label { … }`, jumps `-> :label;` (prefix sigil both ends, one-token lookahead, enclosing-targets-only for E1/Verilog reducibility); un-sigiled `Ident {` is now *always* a struct literal; spec §3.5/§8.5 patched (LC-3). All six examples produce golden parse trees with zero diagnostics, independently re-derived node-by-node; design had 3 adversarial reviews, implementation 2 + a fix round (a J1 stack-overflow on unguarded type recursion was caught and fixed). Criterion bench recorded. The IR does not exist yet.
+**flow-ir is complete and tested** (P2 first half). **ADR-0013 + ERRATA LC-4** resolve the spec's internal dataflow conflict (Pair-metadata/`rhs_const` vs the adjacency-only analyses) in favor of **edges-only**: per-slot `Pair{slot,arity}`, constants-as-objects, loops as inline SCC-visible cycles (no materialized `Trace`), IO as a **linear world token** with three pinned laws (signature synthesis `main : IoToken → IoToken`; token-sink I4b; token-in⇒token-out for loops). The sealed builder + an independent `validate()` enforce the I-ledger (`ir/DESIGN.md` §9); design got 3 adversarial reviews (26 findings applied), implementation got 2 reviews + a soundness attack (3 real breaches found and fixed with regressions: Str-param seal/validate gap, I5 route-vs-state SCC hole, u64→u32 arity truncation). `lower/DESIGN.md` §0.1 now holds **5 pinned lowering obligations** the IR golden tests already encode. The interpreter still does not exist.
 
 ## Test state: ALL GREEN
 
-`cargo test --workspace` green; `flow-syntax` 174 tests (140 lib [104 parser units · 36 lexer] · 6 golden token streams · 6 golden parse trees · 2 lex-error + 3 parse-error + 6 out-of-Core fixture tests · 2 full-surface · 3 coverage · 3+3 proptests @2048). `cargo fmt --check` and `clippy -p flow-syntax --all-targets` clean. Bench: parse 1.07–7.45 µs per example; 100× synthetic scales linearly (740 µs).
+`cargo test --workspace`: 32 targets all ok, 0 failed. flow-ir 87 tests (46 unit rejection-matrix · 16 builder_rejections · 13 golden Mermaid, every snap hand-verified + linted · 4 proptests incl. headline "seal Ok ⇒ validate empty" @256 · 8 algos incl. 100k-chain J1 test). flow-syntax 174 unchanged. `cargo fmt --check` + `clippy -p flow-ir --all-targets` clean. Bench `ir_scale` recorded (chain 100k: build+seal 65ms / dump 69ms / sccs 7.9ms — near-linear).
 
 ## Do next (ordered, smallest-first)
 
-1. **P2 begins: `flow-ir` design.** Read category-ir.md §2–§3, §5 + CHANGES §1 (why the invariants exist) and write `docs/components/ir/DESIGN.md`: arena/slotmap graph per §3 (objects/morphisms, every morphism exactly one source + one target, Pair-then-primitive, first-class `Phi`, `Trace`+`LoopMerge` with real back-edges visible to SCC), **builder API that makes ill-formed graphs unconstructible** (HANDOFF §5 item 3), Mermaid dump (lint rules: quote special-char labels, no mixed arrow styles — past failure modes, HANDOFF §5 item 6).
-2. Implement `flow-ir` per design: builder-enforced invariants, property test "no ill-formed graph constructible through the public API", golden Mermaid dumps (lint-checked in tests).
-3. If time remains: start the binding `docs/components/lower/DESIGN.md` — parse tree → IR per category-ir §4. **The grounds are laid: `lower/DESIGN.md` §0 already holds the 27 parse-tree-obligation extract** (recorded Session 03, non-binding; re-verify against spec). Key items: guard arms → Phi *or* Trace routing (§4.4 vs §4.5 — do not Phi loop-guard arms); chains stay flat; `Hole` = piped left operand; map/fold = Pair-then-primitive with the block as operator metadata.
+1. **P2 second half: `flow-lower` design.** Write the real `docs/components/lower/DESIGN.md`: parse tree (`flow-syntax::ast`, syntax DESIGN §15) → `flow-ir` builder calls per category-ir §4 + the §0 obligations extract (re-verify, it's non-binding) + **§0.1's five pinned rules** (token synthesis; canonical ret-write `Dest::Ret` vs `output()`; negative-literal folding; right-folded value-guard Phi chains; loop exit reads merge-state view — `sum_to_n(10)` exits **55**). Key open design work: symbol table / `mut`-SSA discipline (each update = fresh object; back edge routes to merge), guard-arm classification (Phi §4.4 vs Trace routing §4.5 — an arm reaching `-> loop;` is routing, never Phi), loop-state packing (multiple `mut` vars → tuple U), Hole substitution (piped value = leftmost left operand), L-code diagnostics for lower-stage rejections.
+2. **Implement `flow-lower`** with golden IR dumps for all six examples (the 13 ir goldens show the expected shapes — e.g. `golden_mermaid` (d′) is sum_to_n's loop) + lex→parse→lower round-trip tests. The interpreter (P3) is next after that; differential tests wait for it.
+3. If time remains: start `check`/`interp` DESIGN reading (interp pins float print formatting + multi-ret-writer exclusivity — both parked for it).
 
 ## Open questions for Sapir
 
-- ~~ADR-0011 veto window~~ — superseded: **ADR-0012 was decided with Sapir this session** (labeled-block sigil). One follow-up parked inside it: break-to-*after*-a-loop has no surface (`-> :outer;` restarts; exits are `-> ret;`) — the Core+1 ADR that lifts P0110 must decide or re-defer.
-- **P0115 scope reading:** anonymous block stages (`-> { … } -> r`, user-guide §8.3; also the §5.2 `seq` branch wrappers) are rejected as out-of-Core under HANDOFF §4's default-reject. If you want them in Core, say so — it's one P-code lift, but it also reopens "what is a Core `seq` branch".
-- **W15:** §3.6 has no unary row; unary `-`/`!` bound tighter than `*`, looser than postfix (standard; `x * -1` ✓). Flag only if you want a different binding.
+- **ADR-0013 review** (accepted autonomously, revisable): the IR realization decisions — esp. (a) IO as linear world-token threading (vs a looser effect ordering), (b) trap semantics for div/mod-by-zero + OOB `Index` until Core+1 coproducts, (c) `Operation::Trace` not materialized. All argued in the ADR + `ir/DESIGN.md`; nothing downstream is built on them yet, so now is the cheap moment to veto.
+- **Cross-builder id mixing is UB with no defense** (DESIGN §10, pinned by test): slotmap keys collide across `IrBuilder` instances; a foreign `FuncId` can seal+validate clean against the wrong callee. Fine while flow-lower is the only constructor — say the word if you want the builder-nonce ADR now rather than later.
+- Carried over: P0115 anonymous-block stages; W15 unary binding (flag only if you want different).
 
 ## Gotchas / warnings (things that will waste the next session's time)
 
-- **Golden tests (token AND tree) read `examples/*.flow` live at runtime.** Run `git status --porcelain examples/` before trusting/updating the golden suites.
-- **Snapshot discipline unchanged:** `cargo insta review`; never accept without reading the `.snap` against the source — wrong-but-stable is the failure mode. The six tree snaps were re-derived independently this session; keep that bar.
-- **Don't re-litigate the ledgers:** lexer W1–W9 (DESIGN §6), parser W10–W25 (DESIGN §17). Each was decided once, reviewed adversarially. In particular: `Ident {` statement-initial is ALWAYS a struct literal (ADR-0012); the four-token scan survives only as the "labels are written `:name { … }`" error heuristic; `-> search;` un-sigiled is a variable flow, never a jump (W25).
-- **J1 is load-bearing:** the shared depth counter (limit 128) covers expression, block, *and type* recursion. Any new recursive production in `parser.rs` must call `enter()`/`leave()` — that omission was this session's only blocker-grade defect.
-- **`Expr::Hole` invariant:** exactly one `Hole`, leftmost leaf, only under `StageKind::OpShorthand` — lowering will rely on it.
-- Parse-tree render conventions: grouped exprs' spans include their parens; binary ops/member fields render bare (`Binary +`, `Member .r`) — contractual per DESIGN §20, don't "fix" them.
-- `verilator`/`nvcc` still not installed; `clang` is (backend phases only).
-- LC-1 (`?` in fanout) still parked for the Core+1 error-handling ADR; float print formatting still unpinned (decide in interp's DESIGN). `?` is parsed as expression postfix (W23) — revisit only in that ADR.
-- `editors/nvim/`: **updated for ADR-0012** — sigiled labels highlight on both ends; the known-label-narrowing buffer scan is deleted (the sigil killed the ambiguity it worked around); un-sigiled `ident {` is no longer painted as a label. Verified by headless-nvim position checks. No further plugin work pending.
+- **Don't re-litigate the ledgers:** syntax W1–W25, ir **D1–D10** (`ir/DESIGN.md` §18) + the I-invariant ledger (§9). In particular: loops are ALWAYS two routes (even `B = U`); `LoopBack` fires on **true**, `LoopExit` on **false**; exit reads the **merge-state view** (55, not 54/65); `Output` only for bare pre-existing `x -> ret`.
+- **I5 checks the carried STATE's SCC membership, not the route's** — the route is always pulled into the SCC by its cond slot (review SND-1). If you touch `check_loops`, keep builder and validate copies in lock-step (they are deliberately independent code).
+- **I9/I10 intake runs on synthesized tys too** (pack/binop/routes) — adding a builder primitive without the intake call reopens the Str-smuggling hole (review L2-04/F1).
+- **Token rules are load-bearing for lower:** every print-bearing fn declares token-threaded (`main : IoToken → IoToken`), final token → Return; loop-carried tokens must exit via every `LoopExit` (`TokenNotEscaping` otherwise).
+- **Snapshot discipline unchanged** (insta; read every .snap against the DESIGN — wrong-but-stable is the failure mode). Golden tests read `examples/*.flow` live — `git status examples/` before trusting (clean as of this commit).
+- **J1 stands crate-wide:** all recursion in flow-ir is iterative/depth-guarded (Tarjan explicit stack, Ty walks bounded). New graph algorithms must follow; the 100k-chain test will catch you.
+- A legal "two merges in one SCC" graph (Verilog-reject shape) cannot seed the inner loop from the outer merge (I5 rejects) — fuse via cross-feeding next-states from external seeds (see `tests/algos.rs` nested test).
+- `verilator`/`nvcc` still not installed; `clang` is. LC-1 (`?` in fanout) still parked for the Core+1 error-handling ADR.
 
 ## Commands (build/test/bench invocations that currently work)
 
 ```sh
-cargo test --workspace                          # green — 174 flow-syntax tests + empty crates
-cargo test -p flow-syntax                       # full syntax suite (proptests ~18s)
-cargo insta review                              # review pending snapshot changes
-cargo bench -p flow-syntax --bench lex_parse    # criterion lex+parse bench
+cargo test --workspace                          # green — 174 flow-syntax + 87 flow-ir + empty crates
+cargo test -p flow-ir                           # full IR suite (<2s; proptests bounded)
+cargo insta review                              # review pending snapshot changes (none pending)
+cargo bench -p flow-ir --bench ir_scale         # criterion build/seal+dump+sccs bench (chains + grids)
+cargo bench -p flow-syntax --bench lex_parse    # lex+parse bench (unchanged)
 cargo run -p flow-cli                           # still the not-implemented stub, exits 1
 ```
