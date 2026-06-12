@@ -1,0 +1,32 @@
+---
+source: crates/flow-ir/tests/golden_mermaid.rs
+expression: dump
+---
+flowchart LR
+    subgraph f0["fn count"]
+        f0o0(("i32"))
+        f0o1(("ret: i32"))
+        f0o2(("0: i32"))
+        f0o3(("⟲ i32"))
+        f0o4(("10: i32"))
+        f0o5(("(i32, i32)"))
+        f0o6(("cond: bool"))
+        f0o7(("1: i32"))
+        f0o8(("(i32, i32)"))
+        f0o9(("inext: i32"))
+        f0o10(("(i32, bool)"))
+        f0o11(("(i32, bool)"))
+        f0o2 -- "LoopEnter" --> f0o3
+        f0o3 -- "Pair 0/2" --> f0o5
+        f0o4 -- "Pair 1/2" --> f0o5
+        f0o5 -- "Lt" --> f0o6
+        f0o3 -- "Pair 0/2" --> f0o8
+        f0o7 -- "Pair 1/2" --> f0o8
+        f0o8 -- "Add" --> f0o9
+        f0o9 -- "Pair 0/2" --> f0o10
+        f0o6 -- "Pair 1/2" --> f0o10
+        f0o10 -- "LoopBack ↩" --> f0o3
+        f0o3 -- "Pair 0/2" --> f0o11
+        f0o6 -- "Pair 1/2" --> f0o11
+        f0o11 -- "LoopExit" --> f0o1
+    end

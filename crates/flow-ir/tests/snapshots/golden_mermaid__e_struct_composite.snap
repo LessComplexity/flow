@@ -1,0 +1,15 @@
+---
+source: crates/flow-ir/tests/golden_mermaid.rs
+expression: dump
+---
+flowchart LR
+    subgraph f0["fn mk_point"]
+        f0o0(("(f32, f32)"))
+        f0o1(("ret: Point"))
+        f0o2(("x: f32"))
+        f0o3(("y: f32"))
+        f0o0 -- "Proj 0" --> f0o2
+        f0o0 -- "Proj 1" --> f0o3
+        f0o2 -- "Pair 0/2" --> f0o1
+        f0o3 -- "Pair 1/2" --> f0o1
+    end

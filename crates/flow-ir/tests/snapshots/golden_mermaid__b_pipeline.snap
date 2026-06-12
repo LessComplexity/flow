@@ -1,0 +1,26 @@
+---
+source: crates/flow-ir/tests/golden_mermaid.rs
+expression: dump
+---
+flowchart LR
+    subgraph f0["fn pipe"]
+        f0o0(("i32"))
+        f0o1(("ret: i32"))
+        f0o2(("2: i32"))
+        f0o3(("(i32, i32)"))
+        f0o4(("i32"))
+        f0o5(("5: i32"))
+        f0o6(("(i32, i32)"))
+        f0o7(("i32"))
+        f0o8(("3: i32"))
+        f0o9(("(i32, i32)"))
+        f0o0 -- "Pair 0/2" --> f0o3
+        f0o2 -- "Pair 1/2" --> f0o3
+        f0o3 -- "Mul" --> f0o4
+        f0o4 -- "Pair 0/2" --> f0o6
+        f0o5 -- "Pair 1/2" --> f0o6
+        f0o6 -- "Add" --> f0o7
+        f0o7 -- "Pair 0/2" --> f0o9
+        f0o8 -- "Pair 1/2" --> f0o9
+        f0o9 -- "Mul" --> f0o1
+    end
