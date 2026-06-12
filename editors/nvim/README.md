@@ -43,17 +43,19 @@ Design highlights:
   and sinks (`-> nr;`, `-> total_r;`) have no trailing `->`, so this rule does
   *not* fire on them. True call-vs-binding resolution arrives with LSP semantic
   tokens (ADR-0008).
-- **`ret`** links to `Special` (the graph sink); loop-label declarations
-  (`outer {`, `inner {`, …) and `-> label;` jump targets link to `Label`.
-  A jump target `-> outer;` and a terminal binding `-> out;` are lexically
-  identical, so the syntax file **scans the buffer for label declarations**
-  (lowercase-initial identifiers before `{`, excluding the `loop` keyword and
-  primitive return types) and restricts the jump match to that exact set. Only
-  declared labels become `Label`; terminal bindings/sinks (`-> out;`,
-  `-> diff;`, `-> nr;`, `-> total;`) are **not** declared labels and stay
-  unhighlighted. The back-edge `-> loop;` stays a keyword and `-> ret;` stays
-  the `ret` sink. This is a single-buffer lexical heuristic; cross-file and
-  true target resolution arrive with LSP semantic tokens (ADR-0008).
+- **`ret`** links to `Special` (the graph sink); **labeled blocks and jumps**
+  (ADR-0012) link to `Label`. Labels carry a prefix `:` sigil on both ends —
+  declaration `:outer { … }`, jump `-> :outer;` — so both forms are
+  self-identifying by regex alone: a terminal binding `-> out;` has no sigil
+  and stays unhighlighted, and the whole `:ident` (sigil included) is the
+  Label. The buffer-scanning "known-label narrowing" hack this plugin used to
+  need (un-sigiled jumps were lexically identical to bindings) is gone — the
+  sigil killed the ambiguity it worked around. Un-sigiled `outer {` is no
+  longer a label form (the compiler reads statement-initial `Ident {` as a
+  struct literal and hints at the sigiled spelling). The back-edge `-> loop;`
+  stays a keyword and `-> ret;` stays the `ret` sink. Labels are Core+1
+  surface (rejected with P0110 today) but are the decided spelling, exhibited
+  by the LC-3-patched spec.
 - **`category`** links to `Error` — it is reserved-and-rejected under ADR-0006
   (errata E5: the type keyword is `type`). The editor teaches E5 by flagging it.
 

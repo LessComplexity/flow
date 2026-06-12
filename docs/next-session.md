@@ -32,7 +32,7 @@ Written: 2026-06-12 · end of Session 03 · by: Claude (Fable 5 orchestrator + O
 - Parse-tree render conventions: grouped exprs' spans include their parens; binary ops/member fields render bare (`Binary +`, `Member .r`) — contractual per DESIGN §20, don't "fix" them.
 - `verilator`/`nvcc` still not installed; `clang` is (backend phases only).
 - LC-1 (`?` in fanout) still parked for the Core+1 error-handling ADR; float print formatting still unpinned (decide in interp's DESIGN). `?` is parsed as expression postfix (W23) — revisit only in that ADR.
-- `editors/nvim/`: ADR-0012 added the `:label`/`-> :label` surface (exhibited in the patched user-guide, Core+1 in the compiler). The plugin is best-effort/non-authoritative — a one-line label-highlight rule is optional, not required; nothing else changed lexically.
+- `editors/nvim/`: **updated for ADR-0012** — sigiled labels highlight on both ends; the known-label-narrowing buffer scan is deleted (the sigil killed the ambiguity it worked around); un-sigiled `ident {` is no longer painted as a label. Verified by headless-nvim position checks. No further plugin work pending.
 
 ## Commands (build/test/bench invocations that currently work)
 

@@ -2,7 +2,9 @@
 " Language:    Flow (dataflow language — flow-lang Flow-Core subset, v0.3)
 " Maintainer:  Flow project (editors/nvim)
 " Reference:   docs/spec/user-guide.md §3 (as patched: E4 statement rule,
-"              E5 `type` keyword), HANDOFF.md §4.1 (Flow-Core scope).
+"              E5 `type` keyword, LC-3 sigiled labels), HANDOFF.md §4.1
+"              (Flow-Core scope), ADR-0012 (labeled blocks `:label { … }`,
+"              jumps `-> :label;`).
 "
 " Regex-based highlighting. A tree-sitter grammar is deferred until it can be
 " derived from the real flow-syntax parser (ADR-0008).
@@ -99,77 +101,39 @@ syn keyword flowReserved category
 syn match flowFnName "\%(\<fn\>\s\+\)\@<=\h\w*"
 
 " ---------------------------------------------------------------------------
-" Loop-label declarations and jump targets (user-guide §3.5)
+" Labeled blocks and label jumps (ADR-0012; user-guide §3.5/§8.5 as patched
+" by LC-3)
 " ---------------------------------------------------------------------------
-" Label declaration: an identifier immediately followed by `{` that opens a
-" loop body, e.g. `outer {`, `inner {`, `search {`. (`loop` itself is a
-" keyword and is matched above; named labels are matched here.)
-" Restricted to a lowercase-initial identifier so a PascalCase `type Pixel {`
-" stays a type name (snake_case labels by convention; user-guide §10.2).
-syn match flowLabel "\<[a-z_]\w*\ze\s*{" contains=NONE
-
-" Label jump targets: the identifier in a jump edge `-> outer;`, `-> inner;`,
-" `-> search;`. We highlight the destination identifier as a Label.
+" Labels carry a prefix `:` sigil on BOTH ends: declaration `:outer { … }`,
+" jump `-> :outer;`. The sigil makes both forms self-identifying, so the old
+" buffer-scanning "known-label narrowing" machinery that used to live here is
+" gone — it existed precisely because un-sigiled jumps (`-> outer;`) were
+" lexically identical to terminal bindings (`-> out;`). Under ADR-0012:
+"   - `-> out;` (binding/sink)  — no sigil — stays unhighlighted.  ✓ by regex
+"   - `-> :outer;` (jump)       — sigil — Label.
+"   - `outer { … }` un-sigiled  — no longer a label form at all (the compiler
+"     treats statement-initial `Ident {` as a struct literal and hints at the
+"     sigiled spelling, P0110) — intentionally NOT highlighted as Label here.
+"   - `-> loop;` stays flowKeyword; `-> ret;` stays flowRet (keywords outrank).
+" The whole `:ident` (sigil included) is the Label — the sigil is the
+" construct's identity.
 "
-" KNOWN-LABEL NARROWING (the load-bearing fix). A jump edge `-> ident;` and a
-" terminal binding/sink `-> ident;` are LEXICALLY IDENTICAL: `-> outer;` (jump,
-" must be Label) and `-> out;` (binding, must be UNhighlighted) differ only in
-" whether `ident` was DECLARED as a loop label (`ident {`) elsewhere in the
-" buffer. A position-only regex cannot tell them apart, so the old rule
-" (`-> \h\w* \ze ;`) wrongly painted every terminal binding as a label.
+" Both rules anchor on the `:` and exclude `::` (the out-of-Core path syntax,
+" e.g. `List::map`) via a negative lookbehind, so the second colon of a `::`
+" never starts a label match. Labels are written tight (`:outer`, no interior
+" space — spec style per the LC-3 exhibits); ascriptions/struct fields put the
+" colon AFTER the identifier (`x: i32`, `r: 200.0`), so the two never collide.
 "
-" We resolve this by SCANNING the buffer for label declarations and restricting
-" the jump match to that exact set. A label declaration is a lowercase-initial
-" identifier immediately followed by `{` (the same shape flowLabel highlights),
-" EXCLUDING tokens that open a block for another reason: the `loop` keyword and
-" primitive return types (`-> f64 {`, etc.). The harvested names are spliced
-" into a single anchored alternation; only those identifiers become jump targets.
-"   - `-> outer;` matches iff `outer {` was declared  -> flowLabelJump (Label).
-"   - `-> out;`/`-> diff;`/`-> nr;`/`-> done;` are NOT declared labels -> no
-"     match here, so they fall through to NOTHING and stay unhighlighted.
-"   - `-> loop;` stays flowKeyword (the `loop` keyword outranks any match) and
-"     `-> ret;` stays flowRet — both are intentionally not in the label set.
-" A lookbehind (`\%(->\s*\)\@<=`) starts the match at the label word itself so it
-" does not consume the `->` (flowArrow owns it — a match cannot start inside
-" another match's region); `\ze\s*;` bounds it to a jump edge.
-" NOTE: still a lexical heuristic over a single buffer. Cross-file / true
-" target resolution arrives with LSP semantic tokens (ADR-0008).
-function! s:FlowLabelNames() abort
-  " Tokens that look like `ident {` but are NOT loop labels.
-  let l:exclude = {'loop': 1, 'seq': 1, 'fn': 1, 'type': 1, 'mut': 1, 'void': 1,
-        \ 'map': 1, 'fold': 1, 'print': 1, 'ret': 1, 'true': 1, 'false': 1,
-        \ 'i32': 1, 'i64': 1, 'u8': 1, 'f32': 1, 'f64': 1, 'bool': 1}
-  let l:seen = {}
-  let l:names = []
-  for l:line in getline(1, '$')
-    " Strip line comments so a `foo {` inside `// ...` is not harvested.
-    let l:code = substitute(l:line, '//.*$', '', '')
-    let l:start = 0
-    while 1
-      let l:m = matchstrpos(l:code, '\<[a-z_]\w*\ze\s*{', l:start)
-      if l:m[1] < 0
-        break
-      endif
-      let l:start = l:m[2]
-      let l:name = l:m[0]
-      if !has_key(l:exclude, l:name) && !has_key(l:seen, l:name)
-        let l:seen[l:name] = 1
-        call add(l:names, l:name)
-      endif
-    endwhile
-  endfor
-  return l:names
-endfunction
-
-let s:flow_labels = s:FlowLabelNames()
-if !empty(s:flow_labels)
-  " Anchored word alternation of the declared label names, e.g.
-  " \%(outer\|inner\)\>, so only real labels match as jump targets.
-  let s:flow_label_alt = '\%(' . join(s:flow_labels, '\|') . '\)\>'
-  execute 'syn match flowLabelJump "\%(->\s*\)\@<=' . s:flow_label_alt . '\ze\s*;"'
-endif
-" If no labels are declared in the buffer, flowLabelJump is intentionally never
-" defined — every `-> ident;` is then a terminal binding and stays unhighlighted.
+" Declaration: `:label` immediately followed by (optional space and) `{`.
+syn match flowLabel ":\@<!:\h\w*\ze\s*{"
+" Jump: `:label` after a flow arrow, bounded by `;`. The lookbehind
+" (`\%(->\s*\)\@<=`) starts the match at the `:` so it does not consume the
+" `->` (flowArrow owns it — a match cannot start inside another match's region).
+syn match flowLabelJump "\%(->\s*\)\@<=:\@<!:\h\w*\ze\s*;"
+" NOTE: labels are Core+1 — the compiler currently rejects them with P0110.
+" They are highlighted (not error-flagged) because they are the decided
+" surface (ADR-0012), exhibited by the patched spec; the plugin is
+" best-effort/non-authoritative (ADR-0008).
 
 " ---------------------------------------------------------------------------
 " Numbers
