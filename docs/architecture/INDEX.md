@@ -26,7 +26,7 @@ and is **not** re-modeled here (errata E5 firewall).
 | `ir` | Sealed Core graph IR: `CategoryIr`/`Object`/`Morphism` olog, builder + validate passes | [`components/ir/DESIGN.md`](../components/ir/DESIGN.md) | modeled |
 | `lower` | `lower` functor: surface tree ⇀ sealed IR, passes A–E, the type-resolution + signature-synthesis morphisms | [`components/lower/DESIGN.md`](../components/lower/DESIGN.md) | modeled |
 | `check` | Type / effect / lifetime checks (E2/E3) | `components/check/DESIGN.md` | planned |
-| `interp` | Fueled reference interpreter (the oracle) | `components/interp/DESIGN.md` | planned |
+| `interp` | Fueled reference interpreter (the oracle): the `RValue` domain, the `eval` `Trn`, the SCC loop driver, token-as-Writer | [`components/interp/DESIGN.md`](../components/interp/DESIGN.md) | modeled |
 | `rewrite` | Layer 1–4 rewrite passes over `CategoryIr` | `components/rewrite/DESIGN.md` | planned |
 | `backend-llvm` | `F_LLVM : Flow-Cat → LLVM-Cat` | `components/backend-llvm/DESIGN.md` | planned |
 | `backend-cuda` | `F_CUDA` (the one place `Loc`/`Trm` are real — host↔device) | `components/backend-cuda/DESIGN.md` | planned |
