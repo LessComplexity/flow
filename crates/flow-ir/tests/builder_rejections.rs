@@ -194,7 +194,7 @@ fn two_prints_are_reachability_ordered() {
         .unwrap()
         .morphisms
         .iter()
-        .filter(|&&m| ir.morphism(m).unwrap().op == Operation::Print)
+        .filter(|&&m| matches!(ir.morphism(m).unwrap().op, Operation::Print { .. }))
         .copied()
         .collect();
     assert_eq!(prints.len(), 2);

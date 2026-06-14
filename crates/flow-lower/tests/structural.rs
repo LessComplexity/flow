@@ -145,7 +145,7 @@ fn fanout_main_print_token_order() {
         .morphisms
         .iter()
         .map(|&m| ir.morphism(m).unwrap())
-        .filter(|m| m.op == Operation::Print)
+        .filter(|m| matches!(m.op, Operation::Print { .. }))
         .collect();
     assert_eq!(prints.len(), 2, "main has two prints");
     // Print2's token (slot-0 of its source pair) is Print1's output token.

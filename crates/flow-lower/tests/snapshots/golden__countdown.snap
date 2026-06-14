@@ -33,7 +33,7 @@ flowchart LR
         f0o5 -- "Proj 1" --> f0o7
         f0o7 -- "Pair 0/2" --> f0o8
         f0o6 -- "Pair 1/2" --> f0o8
-        f0o8 -- "Print" --> f0o9
+        f0o8 -- "Println" --> f0o9
         f0o6 -- "Pair 0/2" --> f0o11
         f0o10 -- "Pair 1/2" --> f0o11
         f0o11 -- "Gt" --> f0o12

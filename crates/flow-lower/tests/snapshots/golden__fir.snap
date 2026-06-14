@@ -110,6 +110,6 @@ flowchart LR
         f1o16 -- "Call" --> f1o17
         f1o0 -- "Pair 0/2" --> f1o18
         f1o17 -- "Pair 1/2" --> f1o18
-        f1o18 -- "Print" --> f1o19
+        f1o18 -- "Println" --> f1o19
         f1o19 -- "Output" --> f1o1
     end

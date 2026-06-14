@@ -44,11 +44,11 @@ fn golden_sepia() {
 }
 
 /// countdown (§9 non-example regression, golden h's surface): mut param carried,
-/// `U = (i32, IoToken)` (token last), print before the guard, value-less ret exit
-/// carrying the post-print snapshot token, `Output` to Ret.
+/// `U = (i32, IoToken)` (token last), `println` before the guard (ADR-0015),
+/// value-less ret exit carrying the post-print snapshot token, `Output` to Ret.
 const COUNTDOWN: &str = r#"fn countdown(mut n: i32) {
     loop {
-        n -> print;
+        n -> println;
         (n > 0) -> {
             -true-> { n - 1 -> n; -> loop; }
             -false-> -> ret;

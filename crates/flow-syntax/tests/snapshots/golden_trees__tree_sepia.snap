@@ -1,5 +1,6 @@
 ---
 source: crates/flow-syntax/tests/golden_trees.rs
+assertion_line: 24
 expression: rendered
 ---
 25:1 Program
@@ -289,4 +290,4 @@ expression: rendered
 77:5           head
 77:5             Var ‹total_r›
 77:13           -> Expr
-77:16             Var ‹print›
+77:16             Var ‹println›

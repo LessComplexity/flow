@@ -179,7 +179,7 @@ flowchart LR
         f1o69 -- "Fold" --> f1o70
         f1o0 -- "Pair 0/2" --> f1o71
         f1o70 -- "Pair 1/2" --> f1o71
-        f1o71 -- "Print" --> f1o72
+        f1o71 -- "Println" --> f1o72
         f1o72 -- "Output" --> f1o1
     end
     subgraph f2["fn main::map@0"]

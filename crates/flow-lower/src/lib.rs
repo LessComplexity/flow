@@ -144,10 +144,19 @@ pub fn lower(source: &str, program: &Program) -> Result<flow_ir::CategoryIr, Vec
     emit::lower_program(source, program, &types, &effects, &fn_sigs, &typing_info)
 }
 
-/// Whether a name is reserved (L1009): `print`, or a builtin scalar type name.
+/// The builtin print family (ADR-0015): `print` (raw) and `println` (newline).
+/// One predicate so the many effect / typing / emit sites that special-case the
+/// builtin cannot drift — adding `println` otherwise silently breaks every missed
+/// call site (the FRAMEWORK §5 "one source of truth for a shared check" rule; this
+/// helper was introduced precisely because `println` regressed an un-updated site).
+pub(crate) fn is_print_builtin(name: &str) -> bool {
+    matches!(name, "print" | "println")
+}
+
+/// Whether a name is reserved (L1009): `print`/`println`, or a builtin scalar type name.
 fn is_reserved(name: &str) -> bool {
     matches!(
         name,
-        "print" | "i32" | "i64" | "u8" | "f32" | "f64" | "bool"
+        "print" | "println" | "i32" | "i64" | "u8" | "f32" | "f64" | "bool"
     )
 }

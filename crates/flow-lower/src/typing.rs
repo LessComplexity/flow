@@ -398,7 +398,7 @@ impl Walk<'_> {
                             Some(r) => WTy::Known(r.clone()),
                             None => WTy::Unknown,
                         }
-                    } else if text == "print" {
+                    } else if crate::is_print_builtin(text) {
                         // print sink; result is "no value".
                         WTy::Unknown
                     } else {
@@ -1131,7 +1131,7 @@ fn body_effect_span(
         {
             let text = name_text(source, *n);
             let effectful = fn_sigs.get(text).map(|s| s.effectful).unwrap_or(false);
-            if text == "print" || effectful {
+            if crate::is_print_builtin(text) || effectful {
                 found = Some(stage.span);
             }
         }
@@ -1212,7 +1212,10 @@ fn capture_chain(
                 // a bare-name stage that binds a fresh local registers it.
                 if let ExprKind::Var(n) = &e.kind {
                     let text = name_text(source, *n);
-                    if !local.contains(text) && fn_sigs.get(text).is_none() && text != "print" {
+                    if !local.contains(text)
+                        && fn_sigs.get(text).is_none()
+                        && !crate::is_print_builtin(text)
+                    {
                         local.insert(text.to_string());
                     }
                 } else if let Some(c) = capture_expr(source, e, local, fn_sigs) {

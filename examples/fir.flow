@@ -39,5 +39,5 @@ fn main() {
     [0.5, 0.25, 0.125, 0.0625]               -> coeffs: [f32; 4];
 
     (signal, coeffs) -> fir4 -> sample;
-    sample -> print;
+    sample -> println;
 }

@@ -17,5 +17,5 @@ fn f(data: i32) -> i32 {
 fn main() {
     10 -> f -> result;
     "f(10) = " -> print;
-    result -> print;
+    result -> println;
 }

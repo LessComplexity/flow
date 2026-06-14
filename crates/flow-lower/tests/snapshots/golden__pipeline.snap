@@ -1,5 +1,6 @@
 ---
 source: crates/flow-lower/tests/golden.rs
+assertion_line: 13
 expression: dump
 ---
 flowchart LR
@@ -34,6 +35,6 @@ flowchart LR
         f1o5 -- "Print" --> f1o6
         f1o6 -- "Pair 0/2" --> f1o7
         f1o3 -- "Pair 1/2" --> f1o7
-        f1o7 -- "Print" --> f1o8
+        f1o7 -- "Println" --> f1o8
         f1o8 -- "Output" --> f1o1
     end

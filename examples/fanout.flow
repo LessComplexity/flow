@@ -24,6 +24,6 @@ fn main() {
         -> double -> db;
     }
     // implicit join: (sq, db) are both available here
-    sq -> print;
-    db -> print;
+    sq -> println;
+    db -> println;
 }

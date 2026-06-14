@@ -1,5 +1,6 @@
 ---
 source: crates/flow-syntax/tests/golden_trees.rs
+assertion_line: 24
 expression: rendered
 ---
 13:1 Program
@@ -51,10 +52,10 @@ expression: rendered
 27:5           head
 27:5             Var ‹sq›
 27:8           -> Expr
-27:11             Var ‹print›
+27:11             Var ‹println›
 28:5       Stmt::Chain
 28:5         Chain
 28:5           head
 28:5             Var ‹db›
 28:8           -> Expr
-28:11             Var ‹print›
+28:11             Var ‹println›

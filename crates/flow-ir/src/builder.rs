@@ -1676,12 +1676,33 @@ impl FnBuilder<'_> {
         Ok(self.emit_to_dest(plan, seed_and_arr, Operation::Fold { body }, loc))
     }
 
-    /// `Print` (DESIGN §5.1): `(IoToken, P) → IoToken`. Builds the internal
-    /// `(IoToken, P)` pair (the only place `Str` may be a pair component, I9s).
+    /// `print` — raw, no trailing newline (ADR-0015): emits `Print { newline: false }`.
     pub fn print(
         &mut self,
         token: ObjectId,
         value: ObjectId,
+        loc: SourceLoc,
+    ) -> Result<ObjectId, IrError> {
+        self.print_with(token, value, false, loc)
+    }
+
+    /// `println` — appends a trailing `"\n"` (ADR-0015): emits `Print { newline: true }`.
+    pub fn println(
+        &mut self,
+        token: ObjectId,
+        value: ObjectId,
+        loc: SourceLoc,
+    ) -> Result<ObjectId, IrError> {
+        self.print_with(token, value, true, loc)
+    }
+
+    /// `Print { newline }` (DESIGN §5.1): `(IoToken, P) → IoToken`. Builds the internal
+    /// `(IoToken, P)` pair (the only place `Str` may be a pair component, I9s).
+    fn print_with(
+        &mut self,
+        token: ObjectId,
+        value: ObjectId,
+        newline: bool,
         loc: SourceLoc,
     ) -> Result<ObjectId, IrError> {
         self.check_obj(token)?;
@@ -1726,7 +1747,8 @@ impl FnBuilder<'_> {
         let out = self
             .b
             .mint_object(self.f, Ty::IoToken, None, ObjectKind::Temporary, None, loc);
-        self.b.add_edge(self.f, pair, out, Operation::Print, loc);
+        self.b
+            .add_edge(self.f, pair, out, Operation::Print { newline }, loc);
         Ok(out)
     }
 

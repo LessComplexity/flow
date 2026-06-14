@@ -281,7 +281,7 @@ pub enum Operation {
     Fold { body: FuncId },           // (Acc × [T; n]) → Acc; body: (Acc × T) → Acc
     Index,                           // ([T; n] × I) → T; OOB = trap in Core (ADR-0013)
     // effects (§8)
-    Print,                           // (IoToken × P) → IoToken, P printable
+    Print { newline: bool },         // (IoToken × P) → IoToken; println appends \n, print raw (ADR-0015)
     // loops (§7) — the inline-cycle realization of Tr^U (CHANGES §1.3)
     LoopEnter,                       // U → U, init value → LoopMerge
     LoopBack,                        // (U × Bool) → U, route → LoopMerge; THE back edge; fires when Bool = true
@@ -312,7 +312,7 @@ Notation: `N` = Core numeric scalar (`i32`/`i64`/`u8`/`f32`/`f64`), `I` = Core i
 | `Map{body}` | `Array{T, n}` | `Array{U, n}` | body: `T → U`, `FuncKind::MapBody`, token-free |
 | `Fold{body}` | `(Acc, Array{T, n})` | `Acc` | body: `(Acc, T) → Acc`, `FuncKind::FoldBody`, token-free |
 | `Index` | `(Array{T, n}, I)` | `T` | OOB traps in Core |
-| `Print` | `(IoToken, P)` | `IoToken` | the only effectful op (HANDOFF §4.1) |
+| `Print {newline}` | `(IoToken, P)` | `IoToken` | the effectful op (HANDOFF §4.1); `newline` selects `println`/`print` (ADR-0015), typing identical |
 | `LoopEnter` | `U` | `U` (target kind LoopMerge) | exactly one per merge |
 | `LoopBack` | `(U, Bool)` | `U` (target kind LoopMerge) | ≥1 per merge; source inside the loop SCC (I5) |
 | `LoopExit` | `(B, Bool)` | `B` | source inside the SCC, target outside (I5) |
@@ -432,7 +432,8 @@ impl FnBuilder<'_> {
     pub fn call  (&mut self, f: FuncId, arg: ObjectId, dest: Dest, loc: SourceLoc) -> Result<ObjectId, IrError>;
     pub fn map   (&mut self, body: FuncId, arr: ObjectId, dest: Dest, loc: SourceLoc) -> Result<ObjectId, IrError>;
     pub fn fold  (&mut self, body: FuncId, seed_and_arr: ObjectId, dest: Dest, loc: SourceLoc) -> Result<ObjectId, IrError>;
-    pub fn print (&mut self, token: ObjectId, value: ObjectId, loc: SourceLoc) -> Result<ObjectId, IrError>;  // → fresh IoToken
+    pub fn print  (&mut self, token: ObjectId, value: ObjectId, loc: SourceLoc) -> Result<ObjectId, IrError>;  // Print{newline:false} → fresh IoToken
+    pub fn println(&mut self, token: ObjectId, value: ObjectId, loc: SourceLoc) -> Result<ObjectId, IrError>;  // Print{newline:true}  → fresh IoToken (ADR-0015)
 
     /// bare `x -> ret` / `x -> ret.k` for an EXISTING object: emits Output (full) or a Pair slot edge.
     pub fn output(&mut self, value: ObjectId, slot: Option<u32>, loc: SourceLoc) -> Result<(), IrError>;

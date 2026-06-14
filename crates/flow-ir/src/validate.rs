@@ -242,7 +242,7 @@ fn edge_type_ok(ir: &CategoryIr, m: &crate::graph::Morphism, sty: &Ty, tty: &Ty)
             },
             _ => false,
         },
-        Operation::Print => match sty {
+        Operation::Print { .. } => match sty {
             Ty::Tuple(ts) if ts.len() == 2 => {
                 ts[0] == Ty::IoToken && ts[1].is_printable() && *tty == Ty::IoToken
             }

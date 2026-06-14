@@ -74,5 +74,5 @@ fn main() {
         acc + px.r
     } -> total_r;
 
-    total_r -> print;
+    total_r -> println;
 }

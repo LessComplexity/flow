@@ -280,6 +280,33 @@ fn golden_g_two_prints() {
     check("g_two_prints", &ir);
 }
 
+/// (g') `println` (ADR-0015) renders a `Println` edge label and lints clean.
+#[test]
+fn println_renders_println_label() {
+    let mut b = IrBuilder::new();
+    let f = b
+        .declare(FuncKind::Named, "main", Ty::IoToken, Ty::IoToken, L)
+        .unwrap();
+    {
+        let mut fb = b.build_fn(f).unwrap();
+        let t0 = fb.input();
+        let s1 = fb.constant(Value::Str("hi".into()), L).unwrap();
+        let t1 = fb.println(t0, s1, L).unwrap();
+        fb.output(t1, None, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(f).unwrap();
+    let dump = ir.to_mermaid();
+    assert!(
+        dump.contains("Println"),
+        "println must render a `Println` edge label"
+    );
+    assert!(
+        lint_mermaid(&dump).is_empty(),
+        "println dump must lint clean"
+    );
+}
+
 /// (h) print-inside-loop in a Unit-surface fn: token-bearing U, token-bearing
 /// exit (the F2/L2-01 case).
 #[test]

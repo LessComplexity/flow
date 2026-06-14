@@ -176,7 +176,7 @@ impl NameWalk<'_> {
                     if let ExprKind::Var(n) = &e.kind {
                         let text = name_text(self.source, *n);
                         if !scope.contains(text) {
-                            if text == "print" {
+                            if crate::is_print_builtin(text) {
                                 self.direct_effect = true;
                             } else if self.fn_names.contains(text) {
                                 self.add_callee(text);

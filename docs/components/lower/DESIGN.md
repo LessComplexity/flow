@@ -301,8 +301,9 @@ binds); a `mut` rebind keeps the original `decl_seq` (LD4).
   block params — referencing an enclosing local is L1108 (blocks are not closures;
   their IR functions have no capture slots).
 - **Resolution order for a bare name in stage position (LD1):** local scopes (innermost
-  first) → surface functions → the builtin `print`. Variables shadow functions; declaring
-  `fn print` or `type` named after a builtin scalar is L1009. In *expression* position a
+  first) → surface functions → the builtins `print`/`println` (ADR-0015; one `is_print_builtin`
+  predicate gates every print/effect/token site — LD25). Variables shadow functions; declaring
+  `fn print`/`println` or `type` named after a builtin scalar is L1009. In *expression* position a
   name resolves to locals only (a function name as a value is L1105).
 - **After a loop**, the loop's carried `mut` names are **poisoned** in the enclosing
   scope; reading one is L1107 ("bind the exit value instead", LD9). Rationale: the
@@ -858,7 +859,7 @@ clean tree + bounded recursion + fail-fast emission ⇒ never panics/hangs.
 6. **Bench (criterion)** — `lower_scale`: synthetic N-stage pipeline + N-arm value
    match; record build numbers in STATUS (HANDOFF §7.2 step 6).
 
-## 15. Decision ledger (LD1–LD24)
+## 15. Decision ledger (LD1–LD25)
 
 | # | Decision | Why |
 | --- | --- | --- |
@@ -886,6 +887,7 @@ clean tree + bounded recursion + fail-fast emission ⇒ never panics/hangs.
 | LD22 | L1503 is derivation-based (derives-from-merge tags, §7.3) and deliberately stricter than seal | name-based reads have false positives/negatives (DG-1/IR-2); non-derived next-state is seal `LoopBackOutsideScc` |
 | LD23 | Params bind with `mutable = mut_span.is_some()`; mut params are carried-state-eligible | user-guide §3.5 countdown is golden h's surface (SF-3/CP-6) |
 | LD24 | Pass B's L1008 graph = I6's reference graph (owner→callee edges include block-internal calls) | owner-via-body recursion must be a user diagnostic, not seal `RecursiveCall` (SF-9/IR-3) |
+| LD25 | `print`/`println` are one builtin family behind `is_print_builtin` (ADR-0015); `println` lowers to `Print{newline:true}`, `print` to `Print{newline:false}` | `print` was special-cased in 9 effect/typing/emit sites — a single predicate stops them drifting (FRAMEWORK §5); `println` regressed an un-updated site, which is why the helper exists |
 
 ## 16. Open questions (→ next-session / ADR candidates)
 

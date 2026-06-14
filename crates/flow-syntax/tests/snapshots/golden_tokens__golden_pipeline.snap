@@ -1,5 +1,6 @@
 ---
 source: crates/flow-syntax/tests/golden_tokens.rs
+assertion_line: 36
 expression: rendered
 ---
 11:1 372..374 KwFn ‹fn›
@@ -39,7 +40,7 @@ expression: rendered
 19:24 502..503 Semi ‹;›
 20:5 508..514 Ident ‹result›
 20:12 515..517 Arrow ‹->›
-20:15 518..523 Ident ‹print›
-20:20 523..524 Semi ‹;›
-21:1 525..526 RBrace ‹}›
-22:1 527..527 Eof
+20:15 518..525 Ident ‹println›
+20:22 525..526 Semi ‹;›
+21:1 527..528 RBrace ‹}›
+22:1 529..529 Eof

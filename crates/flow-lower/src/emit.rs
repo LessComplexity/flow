@@ -926,10 +926,10 @@ impl Emitter<'_> {
                         self.maybe_bind_next(fb, next, r);
                     }
                     Ok(r)
-                } else if text == "print" {
+                } else if crate::is_print_builtin(&text) {
                     let wire = wire
                         .ok_or_else(|| diag(LCode::HeadlessChain, e.span, "print with no value"))?;
-                    self.emit_print(fb, wire, e.span)?;
+                    self.emit_print(fb, wire, text == "println", e.span)?;
                     Ok(None) // print is a sink; chain ends.
                 } else {
                     // Unbound bare name = a fresh binding (LD1): the wire's value
@@ -995,7 +995,7 @@ impl Emitter<'_> {
                     if let ExprKind::Var(n) = &e.kind {
                         let text = name_text(self.source, *n);
                         // bare name binding (unbound or mut) → name it.
-                        if !self.fn_ids.contains_key(text) && text != "print" {
+                        if !self.fn_ids.contains_key(text) && !crate::is_print_builtin(text) {
                             return Ok(Dest::Fresh(Some(text.to_string())));
                         }
                     }
@@ -1516,7 +1516,13 @@ impl Emitter<'_> {
         })
     }
 
-    fn emit_print(&mut self, fb: &mut FnBuilder, value: ObjectId, sp: syn::SourceLoc) -> ER<()> {
+    fn emit_print(
+        &mut self,
+        fb: &mut FnBuilder,
+        value: ObjectId,
+        newline: bool,
+        sp: syn::SourceLoc,
+    ) -> ER<()> {
         let tok = self.consume_token(sp)?;
         // Printability: value ty must be numeric/bool/str.
         let vty = self.ty_of(fb, value);
@@ -1527,9 +1533,12 @@ impl Emitter<'_> {
                 format!("cannot print `{}`", ty_name(&vty)),
             ));
         }
-        let nt = fb
-            .print(tok, value, ir_loc(sp))
-            .map_err(|e| ir_err(e, sp))?;
+        let res = if newline {
+            fb.println(tok, value, ir_loc(sp))
+        } else {
+            fb.print(tok, value, ir_loc(sp))
+        };
+        let nt = res.map_err(|e| ir_err(e, sp))?;
         self.record(nt, Ty::IoToken);
         self.token = Some(nt);
         Ok(())
@@ -2734,7 +2743,7 @@ impl Emitter<'_> {
             let text = name_text(self.source, *n);
             if self.scope.resolve(text).is_none()
                 && !self.fn_ids.contains_key(text)
-                && text != "print"
+                && !crate::is_print_builtin(text)
             {
                 return Some(text.to_string());
             }
@@ -3111,8 +3120,8 @@ fn scan_chain(
                     // A bare-name stage that resolves to `print` or to a
                     // user-defined effectful fn is an effect in a Phi arm (L1404;
                     // tokens cannot pass a Phi). Mirror typing.rs's L1605 check.
-                    let effectful =
-                        text == "print" || fn_sigs.get(text).map(|s| s.effectful).unwrap_or(false);
+                    let effectful = crate::is_print_builtin(text)
+                        || fn_sigs.get(text).map(|s| s.effectful).unwrap_or(false);
                     if effectful {
                         if scan.effect_span.is_none() {
                             scan.effect_span = Some(stage.span);
@@ -3247,7 +3256,7 @@ fn effect_chain(source: &str, chain: &Chain, fn_sigs: &BTreeMap<String, FnSig>, 
                 if let ExprKind::Var(n) = &e.kind {
                     let text = name_text(source, *n);
                     let effectful = fn_sigs.get(text).map(|s| s.effectful).unwrap_or(false);
-                    if text == "print" || effectful {
+                    if crate::is_print_builtin(text) || effectful {
                         *found = true;
                     }
                 }

@@ -18,5 +18,5 @@ fn abs(x: i32) -> i32 {
 
 fn main() {
     -7 -> abs -> result;
-    result -> print;
+    result -> println;
 }

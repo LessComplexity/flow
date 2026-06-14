@@ -103,8 +103,11 @@ pub enum Operation {
     /// `([T; n] × I) → T`; OOB = trap in Core (ADR-0013).
     Index,
     // effects (§8)
-    /// `(IoToken × P) → IoToken`, `P` printable — the only effectful op.
-    Print,
+    /// `(IoToken × P) → IoToken`, `P` printable — the effectful op. `newline: true`
+    /// is `println` (appends `\n`), `false` is `print` (raw) — ADR-0015.
+    Print {
+        newline: bool,
+    },
     // loops (§7) — the inline-cycle realization of `Tr^U`
     /// `U → U`, init value → LoopMerge.
     LoopEnter,
