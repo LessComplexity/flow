@@ -40,6 +40,161 @@ graphs for the same program. They are obligations on lower, decided already:
 
 ---
 
+## Categorical model (Dat + Trn)
+
+> Read first. This section models the **compiler itself** at the LEVEL-B
+> firewall (FRAMEWORK §0): the objects below are the lowering filter's own `Dat`,
+> the passes are its `Trn`. It does **not** restate the object language — Flow
+> programs as morphisms in Flow-Cat are modeled once in
+> [`docs/architecture/categorical-model.md`](../../architecture/categorical-model.md)
+> (the project-wide model kernel) and crossed here only as opaque typed `Trm`
+> payloads (`flow_syntax::Program` in, `flow_ir::CategoryIr` out). Never conflate
+> the two — the project already paid the category-keyword tax once (errata E5).
+> Scoping (FRAMEWORK §7.1): the compiler is one in-process pipe-and-filter
+> pipeline, so the physical pair `Loc`/`Trm` is **degenerate** here (all passes
+> share one process `Loc`, every pipe is same-location); we apply the logical pair
+> `Dat`/`Trn` richly and reserve `Loc`/`Trm` for the downstream backend/runtime
+> seam where CPU/GPU/FPGA placement and host↔device transmission are genuinely
+> real. The model is the authority for the *intent* of §§1–16; where code and
+> model disagree, FRAMEWORK §2 governs (fix the code, or amend the model with a
+> stated exception).
+
+### Why (one paragraph)
+
+`flow-lower` **is one functor**, `lower : 𝒮 ⇀ ℐ`, from the surface syntax
+category 𝒮 (the parse-clean `flow_syntax` AST as a `Dat` category) to the IR
+category ℐ (the sealed `flow_ir::CategoryIr` as a `Dat` category). Saying it once,
+categorically, buys three things the prose otherwise repeats construct-by-construct:
+(1) the **object map** (`TyKind → Ty`, parse-node kind → IR construct) and the
+**morphism map** (each surface form → its IR realization) are the *same* functor
+viewed on objects vs. arrows — so the §5 type-table and the §8 emission recipes
+are not two designs but two faces of one map; (2) the functor is **partial**
+(`⇀`) by construction — its domain of definition is exactly Flow-Core (J3-clean
+trees minus the rejected-but-kept forms), and **rejection = partiality**: every
+out-of-Core form is an arrow where `lower` is undefined, surfaced as an L-code
+(§4), never a silent pass and never a panic (§13 totality is "total *into* the
+`⊕ Diagnostic*` sum", not "defined everywhere"); (3) the **staging** A→E is the
+functor *factored through intermediate categories* — each pass is a `Trn` object
+with `t_from`/`t_to` projections (FRAMEWORK §4.1), and their composition in `Alg`
+is the realized functor. The Consolidation Principle (FRAMEWORK §3) is honored:
+there is **one** AST, pattern-matched in place — not a parallel `CoreAst` plus a
+translator DTO (which would be the §3 modeling smell and would force a full
+SurfaceParse→CoreAst copy on every clean compile).
+
+### The functor `lower : 𝒮 ⇀ ℐ`
+
+**On objects (the type-lowering core, §5 / `tys.rs`).** `resolve_ty` /
+`TypeTable::resolve` carry `flow_syntax::TyKind → flow_ir::Ty`. This map is
+**not** bijective-on-objects (so by FRAMEWORK §3 step 4 it is genuinely two
+categories, not one in disguise): one surface `Named` arrow fans out to five IR
+targets via name resolution, surface-only `Dynamic`/`Error` have no IR image, and
+IR-only `Unit`/`Str`/`IoToken` are **minted downstream** by the functor's own
+signature-synthesis law (§6.2) and the Return/Print machinery — they have no
+surface preimage. The only squares that commute on the nose are the recursive
+product/array centre (`Tuple → Ty::Tuple`, `Array{len} → Array{size}` — note the
+`len ↦ size` relabel, pinned identical); the discriminated leaves are the genuine
+distinctions, segregated as the resolution `Trn`, not a shared shape.
+
+**On morphisms (the emission core, §8 / `emit.rs`).** Each parse-node *kind* maps
+to an IR *construct*. Two structural facts make this a clean functor rather than a
+table of special cases:
+
+- **`binop → Pair-then-primitive` is categorical product formation.** A `k`-ary
+  surface operation lowers to `k` distinct-slot `Pair` edges into one product
+  `Object`, then a single op-edge `(A×B…) → T`. This is *why* the IR's
+  one-source/one-target invariant (I1) stays total: arity is reified as a product
+  `Object`, never as a wide multi-source edge. (Unary `Neg`/`Not` are the genuine
+  non-product arrows — deliberately not wrapped in a degenerate 1-tuple, which I9
+  would reject.)
+- **`guard → Phi`, `loop → inline trace`.** A pure value-match/bool guard lowers to
+  a (right-folded chain of) `Phi` selection edge(s) over a product
+  `Tuple[T,T,Bool]`; a routing guard is *not* a guard at all but the loop's route
+  point. A `loop` lowers to an **inline cycle** — a `LoopMerge` object plus
+  `LoopEnter`/`LoopBack`/`LoopExit` edges — never a materialized `Trace` payload
+  (the trace *is* the cycle; loop regions are recovered on demand by SCC). This is
+  FRAMEWORK §5 "deduce, don't store" applied to loop structure.
+
+**Functoriality (the staging law).** `lower = sealₑ ∘ emitₐ₃ ∘ emitₐ₂ ∘ typeₐ₁ ∘
+declareᵪ ∘ effectsᵦ ∘ tableₐ`, read right-to-left as composition in `Alg`. Piecewise
+emission — `lower(hₙ ∘ … ∘ h₁) = lower(hₙ) ∘ … ∘ lower(h₁)` over a chain's stages —
+is what makes "lower stage-by-stage against the wire" correct by construction (§8.1).
+
+### Morphism table
+
+Every arrow below is a `Trn` (a pass) or a structural construct-map of the functor;
+each is realized in code at the cited seam.
+
+| Morphism / construct-map | Signature | Partiality | Semantics |
+| --- | --- | --- | --- |
+| `lower` | `𝒮 ⇀ ℐ` | Partial | THE functor; total *into* `CategoryIr ⊕ Diagnostic*`, undefined on out-of-Core arrows (`lib.rs::lower`) |
+| `table` (Pass A) | `Trn : 𝒮 → TypeTable` | Total | resolve `type` decls to `name → Ty::Struct` (`tys::build`) |
+| `resolve_ty` | `TyKind ⇀ Ty` | Partial | the object map; `Named`→{Int,Float,Bool,Struct}∪⊥, `Dynamic`/`Error`→⊥ (`tys.rs`) |
+| `effects` (Pass B) | `Trn : 𝒮 → Effects` | Total | classify transitively-effectful fns; I6 call-graph cycle → L1008 (`effects::analyze`) |
+| `ir_signature` | `FnSig → Ty × Ty` | Total | §6.2 law: pure `A→B`; effectful → token-threaded `(IoToken×A)→(IoToken×B)`; mints `IoToken`/`Unit` (`emit.rs`) |
+| `type` (Pass D1) | `Trn : 𝒮 → TypeInfo` | Total | literal-width unification + block sigs; emits typing L-codes (`typing::analyze_fn`) |
+| `emit` (Pass D2/D3) | `Trn : 𝒮 → CategoryIr` (under construction) | Partial | the morphism map; per-construct recipes §8; fail-fast on first `IrError` (`emit::lower_program`) |
+| `binop` | `Binary → Pair*-then-op` | Partial | product formation: k `Pair` edges → one op-edge `(A×B)→T` (I1 total) |
+| `guard` | `Guard → Phi` | Partial | pure arms → right-folded `Phi` over `Tuple[T,T,Bool]`; routing arms → loop route |
+| `loop` | `Loop → inline cycle` | Partial | `LoopMerge` + `LoopEnter`/`LoopBack`/`LoopExit`; no stored `Trace` (D3) |
+| `seal` (Pass E) | `Builder ⇀ CategoryIr` | Partial | freeze with `entry=main`; post-check failure ⇒ L1901 (lower bug) (`emit.rs` tail) |
+| `ir_err` | `IrError → Diagnostic` | Total | builder = "second line of type checking"; maps to L12xx or L1901 (LD12) |
+| `feeds` (TT/EF/TI → BU) | `TypeTable × Effects × TypeInfo → IrBuilder` | Total | data availability: these three Dat objects are all inputs consumed by the Pass C/D2/D3 emission block; no copying — FRAMEWORK §7.1 degenerate case |
+| `rejection` (out-of-Core → Diagnostic*) | `StageKind::Error / Call / Question / Dynamic / StmtBlock / GuardDiscr::OutOfCore ⇀ Diagnostic` | Partial | the functor being undefined on out-of-Core forms; rejection path of `lower`; each branch produces one or more L1xxx codes (L1000 backstop) |
+
+### Partiality — rejection is the functor being undefined
+
+`dom(lower) = Flow-Core ⊊ SurfaceParse`. The inclusion `ι : Flow-Core ↪
+SurfaceParse` is injective-but-not-surjective on objects, so the two are related
+by a **proper inclusion**, not an identity — there is genuinely a larger surface
+category. Each out-of-Core arrow is segregated as a partial-morphism site
+discriminated by its variant and rejected with a dedicated code: `Call`/`Question`/
+`Dynamic`/`StmtBlock`/`GuardDiscr::OutOfCore`/the `Error` sentinels are the exact
+branches where `emit`/`lower` return `Err` (L1000 backstop; the parser's P-codes
+are the upstream span-precise gate, C13). `LoopLabel::Custom` and `FanoutKind::Void`
+are gated **only** upstream (P0110/P0113) and silently tolerated by `lower` — so for
+those two, J3-cleanliness (not a `lower` Err arm) is the guarantee. The model's
+honest statement: `dom(lower)` is the J3-clean sub-category, enforced jointly by the
+parser's P-codes and `lower`'s `Err` arms, not uniformly by `lower` alone.
+
+### Diagram (project lint: single `-->` arrow style; partiality carried in the label)
+
+```mermaid
+graph LR
+    S["𝒮 — surface AST<br/>(flow_syntax::Program)"]
+    TT["TypeTable<br/>(Pass A)"]
+    EF["Effects<br/>(Pass B)"]
+    TI["TypeInfo<br/>(Pass D1)"]
+    BU["IrBuilder<br/>(Pass C/D2/D3)"]
+    I["ℐ — sealed IR<br/>(flow_ir::CategoryIr)"]
+    D["Diagnostic*<br/>(L1xxx)"]
+    S -- "table" --> TT
+    S -- "effects · L1008?" --> EF
+    S -- "type · D1" --> TI
+    TT -- "feeds" --> BU
+    EF -- "feeds" --> BU
+    TI -- "feeds" --> BU
+    S -- "emit · binop→Pair·op, guard→Phi, loop→cycle" --> BU
+    BU -- "seal · entry=main" --> I
+    S -- "partial: out-of-Core ↦ ⊥ (reject)" --> D
+    BU -- "ir_err: IrError ↦ L1xxx / L1901" --> D
+    style S fill:#4f8cf7,color:#fff
+    style I fill:#4f8cf7,color:#fff
+    style TT fill:#7fc47f,color:#000
+    style EF fill:#7fc47f,color:#000
+    style TI fill:#7fc47f,color:#000
+    style BU fill:#cf7fcf,color:#fff
+    style D fill:#9a9a9a,color:#fff
+```
+
+The arrows out of `𝒮` are the functor's two faces (object map via `table`/`type`,
+morphism map via `emit`); the arrow to `D` labeled "partial" is rejection — the
+functor being undefined. See
+[`docs/architecture/categorical-model.md`](../../architecture/categorical-model.md)
+for the project-wide model kernel (the object-language category this functor's
+codomain realizes).
+
+---
+
 ## 1. Scope and contract
 
 flow-lower turns a **parse-clean** `flow_syntax::Program` into a **sealed**
@@ -113,7 +268,9 @@ caught by the builder's per-call checks and surfaces as L1901 (a lower bug by de
 
 ## 3. Symbol table and the `mut`-SSA discipline
 
-A scope stack of `name → Binding { obj: ObjectId, ty, mutable, kind }`.
+A scope stack of `name → Binding { obj: ObjectId, ty: Ty, mutable: bool, decl_seq: u32 }`.
+`decl_seq` is the monotonic declaration-sequence number (params first, then source-order
+binds); a `mut` rebind keeps the original `decl_seq` (LD4).
 
 - **Binding forms:** function **parameters** (`mutable = param.mut_span.is_some()` —
   user-guide §3.5's `fn countdown(mut n: i32)` is the canonical mut-param loop, the
@@ -306,8 +463,9 @@ device is **literal-width unification** (LD3):
 
 ### 7.1 What it computes
 
-- `lit_ty: Vec<(SourceLoc, Ty)>` — resolved ty for every unsized `Int`/`Float` literal
-  (spans are unique per literal node; deterministic order).
+- `lit_ty: BTreeMap<(u32, u32), Ty>` — resolved ty for every unsized `Int`/`Float`
+  literal, keyed by `(span.start, span.end)`; spans are unique per node (J2), giving
+  O(log n) lookup at emission (accessed via `TypeInfo::lit(span)`).
 - Per map/fold stage (keyed by stage span): `elem`/`(acc, elem)` input tys, body result
   ty, and the synthesized body name (LD11).
 - Symbol tys, carried-state sets for loops (§8.5), guard classifications (§8.4) — i.e.
@@ -600,7 +758,7 @@ in fanout branches → threaded (§8.6).
   (golden g shape); `main : IoToken → IoToken`; final token `output(…, None)`.
 - **sepia.flow**: `Pixel` struct table; `clamp` = nested Phi guards (inner phi feeds
   outer's false slot — golden i nesting); `main::map@0 : Pixel → Pixel` (MapBody) with
-  three `clamp` calls and a `pack_struct` tail to Ret; `main::fold@0 : (f32, Pixel) → f32`
+  three `clamp` calls and a `pack_struct` tail to Ret; `main::fold@1 : (f32, Pixel) → f32`
   (FoldBody; the seed `0.0` resolves f32 via §7.2); fold head pack `(0.0, sepia_image)`;
   one print; token threading.
 - **countdown (non-example regression, golden h's surface):** `fn countdown(mut n: i32)
@@ -676,8 +834,9 @@ clean tree + bounded recursion + fail-fast emission ⇒ never panics/hangs.
    interp): sum_to_n — 1 LoopEnter/1 LoopBack/1 LoopExit, both routes' slot-1 Pair
    source is one shared cond object, exit-route slot-0 source is a Proj of the merge —
    NOT the jump arm's recomputed `acc+i` (the 55-not-66 snapshot regression, review
-   SF-2c); abs — exactly 1 Phi, a `-1` Constant, no Neg morphism; sepia — one MapBody +
-   one FoldBody fn, fold source ty `(f32, [Pixel; 16])`; fanout main — Print₂'s token
+   SF-2c); abs — exactly 1 Phi, a `-1` Constant, no Neg morphism; sepia — one MapBody
+   (`main::map@0`) + one FoldBody (`main::fold@1`), fold source ty `(f32, [Pixel; 16])`;
+   fanout main — Print₂'s token
    pack consumes Print₁'s output token (order pinned); countdown — token-bearing `U`,
    exit payload = post-print token (golden h shape); every fn's declared tys match
    §6.2's table; `fn f(x: i32) -> i32 { x + 1 }` — fn-body tail returns (LD21).

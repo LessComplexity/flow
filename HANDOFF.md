@@ -38,11 +38,13 @@ All spec files live in `docs/spec/` (copied there during bootstrap, §10).
 | `docs/spec/getting-started.md`        | v0.2      | 10-minute intro. Useful as the "what a new user sees" test surface.                                                                                                                                                                                          |
 | `docs/spec/CHANGES.md`                | v0.1→v0.2 | Decision log for the v0.2 revision. **Read §1 (structural fixes) before touching the IR** — it explains _why_ the invariants exist (single-source morphisms, first-class Phi, loops as trace, honest coproducts for effects).                                |
 | `docs/spec/flow-language-design.docx` | v0.1-era  | Original design document (philosophy, goals, rationale). Historical authority only; superseded where it conflicts with v0.2 files.                                                                                                                           |
+| `FRAMEWORK.md`                        | current   | Categorical modeling method for compiler-internal (Level B) design; coherence checklist (§8); session reconcile gate (ADR-0014). Methodology only — does not touch the frozen Level A spec.                                                                   |
 | `HANDOFF.md`                          | 1.0       | This file.                                                                                                                                                                                                                                                   |
 
 ### 2.2 Authority order (highest wins)
 
 1. Accepted ADRs in `docs/decisions/` (including the bootstrap ADRs encoding errata E1–E5, §3)
+   - `FRAMEWORK.md` — for all compiler-internal (Level B) modeling and doc-reconcile gate questions; defers to accepted ADRs on any spec-touching question.
 2. `category-ir.md` v0.2 (formal semantics)
 3. `user-guide.md` v0.2 and `architecture.md` v0.2 (tie: user-guide for language behavior, architecture for compiler structure)
 4. `getting-started.md` v0.2
@@ -124,7 +126,7 @@ Recorded as bootstrap ADRs; summarized here.
 
 1. **Implementation language: Rust.** Spec pseudocode is already Rust-shaped.
 2. **Handwritten lexer + recursive-descent parser.** The guard/flow syntax is unusual enough that generators will fight it. Error spans (`SourceLoc`) from day one.
-3. **IR:** arena/slotmap-backed graph exactly per `category-ir.md` §3 (v0.2 invariants: every morphism has exactly one source and one target object; multi-arg ops lower as Pair-then-primitive; `Phi` first-class; loops via `Trace` + `LoopMerge`; back-edges are real adjacency edges visible to Tarjan SCC). **Invariants are enforced in the IR builder API** — it must be impossible to construct an ill-formed graph through the public interface.
+3. **IR:** arena/slotmap-backed graph with the ADR-0013 delta from `category-ir.md` §3 (v0.2 invariants retained: every morphism has exactly one source and one target object; multi-arg ops lower as Pair-then-primitive; `Phi` first-class; back-edges are real adjacency edges visible to Tarjan SCC). All dataflow is adjacency edges; loops are inline cycles — a `LoopMerge` object receives `LoopEnter` + ≥1 `LoopBack`, and `LoopExit` edges leave the cycle; `Operation::Trace` is not materialized — the trace is the cycle. Full operation set: the Core subset of §3.3 plus `Neg`, `Index`, `Map{body}`, `Fold{body}`, `Print`, `LoopEnter`, `LoopBack`, `LoopExit`, `Output`; minus `Identity`, `Const`, `Trace`, and out-of-Core variants. **Invariants are enforced in the IR builder API** — it must be impossible to construct an ill-formed graph through the public interface. See ADR-0013.
 4. **Reference interpreter on the IR is the oracle.** Built before any backend. Every rewrite and every backend is judged against it. Loop evaluation is fueled (E1).
 5. **Backends emit source text:** textual LLVM IR (`.ll`) piped to `clang` (no FFI bindings initially); CUDA `.cu` via `nvcc` when present; Verilog `.v` simulated with **Verilator** (fallback Icarus). Toolchain absence ⇒ tests skip-with-reason, recorded in STATUS.
 6. **Testing stack:** `cargo test`; golden/snapshot tests (`insta`) for parse trees, IR dumps, emitted code; property tests (`proptest`) for rewrite soundness; **differential tests** backend-vs-interpreter on random inputs; `criterion` benchmarks. Graph dumps render to Mermaid and are lint-checked (quote labels containing `'` or special chars; no mixed arrow styles — both were past failure modes).
@@ -145,13 +147,11 @@ flow/
 │   ├── spec/                       # the corpus (§2.1) + errata patches
 │   │   └── ERRATA.md               # E1–E5 text + any later spec corrections
 │   ├── decisions/                  # ADRs (template §7.1.3)
-│   │   ├── ADR-0001-flow-core-scope.md
-│   │   ├── ADR-0002-loops-partiality-trace.md        (E1)
-│   │   ├── ADR-0003-parallel-effects-kpn.md          (E2)
-│   │   ├── ADR-0004-memory-guarantee-scope.md        (E3)
-│   │   ├── ADR-0005-flow-is-a-statement.md           (E4)
-│   │   ├── ADR-0006-rename-category-to-type.md       (E5)
-│   │   └── ADR-0007-tech-stack.md
+│   │   ├── ADR-0001…ADR-0007 (bootstrap)
+│   │   └── ADR-NNNN-slug.md (added each session as needed)
+│   ├── architecture/               # FRAMEWORK model index (ADR-0014)
+│   │   ├── INDEX.md
+│   │   └── categorical-model.md
 │   └── components/<name>/          # one folder per component
 │       ├── STATUS.md               # development status (template §7.1.2)
 │       └── DESIGN.md               # living design doc, written BEFORE code
@@ -166,6 +166,7 @@ flow/
 │   ├── flow-backend-cuda/
 │   ├── flow-backend-verilog/       # + Verilator harness, done-protocol (E1)
 │   └── flow-cli/                   # `flow build|run|dump-ir|test`
+├── editors/                        # editor/tooling support (ADR-0008)
 ├── examples/                       # sepia.flow, fir.flow, abs.flow, sum_to_n.flow, pipeline.flow, fanout.flow
 └── tests/
     ├── golden/                     # .flow → expected interpreter output / IR snapshots
@@ -282,7 +283,7 @@ Written: YYYY-MM-DD · end of Session NN · by: <agent/human>
 
 #### 7.1.5 `DESIGN.md`
 
-Living design document per component, written/updated **before** code in every session that touches the component: data structures, public API, algorithms, error behavior, how invariants are enforced, what the tests will assert. Spec deviations discovered while designing go to an ADR first.
+Living design document per component, written/updated **before** code in every session that touches the component: data structures, public API, algorithms, error behavior, how invariants are enforced, what the tests will assert. Spec deviations discovered while designing go to an ADR first. Every component `DESIGN.md` **MUST** lead with a `## Categorical model (Dat + Trn)` section (FRAMEWORK §2; ADR-0014) — objects and morphisms before tables and API — and is listed in the model index `docs/architecture/INDEX.md`.
 
 ### 7.2 The session protocol — mandatory, in order
 
@@ -293,6 +294,7 @@ Living design document per component, written/updated **before** code in every s
 5. **Fix.** Iterate to green. If green is not reachable this session, stop coding early enough to document the red state precisely (step 8) — a documented red beats an undocumented "almost".
 6. **Perf / profile.** Once the component is functional: run `criterion` benches (and profiler when investigating); record numbers + date in the component STATUS. Optimize only with profile evidence; never trade away an invariant for speed without an ADR.
 7. **Reconcile docs.** Diff actual behavior against spec sections. Update: component `STATUS.md` (always), global `STATUS.md` (component table, capability matrix, session log), `ERRATA.md`/ADRs (if the implementation found a spec bug — this is expected and good; v0.2 itself came from five such finds). The implementation never silently diverges from the spec.
+   - Verify the change against the FRAMEWORK §8 coherence/reduction checklist, and update the component's `## Categorical model (Dat + Trn)` section + morphism table (and `docs/architecture/INDEX.md`) in the same change (FRAMEWORK §6; ADR-0014).
 8. **Hand off.** Overwrite `docs/next-session.md` (template §7.1.4). Commit everything. **Every session ends with this file — especially failed sessions.**
 
 ### 7.3 Hard rules for AI sessions
@@ -312,7 +314,7 @@ Living design document per component, written/updated **before** code in every s
 
 | Phase                       | Component focus | Definition of done                                                                                                                                                       |
 | --------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **P0 Bootstrap (M0)**       | repo, docs      | §10 executed: scaffold + docs system live; spec copied; ERRATA.md + ADR-0001…0007 written; E1–E5 patches applied to spec files; empty workspace `cargo test` green.      |
+| **P0 Bootstrap (M0)**       | repo, docs      | §10 executed: scaffold + docs system live; spec copied; ERRATA.md + ADR-0001…0007 written (bootstrap ADRs; subsequent sessions added ADR-0008…0014, see `docs/decisions/`); E1–E5 patches applied to spec files; empty workspace `cargo test` green.      |
 | **P1 Frontend**             | syntax          | Lexer+parser for all Flow-Core constructs; golden parse-tree tests incl. every `examples/*.flow`; spanned diagnostics; E4 statement-rule implemented.                    |
 | **P2 IR + lowering**        | ir, lower       | §3/§4 structures with builder-enforced invariants; lowering golden tests; property test "no ill-formed graph constructible"; Mermaid dump of any program.                |
 | **P3 Interpreter (M1)**     | interp, check   | Type/effect/lifetime checks for Core; fueled evaluator; **`sepia.flow` (and abs, sum_to_n, pipeline, fanout) run correctly on CPU via interpreter.** Oracle established. |

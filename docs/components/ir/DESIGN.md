@@ -3,6 +3,158 @@
 Written: 2026-06-12 · Session 04 · Status of this doc: increment 1 (P2) — authoritative for `crates/flow-ir`
 Spec authority: ADR-0013 > category-ir.md §3/§5 (+§2, §4 worked lowerings, §9.5, §11) > architecture.md §3. CHANGES §1 is the rationale; E1 (ADR-0002) and E2 (ADR-0003) constrain loops and effects.
 
+## Categorical model (Dat + Trn)
+
+This crate is modeled as a FRAMEWORK component (FRAMEWORK §0–§4). **Two-level firewall, stated once so it is never re-litigated:** the object language — Flow programs *as* morphisms of Flow-Cat — is **Level A**, already modeled in `docs/spec/category-ir.md`; this section does **not** restate it. What is modeled here is **Level B: the compiler itself** — `flow-ir`'s own internal Rust data types and the passes over them. The name collision is deliberate and is the errata-E5 tax: `CategoryIr`/`Object`/`Morphism`/`Operation` are Level-B *Rust structs the compiler holds in RAM* (objects of the compiler's `Dat`), **not** arrows of Flow-Cat. Never conflate the two. One-line pointer to the cross-component picture: see `docs/architecture/categorical-model.md`.
+
+**Scoping truth (FRAMEWORK §7.1 degenerate case).** The compiler is a single in-process pipe-and-filter pipeline, so the PHYSICAL pair `Loc`/`Trm` is **degenerate** for `flow-ir`: every type lives in one process, every pass is same-location, no transmission crosses a boundary. `loc.rs::SourceLoc` is a byte-range *datum*, **not** a FRAMEWORK `Loc` execution site (D8). The LOGICAL pair `Dat`/`Trn` is therefore applied richly and `Loc`/`Trm` are not invoked until the downstream backend/runtime seam (CPU/GPU/FPGA; host↔device `cudaMemcpy`), which lives in other crates. So the complete model of this crate is `Dat` (the data category below) + `Alg` (its passes, §§ below).
+
+### Why (one paragraph)
+
+Modeling `flow-ir` as a category buys three concrete things. (1) *Optionality is a partial morphism*: `value? : Object → Value` is defined exactly on `kind == Constant` (I7) — the nullable field IS the partiality, with the `kind` enum as its discriminator (FRAMEWORK §3 step 5). (2) *Deduce, don't store*: loop regions, topological order, and SCCs are **deduced morphisms** out of `CategoryIr`, never stored fields — so there is no second copy to drift (D3/D5; FRAMEWORK §5 "Deduce, don't store"). (3) *Consolidation*: each k-ary operation is one categorical product (`k` `Pair` edges into one product `Object`, then one op-edge), so I1 (one source, one target) is the *consequence* of representing arity as a product object, not a restriction bolted on top — there is no wide-edge type to parallel.
+
+### The Dat category (objects)
+
+The internal data category `Dat` of the compiler. Objects are the Rust types of `crates/flow-ir/src/{graph,ty,loc}.rs`; primitive sets follow FRAMEWORK notation (`𝕊` string, `𝔹` bool, `ℕ` natural, `u8`/`u32`/`u64`/`i32`/… the machine scalars). The central object is `CategoryIr` — one sealed dataflow graph — built out of `Object`/`Morphism`/`FuncDef` keyed by the opaque id atoms `ObjectId`/`MorphismId`/`FuncId`.
+
+```mermaid
+graph TB
+    CIr["CategoryIr"]
+    Obj["Object"]
+    Mor["Morphism"]
+    Fn["FuncDef"]
+    OKind["ObjectKind<br/>{Parameter,Temporary,Constant,Return,LoopMerge}"]
+    FKind["FuncKind<br/>{Named,MapBody,FoldBody}"]
+    Op["Operation<br/>(the §5.1 op set)"]
+    Ty["Ty"]
+    Val["Value"]
+    OId["ObjectId"]
+    MId["MorphismId"]
+    FId["FuncId"]
+    Loc["SourceLoc"]
+
+    CIr -->|"objects"| Obj
+    CIr -->|"morphisms"| Mor
+    CIr -->|"funcs"| Fn
+    CIr -->|"entry"| Fn
+    OId -->|"owner (via CategoryIr.owner)"| FId
+    OId -->|"in_edges / out_edges"| MId
+
+    Obj -->|"id"| OId
+    Obj -->|"ty"| Ty
+    Obj -->|"kind"| OKind
+    Obj -->|"loc"| Loc
+    Obj -->|"value? (partial, I7)"| Val
+    Obj -->|"name? (partial, D4)"| Str["𝕊"]
+
+    Mor -->|"id"| MId
+    Mor -->|"source"| Obj
+    Mor -->|"target"| Obj
+    Mor -->|"op"| Op
+    Mor -->|"loc"| Loc
+
+    Fn -->|"kind"| FKind
+    Fn -->|"input / output"| Obj
+    Fn -->|"morphisms (free monoid, insertion order)"| MId
+    Fn -->|"loc"| Loc
+
+    Op -->|"Call/Map/Fold payload (partial)"| FId
+    Val -->|"ty (total, underwrites I7)"| Ty
+
+    style CIr fill:#4f8cf7,color:#fff
+    style Obj fill:#4f8cf7,color:#fff
+    style Mor fill:#4f8cf7,color:#fff
+    style Fn fill:#4f8cf7,color:#fff
+    style OKind fill:#cf7fcf,color:#fff
+    style FKind fill:#cf7fcf,color:#fff
+    style Op fill:#cf7fcf,color:#fff
+    style Ty fill:#f7c04f,color:#000
+    style Val fill:#f7c04f,color:#000
+    style OId fill:#f7c04f,color:#000
+    style MId fill:#f7c04f,color:#000
+    style FId fill:#f7c04f,color:#000
+    style Loc fill:#f7c04f,color:#000
+    style Str fill:#f7c04f,color:#000
+```
+
+**Object catalogue** (full Rust definitions in §§2–6; this is the categorical view).
+
+| Object | Kind | Role in `Dat` |
+|---|---|---|
+| `CategoryIr` | product | the sealed graph — the central data object ten crates depend on; append-only then frozen |
+| `Object` | product | a graph node (data atom); `value?` partial on `kind==Constant` (I7) |
+| `ObjectKind` | discrete cat | `{Parameter, Temporary, Constant, Return, LoopMerge}` — the `kind` discriminator selecting each I3 in-edge shape |
+| `Morphism` | product | a directed dataflow edge — exactly one `source`, one `target` (I1); the `Dat`-level morphism of the IR graph |
+| `Operation` | discrete cat (+ `FuncId` payload on `Call`/`Map`/`Fold`) | the op tag keying the §5.1 typing table |
+| `FuncDef` | product | one function: one input `Parameter`, one output `Return`, an insertion-ordered `morphisms` set (free monoid `MorphismId*`) |
+| `FuncKind` | discrete cat | `{Named, MapBody, FoldBody}` |
+| `Ty` | sum ⊕ + recursive product (`Tuple` ×, `Struct` named ×, `Array`) | the Core type universe; depth-bounded ≤64 (I10) |
+| `Value` | sum ⊕ | the literal of a `Constant`; `value.ty()` total, underwrites I7 |
+| `SourceLoc` | product | half-open `[start,end)` byte span (I11) — a datum, **not** a `Loc` |
+| `ObjectId` / `MorphismId` / `FuncId` | identity atoms | opaque slotmap keys; insertion-ordered ⇒ deterministic iteration (I12/D2) |
+
+### Morphisms — the §5.1 Operation typing table is canonical
+
+The edge-tagging morphisms of the IR — i.e. the meaning of each `Morphism` keyed by its `Operation` — are specified **once and canonically** by the **§5.1 Operation typing table** (`op | source ty | target ty | extra conditions`). That table IS the morphism table for the `Operation` quiver of this category; **it is normative for both the builder (I2, per call) and the validator (`edge_type_ok` re-derives it), and is not duplicated here.** Read §5.1 as the canonical morphism specification.
+
+The remaining (non-edge) morphisms are the structural projections out of each `Dat` object, catalogued below. Partial morphisms carry `?`; deduced morphisms are dashed.
+
+| Morphism | Signature | Partiality | Semantics |
+|---|---|---|---|
+| `Object.ty` | `Object → Ty` | Total | the node's Core type |
+| `Object.kind` | `Object → ObjectKind` | Total | the discriminator selecting the I3 in-edge shape |
+| `Object.value?` | `Object → Value` | **Partial** | the literal carried by a `Constant`; `Some ⇔ kind==Constant` (I7), then `value.ty()==ty`. **The partial-morphism exemplar** (FRAMEWORK §3 step 5): one consolidated `Object` struct, with the one non-commuting distinction segregated as a partial morphism keyed on `kind` — never split into parallel `ConstantNode`/`InnerNode` types |
+| `Object.name?` | `Object → 𝕊` | Partial | surface name for dumps/debug (D4); `None` on synthesized nodes |
+| `Object.loc` | `Object → SourceLoc` | Total | source span (I11) |
+| `Morphism.source` / `Morphism.target` | `Morphism → Object` | Total | the edge's unique endpoints (I1) |
+| `Morphism.op` | `Morphism → Operation` | Total | constrains source/target per **§5.1** (I2) |
+| `Value.ty` | `Value → Ty` | Total | the unique ty of a literal; underwrites I7 |
+| `FuncDef.input` / `FuncDef.output` | `FuncDef → Object` | Total | the single `Parameter` / single `Return` object |
+| `FuncDef.morphisms` | `FuncDef → MorphismId*` | Total | the body as a free monoid in **insertion** order (a valid *construction* order; the *execution* order is deduced — see below) |
+| `CategoryIr.owner` | `ObjectId → FuncId` | Total (`try_owner` is the partial form validate uses for the I6 ownership clause) | the owning function; no cross-function edges (I6) |
+| `CategoryIr.entry` | `CategoryIr → FuncId` | Total | the entry function; always `FuncKind::Named` (`EntryNotNamed` otherwise) |
+| `CategoryIr.in_edges` / `out_edges` | `ObjectId → MorphismId*` | Total | incident edges in insertion order; `in_edges` shape decides I3 |
+
+**Partial-morphism worked example.** `value? : Object → Value` is the textbook FRAMEWORK §3 reduction realized in code. The naive split into two objects — `ConstantNode` (carrying `value`) and `InnerNode` (Parameter/Temporary/Return/LoopMerge, no `value`) — has every shared morphism (`id`, `ty`, `kind`, `name?`, `loc`) landing in the same targets, so the identity-on-objects functor between them commutes everywhere: they are **one object in disguise**. The single morphism that does *not* commute, `value`, is therefore segregated as a partial morphism on the unified `Object`, with `kind : Object → ObjectKind` as the discriminator (`value.is_some() ⇔ kind==Constant`). Corollary applied: `Object.ty` on a `Constant` is **deduced through** `value` (`object.ty == value.ty()`, single-sourced by `constant()`, re-checked by validate) — never an independent copy that could drift.
+
+### The Trn passes — builder primitives are morphism constructors
+
+The crate's transformations (`Trn`, FRAMEWORK §4.1) are its passes; with `Loc`/`Trm` degenerate, the model is the free **algorithm category `Alg`** of composable passes. Each `Trn` carries `t_from`/`t_to` projections into `Dat`.
+
+The **builder primitives are the morphism-and-object *constructors* of `Dat`** — the only producers of a `CategoryIr` ("ill-formed is unconstructible"). Each `FnBuilder` primitive (`constant`/`proj`/`pack`/`pack_struct`/`pack_array`/`unop`/`binop`/`phi`/`index`/`call`/`map`/`fold`/`print`/`output`/the loop quartet) is a *guarded constructor*: it mints a fresh target `Object` and the §5.1-typed defining `Morphism`(s), intaking every synthesized `Ty` (I9) and dispatching the per-op typing row (I2). Composite ops build their internal `Pair` packs **atomically** (the "Pair-then-primitive" product formation — callers cannot half-build a product). This is the Consolidation Principle made structural: arity is a product `Object`, so every constructor yields single-source/single-target edges and I1 holds by construction.
+
+| Pass (`Trn`) | `t_from → t_to` | Effect on `Dat` |
+|---|---|---|
+| `IrBuilder::declare` | `(FuncKind, 𝕊, Ty, Ty, SourceLoc) → FuncId ⊕ IrError` | mints a function's `Parameter`+`Return`; intakes both tys (I9) |
+| `FnBuilder` primitives | `(args…, Dest, SourceLoc) → ObjectId ⊕ IrError` | the object/morphism constructors above; enforce §5.1 (I2) + I9 per call |
+| `IrBuilder::seal` | `(IrBuilder, FuncId) ⇀ CategoryIr ⊕ IrError` | freezes the graph and runs the global checks (I4b/I5/I6/I-RET/struct-name); the **headline property**: `seal Ok ⇒ validate empty` |
+| `validate` | `&CategoryIr → IrViolation*` | the **independent oracle** (§11): re-derives every graph-shape clause from scratch with **no shared code** with the builder; empty `Vec` ⇔ well-formed |
+| `sccs` / `topo_order` / `loop_structure` | `CategoryIr × FuncId → …` | **deduced** structure recovery — see below |
+| `to_mermaid` / `lint_mermaid` | `&CategoryIr → 𝕊` / `&str → 𝕊*` | deterministic dump + lint |
+
+The builder is `Trn` (a genuine pass with algorithmic content) producing `Dat`; `validate` is a *parallel realization* of the same well-formedness contract on an independent code path — the FRAMEWORK §7.2 "validate twice, honestly" shape: two non-shared realizations of one contract make the `seal Ok ⇒ validate empty` property load-bearing rather than a tautology.
+
+### Deduce, don't store — topo / SCC / loop regions (D3/D5)
+
+Order and region structure are **deduced morphisms** out of `CategoryIr`, never stored fields (FRAMEWORK §5; D3, D5). The one stored ordering — `FuncDef.morphisms` in *insertion* order — is forced for free by the slotmap determinism contract (I12/D2) and serves only as the deterministic tie-break; the expensive *views* are recomputed on demand:
+
+| Deduced morphism | Signature | Why deduced, not stored |
+|---|---|---|
+| `topo_order` | `CategoryIr × FuncId → MorphismId*` | the dataflow/execution order (Kahn, `LoopBack` non-gating). A *different* ordering of the same edge set than the stored insertion (construction) order — a pure function of adjacency, so storing it would be a copy that could drift |
+| `sccs` | `CategoryIr × FuncId → Vec<ObjectId>*` | iterative Tarjan over adjacency; non-trivial SCCs **are** the loop regions, back edges **are** the `LoopBack` morphisms |
+| `loop_structure` | `CategoryIr × FuncId → LoopScc*` | `sccs ∘ kind-filter ∘ merge-tag` — the backend capability predicate (D3) |
+
+This is the load-bearing instance of "Deduce, don't store": **`Operation::Trace` is not materialized — the trace IS the cycle** (D3). A stored `Trace` payload (or stored topo/region fields) would be a *stored copy of a deduced morphism* — exactly the redundant-morphism smell — that could drift from the back edges. `seal` itself recomputes `sccs(f)` for its I4/I5 checks rather than caching, confirming the discipline. (Honest cost, recorded once: each call is `O(V+E)` and recursion-free per call; on Core's single-file programs this is cheap and is the right trade for zero-drift determinism. If a future profile shows `seal`/codegen hot on large graphs, the §5-sanctioned move is a single post-seal memo — legal precisely because the graph is immutable after seal, so the cache cannot drift — added in its own ADR, not now.)
+
+### Mermaid lint rules (project convention)
+
+All diagrams in this and sibling docs follow the project Mermaid rules — the same rules `lint_mermaid` (§14) enforces on every IR dump in tests, plus the FRAMEWORK appendix color legend:
+
+1. **One arrow style** in the whole document: `-->` only (labeled as `-- "label" -->` in `flowchart`, `-->|"label"|` in `graph`). No `-.->`/`==>`/`---` for edges **anywhere** — including design diagrams; partial/deduced/future morphisms are flagged by a **label** on a solid arrow (`-->|"… (partial)"|`), not by a dashed edge, while `to_mermaid` output likewise uses one solid style and labels back edges `"LoopBack ↩"` + the `⟲ ` merge prefix (D9) rather than dashing them.
+2. **Every label double-quoted**, with `"` escaped (`#quot;` in `to_mermaid`).
+3. **Structural**: a `flowchart`/`graph` header, balanced `subgraph`/`end`, node ids `[A-Za-z0-9_]+` (per-dump `f{i}o{j}` ordinals, never raw slotmap bits).
+4. **Color legend** (FRAMEWORK appendix): blue `#4f8cf7` data objects, green `#7fc47f` `Trn`, red `#f77f7f` `Loc`, teal `#7fc4c4` `Trm`/junctions, yellow `#f7c04f` primitives/ids/ports, purple `#cf7fcf` components/enums, grey `#9a9a9a` deduced/future.
+
 ## 0. Scope of increment 1
 
 In: the graph data structures (§3–§5 below), the invariant-enforcing builder (§10–§11), the independent validator (§12), iterative Tarjan SCC + topological order (§13), the deterministic Mermaid dump + lint (§14), tests (§16), a small criterion bench.
@@ -345,6 +497,7 @@ flowchart LR
         f0o0(("in: ()"))
         f0o1(("10: i32"))
         f0o2(("(i32, i32)"))
+        f0o3(("ret: i32"))
         f0o0 -- "Pair 0/2" --> f0o2
         f0o1 -- "Pair 1/2" --> f0o2
         f0o2 -- "Add" --> f0o3

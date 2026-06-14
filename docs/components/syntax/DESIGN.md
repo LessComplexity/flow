@@ -8,6 +8,190 @@ Increment map:
 - **§1–§11 (Session 02): the lexer.** Token model, lexical grammar, diagnostics, API, tests.
 - **§13–§21 (Session 03): the parser.** Two-tier grammar (ADR-0005), parse-tree data structures, P-code diagnostics + recovery (ADR-0008), `Ident {` law (ADR-0011), tests + bench. §12's pre-collected questions are resolved here.
 
+## Categorical model (Dat + Trn)
+
+> See `docs/architecture/categorical-model.md` for the cross-cutting model and bridges.
+
+**Scope of this section (the firewall).** This models the **compiler's own**
+internal data and passes — `flow-syntax` as a **Level-B** component — in
+FRAMEWORK.md vocabulary. Its `Dat` is the crate's own data types (tokens, AST
+nodes, diagnostic values); its `Trn` is the crate's two passes (`lex`, `parse`).
+It does **not** model the object language: `Chain`/`Stage`/`StageKind` are
+Level-B AST nodes that *represent* Flow-Cat (Level-A) constructs — they are data
+*inside* this category, never arrows of it. The Level-A object language lives in
+`docs/spec/category-ir.md` and is not restated here (errata E5: the
+category-keyword collision was already paid for; `category` is reserved-and-
+rejected via L0004 in favour of `type`).
+
+**Why categorical, here.** Two payoffs the diagram makes checkable. (1) The crate
+is the **degenerate pipe-and-filter** case (FRAMEWORK §7.1 final note): an
+in-process two-filter chain `lex ; parse` where all filters share one process
+`Loc` and every pipe is same-location, so the physical pair `Loc`/`Trm` collapses
+entirely and the model reduces to `Dat` + `Alg` (the pass pipeline) — there is no
+backend/runtime seam in this crate to invoke them at. (2) The
+consolidation reading is honest about its near-twins: `GuardDiscr` is *not* a
+parallel copy of `GuardKind` but `GuardKind` **plus** the `OutOfCore` morphism
+(§3 "extend, don't parallel"); and `SourceLoc` is **duplicated** into `flow-ir`
+by a deliberate dependency-direction choice (D8), an accepted stored-copy
+tradeoff at the crate seam, not a modeling smell.
+
+### The core category — `Dat`
+
+The crate's `Dat` is dominated by two free monoids and one product hub. `Token*`
+(the free monoid of `Token = TokenKind × SourceLoc`) is the carrier between the
+two filters; `Diagnostic*` (the free monoid of structured, renderer-free
+diagnostics) is the second projection of *both* pass outputs; and the AST is a
+recursive product/sum tree of nodes, each carrying a `SourceLoc` span (C12). The
+two pass containers `LexOutput = Token* × Diagnostic*` and
+`ParseOutput = Program × Diagnostic*` are the products that the passes weld.
+
+```mermaid
+graph LR
+    Str["𝕊 (source)"]
+    Tok["Token"]
+    TokK["TokenKind"]
+    Loc["SourceLoc"]
+    Diag["Diagnostic"]
+    DiagC["DiagCode"]
+    Sev["Severity"]
+    Fix["SuggestedFix"]
+    Prog["Program"]
+    Item["Item"]
+    FnDecl["FnDecl"]
+    Block["Block"]
+    Chain["Chain"]
+    Stage["Stage"]
+    StageK["StageKind"]
+    Expr["Expr"]
+    Ty["Ty"]
+    LexO["LexOutput = Token* × Diagnostic*"]
+    ParseO["ParseOutput = Program × Diagnostic*"]
+
+    Tok -->|"kind"| TokK
+    Tok -->|"span"| Loc
+    Tok -.->|"lexeme · deduced (&source[span])"| Str
+    Diag -->|"code"| DiagC
+    Diag -->|"severity"| Sev
+    Diag -->|"span"| Loc
+    Diag -->|"fix?"| Fix
+    Prog -->|"items"| Item
+    Item -->|"fn?"| FnDecl
+    FnDecl -->|"body"| Block
+    Block -->|"tail?"| Chain
+    Chain -->|"head?"| Expr
+    Chain -->|"stages"| Stage
+    Stage -->|"kind"| StageK
+    LexO -->|"tokens"| Tok
+    LexO -->|"lex_diags"| Diag
+    ParseO -->|"program"| Prog
+    ParseO -->|"parse_diags"| Diag
+
+    style Str fill:#f7c04f,color:#000
+    style Loc fill:#f7c04f,color:#000
+    style DiagC fill:#f7c04f,color:#000
+    style Sev fill:#cf7fcf,color:#fff
+    style TokK fill:#cf7fcf,color:#fff
+    style Fix fill:#4f8cf7,color:#fff
+    style Tok fill:#4f8cf7,color:#fff
+    style Diag fill:#4f8cf7,color:#fff
+    style Prog fill:#4f8cf7,color:#fff
+    style Item fill:#cf7fcf,color:#fff
+    style FnDecl fill:#4f8cf7,color:#fff
+    style Block fill:#4f8cf7,color:#fff
+    style Chain fill:#4f8cf7,color:#fff
+    style Stage fill:#4f8cf7,color:#fff
+    style StageK fill:#cf7fcf,color:#fff
+    style Expr fill:#4f8cf7,color:#fff
+    style Ty fill:#4f8cf7,color:#fff
+    style LexO fill:#4f8cf7,color:#fff
+    style ParseO fill:#4f8cf7,color:#fff
+```
+
+(Project lint rules: every node uses a quoted label; one arrow style `-->`
+throughout, with `-.->` reserved for deduced morphisms — partial morphisms use
+solid `-->` and a `?`-suffixed label (FRAMEWORK §appendix); the color legend
+is FRAMEWORK.md's — primitives/spans yellow, data objects blue, enums/discrete
+categories purple.)
+
+### Morphism table
+
+Selected structural morphisms (every arrow in the diagram above appears here, and
+every row here that is in the diagram's scope appears there; display-only
+deductions are tabled separately below and are deliberately off-diagram). `?`
+marks a partial morphism; "Deduced" marks a morphism computed on demand, never
+stored.
+
+| Morphism | Signature | Partiality | Semantics |
+| --- | --- | --- | --- |
+| `kind` | `Token → TokenKind` | Total | the token's classification |
+| `span` | `Token → SourceLoc` | Total | the token's byte range — the sole home of its lexeme text |
+| `lexeme` | `Token × 𝕊 → 𝕊` | Deduced | `&source[span.start..span.end]`; never stored (single source of truth) |
+| `span` (uniform) | `Node → SourceLoc` | Total | every node/token carries a span (C12): a nat. transf. `Id ⇒ ConstSourceLoc`; child spans ⊆ parent (J2) |
+| `code` | `Diagnostic → DiagCode` | Total | stable machine class (`L####`/`P####`/`T####`) |
+| `severity` | `Diagnostic → Severity` | Total | `Error \| Warning` |
+| `fix?` | `Diagnostic → SuggestedFix` | Partial | machine-applicable repair, when offered |
+| `items` | `Program → Item*` | Total | the free monoid of top-level declarations (`item* EOF`) |
+| `fn?` | `Item → FnDecl` | Partial | the `Fn` variant's declaration; `None` for `Type`/`Error` items |
+| `body` | `FnDecl → Block` | Total | the function body block |
+| `tail?` | `Block → Chain` | Partial | the block's optional trailing chain expression; absent for statement-only blocks |
+| `head?` | `Chain → Expr` | Partial | optional leading expression; absent for headless chains (`stage+`) |
+| `stages` | `Chain → Stage*` | Total | the flat ordered pipe-and-filter spine (no arrow nesting, C11) |
+| `kind` | `Stage → StageKind` | Total | classified stage body — the central dispatch surface for lowering |
+| `tokens` | `LexOutput → Token*` | Total | the token stream, always `Eof`-terminated (I1) |
+| `lex_diags` | `LexOutput → Diagnostic*` | Total | recovery diagnostics from the lexing pass |
+| `program` | `ParseOutput → Program` | Total | first projection of the parse result — the thin tree |
+| `parse_diags` | `ParseOutput → Diagnostic*` | Total | merged, position-sorted lex+parse log; ⊇ `lex(s).diagnostics` (J6) |
+
+The diagram's `diagnostics` arrows carry the disambiguating labels `lex_diags`
+and `parse_diags` for the two pass containers; both land on `Diagnostic`.
+
+**Display-only deductions** (off-diagram — computed for rendering, never on nodes,
+not part of the core `Dat` category diagram above):
+
+| Morphism | Signature | Partiality | Semantics |
+| --- | --- | --- | --- |
+| `line_col` | `SourceLoc.start → LineCol` | Deduced | offset → 1-based line/col via `LineIndex`; display-only, never on nodes |
+
+### `Trn` — the two passes (the `Alg` sub-chain)
+
+The passes are `Trn` objects with `t_from`/`t_to` projections into `Dat`. The
+whole crate is one composable chain in `Alg`: `parse` internally composes
+`lex ; parse_program ; (merge+sort)`, so the pipe-weld equation
+`t_to(lex) = t_from(parse_program) = Token*` holds (Coherence Law 1 specialised:
+the pipe carries exactly `Token*`).
+
+| Pass (`Trn`) | `t_from` | `t_to` | Partiality | Semantics |
+| --- | --- | --- | --- | --- |
+| `lex` | `𝕊` | `LexOutput` | Total | one forward maximal-munch scan; error-recovering, always `Eof`-terminated; the scanner always advances (I1/C2/C4) |
+| `parse` | `𝕊` | `ParseOutput` | Total | runs `lex`, then two-tier recursive descent (ADR-0005) into `Program`; merges + stably sorts lex+parse diagnostics; depth-guarded (P0011) + progress lemma ⇒ never panics/hangs (J1) |
+
+Both passes are **total** (never panic, never bail) — the `Diagnostic*` arm of
+each output container carries recovery information, so partiality is encoded as a
+*sum in the output*, not as an undefined transformation. This is why
+`lex`/`parse` are arrows in `Alg`, not partial morphisms.
+
+### Composition rules / invariants (cross-reference)
+
+The categorical facts above are enforced by the named invariants: span
+single-source and monotonicity (I2, J2), coverage as a partition of the source
+(I3), `Eof`-termination and scanner progress (I1), parse totality (J1),
+clean-tree (J3: zero diagnostics ⇒ no `Error` nodes and no rejected-but-kept
+forms — i.e. the in-Core sub-AST is exactly the domain of clean parsing),
+renderer-freedom (I5/J5: no `Display` anywhere — diagnostics are structured
+values, presentation is `flow-cli`'s job), and lex-diagnostic preservation (J6).
+See §8 (I1–I5) and §19 (J1–J6).
+
+### Bridges (Level-B seams to other crates)
+
+| Bridge | Direction | Stored? | Note |
+| --- | --- | --- | --- |
+| `SourceLoc` | `flow-syntax ↔ flow-ir` | Stored copy (D8) | field-identical `{start,end}`; `flow-ir` defines its **own** to keep zero deps; converted by `flow-lower::tys::ir_loc` |
+| `Diagnostic`/`DiagCode`/`Severity` | `flow-syntax → flow-lower` (verbatim) | Shared type | one `DiagCode` space, L-bands partitioned (LD16); no separate diagnostics crate |
+| `Program` | `flow-syntax → flow-lower` | Crosses as typed payload | the entry datum to `lower` (consumes a clean `Program`) |
+| `Ty`/`TyKind` (surface) | `flow-syntax → flow-ir::Ty` (resolved) | Two distinct objects | resolved by `flow-lower::tys`; do **not** conflate surface `Ty` with IR `Ty` |
+| `unescape_string` | `flow-syntax → flow-lower::emit` | Shared helper | materialises `Str` values the thin tree leaves un-decoded |
+| `Diagnostic` rendering | `flow-syntax → flow-cli` | One-directional | structured values out, presentation downstream (I5/C3/J5) |
+
 ## 0. Spec basis and binding constraints
 
 Sources, in authority order (HANDOFF §2.2): ADR-0005/0006/0008/0009/0010 · `user-guide.md` §2–3 (as patched: E4, E5) for the Flow-Core surface, **plus §5–§10 and the flow snippets in `category-ir.md` enumerated for full-surface tokenization per C8** (`@`-annotations, `?`, `channel<i32>`, `::`, `200MHz`, …) · `architecture.md` §2.2.1 · HANDOFF §4.1 (Flow-Core scope), §5 items 2/6 · `docs/spec/ERRATA.md` (LC-2).
