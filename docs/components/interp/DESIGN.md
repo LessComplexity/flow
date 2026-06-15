@@ -1,7 +1,7 @@
 # Component: interp — DESIGN
 
 Written: 2026-06-14 · Session 07 · Status of this doc: increment 1 (P3, → M1) — authoritative for `crates/flow-interp`
-Spec authority: ADR-0002 (E1: fueled / least-fixpoint loop semantics — divergence is a defined outcome) > ir/DESIGN §5.1 (op typing table), §7 (loops / D7 exit-value pin), §8 (tokens / effect order) > category-ir.md §2.6–2.8 (Kleisli effects, divergence monad, trace), §11.4 (graph walk in topo order, SCCs for loops) > ADR-0013 (traps: div/mod-zero, OOB Index). The interpreter consumes only a **sealed, `validate()`-clean** `flow_ir::CategoryIr`; it is the project's **oracle** (HANDOFF §5 item 4, §7.3).
+Spec authority: ADR-0002 (E1: fueled / least-fixpoint loop semantics — divergence is a defined outcome) > **ADR-0016 (loop branch evaluation is guard-first — the continue-branch is not speculatively evaluated on the exit step; §4)** > ir/DESIGN §5.1 (op typing table), §7 (loops / D7 exit-value pin), §8 (tokens / effect order) > category-ir.md §2.6–2.8 (Kleisli effects, divergence monad, trace), §11.4 (graph walk in topo order, SCCs for loops) > ADR-0013 (traps: div/mod-zero, OOB Index). The interpreter consumes only a **sealed, `validate()`-clean** `flow_ir::CategoryIr`; it is the project's **oracle** (HANDOFF §5 item 4, §7.3).
 
 ## Categorical model (Dat + Trn)
 
@@ -154,39 +154,49 @@ Return `env[fd.output]` (the `Return` object). The in-SCC object set is precompu
 
 `render(v)` (§5): integers → decimal; `Bool` → `true`/`false`; `F32`/`F64` → `format!("{v}")` (Rust shortest round-trip — `4080.0 → "4080"`, `5.375 → "5.375"`); `Str(s) → s`.
 
-## 4. Loops — SCC-driven fueled iteration (the 55 contract)
+## 4. Loops — SCC-driven fueled iteration, **guard-first** (the 55 contract)
 
-A loop is one non-trivial SCC with a designated `LoopMerge m` (ir §7). The driver:
+A loop is one non-trivial SCC with a designated `LoopMerge m` (ir §7). The driver
+is **guard-first (ADR-0016)**: on each iteration it evaluates only the
+**decide/exit cone** (the shared guard `cond` and the `LoopExit` payload), reads
+the guard, and evaluates the **advance set** (the `LoopBack` next-state — where
+speculative traps like `fir`'s `Index(coeffs, k)` live) **only when the guard
+continues**. The continue-branch is the `inr(U)` arm of the Elgot step
+`f : U → B ⊕ U` (E1) and is the **not-taken** arm on the exit step — it MUST NOT
+be evaluated there. The earlier "evaluate the whole body, then test the guard"
+reading miscompiled `fir`: on the exit state `k = 4` it indexed `coeffs[4]` on a
+`[f32; 4]` ⇒ a spurious `Trapped(IndexOob)` instead of `5.375` (ADR-0016).
 
 ```
 run_loop(m):
     state := env[ source(LoopEnter→m) ]          # the init value (computed outside the SCC)
     repeat:
         env[m] := state
-        reset the staging buffer of every in-SCC / route product object
-        for mo in body_order(m):                 # def below; decrements budget per morphism
-            eval_morphism(mo)                    #   rebuilds in-SCC values AND the back/exit route packs
-        back := env[ back_route(m) ]              # the (next_state, cond) route object
-        cond := back@1                            # the shared guard bool (D7: back fires true)
-        if cond == Bool(true):
-            state := back@0                       # continue with next_state
-        else:
-            for ex in exits(m):                  # exit fires on false (D7)
-                env[ target(ex) ] := env[ source(ex) ]@0   # source(ex) = exit route, now built by body_order
+        reset the staging buffer of every in-SCC / route product object (decide + advance)
+        for mo in decide_order(m):               # def below; decrements budget per morphism
+            eval_morphism(mo)                    #   builds the cond + the LoopExit route (incl. exit-feeding effects)
+        cond := env[ exit_route(m) ]@1           # the shared guard bool (D7: back true / exit false)
+        if cond == Bool(false):                  # EXIT — do NOT evaluate the continue-branch
+            for ex in exits(m):
+                env[ target(ex) ] := env[ source(ex) ]@0   # source(ex) = exit route, built by decide_order
             break
+        for mo in advance_order(m):              # CONTINUE — now build the next-state (the inr(U) arm)
+            eval_morphism(mo)
+        state := env[ back_route(m) ]@0          # the (next_state, cond) route's slot 0
 ```
 
 **Loop-part location (read API).** `flow-ir` exposes no direct accessor for these; the driver derives them once per merge `m`:
 
 - `source(LoopEnter→m)` / `back_route(m)` = `source(e)` for the unique `e ∈ in_edges(m)` with `op == LoopEnter` / `op == LoopBack` respectively (ir §7: exactly one `LoopEnter`; one `LoopBack` in the M1 canonical shape, §4 scope).
-- `exits(m)` = the `LoopExit` morphisms whose exit-**route** object is built from in-SCC values (its slot-`Pair` sources ∈ `SCC(m)`). `LoopExit` edges are **not** in `in_edges(m)` and their route sits *outside* the SCC, so attribute by route-feeder membership — not by `in_edges(m)`, and not by SCC membership of the route itself.
-- `body_order(m)` = `ir.topo_order(owner(m))` filtered to morphisms *incident* to `SCC(m)` (`source ∈ SCC(m)` ∨ `target ∈ SCC(m)`), EXCLUDING ops `LoopEnter`/`LoopBack`/`LoopExit`. It is header-first because `topo_order` releases the `LoopMerge` on its lone `LoopEnter` (ir §13); it includes both the **source-in-SCC** route-pack `Pair` edges (which build the back/exit route objects that sit outside the SCC) and the **target-in-SCC** loop-invariant `Pair` edges — so `env[back_route(m)]` and `env[source(ex)]` are populated, and every in-SCC product is fully re-slotted, before they are read.
+- `exits(m)` = the `LoopExit` morphisms whose exit-**route** object is built from in-SCC values (its slot-`Pair` sources ∈ `SCC(m)`). `LoopExit` edges are **not** in `in_edges(m)` and their route sits *outside* the SCC, so attribute by route-feeder membership — not by `in_edges(m)`, and not by SCC membership of the route itself. `exit_route(m) = source(ex)` for the unique M1 `ex ∈ exits(m)` — the `(value, cond)` route object.
+- `body_order(m)` = `ir.topo_order(owner(m))` filtered to morphisms *incident* to `SCC(m)` (`source ∈ SCC(m)` ∨ `target ∈ SCC(m)`) **plus** any `Pair` edge whose **target is `back_route(m)` or `exit_route(m)`** (even if both its endpoints lie outside the SCC), EXCLUDING ops `LoopEnter`/`LoopBack`/`LoopExit`. It is header-first because `topo_order` releases the `LoopMerge` on its lone `LoopEnter` (ir §13); it includes both the **source-in-SCC** route-pack `Pair` edges and the **target-in-SCC** loop-invariant `Pair` edges — so `env[back_route(m)]` and `env[source(ex)]` are populated, and every in-SCC product is fully re-slotted, before they are read. The route-target clause is **degenerate-guard completeness** (impl S08): when the guard `cond` (or the exit value) is a `Constant` — e.g. the §11.3 constant-`true` divergence loop — the route-pack `Pair` edge has *no* in-SCC endpoint (constant source, route target, both outside the SCC), so pure incidence would drop it and the route would never finalize; the clause re-fires it each iteration. It is a no-op for the six examples (their `cond` is computed in-SCC, so the slot edge already has an in-SCC endpoint).
+- **The decide/advance split (ADR-0016).** Let `D(m)` = the objects backward-reachable, within `body_order(m)`'s edges, from `exit_route(m)` (`o ∈ D` iff `o == exit_route(m)` ∨ `o` feeds a morphism whose target ∈ `D`). Then `decide_order(m)` = `body_order(m)` filtered to `target(mo) ∈ D(m)` (topo order preserved); `advance_order(m)` = `body_order(m)` ∖ `decide_order(m)`. `D(m)` captures exactly the shared `cond` (the exit route's slot-1 source), the exit payload (slot-0 source), the merge `Proj`s they need, and any **exit-feeding effect** (countdown's `println` feeds the exit token, so it lands in `decide_order` — fired once per iteration, before the guard is read). The next-state computation feeding `LoopBack` (fir's `Index`/`Mul`/`Add`) feeds only the back route, never `exit_route(m)`, so it lands in `advance_order` — evaluated only on a continuing iteration. The shared `cond → back_route` `Pair` edge is in `advance_order` (its target `back_route ∉ D`), and reads `cond` already in `env` from the decide phase.
 
-**Per-iteration buffer reset.** Because `body_order(m)` re-fires the `Pair` edges that assemble in-SCC / route product objects each iteration, the driver clears those objects' staging buffers at the top of every iteration (alongside `env[m] := state`) so finalization re-triggers cleanly. A loop-invariant slot fed from outside the SCC is re-read from its existing `env` entry (the source value never changes), so re-firing it is harmless and keeps the slot present after the reset.
+**Per-iteration buffer reset.** Because `decide_order(m)` + `advance_order(m)` re-fire the `Pair` edges that assemble in-SCC / route product objects each iteration, the driver clears those objects' staging buffers at the top of every iteration (alongside `env[m] := state`) so finalization re-triggers cleanly. The reset covers **both** phases' product targets even though the advance phase may be skipped on the exit iteration (a stale next-state buffer must never leak into the following run — moot at M1 since the run ends on exit, but kept correct for safety). A loop-invariant slot fed from outside the SCC is re-read from its existing `env` entry (the source value never changes), so re-firing it is harmless and keeps the slot present after the reset.
 
-- **The 55 contract (ir D7).** The exit payload is read from the **failing iteration's merge state**, never from the recomputed next-state. The driver guarantees this: on the iteration where `cond` is false, `env[m]` still holds the current `state`, and the exit route was built from `Proj`s of `m` — so `env[source(ex)]@0` is the merge-view value. `sum_to_n(10)`: states `(1,0)…(11,55)`; at `(11,55)` the guard `11 ≤ 10` is false, exit reads `acc = 55`. **Not 54, not 65.** A golden pins this both structurally (already in `ir`/`lower`) and now **by execution**.
-- **Budget.** Every `eval_morphism` decrements the global budget; an unbounded loop therefore exhausts it mid-iteration and yields `Diverged` (E1) — never a hang. (A loop whose guard is a constant `Bool(true)` — an always-taken `LoopBack` plus a structurally-present, never-fired `LoopExit` — is legal, sealable, and diverges under fuel. A truly exit-less loop **cannot** be sealed: `end_loop` requires ≥1 `LoopExit`.)
-- **Tokens through loops (§8 / I4b).** If a `Print` is inside the loop, `IoToken` is a component of `U`; the token (output log) threads through `state` and accumulates across iterations, escaping via the token-bearing `LoopExit` payload (the countdown shape — golden in §11).
+- **The 55 contract (ir D7).** The exit payload is read from the **exit iteration's merge state**, never from the next-state. Guard-first makes this structural: on the iteration where `cond` is false, `env[m]` still holds the current `state`, the exit route was built (in `decide_order`) from `Proj`s of `m`, and the next-state is **never evaluated at all** (it is in `advance_order`, skipped) — so `env[exit_route(m)]@0` is the merge-view value. `sum_to_n(10)`: states `(1,0)…(11,55)`; at `(11,55)` the guard `11 ≤ 10` is false, exit reads `acc = 55`. **Not 54, not 65.** A golden pins this both structurally (already in `ir`/`lower`) and now **by execution**.
+- **Budget.** Every `eval_morphism` decrements the global budget; an unbounded loop therefore exhausts it mid-iteration (its always-`true` guard keeps re-entering `advance_order`) and yields `Diverged` (E1) — never a hang. (A loop whose guard is a constant `Bool(true)` — an always-taken `LoopBack` plus a structurally-present, never-fired `LoopExit` — is legal, sealable, and diverges under fuel. A truly exit-less loop **cannot** be sealed: `end_loop` requires ≥1 `LoopExit`.)
+- **Tokens through loops (§8 / I4b).** If a `Print` is inside the loop, `IoToken` is a component of `U`; the token (output log) threads through `state` and accumulates across iterations, escaping via the token-bearing `LoopExit` payload (the countdown shape — golden in §11). A `print`/`println` that **precedes the guard** feeds the exit-route token, so it is in `decide_order` (ADR-0016) and fires on **every** iteration including the exit one — countdown prints `0` on the `n = 0` exit step. It fires exactly once per iteration (it is in `decide_order`, never re-run by `advance_order`).
 - **Scope (M1).** Single-merge, single-back, single-exit canonical SCCs (sum_to_n, fir, countdown). The driver asserts, per SCC, `merges.len() == 1`, exactly one `LoopBack` into the merge, and exactly one attributed `LoopExit`; any other shape (multi-merge nested loops, or multiple back/exit edges per merge) is Core-degenerate, **out of M1**, and returns an `interp` error rather than miscomputing. None arise from the six examples, and lower OQ7 restricts generation to canonical shapes. The multi-guard rule ir §7 defers to this component (each `LoopExit` gated by its own route slot-1 cond) is pinned in a later increment — so the Bridges claim reads "walks any sealed IR, **erroring on out-of-M1 loop shapes**."
 
 ## 5. Effects & IO — the token as a Writer
@@ -266,7 +276,7 @@ crates/flow-interp/tests/
 crates/flow-interp/benches/interp_scale.rs
 ```
 
-Cargo deps: `flow-ir`; `flow-syntax` + `flow-lower` as **dev-deps** (the acceptance pipeline `parse→lower→run` lives in tests — the library depends on `ir` alone, per the §0 bridge). Dev-deps `insta`, `proptest` (later), `criterion` + `[[bench]] interp_scale`.
+Cargo deps: `flow-ir` + `slotmap` (the `env`/staging maps are `SecondaryMap<ObjectId, _>`; `flow-ir` does not re-export `slotmap`, so it is a direct dep at the same version — still no `HashMap`, D2/E2); `flow-syntax` + `flow-lower` as **dev-deps** (the acceptance pipeline `parse→lower→run` lives in tests — the library depends on `ir` + `slotmap` alone, per the §0 bridge). Dev-deps `criterion` + `[[bench]] interp_scale` (acceptance asserts the literal program output with `assert_eq!`, not snapshots — no `insta`; `proptest` later).
 
 ## 13. Decision ledger (IN1–IN8 — decided once, do not re-litigate)
 

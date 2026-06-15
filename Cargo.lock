@@ -261,6 +261,13 @@ version = "0.0.1"
 [[package]]
 name = "flow-interp"
 version = "0.0.1"
+dependencies = [
+ "criterion",
+ "flow-ir",
+ "flow-lower",
+ "flow-syntax",
+ "slotmap",
+]
 
 [[package]]
 name = "flow-ir"

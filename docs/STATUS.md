@@ -1,7 +1,7 @@
 # Flow — Global Status
 
-Last updated: 2026-06-14 · Session 07
-Current phase: **P3 underway** — interp DESIGN written + review-hardened; `flow-interp` implementation next (→ M1). Current milestone: M1 — sepia, abs, sum_to_n, pipeline, fanout run correctly on CPU via the interpreter (oracle established)
+Last updated: 2026-06-15 · Session 08
+Current phase: **P3 — M1 oracle ESTABLISHED.** `flow-interp` implemented; all six examples run correctly on CPU via the interpreter. Next: `flow-check` (the §9 owed checks). Current milestone: M1 — sepia, abs, sum_to_n, pipeline, fanout (+fir) run correctly on CPU via the interpreter (oracle established) ✅
 
 ## Components
 
@@ -11,7 +11,7 @@ Current phase: **P3 underway** — interp DESIGN written + review-hardened; `flo
 | ir             | tested      | 92 ✅ | Core graph IR per ADR-0013/LC-4: edge-only dataflow, sealed builder + independent validate, inline-trace loops, IO token, SCC/topo, linted Mermaid; bench recorded. S05: empty-struct hole fixed. S07: `Print{newline}`/`println` (ADR-0015, +1). | [status](components/ir/STATUS.md)             |
 | lower          | tested      | 100 ✅ | P2 second half complete: full Core surface lowers to sealed validate-empty IR; all 6 examples golden (+countdown/effectful-call); 46 L-codes with rejection matrix; literal-width unification; token laws; bench recorded. | [status](components/lower/STATUS.md)          |
 | check          | not-started | —     | Type / effect / lifetime checks for Core; not begun.       | [status](components/check/STATUS.md)          |
-| interp         | design      | —     | Fueled reference interpreter (the oracle): DESIGN written + adversarially review-hardened (S07; 6 blockers fixed); implementation next. | [status](components/interp/STATUS.md)         |
+| interp         | tested      | 27 ✅ | **M1 oracle live (S08):** fueled evaluator; guard-first loop driver (ADR-0016); six example goldens + countdown + 55/fir value contracts + traps + fueled divergence + determinism; bench recorded. | [status](components/interp/STATUS.md)         |
 | rewrite        | not-started | —     | Layer 1–4 rewrite passes + property harness; not begun.    | [status](components/rewrite/STATUS.md)        |
 | backend-llvm   | not-started | —     | Textual LLVM IR → clang; not begun.                        | [status](components/backend-llvm/STATUS.md)   |
 | backend-cuda   | not-started | —     | CUDA .cu for map-kernels via nvcc; not begun.              | [status](components/backend-cuda/STATUS.md)   |
@@ -24,14 +24,14 @@ Status vocabulary: not-started · design · building · tested · stable · bloc
 
 | Feature                              | interp  | llvm    | cuda    | verilog |
 | ------------------------------------ | ------- | ------- | ------- | ------- |
-| pipelines / operator-shorthand       | planned | planned | planned | planned |
-| functions                            | planned | planned | planned | planned |
-| guards → Phi                         | planned | planned | planned | planned |
-| loops / trace                        | planned | planned | planned | planned |
-| parallel fanout (pure)               | planned | planned | planned | planned |
-| seq + print (IO)                     | planned | planned | planned | planned |
-| tuples / named types / fixed arrays  | planned | planned | planned | planned |
-| map / fold inline-block              | planned | planned | planned | planned |
+| pipelines / operator-shorthand       | ✅      | planned | planned | planned |
+| functions                            | ✅      | planned | planned | planned |
+| guards → Phi                         | ✅      | planned | planned | planned |
+| loops / trace (guard-first, ADR-0016)| ✅      | planned | planned | planned |
+| parallel fanout (pure)               | ✅      | planned | planned | planned |
+| seq + print (IO)                     | ✅      | planned | planned | planned |
+| tuples / named types / fixed arrays  | ✅      | planned | planned | planned |
+| map / fold inline-block              | ✅      | planned | planned | planned |
 
 Legend: ✅ supported · ✋ rejected-with-error · planned
 
@@ -60,11 +60,13 @@ None.
 | ADR-0013 | IR realization: all dataflow is edges (per-slot Pair, constants-as-objects); Core op set (+Neg/Index/Map/Fold/Print/loop edges/Output, −Identity/Const/Trace); loops as inline SCC-visible cycles; IO as linear world token (signature synthesis, token sink, token-in⇒token-out) | accepted — autonomous Session 04, **flagged for Sapir review**, revisable | yes (LC-4: category-ir §4.1/§5.3 marked, §3.3 pointer note) |
 | ADR-0014 | FRAMEWORK.md adopted as the Level-B categorical model layer for compiler-internal design (firewalled from Flow-Cat / Level A); mandatory `## Categorical model (Dat + Trn)` DESIGN lead-section + FRAMEWORK §8 reconcile-gate line; new `docs/architecture/{categorical-model,INDEX}.md` | accepted — ratified by Sapir 2026-06-14 (Session 06) | n/a (methodology; Level A untouched — HANDOFF §7.1.5/§7.2 patched, not spec) |
 | ADR-0015 | Split the print effect: `print` raw, `println` appends `\n`; one IR op `Print { newline }`; Core effect surface `{print}` → `{print, println}` | accepted — decided with Sapir (Session 07) | n/a (scope/methodology; HANDOFF §4.1 patched; Level-A spec untouched) |
+| ADR-0016 | Loop branch evaluation is **guard-first** — the continue-branch (`inr(U)` arm) is NOT speculatively evaluated on the exit step (E1 refinement). Found while implementing the interp oracle: eager-both miscompiled `fir` (`coeffs[4]` OOB-trap at the exit state `k=4` instead of `5.375`). Fix lives in the oracle + this ADR; all backends inherit it (differential-tested). | accepted — autonomous (Session 08), **flagged for Sapir's review** (next-session.md), revisable | n/a (operational refinement of E1; `category-ir.md` untouched — frozen Level A already says Elgot; no ERRATA entry) |
 
 ## Session log (newest first)
 
 | NN | date       | focus        | outcome                       |
 | -- | ---------- | ------------ | ----------------------------- |
+| 08 | 2026-06-15 | P3 flow-interp (the oracle) | **M1 oracle established — `flow-interp` implemented; all six examples run correctly on CPU.** Implementation found a **blocker in the review-hardened interp/DESIGN §4 loop driver**: the eager-both ("run the whole body, then test the guard") reading speculatively evaluated the continue-branch on the exit step, OOB-trapping `fir` (`coeffs[4]` at the exit state `k=4`) instead of `5.375`. Resolved as a semantics question via **ADR-0016 (guard-first loop evaluation)** — grounded in E1/Elgot (`U → B ⊕ U`, the `inr` arm is not taken on exit), the "pure-branches-only → Phi" Core rule (a loop continue-branch can trap, so speculation is unsound), ADR-0013 traps, and the functor thesis (define meaning once → all backends inherit, differential-tested). DESIGN §4 rewritten guard-first (decide/exit cone → guard → advance). Built via a dynamic workflow (1 Opus implementer TDD-to-green + 4 adversarial reviewers incl. a deep Opus loop-driver reviewer): 0 blockers / 0 majors / 8 minors. Orchestrator fixed the one real finding — `Le`/`Ge` float NaN ordering now IEEE (was `!Lt`; +`nan_ordering_is_ieee` test) — and reconciled two code↔doc gaps (slotmap dep in §12; `body_order` degenerate-guard route-pack clause). Workspace **393 green** (366 + 27 interp; fmt+clippy clean); `interp_scale` bench baseline recorded. |
 | 07 | 2026-06-14 | interp DESIGN + println split | **`flow-interp` DESIGN written + adversarially review-hardened** (6-dimension review, 22 confirmed findings incl. **6 blockers** — headline: the SCC loop-driver read the exit payload from an out-of-SCC route object → would have miscompiled every loop example; fixed via an incident-SCC body partition). Leads with its ADR-0014 categorical-model section; INDEX `interp`→modeled. **ADR-0015 (print/println split) decided + implemented**: `Operation::Print{newline}` + `println` builder (ir, +1 test); `is_print_builtin` helper routes the 9 effect/typing/emit sites that special-cased `print` (lower — one of them had regressed); examples use `println` for line output + `print` for pipeline's label; `dump_ir` example added (file → Category-IR Mermaid). Workspace **366 green** (174 syntax + 92 ir + 100 lower; fmt+clippy clean); 13 snapshots regenerated + hand-verified Print→Println-only. Interpreter still unimplemented — next session. |
 | 06 | 2026-06-13 | FRAMEWORK / categorical model layer (Level B) | **ADR-0014 accepted** (ratified by Sapir 2026-06-14): FRAMEWORK.md adopted as the compiler-internal modeling method under a strict two-level firewall (Flow-Cat = Level A, frozen, untouched; the compiler itself = Level B). New `docs/architecture/categorical-model.md` (incl. §7 reduction audit — 11/12 findings survived adversarial verification; one firm ADR candidate: the backend strategy-2-category / `TargetText` contract) + `INDEX.md` (10 component rows: syntax/ir/lower modeled, 7 planned). `HANDOFF.md` §7.1.5/§7.2 amended (mandatory `## Categorical model (Dat + Trn)` DESIGN lead-section + FRAMEWORK §8 coherence line on the reconcile gate); syntax/ir/lower DESIGNs gained firewalled §0 model sections (point to the cross-cutting doc, no duplication). Built by a 6-phase dynamic workflow (73 agents: map → reduction-audit → synthesize → author → adversarial coherence review → critic); Fable-5 outage mid-run repaired by Opus. **Methodology only — no spec/code/test change; workspace still 365 green.** |
 | 05 | 2026-06-12 | P2 flow-lower | flow-lower complete — **P2 done** (workspace 365 tests green: 174 syntax + 91 ir + 100 lower). Binding lower/DESIGN.md written (passes A–E, literal-width unification, derives-from-merge tags, 46-code L1xxx catalogue, LD1–LD24 ledger) + 3-way Fable adversarial design review with per-finding Sonnet verification (38 confirmed findings applied; killed three would-be miscompiles: Phi-arm mut leaks, the 55→66 snapshot bug, Block-tail routing guards). Implementation by Opus agents + 2 impl reviews + Fable soundness attack (19 attack findings; all real ones fixed with named regressions — headline ATK-02: effectful-*call* loops now carry the token). flow-ir empty-struct seal/validate hole (TY-1) fixed (+4 tests). All 8 golden snaps hand-read against §9 shape contracts (incl. orchestrator re-read after the head-naming fix). `lower_scale` bench recorded. Open: DESIGN §16 OQ1–OQ8 for Sapir. |

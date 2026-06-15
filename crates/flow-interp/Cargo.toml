@@ -2,3 +2,16 @@
 name = "flow-interp"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+flow-ir = { path = "../flow-ir" }
+slotmap = "1.0"
+
+[dev-dependencies]
+flow-syntax = { path = "../flow-syntax" }
+flow-lower = { path = "../flow-lower" }
+criterion = "0.5.1"
+
+[[bench]]
+name = "interp_scale"
+harness = false

@@ -1,44 +1,46 @@
 # Next Session
 
-Written: 2026-06-14 · end of Session 07 · by: Claude (Opus 4.8 — direct + dynamic-workflow review; Sonnet verifiers; Fable 5 unavailable)
+Written: 2026-06-15 · end of Session 08 · by: Claude (Opus 4.8 1M — orchestrator + design author; dynamic workflow: 1 Opus implementer + 4 adversarial reviewers; Fable 5 unavailable)
 
 ## Where things stand (≤5 lines)
 
-**`flow-interp` is fully DESIGNED and review-hardened, but NOT yet implemented.** `interp/DESIGN.md` (the oracle: the `RValue` value domain, the fueled `eval` `Trn`, an **incident-SCC loop driver**, token-as-Writer, `Outcome = Done | Diverged | Trapped`) leads with its ADR-0014 categorical-model section and survived a 6-dimension adversarial review (22 confirmed findings, **6 blockers** — headline: the loop driver originally read the exit payload from an **out-of-SCC route object** that was unwritten when read → would have miscompiled every loop example; fixed). **ADR-0015 (print/println split) is decided + implemented**: `print` raw, `println` appends `\n`, one IR op `Print { newline }`; examples use `println` for line output and `print` for `pipeline`'s label, so `pipeline → "f(10) = 25\n"`. Workspace **366 green**.
+**M1 ORACLE ESTABLISHED — `flow-interp` is implemented and all six examples run correctly on CPU.** Implementing the loop driver exposed a **blocker in the (previously "review-hardened") interp/DESIGN §4**: the eager-both reading ("run the whole loop body, then test the guard") speculatively evaluated the continue-branch on the exit step, OOB-trapping `fir` at the exit state `k=4` (`coeffs[4]` on `[f32;4]`) instead of producing `5.375`. Resolved as a **semantics** decision via **ADR-0016 (guard-first loop evaluation)** — the continue-branch is the `inr(U)` arm of the Elgot step and is *not* evaluated on exit; the oracle holds the rule and all backends inherit it (differential-tested). DESIGN §4 rewritten guard-first (decide/exit cone → read guard → advance cone). Workspace **393 green** (366 prior + 27 interp), fmt+clippy clean, `interp_scale` bench recorded.
 
 ## Test state: ALL GREEN
 
-`cargo test --workspace`: 366 passed, 0 failed (flow-syntax 174 · flow-ir 92 · flow-lower 100). `cargo fmt --check` + `cargo clippy --workspace --all-targets` clean. All example/token/tree/countdown snapshots regenerated for `println` and hand-verified as Print→Println-only. Benches unchanged.
+`cargo test --workspace`: 393 passed, 0 failed (174 syntax · 92 ir · 100 lower · **27 interp** = 10 acceptance + 6 determinism + 3 divergence + 8 traps). `cargo fmt --check` + `cargo clippy --workspace --all-targets -- -D warnings` clean. `interp_scale` baseline: deep_loop 1k/10k = 323µs/3.20ms, large_map 1k/10k = 862µs/8.56ms (≈ linear).
 
 ## Do next (ordered, smallest-first)
 
-1. **Implement `flow-interp`** strictly to `interp/DESIGN.md` (authoritative, review-hardened). Create `crates/flow-interp` (dep: `flow-ir`; dev-deps `flow-syntax` + `flow-lower` for the acceptance pipeline). Modules per §12: `value.rs` (`RValue`/`Outcome`/`TrapKind`/`render`), `eval.rs` (env + topo walk + product assembly; the §2 **incident-SCC skip rule**), `loops.rs` (the §4 `run_loop` — `body_order`/`back_route`/`exits` derived per §4; the **55 contract** = merge-view exit). TDD: write the six acceptance goldens first (`abs "7\n"`, `sum_to_n "55\n"`, `pipeline "f(10) = 25\n"`, `fanout "36\n12\n"`, `fir "5.375\n"`, `sepia "4080\n"`), then make them pass.
-2. **Then** the contract/edge tests (§11): `sum_to_n(10)==55` / `fir==5.375` / `sepia fold==4080` **by execution**; fueled divergence (constant-true guard, §11.3); traps (hand-built div-0 / index-oob, §11.4); token-through-loop reusing **lower's committed `countdown` golden-h fixture** → `"5\n4\n3\n2\n1\n0\n"` (§11.5); determinism (§11.6).
-3. **`flow-check` design** can follow/interleave: lower/DESIGN §12 ledger of owed checks + interp §9 assumptions = exactly what check owes (exclusivity, E2 seq-context, full typing/E3).
-4. `flow dump-ir --mermaid` as a real CLI when `cli` gets its increment — the `dump_ir` *example* already exists (`cargo run -p flow-lower --example dump_ir -- <file>`).
+1. **`flow-check` design + implement** (the next component; P3 finishes M1's checks). The interp `§9` assumptions are *exactly* check's owed ledger: (a) **Return exclusivity** (IR permits multiple full-value Return writers — ir I-RET; check guarantees exactly one fires), (b) **E2 seq-context effect legality** (no effects in parallel fanout; `print`/`println` only in sequential context), (c) **full typing / E3 lifetime scope**. Cross-ref: lower/DESIGN §12 ledger of owed checks + interp/DESIGN §9. Write `components/check/DESIGN.md` leading with its `## Categorical model (Dat + Trn)` (ADR-0014), flip its INDEX row to `modeled`.
+2. **Then P4 rewrites** (`flow-rewrite`): layers 3–4 (const-fold, DCE, CSE) + layer-1 map-fusion; every pass property-tested *against the interp oracle* (random Core program × random inputs → interp-equal before/after). The oracle now exists — this is unblocked.
+3. **`flow dump-ir --mermaid` as a real CLI** when `cli` gets its increment (the `dump_ir` example already exists).
+4. Optional interp hardening (all minor, deferred under YAGNI; see interp/STATUS "known issues"): cache `derive_plan` per merge; assert the non-straddling-product invariant; the integer-overflow ADR (IN7).
 
 ## Open questions for Sapir
 
-- **interp/DESIGN §14:** (a) **IN6 float ÷0** reads as IEEE (no trap), but ADR-0013 says "division by zero traps" unqualified — needs a one-line ADR-0013 amendment (integer-trap / float-IEEE) before it is normative across backends; (b) **multi-merge / multi-back-or-exit loop SCCs** are out of M1 (the driver errors on them); (c) **countdown shape** is informational — interp reuses lower's print-before-guard golden-h fixture (→ 6 lines), while user-guide §3.5 is a different guard-first shape.
-- **Carried over:** lower §16 OQ1–OQ8; ADR-0013 review (now load-bearing under both lower AND interp); cross-builder id nonce (ir STATUS).
+- **RATIFY ADR-0016 (guard-first loop evaluation).** Decided autonomously this session from your "pick the best place per the language's design" delegation, and implemented. It is a load-bearing **oracle semantics** decision that every backend must honor. Confirm: (a) the fix belongs in the oracle + ADR (not in `lower`); (b) `category-ir.md` (frozen Level A) needs no edit because E1/Elgot already implies it (ADR-0016 is the operational refinement) — so **no ERRATA entry**. If you'd rather the speculative-trap rule be enforced in `lower` (predicated ops) or pushed into `category-ir.md` text, that's a superseding ADR.
+- **IN6 float ÷0** (IEEE, no trap) still wants a one-line ADR-0013 amendment (integer-trap / float-IEEE) before it is normative across backends. ADR-0016 *dissolves* the related `fir` worry (the OOB index is never semantically reached), but the bare float-÷0 question remains.
+- **Carried over:** lower §16 OQ1–OQ8; ADR-0013 review (now load-bearing under ir + lower + interp); cross-builder id nonce (ir STATUS); the backend `TargetText` strategy-2-category ADR candidate (categorical-model §7).
 
 ## Gotchas / warnings (things that will waste the next session's time)
 
-- **The interp loop driver is the miscompile-prone part** — implement §4 exactly: the per-iteration body is morphisms **incident** to the SCC (`source∈SCC ∨ target∈SCC`), **not** "both endpoints in-SCC" (that drops fir's `coeffs[k]` invariant feed AND the out-of-SCC exit route); reset in-SCC/route buffers per iteration; attribute `exits(m)` by route-feeder-in-SCC, not by `in_edges(m)`. The review caught all of this — re-read §4 before coding.
-- **`print`/`println` go through `is_print_builtin` (ADR-0015, LD25)** — `print` was special-cased in 9 effect/typing/emit sites; the helper exists because `println` silently regressed one (countdown lost its token-in-`U`). Don't re-special-case `"print"` anywhere; use the predicate.
-- **Don't re-litigate the ledgers:** syntax W1–W25, ir D1–D10 + I-ledger, lower **LD1–LD25**, interp **IN1–IN8**.
-- **interp must read the merge-state semantics from ir/DESIGN §7 (D7)**, not invent: LoopBack fires on true / LoopExit on false; exit payload = merge view (sum_to_n exits 55); I4 fork = back+exit.
-- **Snapshot discipline** (insta, not cargo-insta): accept by `mv x.snap.new x.snap` AFTER reading; wrong-but-stable is the failure mode. Golden tests read `examples/*.flow` live — `git status examples/` before trusting (clean at this commit).
-- The countdown/effectful-call goldens live in `crates/flow-lower/tests/golden.rs` as inline sources (not `examples/`) — DESIGN §9 regressions, don't promote.
-- `verilator`/`nvcc` not installed; `clang` is. LC-1 (`?` in fanout) still parked.
-- **ADR-0014 dev-flow rule in force:** every `DESIGN.md` leads with `## Categorical model (Dat + Trn)`; reconcile checks FRAMEWORK §8 and flips the `docs/architecture/INDEX.md` row in the same change.
+- **The loop driver is GUARD-FIRST now (ADR-0016), not eager-both.** `loops.rs` splits each iteration's `body_order` into a `decide_order` (backward-reachable from `exit_route` — builds the guard + exit payload + any exit-feeding print) and an `advance_order` (the next-state, where trapping ops like fir's `Index` live), evaluating advance **only when the guard continues**. Re-read DESIGN §4 before touching loops — this is the miscompile-prone part and the eager-both version is WRONG (traps fir).
+- **`body_order` has a degenerate-guard clause** beyond pure SCC-incidence: it also includes any `Pair` edge whose target is the back/exit route object, so a **constant** guard/exit-value (e.g. the §11.3 constant-true divergence loop) still finalizes its route. No-op for the six examples.
+- **interp depends on `flow-ir` + `slotmap` only** (env/buffers are `SecondaryMap<ObjectId,_>`; flow-ir does not re-export slotmap). `flow-syntax`/`flow-lower` are **dev-deps** (the `parse→lower→run` test pipeline). No `HashMap` anywhere (E2).
+- **Float compares use native `<`/`<=`** (`num_lt`/`num_le`) — NOT `!Lt` for `Le`/`Ge` — so NaN ordering is IEEE (all false). The oracle is diffed against backends, so this must stay exactly IEEE (`nan_ordering_is_ieee` pins it).
+- **Don't re-litigate the ledgers:** syntax W1–W25, ir D1–D10, lower LD1–LD25, **interp IN1–IN8 + ADR-0016**.
+- **All loop tests are fueled (E1).** A hanging interp test is a protocol violation, not bad luck. `eval_call`/`run` take an explicit `budget`.
+- The `countdown`/effectful-call goldens live in `crates/flow-lower/tests/golden.rs` as inline sources (interp reuses the `countdown` source string for token-through-loop); examples read live from `examples/`.
+- **ADR-0014 dev-flow rule in force:** every `DESIGN.md` leads with `## Categorical model (Dat + Trn)`; the reconcile flips the `docs/architecture/INDEX.md` row in the same change (interp already `modeled`).
 
 ## Commands (build/test/bench invocations that currently work)
 
 ```sh
-cargo test --workspace                                               # green — 174 syntax + 92 ir + 100 lower (366)
-cargo run -p flow-lower --example dump_ir -- examples/sum_to_n.flow  # file → Category-IR Mermaid (NEW, S07)
-cargo run -p flow-ir --example dump_demo                             # hand-built IR shapes → Mermaid
-cargo bench -p flow-lower --bench lower_scale                        # criterion lower bench
+cargo test --workspace                                               # green — 393 (174 syntax + 92 ir + 100 lower + 27 interp)
+cargo test -p flow-interp                                            # the oracle's 27 tests
+cargo run -p flow-lower --example dump_ir -- examples/fir.flow       # file → Category-IR Mermaid
+cargo bench -p flow-interp --bench interp_scale                      # criterion interp bench
+cargo bench -p flow-lower  --bench lower_scale                       # criterion lower bench
 cargo run -p flow-cli                                                # still the not-implemented stub, exits 1
 ```
