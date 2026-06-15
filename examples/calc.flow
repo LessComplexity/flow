@@ -1,0 +1,58 @@
+// calc.flow  —  a simple calculator in Flow-Core
+//
+// HOW "CHOOSING" WORKS HERE:
+//   Flow-Core has no stdin — the only effect is print/println (output). So you
+//   don't type a choice at runtime; you CHOOSE by editing the op-code and the two
+//   numbers in `main` below, then re-run:
+//       cargo run -p flow-interp --example run -- examples/calc.flow
+//
+//   Operation codes (the "menu"):
+//       0 = +     1 = -     2 = *     3 = /     (anything else) = %
+//
+//   calc(op, a, b) dispatches on `op` with a guard block. Guard branches in
+//   Flow-Core are PURE and lower to a select (Phi), so EVERY arm is evaluated and
+//   one is chosen — which means `a / b` and `a % b` run even when you picked `+`.
+//   Keep b ≠ 0 (a zero divisor traps regardless of the chosen op).
+//
+// Expected output (op-by-op demo over a = 20, b = 6):
+//   20 + 6 = 26
+//   20 - 6 = 14
+//   20 * 6 = 120
+//   20 / 6 = 3
+//   20 % 6 = 2
+
+fn calc(op: i32, a: i32, b: i32) -> i32 {
+    // Switch on the op-code with a guard block: each `-N->` arm matches an integer
+    // literal, `-_->` is the default. This is the idiomatic Flow-Core dispatch.
+    op -> {
+        -0-> a + b;
+        -1-> a - b;
+        -2-> a * b;
+        -3-> a / b;
+        -_-> a % b;
+    } -> ret;
+}
+
+fn main() {
+    // The "menu": one line per operation, all on a = 20, b = 6.
+    // Change the op code and the two numbers to make your own calculation.
+    (0, 20, 6) -> calc -> r_add;
+    "20 + 6 = " -> print;
+    r_add -> println;
+
+    (1, 20, 6) -> calc -> r_sub;
+    "20 - 6 = " -> print;
+    r_sub -> println;
+
+    (2, 20, 6) -> calc -> r_mul;
+    "20 * 6 = " -> print;
+    r_mul -> println;
+
+    (3, 20, 6) -> calc -> r_div;
+    "20 / 6 = " -> print;
+    r_div -> println;
+
+    (4, 20, 6) -> calc -> r_mod;
+    "20 % 6 = " -> print;
+    r_mod -> println;
+}
