@@ -17,7 +17,7 @@ rewrites is unblocked**.
 
 ## Do next (ordered, smallest-first)
 
-1. **Commit Session 10** (working tree carries the whole increment; suggested split: docs-plan/design · crate · reconcile, or one commit — Sapir's call).
+1. ~~Commit Session 10~~ done — single commit `617774b` (Sapir's call, same session).
 2. **P4 rewrites** (`flow-rewrite`): layers 3–4 (constant folding, DCE, CSE) + layer 1 map fusion; every pass property-tested random-program × random-input interpreter-equal before/after (HANDOFF §8 P4 DoD). Write `components/rewrite/DESIGN.md` leading with its categorical model; flip its INDEX row same change.
 3. Sapir decisions carried: RATIFY ADR-0016; ADR-0013 review; **new: OQ-C1** (is `seq { print }` inside a fanout branch definitively illegal? CK5 pinned conservative — one-line ADR to loosen).
 
