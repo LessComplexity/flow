@@ -42,7 +42,7 @@ backend exists.
 | `lower` | `(𝕊 × Program) ⇀ CategoryIr ⊕ Diag*` (partial — domain = Flow-Core) | lower | built |
 | `validate` | `CategoryIr → Violation*` (independent oracle) | ir | built |
 | `eval`/`run` | `(CategoryIr × Input × Fuel) ⇀ Output ⊸` (fueled, E1) | interp | built |
-| `check` | `CategoryIr → Check ⊕ Diag*` | check | planned |
+| `check` | `Src × Program × CategoryIr → Diag*` (ε = accept) | check | built |
 | rewrite passes | `CategoryIr → CategoryIr` (layers 1–4) | rewrite | planned |
 | backend emit | `CategoryIr → TargetText` (one contract, three realisations) | backends | planned |
 | `render` | `Diag* → 𝕊 ⊸` (the lone renderer) | cli | planned |
@@ -62,7 +62,7 @@ backends land: `cudaMemcpy` H↔D (carries buffers), FPGA streaming, the E1
 | syntax | `lex`, `parse` | built (P1) | [DESIGN](components/syntax/DESIGN.md) | [IMPL](components/syntax/IMPLEMENTATION.md) |
 | ir | builder ops, `seal`, `validate`, `topo`/`sccs`, Mermaid dump | built (P2) | [DESIGN](components/ir/DESIGN.md) | [IMPL](components/ir/IMPLEMENTATION.md) |
 | lower | `lower` (passes A–E) | built (P2) | [DESIGN](components/lower/DESIGN.md) | [IMPL](components/lower/IMPLEMENTATION.md) |
-| check | type / effect (E2) / lifetime (E3) checks | planned (P3, next) | [DESIGN](components/check/DESIGN.md) | [IMPL](components/check/IMPLEMENTATION.md) |
+| check | E2 effect legality + Return exclusivity (typing at boundary; E3 vacuous-by-proof) | tested (25) | [DESIGN](components/check/DESIGN.md) | [IMPL](components/check/IMPLEMENTATION.md) |
 | interp | `eval`/`run` — **the oracle** | built (P3/M1) | [DESIGN](components/interp/DESIGN.md) | [IMPL](components/interp/IMPLEMENTATION.md) |
 | rewrite | layer 1–4 passes + property harness | planned (P4) | [DESIGN](components/rewrite/DESIGN.md) | [IMPL](components/rewrite/IMPLEMENTATION.md) |
 | backend-llvm | `F_LLVM` emit | planned (P5/M2) | [DESIGN](components/backend-llvm/DESIGN.md) | [IMPL](components/backend-llvm/IMPLEMENTATION.md) |

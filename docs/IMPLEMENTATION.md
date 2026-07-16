@@ -12,7 +12,7 @@
 | syntax | `crates/flow-syntax/` | [DESIGN](components/syntax/DESIGN.md) | [IMPLEMENTATION](components/syntax/IMPLEMENTATION.md) | built |
 | ir | `crates/flow-ir/` | [DESIGN](components/ir/DESIGN.md) | [IMPLEMENTATION](components/ir/IMPLEMENTATION.md) | built |
 | lower | `crates/flow-lower/` | [DESIGN](components/lower/DESIGN.md) | [IMPLEMENTATION](components/lower/IMPLEMENTATION.md) | built |
-| check | `crates/flow-check/` | [DESIGN](components/check/DESIGN.md) | [IMPLEMENTATION](components/check/IMPLEMENTATION.md) | stub |
+| check | `crates/flow-check/` — entry `flow_check::check(source, &Program, &CategoryIr) -> Vec<Diagnostic>` | [DESIGN](components/check/DESIGN.md) | [IMPLEMENTATION](components/check/IMPLEMENTATION.md) | built |
 | interp | `crates/flow-interp/` | [DESIGN](components/interp/DESIGN.md) | [IMPLEMENTATION](components/interp/IMPLEMENTATION.md) | built |
 | rewrite | `crates/flow-rewrite/` | [DESIGN](components/rewrite/DESIGN.md) | [IMPLEMENTATION](components/rewrite/IMPLEMENTATION.md) | stub |
 | backend-llvm | `crates/flow-backend-llvm/` | [DESIGN](components/backend-llvm/DESIGN.md) | [IMPLEMENTATION](components/backend-llvm/IMPLEMENTATION.md) | stub |

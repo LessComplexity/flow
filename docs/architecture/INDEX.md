@@ -1,6 +1,6 @@
 # Flow — Model Index
 
-Last updated: 2026-06-13 · Session 06
+Last updated: 2026-07-16 · Session 10
 Authority: ADR-0014 (FRAMEWORK adoption) · FRAMEWORK.md §6 (process), §2 (model-section shape)
 
 The index of categorical models for the Flow compiler, per FRAMEWORK §6 ("Add it to
@@ -26,7 +26,7 @@ and is **not** re-modeled here (errata E5 firewall).
 | `syntax` | Lexer + parser: source model, token/AST olog, the `lex`/`parse` passes | [`components/syntax/DESIGN.md`](../components/syntax/DESIGN.md) | modeled |
 | `ir` | Sealed Core graph IR: `CategoryIr`/`Object`/`Morphism` olog, builder + validate passes | [`components/ir/DESIGN.md`](../components/ir/DESIGN.md) | modeled |
 | `lower` | `lower` functor: surface tree ⇀ sealed IR, passes A–E, the type-resolution + signature-synthesis morphisms | [`components/lower/DESIGN.md`](../components/lower/DESIGN.md) | modeled |
-| `check` | Type / effect / lifetime checks (E2/E3) | `components/check/DESIGN.md` | planned |
+| `check` | E2 effect legality (tree×graph) + Return exclusivity; typing discharged at boundary; E3 vacuity proof | [`components/check/DESIGN.md`](../components/check/DESIGN.md) | modeled |
 | `interp` | Fueled reference interpreter (the oracle): the `RValue` domain, the `eval` `Trn`, the SCC loop driver, token-as-Writer | [`components/interp/DESIGN.md`](../components/interp/DESIGN.md) | modeled |
 | `rewrite` | Layer 1–4 rewrite passes over `CategoryIr` | `components/rewrite/DESIGN.md` | planned |
 | `backend-llvm` | `F_LLVM : Flow-Cat → LLVM-Cat` | `components/backend-llvm/DESIGN.md` | planned |
@@ -34,6 +34,6 @@ and is **not** re-modeled here (errata E5 firewall).
 | `backend-verilog` | `F_Verilog : Flow-Cat → Clocked-Cat` (E1 done-protocol) | `components/backend-verilog/DESIGN.md` | planned |
 | `cli` | `flow build\|run\|dump-ir\|test`; the lone renderer of structured diagnostics | `components/cli/DESIGN.md` | planned |
 
-The seven `planned` rows have a DESIGN.md but no `## Categorical model (Dat + Trn)`
+The six `planned` rows have a DESIGN.md but no `## Categorical model (Dat + Trn)`
 section yet; modeling each is part of its component increment (HANDOFF §7.2 step 2).
 Add the model **and** flip its status here in the same change.

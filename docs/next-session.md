@@ -1,42 +1,46 @@
 # Next Session
 
-Written: 2026-07-16 · end of Session 09 · by: Claude (Fable 5 orchestrator; Opus workflow agents; category-architect skill)
+Written: 2026-07-16 · end of Session 10 · by: Claude (Fable 5 orchestrator; Opus workflow agents; category-architect skill)
 
 ## Where things stand (≤5 lines)
 
-**Docs tree extended (ADR-0017); CT-suggestion backlog triaged (3 applied, 1 refuted, 4 parked); `zip`/`enumerate` are now Core builtins (ADR-0018), oracle-defined and example-golden.** The category-architect tree is live: per-component `IMPLEMENTATION.md` (model → `file:symbol`, adversarially verified) + `suggestions.md` + `plans/reviews/general/`; top-level `architecture-map.md` (coherence checklist: all six §4.5 laws PASS), `IMPLEMENTATION.md`, `suggestions.md`, immutable `docs/sessions/` logs. Suggestions: 3 applied (lower `resolve_tykind` consolidation, ir §5.1 golden-oracle test, syntax `LineIndex<'a>` borrow), 1 refuted on vet (interp width seam — premise overstated), 4 parked with reasons (`docs/suggestions.md`). The ir oracle found **zero** DESIGN§5.1 ↔ `edge_type_ok` drift.
+**P3 is complete.** `flow-check` designed + built in one session (S10): T0101 Return
+exclusivity (strict) + T0201 E2 effect legality (`FanoutKind::Plain`-keyed tree×graph
+walk, `effectful?` deduced from token signatures); typing discharged by construction at
+the validate boundary (lower §12 amended in step); E3 recorded vacuous-by-proof with a
+pinned reopen trigger. The oracle (interp, S08) + the checks now both exist — **P4
+rewrites is unblocked**.
 
 ## Test state: ALL GREEN
 
-`cargo test --workspace`: **423 passed, 0 failed** (178 syntax · 101 ir · 112 lower · 32 interp). fmt + clippy clean. No benches run this session (no perf-relevant change).
+`cargo test --workspace`: **448 passed, 0 failed** (178 syntax · 101 ir · 112 lower · 32 interp · 25 check). fmt + clippy clean. No benches run (CK8: check has no perf-relevant pass).
 
 ## Do next (ordered, smallest-first)
 
-1. ~~Commit Session 09~~ done (docs tree, cleanups, leftovers, ADR-0018 zip/enumerate).
-2. **`flow-check` design + implement** (unchanged from S08; the owed ledger is interp/DESIGN §9 + lower/DESIGN §12: Return exclusivity, E2 seq-context effect legality, full typing / E3 lifetime scope). Write `components/check/DESIGN.md` leading with `## Categorical model (Dat + Trn)`, flip its INDEX row, fill its stub `IMPLEMENTATION.md` rows in the same change (ADR-0017).
-3. **Then P4 rewrites** — unblocked, oracle exists.
-4. Session bookends now: `/category-architect start` to resume, `end` to close (writes next-session.md + an immutable sessions/ log).
+1. **Commit Session 10** (working tree carries the whole increment; suggested split: docs-plan/design · crate · reconcile, or one commit — Sapir's call).
+2. **P4 rewrites** (`flow-rewrite`): layers 3–4 (constant folding, DCE, CSE) + layer 1 map fusion; every pass property-tested random-program × random-input interpreter-equal before/after (HANDOFF §8 P4 DoD). Write `components/rewrite/DESIGN.md` leading with its categorical model; flip its INDEX row same change.
+3. Sapir decisions carried: RATIFY ADR-0016; ADR-0013 review; **new: OQ-C1** (is `seq { print }` inside a fanout branch definitively illegal? CK5 pinned conservative — one-line ADR to loosen).
 
 ## Open questions for Sapir
 
-- ~~Pre-existing uncommitted work~~ resolved by Sapir: everything committed, stray `2` deleted. `examples/vector.flow` remains the one out-of-Core sketch (generics — waits on design-note candidates ②/③).
-- **Carried:** RATIFY ADR-0016 (guard-first loops); IN6 float ÷0 ADR-0013 amendment; lower §16 OQ1–OQ8; ADR-0013 review; backend `TargetText` ADR (parked as suggestions #1, owned by P5 design).
+- **OQ-C1 (new, S10):** nested-`seq`-in-fanout legality — check rejects today (CK5, composition reading). Supersedable by one-line ADR; loosening additive.
+- **Carried:** RATIFY ADR-0016 (guard-first loops); ADR-0013 review (load-bearing under 5 crates now); IN6 float ÷0 ADR-0013 amendment; lower §16 OQ1–OQ8; backend `TargetText` ADR (P5).
 
 ## Gotchas / warnings (things that will waste the next session's time)
 
-- **All S08 gotchas still stand** (guard-first loop driver ADR-0016; `body_order` degenerate-guard clause; interp deps; IEEE float compares; fueled loops; ledger no-relitigate rule). Read `sessions/` logs newest-first — next-session.md is the pointer, the logs are the record.
-- `docs/components/<c>/IMPLEMENTATION.md` State columns are now ground truth for STATUS — a code change without its row update fails the reconcile gate (HANDOFF §7.2 step 7, ADR-0017).
-- `LineIndex` is now `LineIndex<'a>` (borrows source) — new call sites must keep the source alive; don't "fix" it back to owned.
-- `resolve_tykind` is the single `TyKind ⇀ Ty` skeleton; never re-fork the Named branch into the callers.
-- The ir §5.1 golden oracle (`typing_table_golden`) must stay test-only and builder-free — sharing it into production paths collapses the independence property it exists to protect.
+- **All S08/S09 gotchas stand** (guard-first driver; `typing_table_golden` test-only; `LineIndex<'a>`; `resolve_tykind` single skeleton; ledger no-relitigate).
+- **`seq { … }` parses to the SAME `StageKind::Fanout` node as a parallel fanout** — only the `kind: FanoutKind` field differs. Any future tree walk that cares about parallelism must key on the field, not the node kind (this was the S10 design review's headline catch).
+- **`Name` carries no string** — identifier text is `&source[span]`; any pass reading names takes `source: &str` (why `check` has three params).
+- **check runs no typing pass — that is by design, not omission** (DESIGN §0 discharge-by-construction; lower §12 amended to match). Do not "fix" by adding a §5.1 re-walk.
+- **E3 is zero code on purpose** (vacuity proof, DESIGN §5). The first heap-op ADR owns the frontier pass + T03xx.
+- check's decision ledger is CK1–CK8 (`components/check/DESIGN.md §9`) — decided once, do not re-litigate.
 
 ## Commands (build/test/bench invocations that currently work)
 
 ```sh
-cargo test --workspace                                               # green — 423 (178+101+112+32)
+cargo test --workspace                                               # green — 448 (178+101+112+32+25)
+cargo test -p flow-check                                             # 25: acceptance 11 · effects 8 · exclusivity 6
 cargo run -p flow-interp --example run -- examples/zip_demo.flow     # live zip/enumerate showcase
-cargo test -p flow-ir typing_table_golden                            # §5.1 oracle
+cargo test -p flow-ir typing_table_golden                            # §5.1 oracle (test-only, keep it that way)
 cargo run -p flow-lower --example dump_ir -- examples/fir.flow       # file → Category-IR Mermaid
-cargo bench -p flow-interp --bench interp_scale                      # criterion interp bench
-cargo bench -p flow-lower  --bench lower_scale                       # criterion lower bench
 ```

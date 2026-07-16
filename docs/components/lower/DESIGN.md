@@ -837,9 +837,12 @@ only on the source text — snapshot-stable (I12/D2 downstream).
 
 - **E2 surface rule** (`print` only under `seq`): flow-check (ADR-0013 consequence).
   Lower's token threading keeps even illegal-surface programs deterministic meanwhile.
-- **Full type checking** (e.g. annotation-vs-use beyond lowering needs): flow-check
-  re-walks the sealed graph (§11.2 phase-2). Lower's L12xx codes are the subset needed
-  to build at all.
+- **Full type checking** (e.g. annotation-vs-use beyond lowering needs): discharged
+  **by construction** at the flow-check boundary — builder I2 + `validate::edge_type_ok`
+  independently certify §5.1 on every sealed graph; the residual is empty, so check runs
+  no typing re-walk (check/DESIGN §0, S10; supersedes this bullet's earlier "re-walks the
+  sealed graph (§11.2 phase-2)" wording, whose §11.2 pointer was dangling). Lower's L12xx
+  codes remain the subset needed to build at all.
 - **Multi-writer Return exclusivity at runtime**: interp (parked per next-session).
 - **Lifetime/escape analysis**: flow-check/E3.
 - **Float print formatting**: interp.
