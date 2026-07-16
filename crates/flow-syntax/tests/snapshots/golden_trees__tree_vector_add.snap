@@ -1,0 +1,130 @@
+---
+source: crates/flow-syntax/tests/golden_trees.rs
+expression: rendered
+---
+9:1 Program
+9:1   Fn ‹main›
+9:11     Block
+11:5       Stmt::Chain
+11:5         Chain
+11:5           head
+11:5             Array (16)
+11:6               Int 0 ‹0›
+11:9               Int 1 ‹1›
+11:12               Int 2 ‹2›
+11:15               Int 3 ‹3›
+11:18               Int 4 ‹4›
+11:21               Int 5 ‹5›
+11:24               Int 6 ‹6›
+11:27               Int 7 ‹7›
+11:30               Int 8 ‹8›
+11:33               Int 9 ‹9›
+11:36               Int 10 ‹10›
+11:40               Int 11 ‹11›
+11:44               Int 12 ‹12›
+11:48               Int 13 ‹13›
+11:52               Int 14 ‹14›
+11:56               Int 15 ‹15›
+11:63           -> Bind ‹a›
+11:69             Ty::Array len=16
+11:70               Ty::Named ‹i32›
+12:5       Stmt::Chain
+12:5         Chain
+12:5           head
+12:5             Array (16)
+12:6               Int 100 ‹100›
+12:11               Int 100 ‹100›
+12:16               Int 100 ‹100›
+12:21               Int 100 ‹100›
+12:26               Int 100 ‹100›
+12:31               Int 100 ‹100›
+12:36               Int 100 ‹100›
+12:41               Int 100 ‹100›
+13:6               Int 100 ‹100›
+13:11               Int 100 ‹100›
+13:16               Int 100 ‹100›
+13:21               Int 100 ‹100›
+13:26               Int 100 ‹100›
+13:31               Int 100 ‹100›
+13:36               Int 100 ‹100›
+13:41               Int 100 ‹100›
+13:63           -> Bind ‹b›
+13:69             Ty::Array len=16
+13:70               Ty::Named ‹i32›
+15:5       Stmt::Chain
+15:5         Chain
+15:5           head
+15:5             Tuple (2)
+15:6               Var ‹a›
+15:9               Var ‹b›
+15:12           -> Expr
+15:15             Var ‹zip›
+15:19           -> map [‹p›]
+15:26             Block
+15:33               tail
+15:33                 Chain
+15:33                   head
+15:33                     Binary +
+15:33                       Member .0
+15:33                         Var ‹p›
+15:39                       Member .1
+15:39                         Var ‹p›
+15:45           -> Bind ‹c›
+15:51             Ty::Array len=16
+15:52               Ty::Named ‹i32›
+18:5       Stmt::Chain
+18:5         Chain
+18:5           head
+18:5             Str ‹"c[0]  = "›
+18:16           -> Expr
+18:19             Var ‹print›
+18:28       Stmt::Chain
+18:28         Chain
+18:28           head
+18:28             Index
+18:28               Var ‹c›
+18:30               Int 0 ‹0›
+18:34           -> Expr
+18:37             Var ‹println›
+19:5       Stmt::Chain
+19:5         Chain
+19:5           head
+19:5             Str ‹"c[15] = "›
+19:16           -> Expr
+19:19             Var ‹print›
+19:28       Stmt::Chain
+19:28         Chain
+19:28           head
+19:28             Index
+19:28               Var ‹c›
+19:30               Int 15 ‹15›
+19:34           -> Expr
+19:37             Var ‹println›
+21:5       Stmt::Chain
+21:5         Chain
+21:5           head
+21:5             Str ‹"sum   = "›
+21:16           -> Expr
+21:19             Var ‹print›
+22:5       Stmt::Chain
+22:5         Chain
+22:5           head
+22:5             Tuple (2)
+22:6               Int 0 ‹0›
+22:9               Var ‹c›
+22:12           -> fold [‹acc›, ‹x›]
+22:20             Block
+22:32               tail
+22:32                 Chain
+22:32                   head
+22:32                     Binary +
+22:32                       Var ‹acc›
+22:38                       Var ‹x›
+22:42           -> Expr
+22:45             Var ‹total›
+23:5       Stmt::Chain
+23:5         Chain
+23:5           head
+23:5             Var ‹total›
+23:11           -> Expr
+23:14             Var ‹println›

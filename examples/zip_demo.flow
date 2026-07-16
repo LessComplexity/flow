@@ -1,27 +1,28 @@
-// zip_demo.flow — can Flow-Core express `zip` itself?
-//   A CONCRETE, monomorphic zip (i32×i32, length 16) CAN be written — but only by
-//   unrolling, and only for this one (T, U, n). Then vec_add = zip >> map(+).
-//   A GENERIC zip (one function for any T, U, n) cannot be written in Core.
-
-fn zip16(a: [i32; 16], b: [i32; 16]) -> [(i32, i32); 16] {
-    [
-        (a[0],  b[0]),  (a[1],  b[1]),  (a[2],  b[2]),  (a[3],  b[3]),
-        (a[4],  b[4]),  (a[5],  b[5]),  (a[6],  b[6]),  (a[7],  b[7]),
-        (a[8],  b[8]),  (a[9],  b[9]),  (a[10], b[10]), (a[11], b[11]),
-        (a[12], b[12]), (a[13], b[13]), (a[14], b[14]), (a[15], b[15]),
-    ] -> ret;
-}
+// zip_demo.flow — the `zip` / `enumerate` builtin showcase (ADR-0018).
+//
+// Historical note (pre-ADR-0018): Core had no `zip`. A concrete, monomorphic zip
+// (i32×i32, length 16) could only be written by unrolling — one `(a[k], b[k])` per
+// slot — and a generic zip (one function for any T, U, n) could not be written at
+// all, because `map` is unary with a non-capturing body (L1108). ADR-0018 made
+// `zip` and `enumerate` Core builtins (resolved by name in flow-lower, like
+// `print`/`println`), so a zipWith is now the generic-shaped pipeline below.
 
 fn main() {
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]    -> a: [i32; 16];
     [100, 100, 100, 100, 100, 100, 100, 100,
      100, 100, 100, 100, 100, 100, 100, 100]                  -> b: [i32; 16];
 
-    // zipWith(+) = zip then map. The map body IS the elementwise binary op,
-    // and now it has both operands in one element `p : (i32, i32)`.
-    (a, b) -> zip16 -> z;
-    z -> map { p -> p.0 + p.1 } -> c: [i32; 16];
+    // zipWith(+) = zip then map. `zip` pairs the two arrays; the map body IS the
+    // elementwise binary op, with both operands in one element `p : (i32, i32)`.
+    (a, b) -> zip -> map { p -> p.0 + p.1 } -> c: [i32; 16];
 
     "c[0]  = " -> print;   c[0]  -> println;   // expect 100
     "c[15] = " -> print;   c[15] -> println;   // expect 115
+
+    // enumerate: pair each element with its `i32` index (0..n-1), then add the two.
+    // a[k] = k, so index + value = k + k = 2k.
+    a -> enumerate -> map { p -> p.0 + p.1 } -> e: [i32; 16];
+
+    "e[0]  = " -> print;   e[0]  -> println;   // expect 0
+    "e[15] = " -> print;   e[15] -> println;   // expect 30
 }

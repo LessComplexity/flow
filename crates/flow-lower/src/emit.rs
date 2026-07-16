@@ -931,6 +931,18 @@ impl Emitter<'_> {
                         .ok_or_else(|| diag(LCode::HeadlessChain, e.span, "print with no value"))?;
                     self.emit_print(fb, wire, text == "println", e.span)?;
                     Ok(None) // print is a sink; chain ends.
+                } else if crate::is_collection_builtin(&text) {
+                    let wire = wire.ok_or_else(|| {
+                        diag(LCode::HeadlessChain, e.span, "collection op with no source")
+                    })?;
+                    let dest = self.lookahead_dest(next, ctx, next.is_none())?;
+                    let r = if text == "zip" {
+                        self.emit_zip(fb, wire, dest, e.span)?
+                    } else {
+                        self.emit_enumerate(fb, wire, dest, e.span)?
+                    };
+                    self.maybe_bind_next(fb, next, r);
+                    Ok(Some(r))
                 } else {
                     // Unbound bare name = a fresh binding (LD1): the wire's value
                     // takes this name. The previous stage's lookahead Dest already
@@ -995,7 +1007,10 @@ impl Emitter<'_> {
                     if let ExprKind::Var(n) = &e.kind {
                         let text = name_text(self.source, *n);
                         // bare name binding (unbound or mut) → name it.
-                        if !self.fn_ids.contains_key(text) && !crate::is_print_builtin(text) {
+                        if !self.fn_ids.contains_key(text)
+                            && !crate::is_print_builtin(text)
+                            && !crate::is_collection_builtin(text)
+                        {
                             return Ok(Dest::Fresh(Some(text.to_string())));
                         }
                     }
@@ -2085,6 +2100,109 @@ impl Emitter<'_> {
         }
     }
 
+    // --- collection builtins (ADR-0018) -------------------------------------
+
+    /// `zip` (ADR-0018): source is a 2-tuple `([A;n], [B;n])`, result `[(A,B);n]`.
+    /// Independently re-derives the shape here (owning L1606/L1607/L1608) before
+    /// calling the builder, which re-checks defensively (the builder is not the
+    /// diagnostic surface — LD12). Projects the two arrays out of the tuple wire
+    /// (Pair-then-primitive; the builder re-pairs, exactly as `binop`).
+    fn emit_zip(
+        &mut self,
+        fb: &mut FnBuilder,
+        wire: ObjectId,
+        dest: Dest,
+        sp: syn::SourceLoc,
+    ) -> ER<ObjectId> {
+        let wty = self.ty_of(fb, wire);
+        let comps = match &wty {
+            Ty::Tuple(ts) if ts.len() == 2 => ts.clone(),
+            _ => {
+                return Err(diag(
+                    LCode::ZipNonTuple,
+                    sp,
+                    "zip source is not a 2-tuple of arrays",
+                ));
+            }
+        };
+        let (a_elem, a_size) = match &comps[0] {
+            Ty::Array { elem, size } => ((**elem).clone(), *size),
+            _ => {
+                return Err(diag(
+                    LCode::ZipNonArray,
+                    sp,
+                    "zip component 0 is not an array",
+                ));
+            }
+        };
+        let (b_elem, b_size) = match &comps[1] {
+            Ty::Array { elem, size } => ((**elem).clone(), *size),
+            _ => {
+                return Err(diag(
+                    LCode::ZipNonArray,
+                    sp,
+                    "zip component 1 is not an array",
+                ));
+            }
+        };
+        if a_size != b_size {
+            return Err(diag(
+                LCode::ZipSizeMismatch,
+                sp,
+                format!("zip arrays differ in length: {a_size} vs {b_size}"),
+            ));
+        }
+        // Project the two arrays out of the tuple wire, then hand to the builder.
+        let lhs = self.proj(fb, wire, 0, Dest::Fresh(None), sp)?;
+        let rhs = self.proj(fb, wire, 1, Dest::Fresh(None), sp)?;
+        let out = Ty::Array {
+            elem: Box::new(Ty::Tuple(vec![a_elem, b_elem])),
+            size: a_size,
+        };
+        let o = fb
+            .zip(lhs, rhs, dest, ir_loc(sp))
+            .map_err(|e| ir_err(e, sp))?;
+        Ok(self.record(o, out))
+    }
+
+    /// `enumerate` (ADR-0018): source `[A;n]`, result `[(i32,A);n]`. Owns L1609
+    /// (non-array) and L1610 (n > i32::MAX — the index `i32` could not name every
+    /// element, F4/SND-3 precedent); the builder re-derives the bound defensively.
+    fn emit_enumerate(
+        &mut self,
+        fb: &mut FnBuilder,
+        wire: ObjectId,
+        dest: Dest,
+        sp: syn::SourceLoc,
+    ) -> ER<ObjectId> {
+        let wty = self.ty_of(fb, wire);
+        let (elem, size) = match &wty {
+            Ty::Array { elem, size } => ((**elem).clone(), *size),
+            _ => {
+                return Err(diag(
+                    LCode::EnumerateNonArray,
+                    sp,
+                    "enumerate applied to a non-array",
+                ));
+            }
+        };
+        if size > i32::MAX as u64 {
+            return Err(diag(
+                LCode::EnumerateOverflow,
+                sp,
+                format!("enumerate array length {size} exceeds i32::MAX"),
+            ));
+        }
+        let out = Ty::Array {
+            elem: Box::new(Ty::Tuple(vec![Ty::i32(), elem])),
+            size,
+        };
+        let o = fb
+            .enumerate(wire, dest, ir_loc(sp))
+            .map_err(|e| ir_err(e, sp))?;
+        Ok(self.record(o, out))
+    }
+
     // --- loops --------------------------------------------------------------
 
     fn emit_loop(&mut self, fb: &mut FnBuilder, l: &syn::LoopStmt) -> ER<()> {
@@ -2744,6 +2862,7 @@ impl Emitter<'_> {
             if self.scope.resolve(text).is_none()
                 && !self.fn_ids.contains_key(text)
                 && !crate::is_print_builtin(text)
+                && !crate::is_collection_builtin(text)
             {
                 return Some(text.to_string());
             }

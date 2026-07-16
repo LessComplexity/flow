@@ -66,6 +66,11 @@ pub enum LCode {
     FoldShape,             // L1603
     BodyNoValue,           // L1604
     BodyEffectful,         // L1605
+    ZipNonTuple,           // L1606
+    ZipNonArray,           // L1607
+    ZipSizeMismatch,       // L1608
+    EnumerateNonArray,     // L1609
+    EnumerateOverflow,     // L1610
     Internal,              // L1901
 }
 
@@ -126,6 +131,11 @@ impl LCode {
             LCode::FoldShape => "L1603",
             LCode::BodyNoValue => "L1604",
             LCode::BodyEffectful => "L1605",
+            LCode::ZipNonTuple => "L1606",
+            LCode::ZipNonArray => "L1607",
+            LCode::ZipSizeMismatch => "L1608",
+            LCode::EnumerateNonArray => "L1609",
+            LCode::EnumerateOverflow => "L1610",
             LCode::Internal => "L1901",
         }
     }

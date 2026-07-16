@@ -235,6 +235,37 @@ pub(crate) fn eval_morphism(
             write(ctx, target, v);
             Ok(())
         }
+        Operation::Zip => {
+            // src is the internal 2-tuple (Array A, Array B); pair elementwise
+            // (ADR-0018 denotation: [(a[0],b[0]), …, (a[n-1],b[n-1])]). Sizes are
+            // equal by ir typing, so `zip` consumes both fully.
+            let src = read(ctx, source).clone();
+            let a = as_array(component(&src, 0));
+            let b = as_array(component(&src, 1));
+            let out = a
+                .iter()
+                .zip(b.iter())
+                .map(|(x, y)| RValue::Tuple(vec![x.clone(), y.clone()]))
+                .collect();
+            write(ctx, target, RValue::Array(out));
+            Ok(())
+        }
+        Operation::Enumerate => {
+            // (ADR-0018 denotation: [(0 as i32, a[0]), …, (n-1 as i32, a[n-1])]).
+            // The index is pinned i32; ir guarantees n ≤ i32::MAX so the cast is exact.
+            let arr = read(ctx, source).clone();
+            let elems = match arr {
+                RValue::Array(es) => es,
+                _ => unreachable!("Enumerate on non-array"),
+            };
+            let out = elems
+                .into_iter()
+                .enumerate()
+                .map(|(i, x)| RValue::Tuple(vec![RValue::Scalar(Value::I32(i as i32)), x]))
+                .collect();
+            write(ctx, target, RValue::Array(out));
+            Ok(())
+        }
         Operation::Print { newline } => {
             let v = print_op(ctx, source, newline);
             write(ctx, target, v);
@@ -466,6 +497,14 @@ fn print_op(ctx: &EvalCtx, source: ObjectId, newline: bool) -> RValue {
         out.push('\n');
     }
     RValue::Token(out)
+}
+
+/// Extract the array elements, panicking on a non-array.
+fn as_array(x: &RValue) -> &[RValue] {
+    match x {
+        RValue::Array(es) => es,
+        _ => unreachable!("expected an array value"),
+    }
 }
 
 /// Extract the scalar payload, panicking on a non-scalar.

@@ -72,6 +72,9 @@ pub enum IrError {
     SlotOutOfRange,
     /// A pack/call/etc. with the wrong number of components.
     ArityMismatch,
+    /// ADR-0018: `enumerate` on an array whose size exceeds `i32::MAX`, so the
+    /// index component (`i32`) cannot represent every index (F4/SND-3 precedent).
+    EnumerateIndexOverflow,
     /// `pack`/`pack_array` of zero components.
     EmptyProduct,
     /// `pack` of exactly one component (no 1-tuples).
@@ -1527,6 +1530,99 @@ impl FnBuilder<'_> {
         self.b.intake_ty(&elem)?;
         let plan = self.dest_target(&dest, &elem, loc)?;
         Ok(self.emit_to_dest(plan, pair, Operation::Index, loc))
+    }
+
+    /// `Zip` (DESIGN §5.1; ADR-0018): `([A; n], [B; n]) → [(A, B); n]`. Builds the
+    /// internal 2-tuple of the two arrays (Pair-then-primitive, exactly as
+    /// `binop`), then applies `Zip`. Both arrays must share size `n`.
+    pub fn zip(
+        &mut self,
+        lhs: ObjectId,
+        rhs: ObjectId,
+        dest: Dest,
+        loc: SourceLoc,
+    ) -> Result<ObjectId, IrError> {
+        self.check_obj(lhs)?;
+        self.check_obj(rhs)?;
+        let lty = self.ty_of(lhs);
+        let rty = self.ty_of(rhs);
+        let (a_elem, a_size) = match &lty {
+            Ty::Array { elem, size } => ((**elem).clone(), *size),
+            _ => return Err(IrError::NotAProduct),
+        };
+        let (b_elem, b_size) = match &rty {
+            Ty::Array { elem, size } => ((**elem).clone(), *size),
+            _ => return Err(IrError::NotAProduct),
+        };
+        if a_size != b_size {
+            return Err(IrError::TypeMismatch {
+                expected: lty.clone(),
+                found: rty.clone(),
+                loc,
+            });
+        }
+        // Str never lives in a product/array (I9s) — such an array is already
+        // unconstructible, but guard explicitly like `binop` for nested cases.
+        if ty::ty_contains_str(&lty) || ty::ty_contains_str(&rty) {
+            return Err(IrError::StrOutsidePrint);
+        }
+        // Internal (lhs, rhs) 2-tuple of the two arrays, then Zip.
+        let pair_ty = Ty::Tuple(vec![lty.clone(), rty.clone()]);
+        self.b.intake_ty(&pair_ty)?;
+        let pair = self
+            .b
+            .mint_object(self.f, pair_ty, None, ObjectKind::Temporary, None, loc);
+        self.b.add_edge(
+            self.f,
+            lhs,
+            pair,
+            Operation::Pair { slot: 0, arity: 2 },
+            loc,
+        );
+        self.b.add_edge(
+            self.f,
+            rhs,
+            pair,
+            Operation::Pair { slot: 1, arity: 2 },
+            loc,
+        );
+        let out_ty = Ty::Array {
+            elem: Box::new(Ty::Tuple(vec![a_elem, b_elem])),
+            size: a_size,
+        };
+        self.b.intake_ty(&out_ty)?;
+        let plan = self.dest_target(&dest, &out_ty, loc)?;
+        Ok(self.emit_to_dest(plan, pair, Operation::Zip, loc))
+    }
+
+    /// `Enumerate` (DESIGN §5.1; ADR-0018): `[A; n] → [(i32, A); n]`. Single
+    /// source (direct edge, no internal pair). Rejects `n > i32::MAX` up front —
+    /// the index `i32` could not name every element (F4/SND-3 precedent).
+    pub fn enumerate(
+        &mut self,
+        arr: ObjectId,
+        dest: Dest,
+        loc: SourceLoc,
+    ) -> Result<ObjectId, IrError> {
+        self.check_obj(arr)?;
+        let aty = self.ty_of(arr);
+        let (elem, size) = match &aty {
+            Ty::Array { elem, size } => ((**elem).clone(), *size),
+            _ => return Err(IrError::NotAProduct),
+        };
+        if size > i32::MAX as u64 {
+            return Err(IrError::EnumerateIndexOverflow);
+        }
+        if ty::ty_contains_str(&aty) {
+            return Err(IrError::StrOutsidePrint);
+        }
+        let out_ty = Ty::Array {
+            elem: Box::new(Ty::Tuple(vec![Ty::i32(), elem])),
+            size,
+        };
+        self.b.intake_ty(&out_ty)?;
+        let plan = self.dest_target(&dest, &out_ty, loc)?;
+        Ok(self.emit_to_dest(plan, arr, Operation::Enumerate, loc))
     }
 
     /// `Call(f)` (DESIGN §5.1): `f` is `FuncKind::Named`; arg ty = input ty.

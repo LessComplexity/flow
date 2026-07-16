@@ -10,7 +10,7 @@ use flow_ir::{CategoryIr, FuncId, Ty, Value};
 
 const BUDGET: u64 = 100_000;
 
-/// Read one of the six acceptance programs from `examples/`.
+/// Read one of the acceptance programs from `examples/`.
 fn example(name: &str) -> String {
     let path = format!(
         "{}/../../examples/{}.flow",
@@ -80,6 +80,27 @@ fn golden_fir() {
 fn golden_sepia() {
     let ir = build(&example("sepia"));
     assert_eq!(run(&ir, BUDGET).output, "4080\n");
+}
+
+#[test]
+fn golden_zip_demo() {
+    // ADR-0018 builtin showcase: `zip` add (c[k]=k+100) then `enumerate` add
+    // (e[k]=k+k=2k). Preserves the pre-ADR-0018 c[0]=100 / c[15]=115 contract.
+    let ir = build(&example("zip_demo"));
+    assert_eq!(
+        run(&ir, BUDGET).output,
+        "c[0]  = 100\nc[15] = 115\ne[0]  = 0\ne[15] = 30\n"
+    );
+}
+
+#[test]
+fn golden_vector_add() {
+    // ADR-0018: elementwise add via `zip`, then fold sum = 1720.
+    let ir = build(&example("vector_add"));
+    assert_eq!(
+        run(&ir, BUDGET).output,
+        "c[0]  = 100\nc[15] = 115\nsum   = 1720\n"
+    );
 }
 
 #[test]

@@ -364,9 +364,18 @@ impl Walk<'_> {
     }
 
     fn chain(&mut self, chain: &Chain, scope: &mut ScopeStack<WTy>) {
+        self.chain_seeded(chain, WTy::Unknown, scope);
+    }
+
+    /// Like [`chain`], but a **headless** chain (no head expr) starts from `seed`
+    /// instead of `Unknown` — the fanout wire threaded into each branch so a
+    /// tuple-producing op (`enumerate`/`zip`) inside a branch types its downstream
+    /// `map` body correctly (emit already threads the real wire; this keeps the
+    /// D1 BlockSig in step).
+    fn chain_seeded(&mut self, chain: &Chain, seed: WTy, scope: &mut ScopeStack<WTy>) {
         let mut cur: WTy = match &chain.head {
             Some(h) => self.expr(h, scope),
-            None => WTy::Unknown,
+            None => seed,
         };
         for stage in &chain.stages {
             cur = self.stage(&stage.kind, stage.span, cur, scope);
@@ -401,6 +410,14 @@ impl Walk<'_> {
                     } else if crate::is_print_builtin(text) {
                         // print sink; result is "no value".
                         WTy::Unknown
+                    } else if text == "zip" {
+                        // zip: cur is a 2-tuple `([A;n], [B;n])`; result `[(A,B);n]`.
+                        // Synthesize when resolvable so a downstream map sees the
+                        // tuple element ty (emit re-derives + owns the L-codes).
+                        self.zip_result(&cur)
+                    } else if text == "enumerate" {
+                        // enumerate: cur is `[A;n]`; result `[(i32, A);n]`.
+                        self.enumerate_result(&cur)
                     } else {
                         // bind cur to a fresh name.
                         scope.bind(text, cur.clone());
@@ -452,7 +469,7 @@ impl Walk<'_> {
             StageKind::Guard(arms) => self.guard(arms, &cur, scope),
             StageKind::Fanout { branches, .. } => {
                 for b in branches {
-                    self.chain(b, scope);
+                    self.chain_seeded(b, cur.clone(), scope);
                 }
                 WTy::Unknown
             }
@@ -698,6 +715,39 @@ impl Walk<'_> {
             Ty::Tuple(sig.params.clone())
         };
         self.unify_known(arg, &in_ty, span);
+    }
+
+    /// D1 result ty for a `zip` stage: `([A;n],[B;n]) → [(A,B);n]` (ADR-0018).
+    /// Unknown unless `cur` resolves to a 2-tuple of equal-size arrays — emission
+    /// owns the misuse L-codes (L1606/L1607/L1608); D1 only threads the ty so a
+    /// downstream `map` sees the tuple element.
+    fn zip_result(&mut self, cur: &WTy) -> WTy {
+        let Some(Ty::Tuple(cs)) = self.wty_to_ty(cur) else {
+            return WTy::Unknown;
+        };
+        if let [
+            Ty::Array { elem: ae, size: an },
+            Ty::Array { elem: be, size: bn },
+        ] = cs.as_slice()
+            && an == bn
+        {
+            return WTy::Known(Ty::Array {
+                elem: Box::new(Ty::Tuple(vec![(**ae).clone(), (**be).clone()])),
+                size: *an,
+            });
+        }
+        WTy::Unknown
+    }
+
+    /// D1 result ty for an `enumerate` stage: `[A;n] → [(i32,A);n]` (ADR-0018).
+    fn enumerate_result(&mut self, cur: &WTy) -> WTy {
+        match self.wty_to_ty(cur) {
+            Some(Ty::Array { elem, size }) => WTy::Known(Ty::Array {
+                elem: Box::new(Ty::Tuple(vec![Ty::i32(), (*elem).clone()])),
+                size,
+            }),
+            _ => WTy::Unknown,
+        }
     }
 
     // --- expressions --------------------------------------------------------

@@ -199,7 +199,16 @@ fn first_chain(f: &FnDecl) -> &Chain {
 
 #[test]
 fn examples_parse_clean() {
-    for name in ["abs", "fanout", "fir", "pipeline", "sepia", "sum_to_n"] {
+    for name in [
+        "abs",
+        "fanout",
+        "fir",
+        "pipeline",
+        "sepia",
+        "sum_to_n",
+        "zip_demo",
+        "vector_add",
+    ] {
         let path = format!("{}/../../examples/{name}.flow", env!("CARGO_MANIFEST_DIR"));
         let src = std::fs::read_to_string(&path).expect("read example");
         let out = parse(&src);

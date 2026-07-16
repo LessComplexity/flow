@@ -102,6 +102,13 @@ pub enum Operation {
     },
     /// `([T; n] × I) → T`; OOB = trap in Core (ADR-0013).
     Index,
+    /// `([A; n] × [B; n]) → [(A, B); n]` — the canonical iso `Aⁿ × Bⁿ ≅ (A×B)ⁿ`
+    /// (ADR-0018). Source is the 2-tuple product (Pair-then-primitive, as for
+    /// every binary op); both arrays share size `n`. Pure — no token.
+    Zip,
+    /// `[A; n] → [(i32, A); n]` (ADR-0018): pairs each element with its index,
+    /// index pinned `i32` with the extra bound `n ≤ i32::MAX`. Pure — no token.
+    Enumerate,
     // effects (§8)
     /// `(IoToken × P) → IoToken`, `P` printable — the effectful op. `newline: true`
     /// is `println` (appends `\n`), `false` is `print` (raw) — ADR-0015.

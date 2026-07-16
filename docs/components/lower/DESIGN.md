@@ -134,6 +134,8 @@ each is realized in code at the cited seam.
 | `type` (Pass D1) | `Trn : 𝒮 → TypeInfo` | Total | literal-width unification + block sigs; emits typing L-codes (`typing::analyze_fn`) |
 | `emit` (Pass D2/D3) | `Trn : 𝒮 → CategoryIr` (under construction) | Partial | the morphism map; per-construct recipes §8; fail-fast on first `IrError` (`emit::lower_program`) |
 | `binop` | `Binary → Pair*-then-op` | Partial | product formation: k `Pair` edges → one op-edge `(A×B)→T` (I1 total) |
+| `zip` (builtin) | `Tuple[A^n,B^n] → Zip` | Partial | proj the 2-tuple wire, re-pair, `Zip` → `(A×B)^n`; L1606/L1607/L1608 (§8.9; ADR-0018) |
+| `enumerate` (builtin) | `A^n → Enumerate` | Partial | single-source `Enumerate` → `(i32×A)^n`; L1609/L1610 (§8.9; ADR-0018) |
 | `guard` | `Guard → Phi` | Partial | pure arms → right-folded `Phi` over `Tuple[T,T,Bool]`; routing arms → loop route |
 | `loop` | `Loop → inline cycle` | Partial | `LoopMerge` + `LoopEnter`/`LoopBack`/`LoopExit`; no stored `Trace` (D3) |
 | `seal` (Pass E) | `Builder ⇀ CategoryIr` | Partial | freeze with `entry=main`; post-check failure ⇒ L1901 (lower bug) (`emit.rs` tail) |
@@ -301,10 +303,23 @@ binds); a `mut` rebind keeps the original `decl_seq` (LD4).
   block params — referencing an enclosing local is L1108 (blocks are not closures;
   their IR functions have no capture slots).
 - **Resolution order for a bare name in stage position (LD1):** local scopes (innermost
-  first) → surface functions → the builtins `print`/`println` (ADR-0015; one `is_print_builtin`
-  predicate gates every print/effect/token site — LD25). Variables shadow functions; declaring
-  `fn print`/`println` or `type` named after a builtin scalar is L1009. In *expression* position a
-  name resolves to locals only (a function name as a value is L1105).
+  first) → surface functions → the effectful builtins `print`/`println` (ADR-0015; one
+  `is_print_builtin` predicate gates every print/effect/token site — LD25) → the **pure
+  collection builtins** `zip`/`enumerate` (ADR-0018; one `is_collection_builtin` predicate
+  gates the emit dispatch + the two bare-name-binding lookahead sites — LD26). Variables
+  shadow functions; declaring `fn print`/`println`/`zip`/`enumerate` or a `type` named
+  after a builtin scalar is L1009. In *expression* position a name resolves to locals only
+  (a function name as a value is L1105).
+- **Collection builtins are pure (LD26; ADR-0018).** `zip : ([A;n],[B;n]) → [(A,B);n]` and
+  `enumerate : [A;n] → [(i32,A);n]` carry **no IoToken** — unlike `print`, they never appear
+  in the effects walk or consume a token, so they are legal inside a parallel fanout and in
+  map/fold bodies. `zip`'s surface source is a 2-tuple wire; emission projects the two arrays
+  out (Pair-then-primitive, exactly as `binop`), independently re-derives the shape (owning
+  L1606/L1607/L1608), then calls the builder — which re-checks defensively (it is not the
+  diagnostic surface, LD12). `enumerate` is single-source; emission owns L1609/L1610 and the
+  builder re-derives the `n ≤ i32::MAX` bound. D1 threads the fanout scrutinee ty into each
+  headless branch (`chain_seeded`) so a tuple-producing op followed by a `map` types its body
+  element correctly.
 - **After a loop**, the loop's carried `mut` names are **poisoned** in the enclosing
   scope; reading one is L1107 ("bind the exit value instead", LD9). Rationale: the
   post-loop value lives in the LoopExit object; surfacing it through the old name would
@@ -373,6 +388,11 @@ available (§10). Catalogue (each gets ≥1 rejection test, §14):
 | L1603 | FoldShape | fold wire not a 2-tuple `(init, array)` |
 | L1604 | BodyNoValue | map/fold body block has no tail value |
 | L1605 | BodyEffectful | `print`/effectful call inside a map/fold body |
+| L1606 | ZipNonTuple | `zip` source is not a 2-tuple (scalar, or arity ≠ 2) — ADR-0018 |
+| L1607 | ZipNonArray | a `zip` tuple component is not an array (ADR-0018) |
+| L1608 | ZipSizeMismatch | the two `zip` arrays differ in length (ADR-0018) |
+| L1609 | EnumerateNonArray | `enumerate` applied to a non-array wire (ADR-0018) |
+| L1610 | EnumerateOverflow | `enumerate` array length > `i32::MAX` — the index `i32` could not name every element (F4/SND-3 precedent; ADR-0018) |
 | L1901 | Internal | a builder call failed during emission (lower bug; message embeds the `IrError` debug form) |
 
 ## 5. Pass A — type table
@@ -742,6 +762,26 @@ internally (the only legal `Str` product, I9s). Lower's part: maintain the curre
 register; final token → Return per §8.1. Print in Phi arms → L1404; in bodies → L1605;
 in fanout branches → threaded (§8.6).
 
+### 8.9 zip / enumerate (ADR-0018 / LD26)
+
+Pure collection builtins, resolved by name (LD1). Neither takes or produces a token, so
+neither touches the effects walk / token register — both are legal in fanout branches and
+map/fold bodies.
+
+- **`zip`**: `cur : Tuple[Array{A,n}, Array{B,n}]` → `Array{Tuple[A,B], n}`. Emission
+  re-derives the shape and owns the L-codes — L1606 (source not a 2-tuple), L1607 (a
+  component not an array), L1608 (sizes differ) — then projects `lhs = proj(cur,0)`,
+  `rhs = proj(cur,1)` and calls `zip(lhs, rhs, dest, loc)`. The builder re-pairs them into
+  the internal `(A^n, B^n)` product and applies `Zip` (Pair-then-primitive, exactly as
+  `binop`, §11.1). The tuple→proj→re-pair round-trip is redundant but keeps the single-source
+  IR contract; layer-2 (P4) may fuse it.
+- **`enumerate`**: `cur : Array{A,n}` → `Array{Tuple[i32,A], n}`. Single-source (direct edge,
+  no internal pair). Emission owns L1609 (non-array) and L1610 (`n > i32::MAX` — the index
+  `i32` could not name every element; F4/SND-3 precedent), then calls `enumerate(cur, dest,
+  loc)`; the builder re-derives the bound defensively (LD12).
+- Owner side: the §8.1 lookahead Dest names the result (`-> c: [i32; 4]`). Both re-checks in
+  the builder are an **independent** re-derivation, never shared with emission's checks.
+
 ## 9. Worked contracts (what the goldens will show)
 
 - **pipeline.flow `f`** = dump_demo's `f` exactly: `Mul → Fresh`, then
@@ -888,6 +928,7 @@ clean tree + bounded recursion + fail-fast emission ⇒ never panics/hangs.
 | LD23 | Params bind with `mutable = mut_span.is_some()`; mut params are carried-state-eligible | user-guide §3.5 countdown is golden h's surface (SF-3/CP-6) |
 | LD24 | Pass B's L1008 graph = I6's reference graph (owner→callee edges include block-internal calls) | owner-via-body recursion must be a user diagnostic, not seal `RecursiveCall` (SF-9/IR-3) |
 | LD25 | `print`/`println` are one builtin family behind `is_print_builtin` (ADR-0015); `println` lowers to `Print{newline:true}`, `print` to `Print{newline:false}` | `print` was special-cased in 9 effect/typing/emit sites — a single predicate stops them drifting (FRAMEWORK §5); `println` regressed an un-updated site, which is why the helper exists |
+| LD26 | `zip`/`enumerate` are the **pure** collection builtins behind `is_collection_builtin` (ADR-0018); routed at call-shaped stages (§8.9), emit owns L1606–L1610, builder re-derives defensively (LD12); no token ⇒ legal in fanout/bodies | mirrors LD25's one-predicate rule for the emit dispatch + two bare-name-binding lookahead sites; pure-ness (no effects-walk entry) is what makes them fanout-legal, the property the fanout golden guards |
 
 ## 16. Open questions (→ next-session / ADR candidates)
 

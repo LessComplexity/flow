@@ -34,6 +34,8 @@ describes a Flow *program* as a category (that lives in `docs/architecture/categ
 | `type` (Pass D1) | `𝒮 → TypeInfo` (+ fn sigs) | `crates/flow-lower/src/typing.rs:analyze_fn` / `typing.rs:build_fn_sigs` | built |
 | `emit` (Pass D2/D3, morphism map) | `𝒮 ⇀ CategoryIr` (under construction) | `crates/flow-lower/src/emit.rs:build_bodies` (D2) / `emit.rs:Emitter::emit_fn` (D3) | built |
 | `binop` | `Binary → Pair*-then-op` (product formation) | `crates/flow-lower/src/emit.rs:Emitter::binop` | built |
+| `zip` (builtin, ADR-0018) | `Tuple[A^n,B^n] → Zip` (proj + re-pair; L1606/L1607/L1608) | `crates/flow-lower/src/emit.rs:Emitter::emit_zip` (routed in `emit_expr_stage`; `lib.rs:is_collection_builtin`) | built |
+| `enumerate` (builtin, ADR-0018) | `A^n → Enumerate` (single-source; L1609/L1610) | `crates/flow-lower/src/emit.rs:Emitter::emit_enumerate` (routed in `emit_expr_stage`) | built |
 | `guard` | `Guard → Phi` (bool / right-folded value-match) | `crates/flow-lower/src/emit.rs:Emitter::emit_phi_guard` → `emit_bool_guard` / `emit_value_match` | built |
 | `loop` | `Loop → inline cycle` (LoopEnter/Back/Exit) | `crates/flow-lower/src/emit.rs:Emitter::emit_loop` (+ `emit_routing_guard`, `emit_exit_arm`) | built |
 | `seal` (Pass E) | `Builder ⇀ CategoryIr` (entry=main; fail → L1901) | `crates/flow-lower/src/emit.rs:lower_program` (`b.seal(main_id)` tail) | built |
@@ -51,6 +53,7 @@ describes a Flow *program* as a category (that lives in `docs/architecture/categ
 | Value-match right-folded Phi chain (pin 4): arm order preserved, default innermost | `crates/flow-lower/src/emit.rs:Emitter::emit_value_match` | — (no dedicated test; shape from ir/DESIGN §16 golden) |
 | Loop exit reads merge-state view (pin 5): exit against snapshot, back edge recomputed | `crates/flow-lower/src/emit.rs:Emitter::emit_exit_arm` (+ `ScopeStack::snapshot`) | `tests/structural.rs::sum_to_n_loop_shape` (55-not-66) |
 | Partiality: `dom(lower) = Flow-Core`; rejection = functor undefined | each L-code `Err` arm | `tests/rejection.rs` (one test per L-code) |
+| Collection builtins pure (LD26): no token ⇒ fanout/body-legal; emit owns L1606–L1610, builder re-derives | `crates/flow-lower/src/lib.rs:is_collection_builtin` / `emit.rs:Emitter::emit_zip`,`emit_enumerate` | `tests/rejection.rs::l1606_*..l1610_*` / `tests/golden.rs::golden_zip_builtin`,`golden_enumerate_builtin`,`fanout_pure_collection_ops_lower_clean` |
 | I1 one-source/one-target: arity reified as product `Object` (Pair-then-op) | `crates/flow-lower/src/emit.rs:Emitter::binop` / `pack` | `tests/proptests.rs` (Ok ⇒ `validate` empty) |
 | Call-graph acyclicity (I6): cycle → L1008 before declare | `crates/flow-lower/src/effects.rs:analyze` / `find_cycle` | `tests/rejection.rs::l1008_recursive_call` |
 | Determinism (§11): `BTreeMap`/`Vec` throughout; no `HashMap` in emission order | all modules (structural discipline) | `tests/golden.rs` (insta snapshots stable) |

@@ -280,6 +280,8 @@ pub enum Operation {
     Map  { body: FuncId },           // [T; n] → [U; n]; body: T → U          (ADR-0009/LC-2)
     Fold { body: FuncId },           // (Acc × [T; n]) → Acc; body: (Acc × T) → Acc
     Index,                           // ([T; n] × I) → T; OOB = trap in Core (ADR-0013)
+    Zip,                             // ([A; n] × [B; n]) → [(A, B); n]         (ADR-0018)
+    Enumerate,                       // [A; n] → [(i32, A); n]; n ≤ i32::MAX    (ADR-0018)
     // effects (§8)
     Print { newline: bool },         // (IoToken × P) → IoToken; println appends \n, print raw (ADR-0015)
     // loops (§7) — the inline-cycle realization of Tr^U (CHANGES §1.3)
@@ -312,6 +314,8 @@ Notation: `N` = Core numeric scalar (`i32`/`i64`/`u8`/`f32`/`f64`), `I` = Core i
 | `Map{body}` | `Array{T, n}` | `Array{U, n}` | body: `T → U`, `FuncKind::MapBody`, token-free |
 | `Fold{body}` | `(Acc, Array{T, n})` | `Acc` | body: `(Acc, T) → Acc`, `FuncKind::FoldBody`, token-free |
 | `Index` | `(Array{T, n}, I)` | `T` | OOB traps in Core |
+| `Zip` | `([A, n], [B, n])` 2-tuple, sizes equal | `[(A, B); n]` | ADR-0018; source is the 2-tuple product (Pair-then-primitive); elem tys arbitrary Core tys; result depth bound I10 applies |
+| `Enumerate` | `[A, n]` | `[(i32, A); n]` | ADR-0018; index pinned `i32`; extra condition `n ≤ i32::MAX` (builder rejects; `check_edges` re-derives — a graph-shape *extra condition*, not a typing judgment, so `edge_type_ok`/its golden stays pure) |
 | `Print {newline}` | `(IoToken, P)` | `IoToken` | the effectful op (HANDOFF §4.1); `newline` selects `println`/`print` (ADR-0015), typing identical |
 | `LoopEnter` | `U` | `U` (target kind LoopMerge) | exactly one per merge |
 | `LoopBack` | `(U, Bool)` | `U` (target kind LoopMerge) | ≥1 per merge; source inside the loop SCC (I5) |
@@ -556,6 +560,12 @@ Cargo: `slotmap = "1.0"` (runtime); dev-deps exactly `insta = "1.47.2"`, `propte
 - Trap semantics (div/mod-zero, OOB Index): Core-pinned in ADR-0013; the honest `Kleisli(Result)` lift returns with Core+1 coproducts and will change `Index`/`Div` typing.
 - JSON serialization format (§5.3): when implemented, takes the LC-4 edge form; needs a version field decision.
 - Whether the v1 exclusion of `Operation::Trace` ever needs reversing (an opaque loop summary for a backend) — SCC + LoopMerge carries the same information today.
+- **`Zip`/`Enumerate` composition laws (ADR-0018) — recorded for P4 rewrites, NOT implemented in v1.** Both ops are natural transformations, so their naturality squares are free layer-2 rewrites (category-ir §7.1/§7.2 pattern):
+  1. `zip ∘ (map f × map g) = map (f × g) ∘ zip` (naturality in both arguments)
+  2. `enumerate ∘ map f = map (id_i32 × f) ∘ enumerate`
+  3. `map π₁ ∘ enumerate = id`
+  4. deduction: `iota_n = map π₀ ∘ enumerate` — why there is no `Iota` op (deduce-don't-store applied to the op set itself).
+  The IR realizes only the two ops; these equalities are for the rewrite engine's rule table when P4 lands.
 
 ## 18. Decision ledger (D1–D8 — decided once, do not re-litigate)
 

@@ -1,4 +1,4 @@
-//! Golden Mermaid snapshots (DESIGN §14.1): the six acceptance programs plus the
+//! Golden Mermaid snapshots (DESIGN §14.1): the eight acceptance programs plus the
 //! two §9 non-example regressions (countdown, effectful call). Each snapshot is
 //! lint-clean (asserted in `lower_ok`) and was hand-verified against §9's shape
 //! contract before acceptance (see the agent report's per-golden notes).
@@ -43,6 +43,18 @@ fn golden_sepia() {
     snap("sepia", &example("sepia"));
 }
 
+/// zip_demo (ADR-0018 example): full showcase file — `zip` add + `enumerate` add.
+#[test]
+fn golden_zip_demo() {
+    snap("zip_demo", &example("zip_demo"));
+}
+
+/// vector_add (ADR-0018 example): `zip` add + fold sum.
+#[test]
+fn golden_vector_add() {
+    snap("vector_add", &example("vector_add"));
+}
+
 /// countdown (§9 non-example regression, golden h's surface): mut param carried,
 /// `U = (i32, IoToken)` (token last), `println` before the guard (ADR-0015),
 /// value-less ret exit carrying the post-print snapshot token, `Output` to Ret.
@@ -80,4 +92,55 @@ fn main() {
 #[test]
 fn golden_effectful_call() {
     snap("effectful_call", EFFECTFUL_CALL);
+}
+
+/// zip builtin (ADR-0018 / WP2): `(a, b) -> zip -> map { p -> p.0 + p.1 }`. The
+/// tuple wire is projected into two arrays, re-paired, then `Zip`; the map body
+/// consumes the `(i32, i32)` element. Mirrors the zip_demo showcase form without
+/// touching the example file.
+const ZIP_BUILTIN: &str = r#"fn main() {
+    [0, 1, 2, 3] -> a: [i32; 4];
+    [100, 101, 102, 103] -> b: [i32; 4];
+    (a, b) -> zip -> map { p -> p.0 + p.1 } -> c: [i32; 4];
+    c[0] -> println;
+}
+"#;
+
+#[test]
+fn golden_zip_builtin() {
+    snap("zip_builtin", ZIP_BUILTIN);
+}
+
+/// enumerate builtin (ADR-0018 / WP2): `a -> enumerate -> map { p -> p.0 + p.1 }`.
+/// Single-source `Enumerate` (no internal pair); element `(i32, A)`.
+const ENUMERATE_BUILTIN: &str = r#"fn main() {
+    [10, 20, 30] -> a: [i32; 3];
+    a -> enumerate -> map { p -> p.0 + p.1 } -> c: [i32; 3];
+    c[0] -> println;
+}
+"#;
+
+#[test]
+fn golden_enumerate_builtin() {
+    snap("enumerate_builtin", ENUMERATE_BUILTIN);
+}
+
+/// Fanout legality (ADR-0018): `zip`/`enumerate` are PURE (no token), so they are
+/// legal inside a parallel fanout — unlike `print`/effectful calls (E2). Both
+/// branches lower and validate clean.
+const FANOUT_PURE_OPS: &str = r#"fn main() {
+    [10, 20, 30] -> arr: [i32; 3];
+    arr -> {
+        -> enumerate -> map { p -> p.0 + p.1 } -> e;
+        -> map { x -> x * 2 } -> d;
+    }
+    e[0] -> println;
+    d[0] -> println;
+}
+"#;
+
+#[test]
+fn fanout_pure_collection_ops_lower_clean() {
+    // lower_ok asserts seal-clean, validate-empty, and lint-clean (DESIGN §14).
+    let _ = lower_ok(FANOUT_PURE_OPS);
 }

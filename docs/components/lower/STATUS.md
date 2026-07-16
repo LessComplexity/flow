@@ -1,22 +1,25 @@
 # Component: lower
 
 Status: tested
-Last updated: 2026-06-12 · Session 05
-Spec references: category-ir.md §4 (lowering rules, as corrected by ERRATA LC-4) + §11.1; ERRATA LC-2 (map/fold law); ADR-0013 (realization: edges-only, inline-cycle loops, IO token laws); user-guide §3/§5; lower/DESIGN.md §0.1 pins 1–5 (binding).
+Last updated: 2026-07-16 · Session 09 (WP2 zip/enumerate)
+Spec references: category-ir.md §4 (lowering rules, as corrected by ERRATA LC-4) + §11.1; ERRATA LC-2 (map/fold law); ADR-0013 (realization: edges-only, inline-cycle loops, IO token laws); ADR-0015 (print/println builtins); ADR-0018 (zip/enumerate pure collection builtins); user-guide §3/§5; lower/DESIGN.md §0.1 pins 1–5 (binding).
 Depends on: syntax, ir Depended on by: check, interp, rewrite, backend-llvm, backend-cuda, backend-verilog, cli
 
 ## What works
 
 `pub fn lower(source, &Program) -> Result<CategoryIr, Vec<Diagnostic>>` — the full
-Flow-Core surface, end to end: all six `examples/*.flow` lower to sealed,
+Flow-Core surface, end to end: all eight `examples/*.flow` lower to sealed,
 validate-empty, lint-clean IR matching the ir-golden shapes (DESIGN §9 contracts hold:
 sum_to_n's exit reads the merge view — the 55-not-66 snapshot regression is pinned;
 abs folds `-1` with no `Neg`; sepia's `0.0` fold seed resolves f32 via literal-width
 unification; countdown reproduces ir golden h; effectful calls thread the token with
 the degenerate `tok := r` when B is absent). Five passes per DESIGN §2 (type table →
 effects/call-graph → declare → per-fn typing walk + body emission + outer emission →
-seal). 46 L-codes (L1000–L1901) with ≥1 rejection test each (except L1901, internal by
-construction).
+seal). 51 L-codes (L1000–L1901) with ≥1 rejection test each (except L1901, internal by
+construction). The pure collection builtins `zip`/`enumerate` (ADR-0018) route at
+call-shaped stages like `print` (`is_collection_builtin`) but carry no token — legal in
+parallel fanout and map/fold bodies; emit owns L1606–L1610, the flow-ir builder re-derives
+the shapes/bound defensively (LD12/LD26).
 
 ## What does not / known issues
 
@@ -47,13 +50,14 @@ construction).
 
 ## Test coverage (golden / property / differential / skipped+why)
 
-100 tests: 8 golden Mermaid snaps (6 examples + countdown + effectful-call, every snap
-hand-read against DESIGN §9 — including by the orchestrating session after the
-label-naming fix), 8 structural shape assertions (55-contract, token order, Phi
-counts, signature table), 82 rejection-matrix tests (all L-codes + ATK-finding
-regressions from the soundness attack), 2 bounded proptests (never-panics +
-Ok⇒validate-empty+lint-clean; literal-width vs annotations). Differential tests wait
-for the interpreter (P3). Implementation survived 2 adversarial code reviews + a
+112 tests: 12 golden Mermaid snaps (8 examples incl. zip_demo + vector_add,
+ADR-0018 zip form; + countdown + effectful-call + zip_builtin + enumerate_builtin,
+every snap hand-read against DESIGN §9), 1 fanout-legality
+acceptance (pure zip/enumerate in a parallel fanout lower + validate clean), 8 structural
+shape assertions (55-contract, token order, Phi counts, signature table), 89 rejection-matrix
+tests (all L-codes incl. L1606–L1610 + `fn zip`/`fn enumerate` L1009 collision parity + ATK-finding regressions from the soundness attack),
+2 bounded proptests (never-panics + Ok⇒validate-empty+lint-clean; literal-width vs
+annotations). Differential tests wait for the interpreter (P3). Implementation survived 2 adversarial code reviews + a
 soundness attack: 21 distinct confirmed findings, all fixed with named regressions
 (highlights: ATK-02 effectful-call loops now carry the token; ATK-05 loop-exit
 bindings land in the enclosing scope; LOWER-RETK-TRUNC u64→u32 ret.k truncation).

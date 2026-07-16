@@ -60,6 +60,14 @@ fn l1009_reserved_name() {
 }
 
 #[test]
+fn l1009_reserved_collection_builtins() {
+    // ADR-0018: `zip`/`enumerate` are builtins resolved by name, so a user `fn`
+    // of either name collides exactly like `print` — L1009.
+    assert_rejects("fn zip() {}\nfn main() {}\n", "L1009");
+    assert_rejects("fn enumerate() {}\nfn main() {}\n", "L1009");
+}
+
+#[test]
 fn l1010_empty_type() {
     assert_rejects("type Empty {}\nfn main() {}\n", "L1010");
 }
@@ -576,6 +584,54 @@ fn l1605_body_effectful() {
     assert_rejects(
         "fn main() { [1, 2] -> map { x -> x -> print; x } -> ys: [i32; 2]; }\n",
         "L1605",
+    );
+}
+
+// --- L1606–L1610: zip / enumerate (ADR-0018) --------------------------------
+
+#[test]
+fn l1606_zip_non_tuple_scalar() {
+    // zip source is a scalar, not a 2-tuple.
+    assert_rejects("fn main() { 5 -> zip -> x; }\n", "L1606");
+}
+
+#[test]
+fn l1606_zip_non_tuple_arity3() {
+    // zip source is a 3-tuple, not a 2-tuple.
+    assert_rejects("fn main() { (1, 2, 3) -> zip -> x; }\n", "L1606");
+}
+
+#[test]
+fn l1607_zip_component_not_array() {
+    // component 0 of the 2-tuple is a scalar, not an array.
+    assert_rejects(
+        "fn main() { [1, 2, 3] -> a: [i32; 3]; (5, a) -> zip -> x; }\n",
+        "L1607",
+    );
+}
+
+#[test]
+fn l1608_zip_size_mismatch() {
+    // the two arrays differ in length.
+    assert_rejects(
+        "fn main() { [1, 2] -> a: [i32; 2]; [3, 4, 5] -> b: [i32; 3]; (a, b) -> zip -> x; }\n",
+        "L1608",
+    );
+}
+
+#[test]
+fn l1609_enumerate_non_array() {
+    // enumerate applied to a scalar wire.
+    assert_rejects("fn main() { 5 -> enumerate -> x; }\n", "L1609");
+}
+
+#[test]
+fn l1610_enumerate_oversize() {
+    // an array whose length exceeds i32::MAX cannot be enumerated (the index
+    // `i32` could not name every element).
+    assert_rejects(
+        "fn f(a: [i32; 2147483648]) -> [(i32, i32); 2147483648] { a -> enumerate -> ret; }\nfn main() {}\n",
+        "L1610",
     );
 }
 

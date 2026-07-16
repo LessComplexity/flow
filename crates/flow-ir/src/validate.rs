@@ -71,6 +71,10 @@ pub enum IrViolation {
     TyTooDeep(ObjectId),
     /// I9: a non-Core ty on some object.
     NonCoreType(ObjectId),
+    /// ADR-0018: an `Enumerate` edge over an array of size `> i32::MAX` (the
+    /// index component `i32` cannot name every element). Twin of
+    /// [`crate::IrError::EnumerateIndexOverflow`].
+    EnumerateIndexOverflow(MorphismId),
 }
 
 /// Re-derive every graph-shape invariant on a sealed graph (DESIGN §11). An
@@ -161,6 +165,14 @@ fn check_edges(ir: &CategoryIr, v: &mut Vec<IrViolation>) {
                 v.push(IrViolation::BadOutput(mid));
             }
         }
+        // ADR-0018 extra condition (independent of the typing shape above):
+        // an `Enumerate` array must be indexable by `i32` — `n ≤ i32::MAX`.
+        if m.op == Operation::Enumerate
+            && let Ty::Array { size, .. } = sty
+            && *size > i32::MAX as u64
+        {
+            v.push(IrViolation::EnumerateIndexOverflow(mid));
+        }
     }
 }
 
@@ -240,6 +252,36 @@ fn edge_type_ok(ir: &CategoryIr, m: &crate::graph::Morphism, sty: &Ty, tty: &Ty)
                 Ty::Array { elem, .. } => ts[1].is_integer() && &**elem == tty,
                 _ => false,
             },
+            _ => false,
+        },
+        // ADR-0018. Pure typing shape only; the `n ≤ i32::MAX` extra condition is
+        // re-derived separately in `check_edges` (an "extra condition", not a
+        // typing judgment — matching this module's golden scope).
+        Operation::Zip => match (sty, tty) {
+            (Ty::Tuple(ts), Ty::Array { elem: te, size: tn }) if ts.len() == 2 => {
+                match (&ts[0], &ts[1], &**te) {
+                    (
+                        Ty::Array { elem: ae, size: an },
+                        Ty::Array { elem: be, size: bn },
+                        Ty::Tuple(pair),
+                    ) if pair.len() == 2 => {
+                        an == bn && an == tn && pair[0] == **ae && pair[1] == **be
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        },
+        Operation::Enumerate => match (sty, tty) {
+            (Ty::Array { elem: se, size: sn }, Ty::Array { elem: te, size: tn }) => {
+                sn == tn
+                    && match &**te {
+                        Ty::Tuple(pair) if pair.len() == 2 => {
+                            pair[0] == Ty::i32() && pair[1] == **se
+                        }
+                        _ => false,
+                    }
+            }
             _ => false,
         },
         Operation::Print { .. } => match sty {
@@ -1455,6 +1497,113 @@ mod typing_table_golden {
                 p,
                 false,
             ),
+            // Zip (ADR-0018): ([A;n], [B;n]) -> [(A,B);n]. Pure typing; the
+            // n<=i32::MAX bound is NOT an Enumerate concern and is not tested here.
+            (
+                "Zip ok i32/f32",
+                Zip,
+                tup(&[arr(i32t.clone(), 4), arr(f32t(), 4)]),
+                arr(tup(&[i32t.clone(), f32t()]), 4),
+                p,
+                true,
+            ),
+            (
+                "Zip size mismatch",
+                Zip,
+                tup(&[arr(i32t.clone(), 4), arr(f32t(), 3)]),
+                arr(tup(&[i32t.clone(), f32t()]), 4),
+                p,
+                false,
+            ),
+            (
+                "Zip result size mismatch",
+                Zip,
+                tup(&[arr(i32t.clone(), 4), arr(f32t(), 4)]),
+                arr(tup(&[i32t.clone(), f32t()]), 3),
+                p,
+                false,
+            ),
+            (
+                "Zip wrong elem order",
+                Zip,
+                tup(&[arr(i32t.clone(), 4), arr(f32t(), 4)]),
+                arr(tup(&[f32t(), i32t.clone()]), 4),
+                p,
+                false,
+            ),
+            (
+                "Zip source not tuple",
+                Zip,
+                arr(i32t.clone(), 4),
+                arr(tup(&[i32t.clone(), f32t()]), 4),
+                p,
+                false,
+            ),
+            (
+                "Zip source not arrays",
+                Zip,
+                tup(&[i32t.clone(), f32t()]),
+                arr(tup(&[i32t.clone(), f32t()]), 4),
+                p,
+                false,
+            ),
+            (
+                "Zip target not array of pair",
+                Zip,
+                tup(&[arr(i32t.clone(), 4), arr(f32t(), 4)]),
+                arr(i32t.clone(), 4),
+                p,
+                false,
+            ),
+            // Enumerate (ADR-0018): [A;n] -> [(i32, A);n].
+            (
+                "Enumerate ok",
+                Enumerate,
+                arr(f32t(), 4),
+                arr(tup(&[i32t.clone(), f32t()]), 4),
+                p,
+                true,
+            ),
+            (
+                "Enumerate size mismatch",
+                Enumerate,
+                arr(f32t(), 4),
+                arr(tup(&[i32t.clone(), f32t()]), 3),
+                p,
+                false,
+            ),
+            (
+                "Enumerate wrong index component",
+                Enumerate,
+                arr(f32t(), 4),
+                arr(tup(&[i64t.clone(), f32t()]), 4),
+                p,
+                false,
+            ),
+            (
+                "Enumerate wrong elem",
+                Enumerate,
+                arr(f32t(), 4),
+                arr(tup(&[i32t.clone(), i32t.clone()]), 4),
+                p,
+                false,
+            ),
+            (
+                "Enumerate source not array",
+                Enumerate,
+                i32t.clone(),
+                arr(tup(&[i32t.clone(), f32t()]), 4),
+                p,
+                false,
+            ),
+            (
+                "Enumerate target not array of pair",
+                Enumerate,
+                arr(f32t(), 4),
+                arr(f32t(), 4),
+                p,
+                false,
+            ),
             // Print{newline}: (IoToken, P) -> IoToken, P printable (N, Bool, Str).
             (
                 "Print int",
@@ -1605,6 +1754,57 @@ mod typing_table_golden {
             failures.is_empty(),
             "DESIGN §5.1 typing table disagrees with edge_type_ok:\n{}",
             failures.join("\n")
+        );
+    }
+}
+
+/// The ADR-0018 enumerate-bound twin: `validate` independently re-derives the
+/// `n ≤ i32::MAX` condition the builder rejects up front. The builder can never
+/// *produce* an oversize-enumerate graph, so this corrupts a sealed one (the
+/// in-crate privilege noted in `graph.rs`) to prove the validate pass flags it.
+#[cfg(test)]
+mod enumerate_bound_twin {
+    use super::{IrViolation, validate};
+    use crate::builder::{Dest, IrBuilder};
+    use crate::graph::FuncKind;
+    use crate::loc::SourceLoc;
+    use crate::ty::Ty;
+
+    const L: SourceLoc = SourceLoc { start: 0, end: 0 };
+
+    #[test]
+    fn oversize_enumerate_edge_flagged() {
+        let input = Ty::Array {
+            elem: Box::new(Ty::i32()),
+            size: 3,
+        };
+        let out = Ty::Array {
+            elem: Box::new(Ty::Tuple(vec![Ty::i32(), Ty::i32()])),
+            size: 3,
+        };
+        let mut b = IrBuilder::new();
+        let f = b.declare(FuncKind::Named, "main", input, out, L).unwrap();
+        {
+            let mut fb = b.build_fn(f).unwrap();
+            let a = fb.input();
+            fb.enumerate(a, Dest::Ret { slot: None }, L).unwrap();
+            fb.finish().unwrap();
+        }
+        let mut ir = b.seal(f).unwrap();
+        assert!(validate(&ir).is_empty());
+        // Corrupt every array size past the bound, keeping source/target sizes
+        // equal so the typing shape still holds and ONLY the bound twin fires.
+        let big = i32::MAX as u64 + 1;
+        for (_, obj) in ir.objects.iter_mut() {
+            if let Ty::Array { size, .. } = &mut obj.ty {
+                *size = big;
+            }
+        }
+        let v = validate(&ir);
+        assert!(
+            v.iter()
+                .any(|x| matches!(x, IrViolation::EnumerateIndexOverflow(_))),
+            "expected EnumerateIndexOverflow twin, got {v:?}"
         );
     }
 }

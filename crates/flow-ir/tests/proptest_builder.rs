@@ -35,6 +35,13 @@ enum Step {
     /// `print(token, value)` — always ill-typed here (no token in an i32 fn),
     /// so this exercises the rejection path and can never corrupt the graph.
     Print(usize, usize),
+    /// Pack two pool objects into a `[T; 2]` array (only succeeds when both
+    /// share an elem ty) — feedstock for `Zip`/`Enum`.
+    MakeArr(usize, usize),
+    /// `zip(a, b)` — succeeds only when both are same-size arrays (ADR-0018).
+    Zip(usize, usize),
+    /// `enumerate(a)` — succeeds only when `a` is an array (ADR-0018).
+    Enum(usize),
     /// Open a loop seeded from a pool object (leaving it possibly unclosed).
     BeginLoop(usize),
     /// Back-edge the most recently opened loop with a pool object as next-state.
@@ -55,6 +62,9 @@ fn step_strategy() -> impl Strategy<Value = Step> {
         any::<usize>().prop_map(Step::Neg),
         (any::<usize>(), any::<usize>(), any::<usize>()).prop_map(|(a, b, c)| Step::Phi(a, b, c)),
         (any::<usize>(), any::<usize>()).prop_map(|(a, b)| Step::Print(a, b)),
+        (any::<usize>(), any::<usize>()).prop_map(|(a, b)| Step::MakeArr(a, b)),
+        (any::<usize>(), any::<usize>()).prop_map(|(a, b)| Step::Zip(a, b)),
+        any::<usize>().prop_map(Step::Enum),
         any::<usize>().prop_map(Step::BeginLoop),
         (any::<usize>(), any::<usize>()).prop_map(|(a, b)| Step::LoopBackLast(a, b)),
         (any::<usize>(), any::<usize>()).prop_map(|(a, b)| Step::EndLoopLast(a, b)),
@@ -102,6 +112,13 @@ proptest! {
                         fb.phi(pick(&pool, a), pick(&pool, c), pick(&pool, d), Dest::Fresh(None), L)
                     }
                     Step::Print(t, v) => fb.print(pick(&pool, t), pick(&pool, v), L),
+                    Step::MakeArr(a, c) => {
+                        fb.pack_array(&[pick(&pool, a), pick(&pool, c)], Dest::Fresh(None), L)
+                    }
+                    Step::Zip(a, c) => {
+                        fb.zip(pick(&pool, a), pick(&pool, c), Dest::Fresh(None), L)
+                    }
+                    Step::Enum(a) => fb.enumerate(pick(&pool, a), Dest::Fresh(None), L),
                     Step::BeginLoop(a) => {
                         match fb.begin_loop(pick(&pool, a), L) {
                             Ok(lh) => {

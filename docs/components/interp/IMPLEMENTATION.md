@@ -43,6 +43,8 @@ one `eval` pass. Flow programs are *not* modeled as categories here.
 | `And/Or` (§3) | `(Bool,Bool) → Bool` | `crates/flow-interp/src/eval.rs:logic` | built |
 | `Neg` (§3) | `N → N` (IEEE fneg for floats) | `crates/flow-interp/src/eval.rs:neg` | built |
 | `Index` (§3) | `(Array, I) → T` (OOB ⇒ trap) | `crates/flow-interp/src/eval.rs:index` | built |
+| `Zip` (§3; ADR-0018) | `([A;n],[B;n]) → [(A,B);n]` elementwise pair | `crates/flow-interp/src/eval.rs:eval_morphism` (`Zip` arm) · `as_array` | built |
+| `Enumerate` (§3; ADR-0018) | `[A;n] → [(i32,A);n]` (index pinned `i32`) | `crates/flow-interp/src/eval.rs:eval_morphism` (`Enumerate` arm) | built |
 | `Print{newline}` (§3/§5) | `(IoToken, P) → IoToken` | `crates/flow-interp/src/eval.rs:print_op` | built |
 | product assembly (§2) | `arity × Pair{slot} → Tuple/Struct/Array` | `crates/flow-interp/src/eval.rs:stage_pair` · `finalize_product` | built |
 | `run_loop` (§4 driver) | `LoopMerge → env(exit objects)` | `crates/flow-interp/src/loops.rs:run_loop` | built |
@@ -70,6 +72,7 @@ one `eval` pass. Flow programs are *not* modeled as categories here.
 | Newline (ADR-0015) — `print` raw, `println` appends `\n` | `crates/flow-interp/src/eval.rs:print_op` (`if newline`) | `tests/acceptance.rs::golden_pipeline` · `tests/acceptance.rs::golden_fanout` |
 | Float render (IN4) — Rust shortest round-trip Display | `crates/flow-interp/src/value.rs:render` | `tests/acceptance.rs::golden_fir` · `tests/acceptance.rs::golden_sepia` |
 | Out-of-M1 loop shapes error, not miscompute (§4) | `crates/flow-interp/src/loops.rs:derive_plan` (asserts single merge / one LoopBack / one LoopExit) | — (no fixture; asserted, lower OQ7 never generates one) |
+| Zip/Enumerate denotation (ADR-0018) — elementwise pairs; `(i as i32, x)`; total/pure, legal under fanout | `crates/flow-interp/src/eval.rs:eval_morphism` (`Zip`/`Enumerate` arms) | `tests/zip_enumerate.rs::zip_add_value_contract` (c[0]=100, c[15]=115) · `::enumerate_indices_contract` · `::enumerate_under_fanout` |
 
 ## Notes / divergences
 Resolution per FRAMEWORK §6.6 (the model is a specification, not a transcript).

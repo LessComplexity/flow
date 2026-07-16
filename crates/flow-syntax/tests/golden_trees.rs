@@ -1,6 +1,6 @@
 //! Golden parse trees (DESIGN §20 item 1): the acceptance surface (J4).
 //!
-//! Each of the six shipped examples must parse with **zero** diagnostics; the
+//! Each of the eight shipped examples must parse with **zero** diagnostics; the
 //! rendered tree is snapshotted with `insta`. Reviewing the `.snap` against the
 //! source and the grammar is the verification that parsing is *correct*, not
 //! merely stable (the stated failure mode is wrong-but-stable output).
@@ -52,4 +52,14 @@ fn tree_sepia() {
 #[test]
 fn tree_sum_to_n() {
     check_example("sum_to_n");
+}
+
+#[test]
+fn tree_zip_demo() {
+    check_example("zip_demo");
+}
+
+#[test]
+fn tree_vector_add() {
+    check_example("vector_add");
 }

@@ -8,11 +8,12 @@ Depended on by: rewrite, backend-llvm, backend-cuda, backend-verilog, cli (the d
 
 ## What works
 
-The fueled reference interpreter (THE ORACLE) — `parse → lower → run` for all six `examples/*.flow` produces the exact pinned output:
-`abs "7\n"` · `sum_to_n "55\n"` · `pipeline "f(10) = 25\n"` · `fanout "36\n12\n"` · `fir "5.375\n"` · `sepia "4080\n"`. Plus the committed `countdown` fixture → `"5\n4\n3\n2\n1\n0\n"`.
+The fueled reference interpreter (THE ORACLE) — `parse → lower → run` for all eight `examples/*.flow` produces the exact pinned output:
+`abs "7\n"` · `sum_to_n "55\n"` · `pipeline "f(10) = 25\n"` · `fanout "36\n12\n"` · `fir "5.375\n"` · `sepia "4080\n"` · `zip_demo "c[0]  = 100\nc[15] = 115\ne[0]  = 0\ne[15] = 30\n"` (ADR-0018 zip + enumerate) · `vector_add "c[0]  = 100\nc[15] = 115\nsum   = 1720\n"`. Plus the committed `countdown` fixture → `"5\n4\n3\n2\n1\n0\n"`.
 
 - **Value domain (§1):** `RValue = Scalar(flow_ir::Value) | Tuple | Struct | Array | Token(String) | Unit`; `Outcome = Done | Diverged | Trapped(TrapKind)`; internal `Result<RValue, Abort>` with `?`, lifted to `Outcome` at the boundary.
-- **Evaluator (§2/§3):** env (`SecondaryMap<ObjectId, RValue>`) + topo walk; per-slot `Pair` product assembly into Tuple/Struct/Array; all Core ops (arith at operand width, Div/Mod int-trap & float-IEEE, Neg fneg, comparisons with **IEEE NaN ordering**, And/Or/Not, Phi, Proj, Call, Map, Fold, Index, Print{newline}, Output).
+- **Evaluator (§2/§3):** env (`SecondaryMap<ObjectId, RValue>`) + topo walk; per-slot `Pair` product assembly into Tuple/Struct/Array; all Core ops (arith at operand width, Div/Mod int-trap & float-IEEE, Neg fneg, comparisons with **IEEE NaN ordering**, And/Or/Not, Phi, Proj, Call, Map, Fold, Index, **Zip**, **Enumerate**, Print{newline}, Output).
+- **Zip / Enumerate (§3 / ADR-0018):** `Zip` pairs two equal-size arrays elementwise (`[(a[i],b[i])]`); `Enumerate` pairs each element with its `i32` index (`[(0,a[0]),…]`, `n ≤ i32::MAX` ir-guaranteed so the cast is exact). Both total/pure — no trap, no token, one budget spend per morphism — and legal under parallel fanout. These are the oracle-normative denotations for every future backend.
 - **Guard-first loop driver (§4 / ADR-0016):** the decide/exit cone is evaluated first, the guard is read, and the continue-branch (next-state) is evaluated only when the guard continues — so `fir`'s `coeffs[k]` is never indexed at `k=4` (no spurious `IndexOob`) and `countdown` prints `0` on its exit step. The 55-contract holds by execution.
 - **Effects (§5):** world token = `RValue::Token(String)`; `print` raw, `println` appends `\n`; effect order = dataflow order (E2 structural, no scheduler). Floats render via Rust shortest round-trip (`4080.0→"4080"`, `5.375→"5.375"`).
 - **Fuel / divergence / traps (§6):** global `u64` budget decremented per morphism; `0 ⇒ Diverged` (returns, never hangs). `Trapped(DivZero)`/`Trapped(IndexOob)`; float `1.0/0.0 ⇒ Done(inf)`.
@@ -34,7 +35,7 @@ The fueled reference interpreter (THE ORACLE) — `parse → lower → run` for 
 
 ## Test coverage (golden / property / differential / skipped+why)
 
-27 tests, all green (workspace 393 total). `tests/acceptance.rs` (10): six example goldens + countdown + `eval_call(sum_to_n,10)==Done(I32(55))` + `fir4(...)==Done(F32(5.375))`. `tests/traps.rs` (8): int div/mod-0, Index `i=n`/`i=-1`, float `1.0/0.0=Done`, **`nan_ordering_is_ieee`** (Lt/Gt/Le/Ge/Eq false, Neq true on NaN), in-bounds/nonzero sanity. `tests/divergence.rs` (3): budget boundary on `sum_to_n` + constant-`true`-guard loop ⇒ `Diverged` (returns). `tests/determinism.rs` (6): each example byte-identical across two runs. Differential (backend-vs-oracle) lands with the backends (P5+).
+32 tests, all green. `tests/acceptance.rs` (12): eight example goldens (incl. zip_demo + vector_add, ADR-0018) + countdown + `eval_call(sum_to_n,10)==Done(I32(55))` + `fir4(...)==Done(F32(5.375))` + sepia-input-ty sanity. `tests/traps.rs` (8): int div/mod-0, Index `i=n`/`i=-1`, float `1.0/0.0=Done`, **`nan_ordering_is_ieee`** (Lt/Gt/Le/Ge/Eq false, Neq true on NaN), in-bounds/nonzero sanity. `tests/divergence.rs` (3): budget boundary on `sum_to_n` + constant-`true`-guard loop ⇒ `Diverged` (returns). `tests/determinism.rs` (6): each example byte-identical across two runs. `tests/zip_enumerate.rs` (3, ADR-0018): zip'd add value contract (`c[0]=100`, `c[15]=115`), enumerate `i32` index pairing, enumerate-under-fanout — IR built directly via the `flow-ir` builder (lower's builtin routing is WP2, landing concurrently). Differential (backend-vs-oracle) lands with the backends (P5+).
 
 ## Performance notes (numbers + bench name + date; regressions flagged)
 

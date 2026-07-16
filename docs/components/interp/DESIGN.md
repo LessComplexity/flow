@@ -148,6 +148,8 @@ Return `env[fd.output]` (the `Return` object). The in-SCC object set is precompu
 | `Map{body}` | `Array{T,n}` | `Array( src.map(|e| eval_fn(ir, body, e, budget))? )` |
 | `Fold{body}` | `(Acc, Array{T,n})` | left fold: `acc = src@0; for e in src@1 { acc = eval_fn(ir, body, Tuple[acc,e], budget)? }` |
 | `Index` | `(Array{T,n}, I)` | `i = src@1 as int`; `i < 0 ∨ i ≥ n ⇒ Trapped(IndexOob)`, else `src@0 [i]` |
+| `Zip` | `([A;n], [B;n])` (2-tuple; sizes equal by ir typing) | `Array( (0..n).map(|i| Tuple[src@0[i], src@1[i]]) )` — elementwise pairing (ADR-0018) |
+| `Enumerate` | `[A;n]` (`n ≤ i32::MAX`, ir-guaranteed) | `Array( src.enumerate().map(|(i,x)| Tuple[I32(i as i32), x]) )` — index pinned `i32`, exact cast (ADR-0018) |
 | `Print {newline}` | `(IoToken, P)` | `Token( src@0.log + render(src@1) + (newline ? "\n" : "") )` (§5; ADR-0015) |
 | `Output` | `T` | `src` (the bare `x -> ret` identity move, ir D6) |
 | `LoopEnter/Back/Exit` | — | not evaluated here — see §4 |
@@ -250,7 +252,7 @@ The interpreter validates at exactly one boundary — the IR is **sealed and `va
 
 ## 11. Test plan (what M1-green means)
 
-1. **Acceptance goldens (the M1 line).** For each `examples/*.flow`: `parse → lower → run(budget)` and assert `RunResult.output` exactly: `abs "7\n"`, `sum_to_n "55\n"`, `pipeline "f(10) = 25\n"`, `fanout "36\n12\n"`, `fir "5.375\n"`, `sepia "4080\n"` (ADR-0015 split: `println` terminates lines, `print` is raw).
+1. **Acceptance goldens (the M1 line).** For each `examples/*.flow`: `parse → lower → run(budget)` and assert `RunResult.output` exactly: `abs "7\n"`, `sum_to_n "55\n"`, `pipeline "f(10) = 25\n"`, `fanout "36\n12\n"`, `fir "5.375\n"`, `sepia "4080\n"`, `zip_demo "c[0]  = 100\nc[15] = 115\ne[0]  = 0\ne[15] = 30\n"`, `vector_add "c[0]  = 100\nc[15] = 115\nsum   = 1720\n"` (the last two, ADR-0018, exercise the `zip`/`enumerate` builtins end-to-end) (ADR-0015 split: `println` terminates lines, `print` is raw).
 2. **The 55 contract by execution.** `eval_call(sum_to_n, I32(10))` == `Done(Scalar(I32(55)))`; plus `fir4(...) == Done(Scalar(F32(5.375)))` and `sepia` fold `== 4080.0` — the structural pins (ir/lower) now confirmed dynamically.
 3. **Fueled divergence (E1).** A hand-built loop with a constant-`true` guard (`LoopBack` always taken, `LoopExit` present-but-never-fired) and a small budget ⇒ `Diverged`; assert it returns (no hang) within the budget. A budget large enough for `sum_to_n(10)` ⇒ `Done`; one too small ⇒ `Diverged` (boundary tested).
 4. **Traps (ADR-0013).** Hand-built IR: integer `Div` by `0` ⇒ `Trapped(DivZero)`; `Index` with `i = n` and `i = -1` ⇒ `Trapped(IndexOob)`. Float `1.0/0.0` ⇒ `Done` (IEEE inf), **not** a trap (IN-6).

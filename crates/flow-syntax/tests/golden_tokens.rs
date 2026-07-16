@@ -1,4 +1,4 @@
-//! Golden token-stream snapshots for the six shipped examples (DESIGN §9.1).
+//! Golden token-stream snapshots for the eight shipped examples (DESIGN §9.1).
 //!
 //! Each example must lex to **zero diagnostics** and produce no `Error` tokens.
 //! The rendered stream is snapshotted with `insta`; reviewing the `.snap`
@@ -64,4 +64,14 @@ fn golden_sepia() {
 #[test]
 fn golden_sum_to_n() {
     check_example("sum_to_n");
+}
+
+#[test]
+fn golden_zip_demo() {
+    check_example("zip_demo");
+}
+
+#[test]
+fn golden_vector_add() {
+    check_example("vector_add");
 }

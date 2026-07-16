@@ -10,7 +10,7 @@ Depends on: (none) Depended on by: lower, cli
 - **P1 frontend complete: lexer + parser.** `lex(source) -> LexOutput` and `parse(source) -> ParseOutput` (total, pure, error-recovering; merged span-sorted diagnostics).
 - **Lexer** (Session 02): full v0.2-surface token set, spans + `LineIndex`, L0001–L0008 with recovery, ADR-0010 single-lexeme guard arrows.
 - **Parser** (Session 03): two-tier grammar per ADR-0005 (expressions 1–7; `->`/`<-` chains at statement level), thin spanned parse tree (DESIGN §15, `Expr::Hole` for operator shorthand), guard blocks/fanout/`seq`/`map`/`fold` postfix blocks (ADR-0009), loop statements with `-> loop;` back-edges, struct/array/tuple literals, typed `mut` bindings both directions.
-- **Diagnostics:** P0001–P0012 (syntax/recovery incl. ADR-0010's two guard hints with machine-applicable fixes) + P0101–P0116 (out-of-Core rejections, each naming construct + horizon). All six `examples/*.flow` parse with **zero** diagnostics; `full_surface.flow` yields exactly {P0101×2, P0102×2, P0103×2, P0107, P0109, P0111, P0112, P0113} and zero L-codes — the C8 story end-to-end.
+- **Diagnostics:** P0001–P0012 (syntax/recovery incl. ADR-0010's two guard hints with machine-applicable fixes) + P0101–P0116 (out-of-Core rejections, each naming construct + horizon). All eight `examples/*.flow` parse with **zero** diagnostics; `full_surface.flow` yields exactly {P0101×2, P0102×2, P0103×2, P0107, P0109, P0111, P0112, P0113} and zero L-codes — the C8 story end-to-end.
 - Recovery: panic-mode with sync sets, diagnostic cooldown, shared depth guard (128) over expressions/blocks/**types**, progress lemma — `parse` is total on adversarial input (≈490K-case proptest run during review).
 
 ## What does not / known issues
@@ -25,13 +25,13 @@ Depends on: (none) Depended on by: lower, cli
 - J1 parse total: depth guard (P0011, limit 128, shared incl. type recursion) + progress lemma `debug_assert`s — `parser.rs`; proptests over arbitrary strings/unicode/flow-soup.
 - J2 span sanity (child ⊆ parent, in-bounds): `debug_assert`s in node constructors + recursive walkers in unit & property tests (incl. Bind.ty, MapFold params, arm/discr spans).
 - J3 zero diagnostics ⟹ no Error nodes / rejected-kept forms: walkers in goldens + proptests.
-- J4 acceptance: six examples parse with zero diagnostics (`tests/golden_trees.rs`).
+- J4 acceptance: eight examples parse with zero diagnostics (`tests/golden_trees.rs`; zip_demo + vector_add added with ADR-0018's zip form).
 - J5 presentation-free: no `Display` in crate (C3); render helpers live in `tests/support/`.
 - J6 lex-diagnostic preservation: `parse(s).diagnostics ⊇ lex(s).diagnostics` — unit + proptest.
 
 ## Test coverage (golden / property / differential / skipped+why)
 
-174 tests, all green (`cargo test -p flow-syntax`): 140 lib (104 parser units — precedence/§3.6 verbatim, W10–W24 ledger, F-matrix payloads, ADR-0011 scan, classification, every P-code, design-review regression pins; 36 lexer) · 6 golden token streams · 6 golden parse trees (zero diags asserted) · 2+3+6 diagnostics/error/out-of-Core fixtures · 3 coverage · 3+3 proptests (lexer/parser, 2048 cases each). Golden trees were verified by **independent re-derivation** (one reviewer per example, node-by-node against source + grammar); implementation passed 2 adversarial reviews + a fix round (stack-overflow totality fix, P0007 climber path).
+178 tests, all green (`cargo test -p flow-syntax`): 140 lib (104 parser units — precedence/§3.6 verbatim, W10–W24 ledger, F-matrix payloads, ADR-0011 scan, classification, every P-code, design-review regression pins; 36 lexer) · 8 golden token streams · 8 golden parse trees (zero diags asserted; +zip_demo +vector_add, ADR-0018) · 2+3+6 diagnostics/error/out-of-Core fixtures · 3 coverage · 3+3 proptests (lexer/parser, 2048 cases each). Golden trees were verified by **independent re-derivation** (one reviewer per example, node-by-node against source + grammar); implementation passed 2 adversarial reviews + a fix round (stack-overflow totality fix, P0007 climber path).
 
 ## Performance notes (numbers + bench name + date; regressions flagged)
 

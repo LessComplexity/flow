@@ -70,7 +70,7 @@ category.
 | J1 — `parse` total: never panics, never hangs | `crates/flow-syntax/src/parser.rs:parse` (`DEPTH_LIMIT`=128 + progress lemma) | `tests/proptest_parser.rs::arbitrary_strings_total`, `::flow_soup_total` |
 | J2 — span sanity: child ⊆ parent, siblings ordered non-overlapping | `crates/flow-syntax/src/parser.rs` (debug-asserts in node constructors) | `tests/proptest_parser.rs::flow_soup_total` (`check_program`) |
 | J3 — zero diagnostics ⇒ no `Error`/rejected-but-kept nodes | `crates/flow-syntax/src/parser.rs` (clean-tree discipline) | `tests/proptest_parser.rs` (`has_error_or_rejected`), `tests/golden_trees.rs` |
-| J4 — six `examples/*.flow` parse with zero diagnostics | `crates/flow-syntax/src/parser.rs:parse` | `tests/golden_trees.rs::tree_abs` … `::tree_sum_to_n` |
+| J4 — eight `examples/*.flow` parse with zero diagnostics (+zip_demo, +vector_add per ADR-0018) | `crates/flow-syntax/src/parser.rs:parse` | `tests/golden_trees.rs::tree_abs` … `::tree_vector_add` |
 | J5 — presentation-free: no `Display` anywhere in crate | `crates/flow-syntax/src/ast.rs`, `diag.rs` (only `Debug`) | grep/review |
 | J6 — `parse(s).diagnostics ⊇ lex(s).diagnostics` (same values) | `crates/flow-syntax/src/parser.rs:parse` (seeds `Parser` with lex diags, then stable-sorts) | `tests/proptest_parser.rs::flow_soup_total` |
 | Pipe-weld — `t_to(lex) = t_from(parse_program) = Token*` (Coherence Law 1, specialised) | `crates/flow-syntax/src/parser.rs:parse` (`lex` → `Parser::new(&lexed.tokens)`) | `tests/golden_trees.rs` (end-to-end), `tests/out_of_core.rs::full_surface_exact_pcode_multiset` |

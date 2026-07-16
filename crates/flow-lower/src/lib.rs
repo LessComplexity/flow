@@ -153,10 +153,20 @@ pub(crate) fn is_print_builtin(name: &str) -> bool {
     matches!(name, "print" | "println")
 }
 
-/// Whether a name is reserved (L1009): `print`/`println`, or a builtin scalar type name.
+/// The pure collection builtins (ADR-0018): `zip` and `enumerate`. Resolved by
+/// name at call-shaped stages exactly like `print`/`println` (LD25), but pure —
+/// no token, legal in parallel fanout. One predicate so every routing / naming
+/// site that must skip these (emit dispatch, bare-name binding lookahead) cannot
+/// drift, mirroring `is_print_builtin`.
+pub(crate) fn is_collection_builtin(name: &str) -> bool {
+    matches!(name, "zip" | "enumerate")
+}
+
+/// Whether a name is reserved (L1009): `print`/`println`, the collection builtins
+/// `zip`/`enumerate` (ADR-0018), or a builtin scalar type name.
 fn is_reserved(name: &str) -> bool {
     matches!(
         name,
-        "print" | "println" | "i32" | "i64" | "u8" | "f32" | "f64" | "bool"
+        "print" | "println" | "zip" | "enumerate" | "i32" | "i64" | "u8" | "f32" | "f64" | "bool"
     )
 }
