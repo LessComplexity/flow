@@ -144,6 +144,11 @@ flow/
 ├── docs/
 │   ├── STATUS.md                   # GLOBAL status (template §7.1.1)
 │   ├── next-session.md             # written at end of EVERY session (template §7.1.4)
+│   ├── architecture-map.md         # whole-system §4 map + coherence checklist (ADR-0017)
+│   ├── IMPLEMENTATION.md           # whole-system functor map → code (ADR-0017)
+│   ├── suggestions.md              # CT-derived improvement roll-up (ADR-0017)
+│   ├── sessions/                   # IMMUTABLE per-session handoff logs (ADR-0017)
+│   │   └── YYYY-MM-DD-<slug>.md
 │   ├── spec/                       # the corpus (§2.1) + errata patches
 │   │   └── ERRATA.md               # E1–E5 text + any later spec corrections
 │   ├── decisions/                  # ADRs (template §7.1.3)
@@ -154,7 +159,10 @@ flow/
 │   │   └── categorical-model.md
 │   └── components/<name>/          # one folder per component
 │       ├── STATUS.md               # development status (template §7.1.2)
-│       └── DESIGN.md               # living design doc, written BEFORE code
+│       ├── DESIGN.md               # living design doc, written BEFORE code
+│       ├── IMPLEMENTATION.md       # functor: DESIGN model → file:symbol (ADR-0017)
+│       ├── suggestions.md          # CT-derived improvements (ADR-0017)
+│       └── plans/ · reviews/ · general/   # pre-build plans, post-build reviews, notes (ADR-0017)
 ├── crates/
 │   ├── flow-syntax/                # lexer, parser, parse tree, diagnostics
 │   ├── flow-ir/                    # objects/morphisms/compositions, builder, invariants, Mermaid dump
@@ -295,7 +303,8 @@ Living design document per component, written/updated **before** code in every s
 6. **Perf / profile.** Once the component is functional: run `criterion` benches (and profiler when investigating); record numbers + date in the component STATUS. Optimize only with profile evidence; never trade away an invariant for speed without an ADR.
 7. **Reconcile docs.** Diff actual behavior against spec sections. Update: component `STATUS.md` (always), global `STATUS.md` (component table, capability matrix, session log), `ERRATA.md`/ADRs (if the implementation found a spec bug — this is expected and good; v0.2 itself came from five such finds). The implementation never silently diverges from the spec.
    - Verify the change against the FRAMEWORK §8 coherence/reduction checklist, and update the component's `## Categorical model (Dat + Trn)` section + morphism table (and `docs/architecture/INDEX.md`) in the same change (FRAMEWORK §6; ADR-0014).
-8. **Hand off.** Overwrite `docs/next-session.md` (template §7.1.4). Commit everything. **Every session ends with this file — especially failed sessions.**
+   - Update the touched component's `IMPLEMENTATION.md` rows (new morphism = new row, State column truthful) in the same change (FRAMEWORK §6.3; ADR-0017).
+8. **Hand off.** Overwrite `docs/next-session.md` (template §7.1.4) **and** append an immutable session log `docs/sessions/YYYY-MM-DD-<slug>.md` (decisions, open items, live state, exact resume commands — never edited afterwards; ADR-0017). Commit everything. **Every session ends with these files — especially failed sessions.**
 
 ### 7.3 Hard rules for AI sessions
 

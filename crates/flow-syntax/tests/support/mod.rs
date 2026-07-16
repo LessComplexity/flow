@@ -76,7 +76,7 @@ fn kind_str(kind: TokenKind) -> String {
 }
 
 /// Render one token line.
-fn render_token(source: &str, index: &LineIndex, t: &Token) -> String {
+fn render_token(source: &str, index: &LineIndex<'_>, t: &Token) -> String {
     let lc = index.line_col(t.span.start);
     let head = format!(
         "{}:{} {}..{} {}",
@@ -247,7 +247,7 @@ pub fn read_fixture(name: &str) -> String {
 
 struct TreeWriter<'a> {
     source: &'a str,
-    index: LineIndex,
+    index: LineIndex<'a>,
     out: String,
 }
 

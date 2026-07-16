@@ -77,7 +77,7 @@ fn main() -> ExitCode {
 }
 
 /// Minimal renderer-free diagnostic print: `file:line:col severity[CODE] (stage) msg`.
-fn report(path: &str, lines: &LineIndex, stage: &str, diags: &[Diagnostic]) {
+fn report(path: &str, lines: &LineIndex<'_>, stage: &str, diags: &[Diagnostic]) {
     for d in diags {
         let lc = lines.line_col(d.span.start);
         let sev = match d.severity {

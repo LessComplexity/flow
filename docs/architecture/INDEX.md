@@ -21,6 +21,7 @@ and is **not** re-modeled here (errata E5 firewall).
 
 | Model | Scope | Location | Status |
 | --- | --- | --- | --- |
+| Whole-system §4 map | Four atoms at a glance, component table, placements, coherence checklist (ADR-0017) | [`../architecture-map.md`](../architecture-map.md) | modeled |
 | Cross-cutting `Dat`/`Trn` | Whole compiler — firewall, degenerate `Loc`/`Trm`, boundary morphisms | [`categorical-model.md`](./categorical-model.md) | modeled |
 | `syntax` | Lexer + parser: source model, token/AST olog, the `lex`/`parse` passes | [`components/syntax/DESIGN.md`](../components/syntax/DESIGN.md) | modeled |
 | `ir` | Sealed Core graph IR: `CategoryIr`/`Object`/`Morphism` olog, builder + validate passes | [`components/ir/DESIGN.md`](../components/ir/DESIGN.md) | modeled |

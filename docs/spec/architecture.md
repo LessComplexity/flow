@@ -192,15 +192,15 @@ The IR stores objects (graph nodes) and morphisms (edges) separately, with forwa
 
 ```mermaid
 flowchart LR
-    subgraph ir[CategoryIR]
-        objs[(Objects: SlotMap)]
-        morphs[(Morphisms: SlotMap)]
-        out[out_edges: ObjectId → Vec&lt;MorphismId&gt;]
-        in[in_edges: ObjectId → Vec&lt;MorphismId&gt;]
-        fns[functions: Composition]
+    subgraph ir["CategoryIR"]
+        objs[("Objects: SlotMap")]
+        morphs[("Morphisms: SlotMap")]
+        out["out_edges: ObjectId → Vec&lt;MorphismId&gt;"]
+        in["in_edges: ObjectId → Vec&lt;MorphismId&gt;"]
+        fns["functions: Composition"]
     end
-    morphs --> |source| objs
-    morphs --> |target| objs
+    morphs -->|source| objs
+    morphs -->|target| objs
     out --> morphs
     in --> morphs
 ```
@@ -286,8 +286,8 @@ define i32 @process(i32 %data) {
 
 ```mermaid
 flowchart LR
-    ir[(Category IR)] --> mem[Memory analysis: host vs device]
-    mem --> par[Parallelism → thread/block mapping]
+    ir[(Category IR)] --> mem["Memory analysis: host vs device"]
+    mem --> par["Parallelism → thread/block mapping"]
     par --> kern[Kernel generation]
     par --> host[Host wrapper generation]
     kern --> nvcc[nvcc]
@@ -317,8 +317,8 @@ __global__ void pipeline_kernel(int32_t* input, int32_t* output, int n) {
 ```mermaid
 flowchart LR
     ir[(Category IR)] --> pipe[Pipeline stage analysis]
-    pipe --> tim[Timing analysis — critical path]
-    tim --> res[Resource estimation — LUT/DSP/BRAM]
+    pipe --> tim["Timing analysis — critical path"]
+    tim --> res["Resource estimation — LUT/DSP/BRAM"]
     res --> emit[Verilog emitter]
     emit --> syn[Synthesis tool]
     syn --> bit[FPGA bitstream]

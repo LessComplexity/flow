@@ -56,18 +56,19 @@ pub struct LineCol {
 /// Stores the byte offset of the start of each line; lookup is `O(log n)`
 /// via binary search.
 #[derive(Clone, Debug)]
-pub struct LineIndex {
+pub struct LineIndex<'a> {
     /// Byte offset of the first character of each line. `line_starts[0] == 0`.
     line_starts: Vec<u32>,
     /// Total length of the source in bytes (for end-of-input lookups).
     len: u32,
-    /// A copy of the source so that column counting can be char-aware.
-    source: String,
+    /// The caller's source text, borrowed so column counting can be char-aware
+    /// without owning a second copy (the caller already holds it).
+    source: &'a str,
 }
 
-impl LineIndex {
+impl<'a> LineIndex<'a> {
     /// Build the index from the full source text.
-    pub fn new(source: &str) -> Self {
+    pub fn new(source: &'a str) -> Self {
         let mut line_starts = Vec::with_capacity(16);
         line_starts.push(0u32);
         for (i, b) in source.bytes().enumerate() {
@@ -79,7 +80,7 @@ impl LineIndex {
         LineIndex {
             line_starts,
             len: source.len() as u32,
-            source: source.to_owned(),
+            source,
         }
     }
 

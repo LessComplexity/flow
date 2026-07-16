@@ -267,13 +267,16 @@ fn resolve_struct(
     Some(ty)
 }
 
-/// Resolve a single `TyKind` to a `flow_ir::Ty` (DESIGN §5). Reports the
-/// appropriate L-code and returns `None` on failure.
-pub fn resolve_ty(
+/// The `TyKind ⇀ Ty` resolution skeleton (DESIGN §5): scalar / `Tuple` /
+/// `Array`+L1208 / `Dynamic`|`Error`+L1000 arms and the trailing depth/L1209
+/// check, shared verbatim by both callers. The only variation — how a
+/// non-scalar `Named` reference resolves — is the single declared seam
+/// `resolve_named` (FRAMEWORK §5): it maps `(name, name-span, diags) → Ty`,
+/// pushing its own diagnostic and returning `None` on failure.
+fn resolve_tykind(
     source: &str,
     ty: &SynTy,
-    by_name: &BTreeMap<&str, &syn::TypeDecl>,
-    cyclic: &std::collections::BTreeSet<String>,
+    resolve_named: &impl Fn(&str, syn::SourceLoc, &mut Vec<syn::Diagnostic>) -> Option<Ty>,
     diags: &mut Vec<syn::Diagnostic>,
 ) -> Option<Ty> {
     let resolved = match &ty.kind {
@@ -286,29 +289,13 @@ pub fn resolve_ty(
                 "f32" => Ty::f32(),
                 "f64" => Ty::f64(),
                 "bool" => Ty::Bool,
-                _ => {
-                    if cyclic.contains(text) {
-                        // Part of a reported cycle; do not re-resolve.
-                        return None;
-                    }
-                    match by_name.get(text) {
-                        Some(td) => resolve_struct(source, td, by_name, cyclic, diags)?,
-                        None => {
-                            diags.push(diag(
-                                LCode::UnknownType,
-                                n.span,
-                                format!("unknown type `{text}`"),
-                            ));
-                            return None;
-                        }
-                    }
-                }
+                _ => resolve_named(text, n.span, diags)?,
             }
         }
         TyKind::Tuple(ts) => {
             let mut out = Vec::with_capacity(ts.len());
             for inner in ts {
-                out.push(resolve_ty(source, inner, by_name, cyclic, diags)?);
+                out.push(resolve_tykind(source, inner, resolve_named, diags)?);
             }
             Ty::Tuple(out)
         }
@@ -325,7 +312,7 @@ pub fn resolve_ty(
                 ));
                 return None;
             }
-            let e = resolve_ty(source, elem, by_name, cyclic, diags)?;
+            let e = resolve_tykind(source, elem, resolve_named, diags)?;
             Ty::Array {
                 elem: Box::new(e),
                 size: *len,
@@ -349,6 +336,40 @@ pub fn resolve_ty(
         return None;
     }
     Some(resolved)
+}
+
+/// Resolve a single `TyKind` to a `flow_ir::Ty` (DESIGN §5). Reports the
+/// appropriate L-code and returns `None` on failure. Build-time seam: struct
+/// references resolve mid-build via `by_name`+`cyclic`+[`resolve_struct`].
+pub fn resolve_ty(
+    source: &str,
+    ty: &SynTy,
+    by_name: &BTreeMap<&str, &syn::TypeDecl>,
+    cyclic: &std::collections::BTreeSet<String>,
+    diags: &mut Vec<syn::Diagnostic>,
+) -> Option<Ty> {
+    resolve_tykind(
+        source,
+        ty,
+        &|text, span, diags| {
+            if cyclic.contains(text) {
+                // Part of a reported cycle; do not re-resolve.
+                return None;
+            }
+            match by_name.get(text) {
+                Some(td) => resolve_struct(source, td, by_name, cyclic, diags),
+                None => {
+                    diags.push(diag(
+                        LCode::UnknownType,
+                        span,
+                        format!("unknown type `{text}`"),
+                    ));
+                    None
+                }
+            }
+        },
+        diags,
+    )
 }
 
 /// Whether `ty` is within `MAX_TY_DEPTH` (mirrors flow-ir's intake guard; lower
@@ -391,72 +412,22 @@ impl TypeTable {
         ty: &SynTy,
         diags: &mut Vec<syn::Diagnostic>,
     ) -> Option<Ty> {
-        let resolved = match &ty.kind {
-            TyKind::Named(n) => {
-                let text = name_text(source, *n);
-                match text {
-                    "i32" => Ty::i32(),
-                    "i64" => Ty::i64(),
-                    "u8" => Ty::u8(),
-                    "f32" => Ty::f32(),
-                    "f64" => Ty::f64(),
-                    "bool" => Ty::Bool,
-                    _ => match self.map.get(text) {
-                        Some(t) => t.clone(),
-                        None => {
-                            diags.push(diag(
-                                LCode::UnknownType,
-                                n.span,
-                                format!("unknown type `{text}`"),
-                            ));
-                            return None;
-                        }
-                    },
-                }
-            }
-            TyKind::Tuple(ts) => {
-                let mut out = Vec::with_capacity(ts.len());
-                for inner in ts {
-                    out.push(self.resolve(source, inner, diags)?);
-                }
-                Ty::Tuple(out)
-            }
-            TyKind::Array {
-                elem,
-                len,
-                len_span,
-            } => {
-                if *len == 0 {
+        // Post-build seam: struct references resolve against the completed table.
+        resolve_tykind(
+            source,
+            ty,
+            &|text, span, diags| match self.map.get(text) {
+                Some(t) => Some(t.clone()),
+                None => {
                     diags.push(diag(
-                        LCode::EmptyArray,
-                        *len_span,
-                        "array type has size 0".to_string(),
+                        LCode::UnknownType,
+                        span,
+                        format!("unknown type `{text}`"),
                     ));
-                    return None;
+                    None
                 }
-                let e = self.resolve(source, elem, diags)?;
-                Ty::Array {
-                    elem: Box::new(e),
-                    size: *len,
-                }
-            }
-            TyKind::Dynamic(_) | TyKind::Error => {
-                diags.push(diag(
-                    LCode::UncleanTree,
-                    ty.span,
-                    "unclean type node reached lowering".to_string(),
-                ));
-                return None;
-            }
-        };
-        if !depth_ok(&resolved) {
-            diags.push(diag(
-                LCode::TypeTooDeep,
-                ty.span,
-                format!("type nests deeper than the {MAX_TY_DEPTH}-level limit"),
-            ));
-            return None;
-        }
-        Some(resolved)
+            },
+            diags,
+        )
     }
 }

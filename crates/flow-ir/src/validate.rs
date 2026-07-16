@@ -846,3 +846,765 @@ fn ty_is_core(ty: &Ty) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+mod typing_table_golden {
+    //! Golden oracle for DESIGN §5.1 (the Operation typing table).
+    //!
+    //! The rows below are transcribed **by hand** from DESIGN.md §5.1 and
+    //! asserted against `edge_type_ok` op-by-op. This is a **test-only** oracle:
+    //! it is deliberately NOT shared into the builder or `validate` production
+    //! paths, because the independence of those two realizations is itself the
+    //! load-bearing property (DESIGN §11 / FRAMEWORK §7.2) — a shared table
+    //! would collapse `seal Ok ⇒ validate empty` into a tautology.
+    //!
+    //! Scope: `edge_type_ok` certifies only the **typing** judgment (source and
+    //! target ty). §5.1 "extra conditions" that are graph-shape/provenance
+    //! clauses live in other passes and are intentionally NOT retested here —
+    //! `Call`/`Map`/`Fold` FuncKind (I6, `check_references`/builder), `Output`
+    //! target-is-Return (I8, `check_edges`), `LoopExit` target-outside-SCC (I5,
+    //! `check_loops`), and Map/Fold body token-freedom (`check_tokens`).
+    use super::*;
+    use crate::graph::{FuncDef, FuncKind, Morphism, Object};
+    use crate::loc::SourceLoc;
+    use slotmap::SlotMap;
+
+    const L: SourceLoc = SourceLoc { start: 0, end: 0 };
+
+    fn int(bits: u8) -> Ty {
+        Ty::Int { bits, signed: true }
+    }
+    fn f32t() -> Ty {
+        Ty::Float { bits: 32 }
+    }
+    fn tup(ts: &[Ty]) -> Ty {
+        Ty::Tuple(ts.to_vec())
+    }
+    fn arr(t: Ty, n: u64) -> Ty {
+        Ty::Array {
+            elem: Box::new(t),
+            size: n,
+        }
+    }
+    fn strct(fields: &[(&str, Ty)]) -> Ty {
+        Ty::Struct {
+            name: "P".to_string(),
+            fields: fields
+                .iter()
+                .map(|(n, t)| (n.to_string(), t.clone()))
+                .collect(),
+        }
+    }
+
+    fn mk_obj(objects: &mut SlotMap<ObjectId, Object>, ty: Ty, kind: ObjectKind) -> ObjectId {
+        objects.insert_with_key(|id| Object {
+            id,
+            ty,
+            value: None,
+            kind,
+            name: None,
+            loc: L,
+        })
+    }
+    fn mk_func(
+        objects: &mut SlotMap<ObjectId, Object>,
+        funcs: &mut SlotMap<FuncId, FuncDef>,
+        kind: FuncKind,
+        in_ty: Ty,
+        out_ty: Ty,
+    ) -> FuncId {
+        let input = mk_obj(objects, in_ty, ObjectKind::Parameter);
+        let output = mk_obj(objects, out_ty, ObjectKind::Return);
+        funcs.insert(FuncDef {
+            name: "f".to_string(),
+            kind,
+            input,
+            output,
+            morphisms: Vec::new(),
+            loc: L,
+        })
+    }
+
+    struct Fx {
+        ir: CategoryIr,
+        merge: ObjectId, // a LoopMerge-kind object (valid loop-edge target)
+        plain: ObjectId, // a Temporary object (non-merge target; source is unused)
+        call_f: FuncId,  // Named:    i32 -> f32
+        map_f: FuncId,   // MapBody:  i32 -> f32
+        fold_f: FuncId,  // FoldBody: (f32, i32) -> f32
+        mid: MorphismId,
+    }
+
+    fn fixture() -> Fx {
+        let mut objects = SlotMap::with_key();
+        let mut funcs = SlotMap::with_key();
+        let merge = mk_obj(&mut objects, int(32), ObjectKind::LoopMerge);
+        let plain = mk_obj(&mut objects, int(32), ObjectKind::Temporary);
+        let call_f = mk_func(&mut objects, &mut funcs, FuncKind::Named, int(32), f32t());
+        let map_f = mk_func(&mut objects, &mut funcs, FuncKind::MapBody, int(32), f32t());
+        let fold_f = mk_func(
+            &mut objects,
+            &mut funcs,
+            FuncKind::FoldBody,
+            tup(&[f32t(), int(32)]),
+            f32t(),
+        );
+        // Minted from a throwaway map: `edge_type_ok` never reads `m.id` (or
+        // `m.source` — sty/tty are passed explicitly), only `m.op`/`m.target`.
+        let mut ms: SlotMap<MorphismId, ()> = SlotMap::with_key();
+        let mid = ms.insert(());
+        let ir = CategoryIr {
+            objects,
+            morphisms: SlotMap::with_key(),
+            out_edges: SecondaryMap::new(),
+            in_edges: SecondaryMap::new(),
+            owner: SecondaryMap::new(),
+            funcs,
+            entry: call_f,
+        };
+        Fx {
+            ir,
+            merge,
+            plain,
+            call_f,
+            map_f,
+            fold_f,
+            mid,
+        }
+    }
+
+    fn check(fx: &Fx, op: Operation, sty: Ty, tty: Ty, target: ObjectId) -> bool {
+        let m = Morphism {
+            id: fx.mid,
+            source: fx.plain,
+            target,
+            op,
+            loc: L,
+        };
+        edge_type_ok(&fx.ir, &m, &sty, &tty)
+    }
+
+    #[test]
+    fn edge_type_ok_matches_design_5_1() {
+        use Operation::*;
+        let fx = fixture();
+        let (i32t, i64t) = (int(32), int(64));
+        let p = fx.plain; // target-agnostic ops route here (target unread by them)
+        let m = fx.merge; // loop ops need a LoopMerge target
+
+        // (label, op, source ty, target ty, target obj, expected §5.1 judgment)
+        let cases: Vec<(&str, Operation, Ty, Ty, ObjectId, bool)> = vec![
+            // Pair{slot,arity}: source = component ty at slot of the arity-N product target.
+            (
+                "Pair tuple slot0",
+                Pair { slot: 0, arity: 2 },
+                i32t.clone(),
+                tup(&[i32t.clone(), f32t()]),
+                p,
+                true,
+            ),
+            (
+                "Pair tuple slot1",
+                Pair { slot: 1, arity: 2 },
+                f32t(),
+                tup(&[i32t.clone(), f32t()]),
+                p,
+                true,
+            ),
+            (
+                "Pair struct slot0",
+                Pair { slot: 0, arity: 2 },
+                i32t.clone(),
+                strct(&[("a", i32t.clone()), ("b", f32t())]),
+                p,
+                true,
+            ),
+            (
+                "Pair array slot0",
+                Pair { slot: 0, arity: 3 },
+                i32t.clone(),
+                arr(i32t.clone(), 3),
+                p,
+                true,
+            ),
+            (
+                "Pair slot>=arity",
+                Pair { slot: 2, arity: 2 },
+                i32t.clone(),
+                tup(&[i32t.clone(), f32t()]),
+                p,
+                false,
+            ),
+            (
+                "Pair wrong comp ty",
+                Pair { slot: 0, arity: 2 },
+                f32t(),
+                tup(&[i32t.clone(), f32t()]),
+                p,
+                false,
+            ),
+            (
+                "Pair arity mismatch",
+                Pair { slot: 0, arity: 3 },
+                i32t.clone(),
+                tup(&[i32t.clone(), f32t()]),
+                p,
+                false,
+            ),
+            (
+                "Pair non-product tgt",
+                Pair { slot: 0, arity: 2 },
+                i32t.clone(),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            // Proj{index}: source Tuple/Struct; target = component ty at index. Arrays use Index.
+            (
+                "Proj tuple",
+                Proj { index: 1 },
+                tup(&[i32t.clone(), f32t()]),
+                f32t(),
+                p,
+                true,
+            ),
+            (
+                "Proj struct",
+                Proj { index: 0 },
+                strct(&[("a", i32t.clone()), ("b", f32t())]),
+                i32t.clone(),
+                p,
+                true,
+            ),
+            (
+                "Proj array rejected",
+                Proj { index: 0 },
+                arr(i32t.clone(), 2),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            (
+                "Proj wrong tty",
+                Proj { index: 0 },
+                tup(&[i32t.clone(), f32t()]),
+                f32t(),
+                p,
+                false,
+            ),
+            (
+                "Proj index oob",
+                Proj { index: 5 },
+                tup(&[i32t.clone(), f32t()]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            // Add..Mod: (N,N) same N -> N.
+            (
+                "Add ok",
+                Add,
+                tup(&[i32t.clone(), i32t.clone()]),
+                i32t.clone(),
+                p,
+                true,
+            ),
+            ("Sub ok", Sub, tup(&[f32t(), f32t()]), f32t(), p, true),
+            (
+                "Mul ok",
+                Mul,
+                tup(&[i32t.clone(), i32t.clone()]),
+                i32t.clone(),
+                p,
+                true,
+            ),
+            ("Div ok", Div, tup(&[f32t(), f32t()]), f32t(), p, true),
+            (
+                "Mod ok",
+                Mod,
+                tup(&[i32t.clone(), i32t.clone()]),
+                i32t.clone(),
+                p,
+                true,
+            ),
+            (
+                "Add bool rejected",
+                Add,
+                tup(&[Ty::Bool, Ty::Bool]),
+                Ty::Bool,
+                p,
+                false,
+            ),
+            (
+                "Add mixed numeric",
+                Add,
+                tup(&[i32t.clone(), f32t()]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            (
+                "Add tty mismatch",
+                Add,
+                tup(&[i32t.clone(), i32t.clone()]),
+                f32t(),
+                p,
+                false,
+            ),
+            ("Add not tuple", Add, i32t.clone(), i32t.clone(), p, false),
+            // Neg: N -> same N (unary, direct edge).
+            ("Neg i32", Neg, i32t.clone(), i32t.clone(), p, true),
+            ("Neg f32", Neg, f32t(), f32t(), p, true),
+            ("Neg bool rejected", Neg, Ty::Bool, Ty::Bool, p, false),
+            (
+                "Neg tty mismatch",
+                Neg,
+                i32t.clone(),
+                i64t.clone(),
+                p,
+                false,
+            ),
+            // Eq/Neq: (A,A), A in N u {Bool} -> Bool.
+            (
+                "Eq numeric",
+                Eq,
+                tup(&[i32t.clone(), i32t.clone()]),
+                Ty::Bool,
+                p,
+                true,
+            ),
+            ("Eq bool", Eq, tup(&[Ty::Bool, Ty::Bool]), Ty::Bool, p, true),
+            (
+                "Neq numeric",
+                Neq,
+                tup(&[f32t(), f32t()]),
+                Ty::Bool,
+                p,
+                true,
+            ),
+            (
+                "Eq mixed rejected",
+                Eq,
+                tup(&[i32t.clone(), f32t()]),
+                Ty::Bool,
+                p,
+                false,
+            ),
+            (
+                "Eq tty mismatch",
+                Eq,
+                tup(&[i32t.clone(), i32t.clone()]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            // Str is printable (P) but NOT comparable — A ∈ N ∪ {Bool} only.
+            (
+                "Eq str rejected",
+                Eq,
+                tup(&[Ty::Str, Ty::Str]),
+                Ty::Bool,
+                p,
+                false,
+            ),
+            // Lt/Gt/Le/Ge: (N,N) same N -> Bool (Bool is NOT ordered — the Eq-vs-Lt pin).
+            (
+                "Lt ok",
+                Lt,
+                tup(&[i32t.clone(), i32t.clone()]),
+                Ty::Bool,
+                p,
+                true,
+            ),
+            ("Gt ok", Gt, tup(&[f32t(), f32t()]), Ty::Bool, p, true),
+            (
+                "Le ok",
+                Le,
+                tup(&[i32t.clone(), i32t.clone()]),
+                Ty::Bool,
+                p,
+                true,
+            ),
+            (
+                "Ge ok",
+                Ge,
+                tup(&[i32t.clone(), i32t.clone()]),
+                Ty::Bool,
+                p,
+                true,
+            ),
+            (
+                "Lt bool rejected",
+                Lt,
+                tup(&[Ty::Bool, Ty::Bool]),
+                Ty::Bool,
+                p,
+                false,
+            ),
+            (
+                "Lt mixed rejected",
+                Lt,
+                tup(&[i32t.clone(), f32t()]),
+                Ty::Bool,
+                p,
+                false,
+            ),
+            // And/Or: (Bool,Bool) -> Bool.
+            ("And ok", And, tup(&[Ty::Bool, Ty::Bool]), Ty::Bool, p, true),
+            ("Or ok", Or, tup(&[Ty::Bool, Ty::Bool]), Ty::Bool, p, true),
+            (
+                "And numeric rejected",
+                And,
+                tup(&[i32t.clone(), i32t.clone()]),
+                Ty::Bool,
+                p,
+                false,
+            ),
+            (
+                "And tty mismatch",
+                And,
+                tup(&[Ty::Bool, Ty::Bool]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            // Not: Bool -> Bool.
+            ("Not ok", Not, Ty::Bool, Ty::Bool, p, true),
+            ("Not sty mismatch", Not, i32t.clone(), Ty::Bool, p, false),
+            ("Not tty mismatch", Not, Ty::Bool, i32t.clone(), p, false),
+            // Phi: (T,T,Bool) -> T, T token-free.
+            (
+                "Phi ok",
+                Phi,
+                tup(&[i32t.clone(), i32t.clone(), Ty::Bool]),
+                i32t.clone(),
+                p,
+                true,
+            ),
+            (
+                "Phi 2-tuple rejected",
+                Phi,
+                tup(&[i32t.clone(), Ty::Bool]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            (
+                "Phi cond not bool",
+                Phi,
+                tup(&[i32t.clone(), i32t.clone(), i32t.clone()]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            (
+                "Phi branches differ",
+                Phi,
+                tup(&[i32t.clone(), f32t(), Ty::Bool]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            (
+                "Phi tty mismatch",
+                Phi,
+                tup(&[i32t.clone(), i32t.clone(), Ty::Bool]),
+                f32t(),
+                p,
+                false,
+            ),
+            (
+                "Phi token rejected",
+                Phi,
+                tup(&[Ty::IoToken, Ty::IoToken, Ty::Bool]),
+                Ty::IoToken,
+                p,
+                false,
+            ),
+            // Call(f): source = f.input ty, target = f.output ty (call_f: i32 -> f32).
+            ("Call ok", Call(fx.call_f), i32t.clone(), f32t(), p, true),
+            (
+                "Call sty mismatch",
+                Call(fx.call_f),
+                f32t(),
+                f32t(),
+                p,
+                false,
+            ),
+            (
+                "Call tty mismatch",
+                Call(fx.call_f),
+                i32t.clone(),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            // Map{body}: Array{T,n} -> Array{U,n}, body: T -> U (map_f: i32 -> f32).
+            (
+                "Map ok",
+                Map { body: fx.map_f },
+                arr(i32t.clone(), 3),
+                arr(f32t(), 3),
+                p,
+                true,
+            ),
+            (
+                "Map size mismatch",
+                Map { body: fx.map_f },
+                arr(i32t.clone(), 3),
+                arr(f32t(), 4),
+                p,
+                false,
+            ),
+            (
+                "Map elem vs body in",
+                Map { body: fx.map_f },
+                arr(f32t(), 3),
+                arr(f32t(), 3),
+                p,
+                false,
+            ),
+            (
+                "Map out vs body out",
+                Map { body: fx.map_f },
+                arr(i32t.clone(), 3),
+                arr(i32t.clone(), 3),
+                p,
+                false,
+            ),
+            (
+                "Map not array",
+                Map { body: fx.map_f },
+                i32t.clone(),
+                f32t(),
+                p,
+                false,
+            ),
+            // Fold{body}: (Acc, Array{T,n}) -> Acc, body: (Acc,T) -> Acc (fold_f: (f32,i32) -> f32).
+            (
+                "Fold ok",
+                Fold { body: fx.fold_f },
+                tup(&[f32t(), arr(i32t.clone(), 3)]),
+                f32t(),
+                p,
+                true,
+            ),
+            (
+                "Fold tty not acc",
+                Fold { body: fx.fold_f },
+                tup(&[f32t(), arr(i32t.clone(), 3)]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            (
+                "Fold elem vs body",
+                Fold { body: fx.fold_f },
+                tup(&[f32t(), arr(f32t(), 3)]),
+                f32t(),
+                p,
+                false,
+            ),
+            (
+                "Fold not tuple",
+                Fold { body: fx.fold_f },
+                arr(i32t.clone(), 3),
+                f32t(),
+                p,
+                false,
+            ),
+            // Index: (Array{T,n}, I) -> T.
+            (
+                "Index ok",
+                Index,
+                tup(&[arr(i32t.clone(), 3), i32t.clone()]),
+                i32t.clone(),
+                p,
+                true,
+            ),
+            // I = any Core integer scalar, unsigned included.
+            (
+                "Index u8 idx ok",
+                Index,
+                tup(&[arr(i32t.clone(), 3), Ty::u8()]),
+                i32t.clone(),
+                p,
+                true,
+            ),
+            (
+                "Index idx not int",
+                Index,
+                tup(&[arr(i32t.clone(), 3), f32t()]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            (
+                "Index tty not elem",
+                Index,
+                tup(&[arr(i32t.clone(), 3), i32t.clone()]),
+                f32t(),
+                p,
+                false,
+            ),
+            (
+                "Index src not array",
+                Index,
+                tup(&[i32t.clone(), i32t.clone()]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            // Print{newline}: (IoToken, P) -> IoToken, P printable (N, Bool, Str).
+            (
+                "Print int",
+                Print { newline: false },
+                tup(&[Ty::IoToken, i32t.clone()]),
+                Ty::IoToken,
+                p,
+                true,
+            ),
+            (
+                "Println str",
+                Print { newline: true },
+                tup(&[Ty::IoToken, Ty::Str]),
+                Ty::IoToken,
+                p,
+                true,
+            ),
+            (
+                "Print bool",
+                Print { newline: false },
+                tup(&[Ty::IoToken, Ty::Bool]),
+                Ty::IoToken,
+                p,
+                true,
+            ),
+            (
+                "Print first not token",
+                Print { newline: false },
+                tup(&[i32t.clone(), i32t.clone()]),
+                Ty::IoToken,
+                p,
+                false,
+            ),
+            (
+                "Print tty not token",
+                Print { newline: false },
+                tup(&[Ty::IoToken, i32t.clone()]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            (
+                "Print P not printable",
+                Print { newline: false },
+                tup(&[Ty::IoToken, tup(&[i32t.clone(), i32t.clone()])]),
+                Ty::IoToken,
+                p,
+                false,
+            ),
+            // LoopEnter: U -> U, target kind LoopMerge.
+            (
+                "LoopEnter ok",
+                LoopEnter,
+                i32t.clone(),
+                i32t.clone(),
+                m,
+                true,
+            ),
+            (
+                "LoopEnter tgt not merge",
+                LoopEnter,
+                i32t.clone(),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            (
+                "LoopEnter sty!=tty",
+                LoopEnter,
+                i32t.clone(),
+                f32t(),
+                m,
+                false,
+            ),
+            // LoopBack: (U, Bool) -> U, target kind LoopMerge.
+            (
+                "LoopBack ok",
+                LoopBack,
+                tup(&[i32t.clone(), Ty::Bool]),
+                i32t.clone(),
+                m,
+                true,
+            ),
+            (
+                "LoopBack tgt not merge",
+                LoopBack,
+                tup(&[i32t.clone(), Ty::Bool]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            (
+                "LoopBack 2nd not bool",
+                LoopBack,
+                tup(&[i32t.clone(), i32t.clone()]),
+                i32t.clone(),
+                m,
+                false,
+            ),
+            (
+                "LoopBack tty mismatch",
+                LoopBack,
+                tup(&[i32t.clone(), Ty::Bool]),
+                f32t(),
+                m,
+                false,
+            ),
+            // LoopExit: (B, Bool) -> B.
+            (
+                "LoopExit ok",
+                LoopExit,
+                tup(&[i32t.clone(), Ty::Bool]),
+                i32t.clone(),
+                p,
+                true,
+            ),
+            (
+                "LoopExit 2nd not bool",
+                LoopExit,
+                tup(&[i32t.clone(), i32t.clone()]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            (
+                "LoopExit tty mismatch",
+                LoopExit,
+                tup(&[i32t.clone(), Ty::Bool]),
+                f32t(),
+                p,
+                false,
+            ),
+            // Output: T -> T (target-is-Return is the I8 clause in check_edges, not here).
+            ("Output ok", Output, i32t.clone(), i32t.clone(), p, true),
+            ("Output sty!=tty", Output, i32t.clone(), f32t(), p, false),
+        ];
+
+        let mut failures = Vec::new();
+        for (label, op, sty, tty, target, expected) in cases {
+            let got = check(&fx, op, sty, tty, target);
+            if got != expected {
+                failures.push(format!(
+                    "  {label}: §5.1 says {expected}, edge_type_ok says {got}"
+                ));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "DESIGN §5.1 typing table disagrees with edge_type_ok:\n{}",
+            failures.join("\n")
+        );
+    }
+}
