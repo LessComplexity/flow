@@ -1,0 +1,41 @@
+// vector_add.flow  —  elementwise add of two fixed-size integer vectors, in Flow-Core
+//
+// WHY THE LOOP FORM DOES NOT WORK IN FLOW-CORE
+//   The imperative sketch —
+//       mut c: [i32; 16] <- [0, …];
+//       loop { a[i] + b[i] -> c[i]; i + 1 -> i; (i < 16) -true-> loop; }
+//   — fails at `… -> c[i]` with L1302: Core has NO in-place array mutation and NO
+//   incremental array construction. Objects are values, not memory cells (there is no
+//   `Store` op), so you cannot fill a vector slot by slot. (Labeled blocks/jumps
+//   `:add` / `-> :add` are separately Core+1, P0110.)
+//
+//   The Core way to produce an array is to build it ALL AT ONCE with an array literal.
+//   Elementwise binary ops index both inputs at each position — here unrolled, because
+//   `map` is unary (one array; its body cannot capture a second array — L1108) and Core
+//   has no `zip`. The unrolled literal is the honest Core expression of a zipWith.
+
+fn vec16_add(a: [i32; 16], b: [i32; 16]) -> [i32; 16] {
+    [
+        a[0]  + b[0],  a[1]  + b[1],  a[2]  + b[2],  a[3]  + b[3],
+        a[4]  + b[4],  a[5]  + b[5],  a[6]  + b[6],  a[7]  + b[7],
+        a[8]  + b[8],  a[9]  + b[9],  a[10] + b[10], a[11] + b[11],
+        a[12] + b[12], a[13] + b[13], a[14] + b[14], a[15] + b[15],
+    ] -> ret;
+}
+
+fn main() {
+    // a = [0, 1, 2, …, 15],  b = [100, …, 100]   ⇒   c[k] = k + 100
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]    -> a: [i32; 16];
+    [100, 100, 100, 100, 100, 100, 100, 100,
+     100, 100, 100, 100, 100, 100, 100, 100]                  -> b: [i32; 16];
+
+    (a, b) -> vec16_add -> c;
+
+    // Arrays are not printable, so show a few slots and the total.
+    "c[0]  = " -> print;   c[0]  -> println;   // expect 100
+    "c[15] = " -> print;   c[15] -> println;   // expect 115
+
+    "sum   = " -> print;                       // expect (0+…+15) + 16*100 = 1720
+    (0, c) -> fold { acc, x -> acc + x } -> total;
+    total -> println;
+}

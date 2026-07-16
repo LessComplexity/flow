@@ -45,8 +45,9 @@ syn case match
 " (`category` is NOT here — it is reserved-and-rejected; see flowReserved.)
 syn keyword flowKeyword fn type loop seq mut void
 
-" Builtins: map/fold are inline-block collection ops; print is the only effect.
-syn keyword flowBuiltin map fold print
+" Builtins: map/fold are inline-block collection ops; print/println are the
+" effects (ADR-0015 — `print` raw, `println` appends a newline).
+syn keyword flowBuiltin map fold print println
 
 " Boolean literals.
 syn keyword flowBoolean true false
@@ -225,6 +226,7 @@ hi default link flowTypeName   Type
 hi default link flowReserved   Error
 hi default link flowFnName     Function
 hi default link flowFlowFn     Function
+hi default link flowDeclaredFn Function
 hi default link flowLabel      Label
 hi default link flowLabelJump  Label
 hi default link flowOperator   Operator
@@ -236,5 +238,40 @@ hi default link flowGuardBool     Boolean
 hi default link flowGuardInt      Number
 hi default link flowGuardWild     Special
 hi default link flowGuardVariant  Type
+
+" ---------------------------------------------------------------------------
+" Terminal calls to no-value functions: `-> somefn;`
+" ---------------------------------------------------------------------------
+" A no-value function — `fn somefn() { … }` (no `-> Ret`; `void` is Core+1,
+" P0113) — is invoked TERMINALLY: `data -> somefn;`. That is lexically identical
+" to a terminal binding/sink (`-> result;`), so flowFlowFn above deliberately
+" requires a trailing `->` and leaves both uncolored. To paint terminal CALLS
+" without painting every BINDING, scan the buffer for `fn <name>` declarations
+" and highlight only those names in call position (after `->`) — covering both
+" `-> somefn;` and `-> somefn ->`. Re-run on load/edits so new fns are picked up.
+" (Pure regex cannot tell a call from a binding; a true answer awaits LSP
+" semantic tokens, ADR-0008. This is the same buffer-scan shape the label
+" machinery used before ADR-0012's sigils made it unnecessary for labels.)
+function! s:FlowHighlightDeclaredFns() abort
+  silent! syntax clear flowDeclaredFn
+  let l:names = {}
+  for l:line in getline(1, '$')
+    let l:name = matchstr(l:line, '\<fn\s\+\zs\h\w*')
+    if l:name !=# ''
+      let l:names[l:name] = 1
+    endif
+  endfor
+  for l:name in keys(l:names)
+    " `\h\w*` fn names are regex-safe to interpolate verbatim.
+    execute 'syntax match flowDeclaredFn "\%(->\s*\)\@<=\<' . l:name . '\>"'
+  endfor
+endfunction
+
+augroup flowDeclaredFns
+  autocmd! * <buffer>
+  autocmd BufEnter,BufWritePost,TextChanged,InsertLeave <buffer>
+        \ call <SID>FlowHighlightDeclaredFns()
+augroup END
+call s:FlowHighlightDeclaredFns()
 
 let b:current_syntax = "flow"

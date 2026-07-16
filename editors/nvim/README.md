@@ -7,7 +7,8 @@ Flow is the dataflow language whose surface syntax denotes its compiler graph IR
 (`data -> f -> g -> ret;` *is* three nodes and two edges). This plugin highlights
 the Flow-Core surface: flow arrows, guard arrows, the `type`/`fn`/`loop`/`seq`
 keywords, loop labels and label jumps, primitive and named types, builtins
-(`map`/`fold`/`print`), and the reserved-and-rejected `category` keyword.
+(`map`/`fold`/`print`/`println`), and the reserved-and-rejected `category`
+keyword.
 
 ## What it is
 
@@ -38,11 +39,20 @@ Design highlights:
 - **Functions in flows** — an identifier that sits *between two arrows*
   (`-> clamp ->`, `data -> f -> g ->`; group `flowFlowFn`) links to `Function`.
   This is a lexical heuristic: `syn keyword` builtins/keywords (`map`, `fold`,
-  `print`, `ret`, `loop`, …) outrank it automatically, and it is defined before
-  `flowTypeName` so a PascalCase head still wins as `Type`. Terminal bindings
-  and sinks (`-> nr;`, `-> total_r;`) have no trailing `->`, so this rule does
-  *not* fire on them. True call-vs-binding resolution arrives with LSP semantic
-  tokens (ADR-0008).
+  `print`, `println`, `ret`, `loop`, …) outrank it automatically, and it is
+  defined before `flowTypeName` so a PascalCase head still wins as `Type`.
+  Terminal bindings and sinks (`-> nr;`, `-> total_r;`) have no trailing `->`,
+  so this rule does *not* fire on them.
+- **Terminal calls to no-value functions** (`flowDeclaredFn`) — a no-value
+  function `fn somefn() { … }` (no `-> Ret`) is invoked terminally as
+  `data -> somefn;`, which is lexically identical to a terminal binding
+  `-> result;`, so the rule above leaves both uncolored. To color the *call*
+  without painting every binding, the plugin scans the buffer for `fn <name>`
+  declarations and highlights only those names in call position (after `->`),
+  covering both `-> somefn;` and `-> somefn ->`. It re-runs on load and edits
+  (`BufEnter`/`TextChanged`/`InsertLeave`/`BufWritePost`) so new functions are
+  picked up — the same buffer-scan shape labels used before sigils. A true
+  call-vs-binding answer still awaits LSP semantic tokens (ADR-0008).
 - **`ret`** links to `Special` (the graph sink); **labeled blocks and jumps**
   (ADR-0012) link to `Label`. Labels carry a prefix `:` sigil on both ends —
   declaration `:outer { … }`, jump `-> :outer;` — so both forms are
