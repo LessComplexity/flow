@@ -38,7 +38,7 @@ them (detail: [categorical-model.md §6–§7](architecture/categorical-model.md
 | `flow` CLI | build/run/dump-ir/test | `crates/flow-cli/src/main.rs:main` | stub (exits 1) |
 | `dump_ir` example | file → lex→parse→lower → Mermaid | `crates/flow-lower/examples/dump_ir.rs` | built |
 | `run` example / test pipeline | parse→lower→`run` (fueled) | `flow-interp` tests + example (see [interp map](components/interp/IMPLEMENTATION.md)) | built |
-| `cargo test --workspace` | the whole `Alg` under golden/property/differential harnesses | per-crate `tests/` | built (393 green, S08) |
+| `cargo test --workspace` | the whole `Alg` under golden/property/differential harnesses | per-crate `tests/` | built (484 green, S11) |
 
 ## Divergences (system-level)
 
