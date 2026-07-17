@@ -13,13 +13,11 @@ unblocked, nothing changed its prerequisites. Full detail: `sessions/2026-07-17-
 
 ## Test state: ALL GREEN
 
-`cargo test --workspace`: **484 passed, 0 failed** (192 syntax · 101 ir · 128 lower · 29 check · 34 interp). fmt + clippy clean. Working tree **uncommitted** (S11 increment, Sapir's call to commit).
+`cargo test --workspace`: **484 passed, 0 failed** (192 syntax · 101 ir · 128 lower · 29 check · 34 interp). fmt + clippy clean. Committed: `ea137f5`.
 
 ## Do next (ordered, smallest-first)
 
-1. **Commit Session 11** (single commit, S10 precedent) — the whole seq-block increment
-   incl. new files (`ADR-0019`, `plan-seq-block.md`, `seq_demo.flow`, 7 snapshots,
-   `sessions/2026-07-17-seq-block.md`).
+1. ~~Commit Session 11~~ done — single commit `ea137f5` (Sapir's call, same session).
 2. **P4 rewrites** (`flow-rewrite`): layers 3–4 (constant folding, DCE, CSE) + layer 1 map
    fusion; every pass property-tested random-program × random-input interpreter-equal
    before/after (HANDOFF §8 P4 DoD). Write `components/rewrite/DESIGN.md` leading with its
