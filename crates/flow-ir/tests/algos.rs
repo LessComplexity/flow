@@ -326,3 +326,74 @@ fn nested_loops_multi_merge_one_scc_reject_shape() {
     // And the whole thing is well-formed by the independent oracle.
     assert!(validate(&ir).is_empty(), "{:?}", validate(&ir));
 }
+
+/// S12 regression: a multi-hop loop-invariant computation (`x * 2` — pair +
+/// Mul, neither initially inserted before the loop) must be topo-ordered
+/// BEFORE the LoopEnter edge. Previously FIFO-Kahn released LoopEnter as soon
+/// as the init completed, ordering derived invariants after the header; the
+/// interp driver (and any straight-line backend) then read them before write.
+/// The rule: LoopEnter edges are deferred until no other morphism is ready.
+#[test]
+fn topo_orders_multi_hop_invariants_before_loop_enter() {
+    let mut b = IrBuilder::new();
+    let f = b
+        .declare(FuncKind::Named, "f", Ty::i32(), Ty::i32(), L)
+        .unwrap();
+    {
+        let mut fb = b.build_fn(f).unwrap();
+        let x = fb.input();
+        let zero = fb.constant(Value::I32(0), L).unwrap();
+        // Loop first (insertion order!), invariant chain emitted inside the body
+        // — the shape lower produces for `loop { ... acc + x*2 ... }`.
+        let lh = fb.begin_loop(zero, L).unwrap();
+        let merge = fb.merge_of(&lh);
+        let three = fb.constant(Value::I32(3), L).unwrap();
+        let cond = fb
+            .binop(Operation::Lt, merge, three, Dest::Fresh(None), L)
+            .unwrap();
+        // The 2-hop invariant: t = x * 2 (source objects complete at start, but
+        // the Mul becomes ready only after its internal pair fires).
+        let two = fb.constant(Value::I32(2), L).unwrap();
+        let t = fb
+            .binop(Operation::Mul, x, two, Dest::Fresh(Some("t".into())), L)
+            .unwrap();
+        let next = fb
+            .binop(Operation::Add, merge, t, Dest::Fresh(None), L)
+            .unwrap();
+        fb.loop_back(&lh, next, cond, L).unwrap();
+        fb.loop_exit(&lh, merge, cond, Dest::Ret { slot: None }, L)
+            .unwrap();
+        fb.end_loop(lh).unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(f).unwrap();
+    assert!(validate(&ir).is_empty());
+
+    let order = ir.topo_order(f);
+    let pos = |mid: flow_ir::MorphismId| order.iter().position(|&m| m == mid).unwrap();
+
+    // Locate the LoopEnter edge and the Mul edge (the invariant's definer).
+    let mut enter = None;
+    let mut mul = None;
+    for (mid, morph) in ir.morphisms() {
+        match morph.op {
+            Operation::LoopEnter => enter = Some(mid),
+            Operation::Mul => mul = Some(mid),
+            _ => {}
+        }
+    }
+    let (enter, mul) = (enter.unwrap(), mul.unwrap());
+
+    // The invariant definer AND its feeding Pair edges precede the header.
+    assert!(
+        pos(mul) < pos(enter),
+        "multi-hop invariant must precede LoopEnter (S12)"
+    );
+    for (mid, morph) in ir.morphisms() {
+        if matches!(morph.op, Operation::Pair { .. })
+            && morph.target == ir.morphism(mul).unwrap().source
+        {
+            assert!(pos(mid) < pos(enter), "invariant pair edge precedes header");
+        }
+    }
+}

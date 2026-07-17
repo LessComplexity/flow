@@ -1,0 +1,9 @@
+---
+source: crates/flow-rewrite/tests/golden.rs
+expression: "format!(\"{:#?}\", res.report)"
+---
+RewriteReport {
+    rounds: 1,
+    applied: [],
+    skipped_non_canonical: false,
+}

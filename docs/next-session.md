@@ -1,71 +1,43 @@
 # Next Session
 
-Written: 2026-07-17 · end of Session 11 · by: Claude (Fable 5 orchestrator; Opus/Sonnet workflow agents; category-architect skill)
+Written: 2026-07-18 · end of Session 12 · by: Claude (Fable 5 orchestrator; Opus workflow agents; category-architect skill)
 
 ## Where things stand (≤5 lines)
 
-**ADR-0019 executed (S11).** `seq { … }` is its own node (`StageKind::SeqBlock(Block)`);
-`FanoutKind` is `Plain | Void`; the S10 same-node walk-trap is architecturally gone and
-**OQ-C1 is closed** (CK5 pin → theorem). Spec patched via ERRATA **LC-5** (§5.2's example
-had never parsed). Review bonus: three **pre-existing** miscompiles fixed (Phi-arm scan /
-loop carried-set / capture check didn't descend `Fanout`). **P4 rewrites is next** — still
-unblocked, nothing changed its prerequisites. Full detail: `sessions/2026-07-17-seq-block.md`.
+**P4 COMPLETE (S12).** `flow-rewrite` shipped: plan+replay over sealed IR (rebuild-through-builder, ir §17), const fold + CSE + DCE + map fusion, fixpoint driver, R1 property harness over the new **testgen** random-program generator (P5–P7 will reuse it). Two interp **P0s found & fixed** (multi-hop loop-invariants; two-sequential-loops — both via Sapir's matmul exploration). **P5 prep is banked**: ADR-0020 (emission contract + `flow-rt`) and backend-llvm DESIGN are written; verilator + icarus installed; vastai CLI verified for P6. Full detail: `sessions/2026-07-18-p4-rewrites.md`.
 
 ## Test state: ALL GREEN
 
-`cargo test --workspace`: **484 passed, 0 failed** (192 syntax · 101 ir · 128 lower · 29 check · 34 interp). fmt + clippy clean. Committed: `ea137f5`.
+`cargo test --workspace`: **511 passed, 0 failed** (192 syntax · 102 ir · 128 lower · 29 check · 37 interp · 23 rewrite). fmt + clippy clean.
 
 ## Do next (ordered, smallest-first)
 
-1. ~~Commit Session 11~~ done — single commit `ea137f5` (Sapir's call, same session).
-2. **P4 rewrites** (`flow-rewrite`): layers 3–4 (constant folding, DCE, CSE) + layer 1 map
-   fusion; every pass property-tested random-program × random-input interpreter-equal
-   before/after (HANDOFF §8 P4 DoD). Write `components/rewrite/DESIGN.md` leading with its
-   categorical model; flip its INDEX row same change. The random-program generator built
-   here is also P5/P6's differential-test input.
-3. (Optional, small) lower suggestion #2 / global #6: route `emit_fanout`'s
-   return-position no-value case through `ChainCtx::RetValue` (uniform with seq's L1611).
-4. Sapir decisions carried: RATIFY ADR-0016; ADR-0013 review; IN6 float ÷0 ADR-0013
-   amendment; lower §16 OQ1–OQ8; backend `TargetText` ADR (due P5).
+1. **P5 backend-llvm (M2)** — DESIGN.md is written and review-ready (`components/backend-llvm/DESIGN.md`): implement `crates/flow-rt` (ADR-0020 §2) + the alloca-slot emitter + differential harness (10 examples + testgen, raw + rewritten IR) + sepia perf baseline. Suggested flow: adversarial design-review pass on the DESIGN first (S12 did this for rewrite and it killed 4 blockers pre-code), then the sequenced-TDD workflow, then orchestrator line-by-line review.
+2. (Optional, small) suggestions #6 (lower `ChainCtx::RetValue` uniformity) and #7 headroom items (precise DCE / constant dedup) — any session.
+3. P6 CUDA (vast.ai RTX 4090 route, backend-cuda/STATUS.md) after P5; P7 Verilog (verilator installed) after; M5 CLI last.
 
 ## Open questions for Sapir
 
-- **Carried:** RATIFY ADR-0016 (guard-first loops); ADR-0013 review (load-bearing under 5
-  crates now); IN6 float ÷0 ADR-0013 amendment; lower §16 OQ1–OQ8; backend `TargetText`
-  ADR (P5).
-- ~~OQ-C1~~ **CLOSED by ADR-0019 (S11)** — no decision owed.
+- **New (S12):** RATIFY or amend **ADR-0020** (emission contract: flow-rt runtime, exit-101 traps, no-`nsw` wrapping) — P5 builds on it. RATIFY **rewrite R1/RW2** (traps ⊥-identified, fuel-insensitive oracle equality) — the P4 "interpreter-equal" pin; ADR if contested. **Array-update design note** (`notes/array-update-design.md`): recommendation = pure `Update` op + `c[i] <- x` desugar onto mut-rebind, in-place via E3 last-use (the answer to your S12 question; Core+1 ADR candidate).
+- **Carried:** RATIFY ADR-0016 (guard-first loops); ADR-0013 review; IN6 float ÷0 amendment; lower §16 OQ1–OQ8.
 
 ## Gotchas / warnings (things that will waste the next session's time)
 
-- **All S08/S09/S10 gotchas stand** (guard-first driver; `typing_table_golden` test-only;
-  `LineIndex<'a>`; `resolve_tykind` single skeleton; `Name` carries no string — passes
-  reading names take `source: &str`; check runs no typing pass by design; E3 zero-code by
-  design; CK1–CK8 + LD ledgers no-relitigate).
-- ~~`seq` parses to the same node as fanout~~ — **RESOLVED (ADR-0019)**: walks key on node
-  kind now. Replacement rule of thumb: **any sub-pass that recurses `Fanout` branches must
-  also recurse `SeqBlock` bodies** (both lower in the enclosing scope — pins b/e). The S11
-  review found three walkers where even the `Fanout` descent was missing (live
-  miscompiles, fixed with named regressions); when adding a tree walk, check BOTH.
-- **Guard-arm-in-seq diagnostic codes are form-dependent** (plan §As-built): clean guard
-  token → P0004; spaced/pattern arm → P0005/P0106, +P0006 when mixed with statements.
-  Don't "reconcile" one to the other.
-- **P0117 fires only for `void { … }` blocks** — a rebind/loop in a Plain fanout
-  reclassifies to P0115 upstream; `parse_fanout_block`'s sole caller is the void stage.
-- **`ChainCtx::RetValue`** = return-position-but-value-handed-back (the effectful tail
-  path). `SeqBlock` is deliberately NOT in `stage_writes_value` —
-  `golden_seq_explicit_ret` pins it; don't add it for "symmetry" with Fanout.
-- **P6 CUDA:** nvcc absent locally, but **vast.ai CLI → RTX 4090** is the decided route
-  for real differential runs (backend-cuda/STATUS.md). CUDA is a Sapir priority; order
-  stays P4 → P5 → P6 (P4 map-fusion is CUDA's kernel fusion; P5 builds the harness CUDA
-  reuses).
+- **All S08–S11 gotchas stand** (guard-first driver; `LineIndex<'a>`; `Name` carries no string; check runs no typing pass; CK/LD/RW ledgers no-relitigate; Fanout+SeqBlock walker rule).
+- **New S12 loop-walker rule:** `topo_order` **defers LoopEnter** — every non-merge-gated morphism precedes its loop header (ir §13). Anything walking loops must attribute exits/body **per-merge-SCC, never the per-fn union** (two sequential loops per fn are legal + supported; the union pattern panicked interp and mis-skipped rewrite — both pinned). Backends: emission order = the same `topo_order`, so invariants-before-header transfers for free.
+- **Rewrite plan laws P1–P3** (DESIGN §1.2) are load-bearing: plans key non-SCC `Temporary` objects only; alias preserves SCC membership; fusion needs loop-free bodies. Three review blockers converged there — do not relax casually.
+- **testgen lives at `crates/flow-rewrite/tests/testgen/mod.rs`** — consumed cross-crate via `#[path]` include (the lower `tests/common` pattern), NOT a library export (HANDOFF §9 placement).
+- **`vector.flow` is out-of-Core** (generics sketch) — the example set for harnesses is the 10 in-Core files.
+- **`RewriteResult` is Debug-only** (CategoryIr not Clone); `rewrite` takes the graph **by value** — differential harnesses must run the oracle on the input *before* rewriting.
+- **P6 CUDA:** nvcc absent locally; vast.ai CLI verified (no instances running). Order stays P5 → P6.
 
 ## Commands (build/test/bench invocations that currently work)
 
 ```sh
-cargo test --workspace                                               # green — 484 (192+101+128+29+34)
-cargo run -p flow-interp --example run -- examples/seq_demo.flow     # "36\n12\n" — the ADR-0019 showcase
-cargo run -p flow-lower --example dump_ir -- examples/seq_demo.flow  # token-thread Mermaid, no seq node
-cargo test -p flow-lower l1404                                       # Phi-arm effect-escape regressions (S11)
-cargo test -p flow-check                                             # 29: acceptance 12 · effects 11 · exclusivity 6
-cargo test -p flow-syntax fanout_block_each_dropped_stmt_draws_p0117 # P0117 multi-drop pin
+cargo test --workspace                                   # 511 green (192+102+128+29+37+23)
+cargo test -p flow-rewrite --test property               # R1 battery (PROPTEST_CASES=2000 for a deep run)
+cargo test -p flow-interp --test loop_invariants         # the S12 P0 pins (matmul4, two-loops)
+cargo bench -p flow-rewrite                              # rewrite_scale (chain/grid, ~linear)
+cargo run -p flow-lower --example dump_ir -- examples/sepia.flow   # Mermaid dump
+git log --oneline -3                                     # S12 commit(s)
 ```

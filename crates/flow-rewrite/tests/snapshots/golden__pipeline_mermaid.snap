@@ -1,0 +1,39 @@
+---
+source: crates/flow-rewrite/tests/golden.rs
+expression: res.ir.to_mermaid()
+---
+flowchart LR
+    subgraph f0["fn f"]
+        f0o0(("i32"))
+        f0o1(("ret: i32"))
+        f0o2(("2: i32"))
+        f0o3(("(i32, i32)"))
+        f0o4(("i32"))
+        f0o5(("5: i32"))
+        f0o6(("(i32, i32)"))
+        f0o0 -- "Pair 0/2" --> f0o3
+        f0o2 -- "Pair 1/2" --> f0o3
+        f0o3 -- "Mul" --> f0o4
+        f0o4 -- "Pair 0/2" --> f0o6
+        f0o5 -- "Pair 1/2" --> f0o6
+        f0o6 -- "Add" --> f0o1
+    end
+    subgraph f1["fn main"]
+        f1o0(("io"))
+        f1o1(("ret: io"))
+        f1o2(("10: i32"))
+        f1o3(("result: i32"))
+        f1o4(("#quot;f(10) = #quot;: str"))
+        f1o5(("(io, str)"))
+        f1o6(("io"))
+        f1o7(("(io, i32)"))
+        f1o8(("io"))
+        f1o2 -- "Call" --> f1o3
+        f1o0 -- "Pair 0/2" --> f1o5
+        f1o4 -- "Pair 1/2" --> f1o5
+        f1o5 -- "Print" --> f1o6
+        f1o6 -- "Pair 0/2" --> f1o7
+        f1o3 -- "Pair 1/2" --> f1o7
+        f1o7 -- "Println" --> f1o8
+        f1o8 -- "Output" --> f1o1
+    end

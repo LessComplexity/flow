@@ -152,6 +152,15 @@ impl CategoryIr {
     /// completes on its one definer. `LoopExit` edges are ordinary gating edges.
     /// `LoopBack` is appended after its source completes, never gating. Ties
     /// break by insertion order (deterministic).
+    ///
+    /// **`LoopEnter` edges are deferred**: a ready `LoopEnter` is released only
+    /// when no other morphism is ready. This guarantees every morphism not
+    /// (transitively) gated by a loop merge — i.e. every loop-invariant
+    /// computation, however many hops from its sources — precedes the loop
+    /// header in the order. The interp loop driver and straight-line backends
+    /// rely on this: they read loop-invariant operands when the header fires
+    /// (S12 fix; previously a multi-hop invariant like `x * 2` inside a loop
+    /// body was ordered after its `LoopEnter` and read-before-write).
     pub fn topo_order(&self, f: FuncId) -> Vec<MorphismId> {
         let nodes = self.func_objects(f);
 
@@ -192,39 +201,72 @@ impl CategoryIr {
         let mut order: Vec<MorphismId> = Vec::new();
         let mut released: SecondaryMap<ObjectId, bool> = SecondaryMap::new();
 
-        // Process ready objects in a FIFO worklist; ties broken by the order
-        // objects were discovered, which is insertion order.
-        let mut cursor = 0;
-        while cursor < ready.len() {
-            let o = ready[cursor];
-            cursor += 1;
-            if released.get(o).copied().unwrap_or(false) {
-                continue;
-            }
-            released.insert(o, true);
+        // LoopEnter edges whose source is complete, awaiting a drained worklist
+        // (the deferral rule above). FIFO in source-release order (deterministic).
+        let mut deferred_enters: Vec<MorphismId> = Vec::new();
+        let mut dcursor = 0;
 
-            for &m in self.out_edges(o) {
-                let morph = &self.morphisms[m];
-                if morph.op == Operation::LoopBack {
-                    // Emitted but never gates: append once its source is complete.
+        // Process ready objects in a FIFO worklist; ties broken by the order
+        // objects were discovered, which is insertion order. When the worklist
+        // drains, release the next deferred LoopEnter and continue.
+        let mut cursor = 0;
+        loop {
+            while cursor < ready.len() {
+                let o = ready[cursor];
+                cursor += 1;
+                if released.get(o).copied().unwrap_or(false) {
+                    continue;
+                }
+                released.insert(o, true);
+
+                for &m in self.out_edges(o) {
+                    let morph = &self.morphisms[m];
+                    if morph.op == Operation::LoopBack {
+                        // Emitted but never gates: append once its source is complete.
+                        order.push(m);
+                        continue;
+                    }
+                    if morph.op == Operation::LoopEnter {
+                        // Deferred: released only when nothing else is ready.
+                        deferred_enters.push(m);
+                        continue;
+                    }
+                    // Ordinary gating edge: emit it, then decrement the target.
                     order.push(m);
-                    continue;
-                }
-                // Ordinary gating edge: emit it, then decrement the target.
-                order.push(m);
-                let tgt = morph.target;
-                if self.owner.get(tgt) != Some(&f) {
-                    continue;
-                }
-                let r = remaining[tgt];
-                if r > 0 {
-                    let nr = r - 1;
-                    remaining.insert(tgt, nr);
-                    if nr == 0 {
-                        ready.push(tgt);
+                    let tgt = morph.target;
+                    if self.owner.get(tgt) != Some(&f) {
+                        continue;
+                    }
+                    let r = remaining[tgt];
+                    if r > 0 {
+                        let nr = r - 1;
+                        remaining.insert(tgt, nr);
+                        if nr == 0 {
+                            ready.push(tgt);
+                        }
                     }
                 }
             }
+
+            // Worklist drained: release the next deferred LoopEnter, if any.
+            if dcursor < deferred_enters.len() {
+                let m = deferred_enters[dcursor];
+                dcursor += 1;
+                order.push(m);
+                let tgt = self.morphisms[m].target;
+                if self.owner.get(tgt) == Some(&f) {
+                    let r = remaining[tgt];
+                    if r > 0 {
+                        let nr = r - 1;
+                        remaining.insert(tgt, nr);
+                        if nr == 0 {
+                            ready.push(tgt);
+                        }
+                    }
+                }
+                continue;
+            }
+            break;
         }
 
         order

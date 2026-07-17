@@ -9,12 +9,13 @@
 
 | # | Component | Rule (§) | Change | Status | Detail |
 | --- | --- | --- | --- | --- | --- |
-| 1 | backends (all three) | §4.4/§7.4 strategy 2-category | Shared `Backend` contract + `TargetText` type, fixed by ADR before the first backend | **Parked until P5 design** — the audit itself scopes it "owned by the backend ADR"; writing it now is spec-without-implementation (the project's named top risk) | [backend-llvm](components/backend-llvm/suggestions.md) |
+| 1 | backends (all three) | §4.4/§7.4 strategy 2-category | Shared `Backend` contract + `TargetText` type, fixed by ADR before the first backend | **DONE (S12): ADR-0020** — contract-by-convention `emit(&CategoryIr) -> Result<String, EmitError>` + shared `flow-rt` runtime; flagged for Sapir review | [ADR-0020](decisions/ADR-0020-backend-emission-contract.md) |
 | 2 | lower | §5 one source of truth | Generic `dfs_cycles` util for `detect_cycles`/`find_cycle` | **Deferred (YAGNI watch)** — two call sites with genuinely different on-back-edge behavior; a third graph-cycle check triggers it | [lower](components/lower/suggestions.md) |
 | 3 | interp | §5 one source of truth | Confine the numeric-width dispatch to one seam | **Refuted on vet (S09), deferred** — premise overstated: only `num_lt`/`num_le` share the 5-way shape; `arith` already seams via `int_arith!`/`float_arith!` (different bodies), `as_int` is integer-only. Revisit only if a width is ever added post-M1 (IN7) | [interp](components/interp/suggestions.md) |
 | 4 | interp | §5 deduce-don't-store (perf) | Thread `in_scc`/`topo_order` from `eval_fn` into `run_loop`/`derive_plan` | **Deferred** — perf store without profile evidence (HANDOFF §7.2 step 6); matches the S08 optional-hardening item | [interp](components/interp/suggestions.md) |
 | 5 | cli | §5 define each boundary once | One declared `Diagnostic` target, one renderer | **Soft** — revisit when `flow-cli` is built (Session-06 audit) | [cli](components/cli/suggestions.md) |
 | 6 | lower | §5 one source of truth | Route `emit_fanout`'s return-position no-value case through `ChainCtx::RetValue` (as `seq`/L1611 does, S11) instead of the generic L1306 fall-through | **Open (small)** — found by the ADR-0019 WP2 review; pre-existing, deliberately left in-scope-minimal | [lower](components/lower/suggestions.md) |
+| 7 | rewrite | §5 / §9.2 / §4.3 | P4 headroom: precise DCE, constant dedup via replay channel, layer-2 naturality pass, generic-SCC replay | **Open (post-P4, S12)** — all strictly R1-safe extensions of shipped conservative choices | [rewrite](components/rewrite/suggestions.md) |
 
 ## Applied (changelog)
 

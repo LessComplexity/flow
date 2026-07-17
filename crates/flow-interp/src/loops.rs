@@ -20,7 +20,7 @@ use slotmap::SecondaryMap;
 
 use flow_ir::{CategoryIr, FuncId, MorphismId, ObjectId, Operation, Value};
 
-use crate::eval::{EvalCtx, build_in_scc, eval_morphism};
+use crate::eval::{EvalCtx, eval_morphism};
 use crate::value::{Abort, RValue};
 
 /// Per-merge, structurally-derived loop layout (interp DESIGN §4).
@@ -123,12 +123,6 @@ fn read_slot_bool(ctx: &EvalCtx, o: ObjectId, k: u32) -> bool {
 /// other shape is out of M1 (lower OQ7 never generates one) and is an
 /// unreachable-class interpreter condition for the supported pipeline.
 fn derive_plan(ir: &CategoryIr, f: FuncId, merge: ObjectId) -> LoopPlan {
-    let in_scc = build_in_scc(ir, f);
-    debug_assert!(
-        in_scc.contains_key(merge),
-        "the merge belongs to a loop SCC"
-    );
-
     // M1 single-merge assertion: this merge's SCC has exactly one merge.
     let scc = ir
         .loop_structure(f)
@@ -138,6 +132,24 @@ fn derive_plan(ir: &CategoryIr, f: FuncId, merge: ObjectId) -> LoopPlan {
     assert!(
         scc.merges.len() == 1,
         "out-of-M1 loop: multi-merge SCC is unsupported"
+    );
+
+    // THIS merge's SCC only — never the per-function union. With two sequential
+    // loops in one fn, the union attributed the second loop's exit (and body
+    // morphisms) to the first merge's plan: the exit count tripped the M1 assert
+    // on a legal Core program, and body_order would have owned foreign morphisms
+    // (S12 fix; pinned by interp tests/loop_invariants.rs::two_sequential_loops
+    // and lower-reachable per lower/DESIGN §8.5).
+    let in_scc: SecondaryMap<ObjectId, ()> = {
+        let mut m = SecondaryMap::new();
+        for &o in &scc.objects {
+            m.insert(o, ());
+        }
+        m
+    };
+    debug_assert!(
+        in_scc.contains_key(merge),
+        "the merge belongs to its own SCC"
     );
 
     // init / back_route from the merge's in-edges.

@@ -298,6 +298,16 @@ dependencies = [
 [[package]]
 name = "flow-rewrite"
 version = "0.0.1"
+dependencies = [
+ "criterion",
+ "flow-interp",
+ "flow-ir",
+ "flow-lower",
+ "flow-syntax",
+ "insta",
+ "proptest",
+ "slotmap",
+]
 
 [[package]]
 name = "flow-syntax"

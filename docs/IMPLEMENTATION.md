@@ -14,7 +14,7 @@
 | lower | `crates/flow-lower/` | [DESIGN](components/lower/DESIGN.md) | [IMPLEMENTATION](components/lower/IMPLEMENTATION.md) | built |
 | check | `crates/flow-check/` — entry `flow_check::check(source, &Program, &CategoryIr) -> Vec<Diagnostic>` | [DESIGN](components/check/DESIGN.md) | [IMPLEMENTATION](components/check/IMPLEMENTATION.md) | built |
 | interp | `crates/flow-interp/` | [DESIGN](components/interp/DESIGN.md) | [IMPLEMENTATION](components/interp/IMPLEMENTATION.md) | built |
-| rewrite | `crates/flow-rewrite/` | [DESIGN](components/rewrite/DESIGN.md) | [IMPLEMENTATION](components/rewrite/IMPLEMENTATION.md) | stub |
+| rewrite | `crates/flow-rewrite/` — entry `flow_rewrite::rewrite(CategoryIr) -> RewriteResult` (by-value; fixpoint of 4 passes) | [DESIGN](components/rewrite/DESIGN.md) | [IMPLEMENTATION](components/rewrite/IMPLEMENTATION.md) | built |
 | backend-llvm | `crates/flow-backend-llvm/` | [DESIGN](components/backend-llvm/DESIGN.md) | [IMPLEMENTATION](components/backend-llvm/IMPLEMENTATION.md) | stub |
 | backend-cuda | `crates/flow-backend-cuda/` | [DESIGN](components/backend-cuda/DESIGN.md) | [IMPLEMENTATION](components/backend-cuda/IMPLEMENTATION.md) | stub |
 | backend-verilog | `crates/flow-backend-verilog/` | [DESIGN](components/backend-verilog/DESIGN.md) | [IMPLEMENTATION](components/backend-verilog/IMPLEMENTATION.md) | stub |
@@ -38,7 +38,7 @@ them (detail: [categorical-model.md §6–§7](architecture/categorical-model.md
 | `flow` CLI | build/run/dump-ir/test | `crates/flow-cli/src/main.rs:main` | stub (exits 1) |
 | `dump_ir` example | file → lex→parse→lower → Mermaid | `crates/flow-lower/examples/dump_ir.rs` | built |
 | `run` example / test pipeline | parse→lower→`run` (fueled) | `flow-interp` tests + example (see [interp map](components/interp/IMPLEMENTATION.md)) | built |
-| `cargo test --workspace` | the whole `Alg` under golden/property/differential harnesses | per-crate `tests/` | built (484 green, S11) |
+| `cargo test --workspace` | the whole `Alg` under golden/property/differential harnesses | per-crate `tests/` | built (511 green, S12) |
 
 ## Divergences (system-level)
 

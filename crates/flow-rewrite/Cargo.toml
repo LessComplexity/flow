@@ -2,3 +2,19 @@
 name = "flow-rewrite"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+flow-ir = { path = "../flow-ir" }
+slotmap = "1.0"
+
+[dev-dependencies]
+flow-syntax = { path = "../flow-syntax" }
+flow-lower = { path = "../flow-lower" }
+flow-interp = { path = "../flow-interp" }
+proptest = "1.11.0"
+insta = "1.47.2"
+criterion = "0.5.1"
+
+[[bench]]
+name = "rewrite_scale"
+harness = false

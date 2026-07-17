@@ -43,7 +43,7 @@ backend exists.
 | `validate` | `CategoryIr → Violation*` (independent oracle) | ir | built |
 | `eval`/`run` | `(CategoryIr × Input × Fuel) ⇀ Output ⊸` (fueled, E1) | interp | built |
 | `check` | `Src × Program × CategoryIr → Diag*` (ε = accept) | check | built |
-| rewrite passes | `CategoryIr → CategoryIr` (layers 1–4) | rewrite | planned |
+| rewrite passes | `CategoryIr → CategoryIr` (plan+replay; layers 3–4 + map fusion) | rewrite | built (S12) |
 | backend emit | `CategoryIr → TargetText` (one contract, three realisations) | backends | planned |
 | `render` | `Diag* → 𝕊 ⊸` (the lone renderer) | cli | planned |
 
@@ -64,7 +64,7 @@ backends land: `cudaMemcpy` H↔D (carries buffers), FPGA streaming, the E1
 | lower | `lower` (passes A–E) | built (P2) | [DESIGN](components/lower/DESIGN.md) | [IMPL](components/lower/IMPLEMENTATION.md) |
 | check | E2 effect legality + Return exclusivity (typing at boundary; E3 vacuous-by-proof) | tested (25) | [DESIGN](components/check/DESIGN.md) | [IMPL](components/check/IMPLEMENTATION.md) |
 | interp | `eval`/`run` — **the oracle** | built (P3/M1) | [DESIGN](components/interp/DESIGN.md) | [IMPL](components/interp/IMPLEMENTATION.md) |
-| rewrite | layer 1–4 passes + property harness | planned (P4) | [DESIGN](components/rewrite/DESIGN.md) | [IMPL](components/rewrite/IMPLEMENTATION.md) |
+| rewrite | plan+replay rewriter: const fold/CSE/DCE + map fusion, R1 property harness + testgen | tested (S12) | [DESIGN](components/rewrite/DESIGN.md) | [IMPL](components/rewrite/IMPLEMENTATION.md) |
 | backend-llvm | `F_LLVM` emit | planned (P5/M2) | [DESIGN](components/backend-llvm/DESIGN.md) | [IMPL](components/backend-llvm/IMPLEMENTATION.md) |
 | backend-cuda | `F_CUDA` emit | planned (P6/M3) | [DESIGN](components/backend-cuda/DESIGN.md) | [IMPL](components/backend-cuda/IMPLEMENTATION.md) |
 | backend-verilog | `F_Verilog` emit + done-protocol | planned (P7/M4) | [DESIGN](components/backend-verilog/DESIGN.md) | [IMPL](components/backend-verilog/IMPLEMENTATION.md) |
