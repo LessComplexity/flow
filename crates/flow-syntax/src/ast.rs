@@ -222,16 +222,21 @@ pub enum StageKind {
         params: Vec<Name>,
         body: Block,
     },
+    /// `seq { … }` — an ordered statement block in stage position (ADR-0019).
+    /// The body is the ordinary block production (statements + optional tail),
+    /// **not** a fanout: `seq` is Flow-Core's keyword-marked block stage. Guard
+    /// arms are illegal in it (a clean guard token → stray-guard P0004).
+    SeqBlock(Block),
     /// ⟦P0115⟧ anonymous block stage — kept.
     StmtBlock(Block),
     Error(SourceLoc),
 }
 
 /// The kind of a fanout stage (DESIGN §14.4). `Void` ⇒ P0113 reported.
+/// `seq` is no longer a fanout kind (ADR-0019): it is `StageKind::SeqBlock`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum FanoutKind {
     Plain,
-    Seq(SourceLoc),
     Void(SourceLoc),
 }
 

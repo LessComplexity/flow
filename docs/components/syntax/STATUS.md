@@ -1,16 +1,17 @@
 # Component: syntax
 
 Status: tested
-Last updated: 2026-06-12 · Session 03
-Spec references: user-guide.md §3 (Syntax reference) + ADR-0005 (a flow is a statement; E4) + ADR-0009 (map/fold postfix block) + ADR-0010 (guard-arrow lexing) + ADR-0011 (Core loops are `loop` only) as amended by ADR-0012 (labeled blocks `:label { … }` / jumps `-> :label;`; `Ident {` is always a struct literal). Supporting: architecture.md §2.2.1–§2.2.2 (lexer + recursive-descent parser, minimal parse tree), ADR-0008 (error recovery + structured diagnostics, binding), ADR-0006 (`type` keyword, `category` reserved).
+Last updated: 2026-07-17 · Session 11 (ADR-0019 `seq` statement block)
+Spec references: user-guide.md §3 (Syntax reference) + ADR-0005 (a flow is a statement; E4) + ADR-0009 (map/fold postfix block) + ADR-0010 (guard-arrow lexing) + ADR-0011 (Core loops are `loop` only) as amended by ADR-0012 (labeled blocks `:label { … }` / jumps `-> :label;`; `Ident {` is always a struct literal) + ADR-0019 (`seq { … }` is a statement block `StageKind::SeqBlock`, not a fanout kind; P0117). Supporting: architecture.md §2.2.1–§2.2.2 (lexer + recursive-descent parser, minimal parse tree), ADR-0008 (error recovery + structured diagnostics, binding), ADR-0006 (`type` keyword, `category` reserved).
 Depends on: (none) Depended on by: lower, cli
 
 ## What works
 
 - **P1 frontend complete: lexer + parser.** `lex(source) -> LexOutput` and `parse(source) -> ParseOutput` (total, pure, error-recovering; merged span-sorted diagnostics).
 - **Lexer** (Session 02): full v0.2-surface token set, spans + `LineIndex`, L0001–L0008 with recovery, ADR-0010 single-lexeme guard arrows.
-- **Parser** (Session 03): two-tier grammar per ADR-0005 (expressions 1–7; `->`/`<-` chains at statement level), thin spanned parse tree (DESIGN §15, `Expr::Hole` for operator shorthand), guard blocks/fanout/`seq`/`map`/`fold` postfix blocks (ADR-0009), loop statements with `-> loop;` back-edges, struct/array/tuple literals, typed `mut` bindings both directions.
-- **Diagnostics:** P0001–P0012 (syntax/recovery incl. ADR-0010's two guard hints with machine-applicable fixes) + P0101–P0116 (out-of-Core rejections, each naming construct + horizon). All eight `examples/*.flow` parse with **zero** diagnostics; `full_surface.flow` yields exactly {P0101×2, P0102×2, P0103×2, P0107, P0109, P0111, P0112, P0113} and zero L-codes — the C8 story end-to-end.
+- **Parser** (Session 03): two-tier grammar per ADR-0005 (expressions 1–7; `->`/`<-` chains at statement level), thin spanned parse tree (DESIGN §15, `Expr::Hole` for operator shorthand), guard blocks/fanout/`map`/`fold` postfix blocks (ADR-0009), loop statements with `-> loop;` back-edges, struct/array/tuple literals, typed `mut` bindings both directions.
+- **`seq` statement block** (ADR-0019, Session 11): `seq { … }` is `StageKind::SeqBlock(Block)` — the ordinary block production (statements + optional tail), no longer a `FanoutKind::Seq` fanout. Rebinds/loops inside `seq` are first-class (no silent drop); the old bare-chain branch form still parses; guard arms in `seq` are stray guards (P0004).
+- **Diagnostics:** P0001–P0012 (syntax/recovery incl. ADR-0010's two guard hints with machine-applicable fixes) + P0101–P0117 (out-of-Core rejections, each naming construct + horizon; **P0117** is a structural reject — a non-chain statement dropped from a fanout `void` block, ADR-0019). All eight `examples/*.flow` parse with **zero** diagnostics; `full_surface.flow` yields exactly {P0101×2, P0102×2, P0103×2, P0107, P0109, P0111, P0112, P0113} and zero L-codes — the C8 story end-to-end.
 - Recovery: panic-mode with sync sets, diagnostic cooldown, shared depth guard (128) over expressions/blocks/**types**, progress lemma — `parse` is total on adversarial input (≈490K-case proptest run during review).
 
 ## What does not / known issues
@@ -31,7 +32,7 @@ Depends on: (none) Depended on by: lower, cli
 
 ## Test coverage (golden / property / differential / skipped+why)
 
-178 tests, all green (`cargo test -p flow-syntax`): 140 lib (104 parser units — precedence/§3.6 verbatim, W10–W24 ledger, F-matrix payloads, ADR-0011 scan, classification, every P-code, design-review regression pins; 36 lexer) · 8 golden token streams · 8 golden parse trees (zero diags asserted; +zip_demo +vector_add, ADR-0018) · 2+3+6 diagnostics/error/out-of-Core fixtures · 3 coverage · 3+3 proptests (lexer/parser, 2048 cases each). Golden trees were verified by **independent re-derivation** (one reviewer per example, node-by-node against source + grammar); implementation passed 2 adversarial reviews + a fix round (stack-overflow totality fix, P0007 climber path).
+190 tests, all green (`cargo test -p flow-syntax`): 152 lib (116 parser units — precedence/§3.6 verbatim, W10–W24 ledger, F-matrix payloads, ADR-0011 scan, classification, the ADR-0019 `seq` statement-block suite [stmt-form/headless-compat/rebind+loop-kept/tail/empty/optional-`;`/guard-arm-P0004/fanout-P0117 + each-drop-P0117/unterminated-tail-branch-kept/seq-arm-mixed-P0006 regressions], every P-code, design-review regression pins; 36 lexer) · 8 golden token streams · 8 golden parse trees (zero diags asserted; +zip_demo +vector_add, ADR-0018) · 2+3+6 diagnostics/error/out-of-Core fixtures · 3 coverage · 3+3 proptests (lexer/parser, 2048 cases each). Golden trees were verified by **independent re-derivation** (one reviewer per example, node-by-node against source + grammar); implementation passed 2 adversarial reviews + a fix round (stack-overflow totality fix, P0007 climber path).
 
 ## Performance notes (numbers + bench name + date; regressions flagged)
 

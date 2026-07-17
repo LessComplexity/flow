@@ -14,6 +14,7 @@
 | 3 | interp | §5 one source of truth | Confine the numeric-width dispatch to one seam | **Refuted on vet (S09), deferred** — premise overstated: only `num_lt`/`num_le` share the 5-way shape; `arith` already seams via `int_arith!`/`float_arith!` (different bodies), `as_int` is integer-only. Revisit only if a width is ever added post-M1 (IN7) | [interp](components/interp/suggestions.md) |
 | 4 | interp | §5 deduce-don't-store (perf) | Thread `in_scc`/`topo_order` from `eval_fn` into `run_loop`/`derive_plan` | **Deferred** — perf store without profile evidence (HANDOFF §7.2 step 6); matches the S08 optional-hardening item | [interp](components/interp/suggestions.md) |
 | 5 | cli | §5 define each boundary once | One declared `Diagnostic` target, one renderer | **Soft** — revisit when `flow-cli` is built (Session-06 audit) | [cli](components/cli/suggestions.md) |
+| 6 | lower | §5 one source of truth | Route `emit_fanout`'s return-position no-value case through `ChainCtx::RetValue` (as `seq`/L1611 does, S11) instead of the generic L1306 fall-through | **Open (small)** — found by the ADR-0019 WP2 review; pre-existing, deliberately left in-scope-minimal | [lower](components/lower/suggestions.md) |
 
 ## Applied (changelog)
 

@@ -635,6 +635,131 @@ fn l1610_enumerate_oversize() {
     );
 }
 
+// --- L1611: seq statement block (ADR-0019 / WP2) ----------------------------
+
+#[test]
+fn l1611_seq_continues_no_tail() {
+    // A seq whose chain continues (a following `-> g` stage) but that has no
+    // tail value → L1611 (no more silent pack-of-tails; ADR-0019 pin c).
+    assert_rejects(
+        "fn g(x: i32) -> i32 { x -> ret; }\nfn main() { 5 -> seq { 3 -> a; } -> g -> r; r -> println; }\n",
+        "L1611",
+    );
+}
+
+#[test]
+fn l1611_seq_return_position_no_tail() {
+    // A seq in return position with no tail value → L1611 (the return demands a
+    // value the tail-less seq cannot supply).
+    assert_rejects(
+        "fn f(x: i32) -> i32 { x -> seq { x -> a; } }\nfn main() {}\n",
+        "L1611",
+    );
+}
+
+#[test]
+fn l1611_effectful_seq_return_position_no_tail() {
+    // WP2 fixer regression (finding F5/F6): an EFFECTFUL fn whose body-tail chain
+    // ends in a tail-less `seq` in return position must draw L1611 — not fall
+    // through to the pre-existing L1306. The effectful-B-present tail lowers under
+    // `ChainCtx::RetValue` so `emit_seq_block` sees return position (ADR-0019
+    // pin c; DESIGN §8.10). The pure analogue is `l1611_seq_return_position_no_tail`.
+    assert_rejects(
+        "fn f(x: i32) -> i32 { \"hi\" -> println; x -> seq { 3 -> a; } }\nfn main() { 5 -> f -> r; r -> println; }\n",
+        "L1611",
+    );
+    // A tail-less seq that is itself the whole (effectful) body-tail: same code.
+    assert_rejects(
+        "fn f(x: i32) -> i32 { x -> seq { \"hi\" -> println; } }\nfn main() { 5 -> f -> r; r -> println; }\n",
+        "L1611",
+    );
+}
+
+#[test]
+fn seq_return_position_valued_effectful_lowers_clean() {
+    // WP2 fixer regression: the RetValue fix must NOT break a VALUED seq in an
+    // effectful fn's return position — the tail value is still handed back and
+    // packed with the token (prints "hi" then returns x*2).
+    let _ = lower_ok(
+        "fn f(x: i32) -> i32 { \"hi\" -> println; x -> seq { x * 2 -> a; a } }\nfn main() { 5 -> f -> r; r -> println; }\n",
+    );
+}
+
+#[test]
+fn l1404_effectful_seq_in_phi_arm() {
+    // WP2 fixer regression (finding F1/F2): an effectful stage inside a `seq`
+    // inside a Phi-position guard arm must draw L1404 — the phi-arm scan descends
+    // into the seq body (ADR-0019 §8.10). Without the descent the effect lowered
+    // UNCONDITIONALLY (hoisted out of the Phi): a validate-clean miscompile.
+    assert_rejects(
+        "fn f(b: bool, x: i32) -> i32 { b -> { -true-> { x -> seq { x -> println; x -> a; a } } -false-> x; } -> ret; }\nfn main() {}\n",
+        "L1404",
+    );
+}
+
+#[test]
+fn l1404_effectful_fanout_in_phi_arm() {
+    // Sibling of the above (finding F1's Fanout analog): the phi-arm scan descends
+    // into fanout branches too — an effect in a fanout branch inside a Phi arm is
+    // the same unconditional-effect hazard, L1404.
+    assert_rejects(
+        "fn f(b: bool, x: i32) -> i32 { b -> { -true-> { x -> { -> println; -> a; } a } -false-> x; } -> ret; }\nfn main() {}\n",
+        "L1404",
+    );
+}
+
+#[test]
+fn l1108_capture_in_seq_in_map_body() {
+    // WP2 fixer regression (finding F4): a capture of an enclosing local inside a
+    // `seq` inside a map body must draw L1108 (map/fold body references enclosing
+    // local `k`), not the misleading L1101 "unresolved name" — the capture check
+    // descends into the seq body (ADR-0019 §8.10).
+    assert_rejects(
+        "fn main() { 5 -> k; [1,2,3] -> map { e -> e -> seq { e + k -> a; a } } -> r; r[0] -> println; }\n",
+        "L1108",
+    );
+}
+
+#[test]
+fn effectful_seq_in_fanout_join_rejected() {
+    // ADR-0019 pin e / plan WP2 item 5: an effectful `seq` branch inside a
+    // *Plain* (parallel) fanout that joins is rejected by lower's existing
+    // L1305 — exactly as a bare effectful branch is (the effectful seq produces
+    // no value for the join). Parity with `print_branch_join` below: the seq
+    // opens no effect escape hatch.
+    assert_rejects(
+        "fn main() { 5 -> { -> seq { -> println }; -> println; } -> x; x -> println; }\n",
+        "L1305",
+    );
+    // The bare-print branch it must match, unchanged (plan matrix).
+    assert_rejects(
+        "fn main() { 5 -> { -> println; -> println; } -> x; x -> println; }\n",
+        "L1305",
+    );
+}
+
+#[test]
+fn empty_seq_lowers_clean() {
+    // `seq { }` in statement position: no value, no continuation — lowers clean.
+    let _ = lower_ok("fn main() { 5 -> seq { } }\n");
+}
+
+#[test]
+fn seq_bindings_escape_to_enclosing_scope() {
+    // ADR-0019 pin b: a binding made inside `seq` lives in the enclosing scope,
+    // so `a` is visible after the seq (else `a -> println` would be L1101). The
+    // `fanout.flow` idiom, now for seq.
+    let _ = lower_ok("fn main() { 5 -> seq { 7 -> a; } a -> println; }\n");
+}
+
+#[test]
+fn seq_headless_statements_seed_from_input() {
+    // ADR-0019 pin a / compat pin 3: the old bare-chain branch form — headless
+    // chain *statements* — seeds each from the seq input and lowers clean (each
+    // `-> println` prints the seq input `42`, ordered by the token thread).
+    let _ = lower_ok("fn main() { 42 -> seq { -> println; -> println; } }\n");
+}
+
 // --- named regression: the `0.0`-seed fold must lower CLEAN ------------------
 
 #[test]

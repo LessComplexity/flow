@@ -473,6 +473,25 @@ impl Walk<'_> {
                 }
                 WTy::Unknown
             }
+            StageKind::SeqBlock(body) => {
+                // Type-walk the seq body in the enclosing scope (ADR-0019 pin b):
+                // chain statements + tail seed from the wire `cur` (pin a), so a
+                // headless chain resolves its literals against the seq input.
+                // Bind/Loop are ordinary statements. Value ty is left Unknown
+                // (like a fanout join): emission re-synthesizes the real ty.
+                for item in &body.items {
+                    if let BlockItem::Stmt(s) = item {
+                        match &s.kind {
+                            StmtKind::Chain(c) => self.chain_seeded(c, cur.clone(), scope),
+                            _ => self.stmt(s, scope),
+                        }
+                    }
+                }
+                if let Some(tail) = &body.tail {
+                    self.chain_seeded(tail, cur.clone(), scope);
+                }
+                WTy::Unknown
+            }
             StageKind::MapFold { op, params, body } => {
                 self.map_fold(*op, params, body, stage_span, &cur, scope)
             }
@@ -1291,6 +1310,23 @@ fn capture_chain(
                     }
                 }
             }
+            // Fanout branches and seq bodies lower in the enclosing scope (pin b /
+            // LD8), so a capture of an enclosing local inside one is still a
+            // capture (L1108), and a bind inside one registers a body-local.
+            // Descend into both, matching `effect_chain` (ADR-0019 §8.10);
+            // otherwise a real capture surfaces later as a misleading L1101.
+            StageKind::Fanout { branches, .. } => {
+                for b in branches {
+                    if let Some(c) = capture_chain(source, b, local, fn_sigs) {
+                        return Some(c);
+                    }
+                }
+            }
+            StageKind::SeqBlock(body) => {
+                if let Some(c) = capture_block(source, body, local, fn_sigs) {
+                    return Some(c);
+                }
+            }
             _ => {}
         }
     }
@@ -1381,6 +1417,7 @@ fn walk_chain_stages(source: &str, chain: &Chain, f: &mut impl FnMut(&Stage)) {
                     walk_chain_stages(source, b, f);
                 }
             }
+            StageKind::SeqBlock(body) => walk_block_stages(source, body, f),
             _ => {}
         }
     }

@@ -106,7 +106,7 @@ Flow-Core is the frozen subset the compiler implements through M5. Anything outs
 - **Functions:** `fn name(args) -> Ret { … }`, tuple-input calls `(a, b) -> f -> r;`, `ret` target. Call graph must be **acyclic** in Core (no recursion).
 - **Conditionals:** guard blocks with `-true->/-false->`, integer-literal guards, `-_->` default. **Pure branches only** in Core → Phi lowering (`category-ir.md` §4.4 / CHANGES §1.5).
 - **Loops:** labeled `loop { … -> loop; … -> ret; }` with scalar/tuple carried state, lowered to the trace construction of `category-ir.md` §4.5 under E1 semantics. `mut` permitted for loop-carried variables (lowered to trace state) and simple accumulation.
-- **Parallel fanout** `x -> { -> a; -> b; }` for **pure** branches; implicit join. `seq { … }` for ordering.
+- **Parallel fanout** `x -> { -> a; -> b; }` for **pure** branches; implicit join. `seq { … }` statement block for ordering (ADR-0019).
 - **Effects:** `print` (raw) and `println` (appends a newline) only, modeled in Kleisli(IO); legal only in sequential context (E2). One parameterized IR op `Print { newline }` (ADR-0015).
 - **Collections:** `map` and `fold` over fixed arrays with an **inline block** body (the block is not a first-class value); `zip` and `enumerate` builtins (pure natural transformations, ADR-0018).
 

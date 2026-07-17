@@ -1,6 +1,9 @@
 //! Pass 2 rejection & acceptance fixtures (DESIGN §7.3) — real `parse → lower →
-//! check`. Lower token-threads `Plain`/`Seq` fanout branches identically (CK1),
-//! so every source below *lowers clean*; check is what distinguishes them.
+//! check`. Effects are graph-invisible (CK1): a fanout branch carries no kind
+//! marker in the graph, and `seq` has **no IR footprint at all** (ADR-0019 pin
+//! d) — so print-in-fanout and print-in-seq seal to indistinguishable graphs,
+//! every source below *lowers clean*, and check (reading the tree's
+//! `Fanout`-vs-`SeqBlock` node distinction) is what distinguishes them.
 
 use flow_check::check;
 
@@ -88,8 +91,10 @@ fn main() {
     assert_eq!(codes(&diags), ["T0201", "T0201", "T0201"]);
 }
 
-/// CK5 pin: a `seq` block **inside** a `Plain` branch does NOT clear the illegal
-/// context — its prints are still T0201.
+/// C-check-4 (CK5, now a theorem — ADR-0019): a `seq` block **inside** a
+/// `Plain` branch does NOT clear the illegal context. This falls out of
+/// composition, not a conservative pin: an effectful `seq` in a branch is an
+/// effectful morphism in a branch (the sticky context), T0201 at each print.
 #[test]
 fn seq_inside_plain_branch_still_t0201() {
     let src = r#"
@@ -105,9 +110,91 @@ fn main() {
     assert_eq!(codes(&diags), ["T0201", "T0201", "T0201"]);
 }
 
-/// The `FanoutKind::Seq` same-node-kind trap: a **top-level** `seq { print;
-/// print }` is the legal effect site → CLEAN (the walk keys on the `kind`
-/// field, not the node kind).
+/// The OQ-C1 loosening (closed by ADR-0019, free by construction): a **pure**
+/// `seq` block inside a `Plain` branch → CLEAN. `effectful?(seq b) = ⋁
+/// effectful?(body)`, so a seq of pure calls is a pure composite; nothing in the
+/// branch is an effect site. (The old conservative CK5 pin would have needed a
+/// blanket rule; composition gives this for free.)
+#[test]
+fn pure_seq_inside_plain_branch_is_clean() {
+    let src = r#"
+fn square(x: i32) -> i32 { x * x -> ret; }
+fn double(x: i32) -> i32 { x * 2 -> ret; }
+fn main() {
+    6 -> {
+        -> seq { -> square -> sq; };
+        -> double -> db;
+    }
+    sq -> println;
+    db -> println;
+}
+"#;
+    assert!(check_src(src).is_empty());
+}
+
+/// The other nesting direction (WP3 matrix "nested fanout/seq mixes"): a
+/// `Fanout` **inside** a top-level `seq`. The seq is sequential (`in_fanout`
+/// stays false through the `SeqBlock` arm), but the inner `Fanout` node forces
+/// the illegal context unconditionally — both branch prints are T0201. Guards
+/// the WP3 `Fanout` unconditional-`true` line: a revert to a kind-gated open
+/// would silently pass this.
+#[test]
+fn fanout_inside_seq_is_t0201() {
+    let src = r#"
+fn main() {
+    6 -> seq {
+        -> { -> println; -> println; };
+    }
+}
+"#;
+    let diags = check_src(src);
+    assert_eq!(codes(&diags), ["T0201", "T0201"]);
+}
+
+/// Composition rule 2 ("OR over body") reaches the seq body's *statement forms*,
+/// not just its chains: a `mut i <- …` rebind and a `loop` both live in this
+/// seq. The seq sits inside a `Plain` branch, so the sticky context carries
+/// `in_fanout = true` through the `SeqBlock` arm, through the rebind, and into
+/// the loop body — the in-loop `println` is the lone effect site → one T0201.
+/// (The sibling branch is pure; `toplevel_seq_is_clean` is the sequential
+/// control for the same shape.)
+#[test]
+fn loop_and_rebind_inside_seq_in_branch_is_t0201() {
+    let src = r#"
+fn square(x: i32) -> i32 { x * x -> ret; }
+fn main() {
+    6 -> {
+        -> seq {
+            mut i: i32 <- 3;
+            loop {
+                (i > 0) -> {
+                    -true-> {
+                        i -> println;
+                        i - 1 -> i;
+                        -> loop;
+                    }
+                    -false-> i -> done;
+                }
+            }
+        };
+        -> square -> s;
+    }
+    s -> println;
+}
+"#;
+    let diags = check_src(src);
+    assert_eq!(codes(&diags), ["T0201"]);
+    assert!(
+        diags[0].message.contains("println"),
+        "the caught site is the in-loop println: {:?}",
+        diags[0]
+    );
+}
+
+/// A **top-level** `seq { print; print }` is the legal effect site → CLEAN.
+/// Since ADR-0019 `seq` is its own node (`StageKind::SeqBlock`), so the walk
+/// simply never opens the illegal context here (node-kind discrimination) — no
+/// same-node-kind trap to avoid.
 #[test]
 fn toplevel_seq_is_clean() {
     let src = r#"

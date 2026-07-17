@@ -63,3 +63,9 @@ fn tree_zip_demo() {
 fn tree_vector_add() {
     check_example("vector_add");
 }
+
+/// seq_demo (ADR-0019): `seq { … }` statement block parses with zero diags.
+#[test]
+fn tree_seq_demo() {
+    check_example("seq_demo");
+}

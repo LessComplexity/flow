@@ -1535,12 +1535,17 @@ impl<'a> Parser<'a> {
                 StageKind::LoopJump
             }
             TokenKind::KwSeq => {
-                let kw = self.bump().span;
-                let branches = self.parse_fanout_block();
-                StageKind::Fanout {
-                    kind: FanoutKind::Seq(kw),
-                    branches,
-                }
+                // ADR-0019: `seq { … }` is a statement block in stage position —
+                // the ordinary block production, not a fanout. Guard arms stay
+                // illegal in it (a clean guard token → stray-guard P0004).
+                self.bump(); // `seq`
+                let body = if self.at(TokenKind::LBrace) {
+                    self.parse_block()
+                } else {
+                    self.diag("P0001", self.cur_span(), "expected `{` for seq block");
+                    self.empty_block()
+                };
+                StageKind::SeqBlock(body)
             }
             TokenKind::KwVoid => {
                 // ⟦P0113⟧ `-> void { … }`.
@@ -1916,7 +1921,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A fanout block payload for `seq`/`void` stages: `'{' headless-chains '}'`.
+    /// A fanout block payload for the `void` stage: `'{' headless-chains '}'`.
+    /// (After ADR-0019 `seq` is a statement block, so `void` is the only caller.)
+    /// Non-chain statements (`x <- e` rebinds, `loop`s) do not belong in a fanout
+    /// block: each is flagged with **P0117** at its span, replacing the old silent
+    /// `filter_map` drop (ADR-0019 defect #3).
     fn parse_fanout_block(&mut self) -> Vec<Chain> {
         if !self.at(TokenKind::LBrace) {
             self.diag("P0001", self.cur_span(), "expected `{` for fanout block");
@@ -1930,21 +1939,43 @@ impl<'a> Parser<'a> {
         }
         self.bump(); // `{`
         // A seq/void fanout block holds headless chains, not guard arms.
-        let (items, _tail) = self.parse_block_body(false);
+        let (items, tail) = self.parse_block_body(false);
         if self.eat(TokenKind::RBrace).is_none() {
             self.diag("P0002", self.span(start, start + 1), "unclosed `{`");
         }
         self.leave();
-        items
-            .into_iter()
-            .filter_map(|i| match i {
+        let mut branches = Vec::new();
+        for item in items {
+            match item {
                 BlockItem::Stmt(Stmt {
                     kind: StmtKind::Chain(c),
                     ..
-                }) => Some(c),
-                _ => None,
-            })
-            .collect()
+                }) => branches.push(c),
+                // ⟦P0117⟧ a rebind / loop is not a fanout branch — flag, don't drop
+                // silently. Cooldown is irrelevant here: the cursor is settled past
+                // `}`, so `self.diag`'s cooldown would collapse every drop after the
+                // first into silence. Push directly, exactly as `check_arm_mixing`
+                // does, so *each* dropped statement is surfaced (ADR-0019 defect #3).
+                BlockItem::Stmt(Stmt {
+                    kind: StmtKind::Bind(_) | StmtKind::Loop(_),
+                    span,
+                }) => self.diagnostics.push(Diagnostic::error(
+                    "P0117",
+                    span,
+                    "only chains are fanout branches; `x <- e` / `loop` statements \
+                     do not belong in a fanout block",
+                )),
+                // Error stmts and stray/spaced arms already carry their own
+                // diagnostics (P0004/P0005/P0006), so they stay silent here.
+                _ => {}
+            }
+        }
+        // The final chain written without a trailing `;` is the block tail — it is a
+        // branch too (the `;` is optional), not a silent drop (ADR-0019 defect #3).
+        if let Some(c) = tail {
+            branches.push(c);
+        }
+        branches
     }
 
     // ======================================================================
@@ -2966,7 +2997,9 @@ fn stage_kind_extent(kind: &StageKind) -> Option<SourceLoc> {
                 widen(&mut acc, b.span);
             }
         }
-        StageKind::MapFold { body, .. } | StageKind::StmtBlock(body) => widen(&mut acc, body.span),
+        StageKind::MapFold { body, .. }
+        | StageKind::StmtBlock(body)
+        | StageKind::SeqBlock(body) => widen(&mut acc, body.span),
         _ => {}
     }
     acc
@@ -2980,6 +3013,7 @@ fn stage_is_block_form(kind: &StageKind) -> bool {
         StageKind::Guard(_)
             | StageKind::Fanout { .. }
             | StageKind::MapFold { .. }
+            | StageKind::SeqBlock(_)
             | StageKind::StmtBlock(_)
     )
 }

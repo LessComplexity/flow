@@ -8,7 +8,8 @@
 //!   full-value writer per Return (§3), so interp's "takes the writer that
 //!   fires" is vacuous-safe.
 //! - **Pass 2 — E2 effect legality** (T0201, `effects`): no effectful morphism
-//!   inside a parallel-fanout branch (§4), the `FanoutKind`-keyed walk.
+//!   inside a parallel-fanout branch (§4), the node-kind-keyed walk (`Fanout`
+//!   opens the illegal context; `SeqBlock` recurses sticky — ADR-0019).
 //!
 //! Determinism is sacred (C-check-5): no `HashMap` anywhere; exclusivity
 //! findings in `funcs()` insertion order, then effect findings in tree walk

@@ -55,6 +55,14 @@ fn golden_vector_add() {
     snap("vector_add", &example("vector_add"));
 }
 
+/// seq_demo (ADR-0019 example): pure fanout → join → `seq { … }` ordered prints.
+/// `seq` has no IR footprint (pin d) — the snapshot shows only the two `Println`
+/// primitives, ordered by the IoToken thread.
+#[test]
+fn golden_seq_demo() {
+    snap("seq_demo", &example("seq_demo"));
+}
+
 /// countdown (§9 non-example regression, golden h's surface): mut param carried,
 /// `U = (i32, IoToken)` (token last), `println` before the guard (ADR-0015),
 /// value-less ret exit carrying the post-print snapshot token, `Output` to Ret.
@@ -143,4 +151,68 @@ const FANOUT_PURE_OPS: &str = r#"fn main() {
 fn fanout_pure_collection_ops_lower_clean() {
     // lower_ok asserts seal-clean, validate-empty, and lint-clean (DESIGN §14).
     let _ = lower_ok(FANOUT_PURE_OPS);
+}
+
+// --- seq statement block (ADR-0019 / WP2) -----------------------------------
+
+/// Statement-form `seq` (ADR-0019 pin d): two ordered `println`s. `seq` has NO
+/// IR footprint — the snapshot shows only the two `Println` primitives, ordered
+/// solely by the IoToken thread (io → io → io → Output). This IS the ordering
+/// guarantee; there is no `seq` node.
+const SEQ_TWO_PRINTLNS: &str = r#"fn main() {
+    42 -> seq {
+        "first" -> println;
+        "second" -> println;
+    }
+}
+"#;
+
+#[test]
+fn golden_seq_two_printlns() {
+    snap("seq_two_printlns", SEQ_TWO_PRINTLNS);
+}
+
+/// `seq` mid-chain with a tail (ADR-0019 pin c): `data -> seq { … tail } -> f`.
+/// The headless statement `-> g -> a` seeds from the seq input (pin a); the
+/// seq's value is its tail chain's value (`a`), which feeds the following `-> g`.
+const SEQ_MID_CHAIN: &str = r#"fn g(x: i32) -> i32 { x -> ret; }
+fn main() {
+    5 -> seq { -> g -> a; a } -> g -> r;
+    r -> println;
+}
+"#;
+
+#[test]
+fn golden_seq_mid_chain() {
+    snap("seq_mid_chain", SEQ_MID_CHAIN);
+}
+
+/// `seq` in return position with a tail (ADR-0019 pin c): the tail value is the
+/// fn's return. Bindings inside the seq (`a`) live in the enclosing scope
+/// (pin b), and the tail `a` is written to `Output`/Ret.
+const SEQ_RETURN_TAIL: &str = r#"fn f(x: i32) -> i32 {
+    x -> seq { x * 2 -> a; a }
+}
+fn main() {}
+"#;
+
+#[test]
+fn golden_seq_return_tail() {
+    snap("seq_return_tail", SEQ_RETURN_TAIL);
+}
+
+/// `seq` stage immediately followed by an explicit `-> ret` marker in the same
+/// chain (WP2 fixer regression, finding F7). `SeqBlock` is deliberately NOT a
+/// `stage_writes_value`, so the seq value comes back **bare** and the following
+/// `-> ret` routes it through `emit_ret_existing` (DESIGN §8.10) — exactly like a
+/// pre-existing wire, never a double-write to Return. This snapshot pins that path.
+const SEQ_EXPLICIT_RET: &str = r#"fn f(x: i32) -> i32 {
+    x -> seq { x * 2 -> a; a } -> ret;
+}
+fn main() {}
+"#;
+
+#[test]
+fn golden_seq_explicit_ret() {
+    snap("seq_explicit_ret", SEQ_EXPLICIT_RET);
 }

@@ -125,7 +125,9 @@ fn check_chain(c: &Chain, parent: SourceLoc, len: u32) {
                 }
                 check_block(body, st.span, len)
             }
-            StageKind::StmtBlock(body) => check_block(body, st.span, len),
+            StageKind::StmtBlock(body) | StageKind::SeqBlock(body) => {
+                check_block(body, st.span, len)
+            }
             _ => {}
         }
     }
@@ -242,7 +244,7 @@ fn chain_bad(c: &Chain) -> bool {
             StageKind::Guard(arms) => arms
                 .iter()
                 .any(|a| a.discr == GuardDiscr::OutOfCore || payload_bad(&a.payload)),
-            StageKind::MapFold { body, .. } => block_bad(body),
+            StageKind::MapFold { body, .. } | StageKind::SeqBlock(body) => block_bad(body),
             StageKind::Bind { ty, .. } => ty.as_ref().map(ty_bad).unwrap_or(false),
             _ => false,
         })

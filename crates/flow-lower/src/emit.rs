@@ -14,8 +14,8 @@ use flow_ir::{
     Value,
 };
 use flow_syntax::{
-    self as syn, ArmPayload, BinOp, Block, BlockItem, Chain, CollOp, Expr, ExprKind, FanoutKind,
-    GuardArm, GuardDiscr, MemberField, Program, Stage, StageKind, Stmt, StmtKind, UnOp,
+    self as syn, ArmPayload, BinOp, Block, BlockItem, Chain, CollOp, Expr, ExprKind, GuardArm,
+    GuardDiscr, MemberField, Program, Stage, StageKind, Stmt, StmtKind, UnOp,
 };
 
 use crate::diag::{LCode, diag};
@@ -370,6 +370,7 @@ fn collect_chain<'a>(
                     collect_chain(b, out);
                 }
             }
+            StageKind::SeqBlock(body) => collect_block(body, out),
             _ => {}
         }
     }
@@ -620,7 +621,11 @@ impl Emitter<'_> {
                 self.emit_chain(fb, tail, ChainCtx::FnBodyReturn { effectful: true })?;
                 return Ok(());
             }
-            let v = self.emit_chain(fb, tail, ChainCtx::Statement)?;
+            // `RetValue` (not `Statement`): the tail is in return position, so a
+            // tail-less `seq` here draws L1611 (ADR-0019 pin c), not the outer
+            // L1306 fall-through. A valued tail is still handed back for the
+            // token-pack below (RetValue writes nothing to Ret itself).
+            let v = self.emit_chain(fb, tail, ChainCtx::RetValue)?;
             let value = v.ok_or_else(|| {
                 diag(
                     LCode::IncompleteReturn,
@@ -856,10 +861,10 @@ impl Emitter<'_> {
                 self.maybe_bind_next(fb, next, r);
                 Ok(Some(r))
             }
-            StageKind::Fanout { kind, branches } => {
+            StageKind::Fanout { branches, .. } => {
                 let wire =
                     cur.ok_or_else(|| diag(LCode::HeadlessChain, sp, "fanout with no wire"))?;
-                self.emit_fanout(fb, kind, branches, wire, next, ctx, sp)
+                self.emit_fanout(fb, branches, wire, next, ctx, sp)
             }
             StageKind::MapFold { op, params, body } => {
                 let wire =
@@ -868,6 +873,10 @@ impl Emitter<'_> {
                 let r = self.emit_map_fold(fb, *op, params, body, stage, wire, dest)?;
                 self.maybe_bind_next(fb, next, r);
                 Ok(Some(r))
+            }
+            StageKind::SeqBlock(body) => {
+                let wire = cur.ok_or_else(|| diag(LCode::HeadlessChain, sp, "seq with no wire"))?;
+                self.emit_seq_block(fb, body, wire, next, ctx, sp)
             }
             StageKind::StmtBlock(_) | StageKind::Error(_) => {
                 Err(diag(LCode::UncleanTree, sp, "unclean stage"))
@@ -2008,7 +2017,6 @@ impl Emitter<'_> {
     fn emit_fanout(
         &mut self,
         fb: &mut FnBuilder,
-        _kind: &FanoutKind,
         branches: &[Chain],
         source: ObjectId,
         next: Option<&Stage>,
@@ -2048,6 +2056,82 @@ impl Emitter<'_> {
             self.maybe_bind_next(fb, next, r);
             Ok(Some(r))
         }
+    }
+
+    // --- seq ----------------------------------------------------------------
+
+    /// `seq { … }` (ADR-0019): an ordered statement block in stage position.
+    /// `seq` has **no IR footprint** (pin d) — its ordering guarantee *is* the
+    /// token thread that source-order statement lowering already produces. The
+    /// statements lower in order **in the enclosing scope** (no child scope —
+    /// bindings escape, pin b); a headless chain statement seeds from the seq
+    /// input `wire` (pin a — the old bare-chain branch form still means the
+    /// same). The seq's value is its tail chain's value (pin c); a seq that
+    /// continues (a following stage, or return position) with no tail value is
+    /// L1611.
+    fn emit_seq_block(
+        &mut self,
+        fb: &mut FnBuilder,
+        block: &Block,
+        wire: ObjectId,
+        next: Option<&Stage>,
+        ctx: &ChainCtx,
+        sp: syn::SourceLoc,
+    ) -> ER<Option<ObjectId>> {
+        // ponytail: a chain statement routes through `emit_chain(HeadlessSeed)`
+        // (so a headless one seeds from the wire, pin a); Bind/Loop reuse
+        // `emit_stmt`. This is the one place seq diverges from `emit_block`'s
+        // non-seeding statement loop.
+        for item in &block.items {
+            if let BlockItem::Stmt(s) = item {
+                match &s.kind {
+                    StmtKind::Chain(c) => {
+                        self.emit_chain(fb, c, ChainCtx::HeadlessSeed(wire))?;
+                    }
+                    _ => self.emit_stmt(fb, s)?,
+                }
+            }
+        }
+        let continues = next.is_some()
+            || matches!(
+                ctx,
+                ChainCtx::FnBodyReturn { .. } | ChainCtx::BodyReturn | ChainCtx::RetValue
+            );
+        let Some(tail) = &block.tail else {
+            if continues {
+                return Err(diag(
+                    LCode::SeqNoValue,
+                    sp,
+                    "chain continues past `seq` but the block has no tail value",
+                ));
+            }
+            return Ok(None);
+        };
+        let value = self.emit_chain(fb, tail, ChainCtx::HeadlessSeed(wire))?;
+        if !continues {
+            return Ok(value);
+        }
+        let value = value.ok_or_else(|| {
+            diag(
+                LCode::SeqNoValue,
+                tail.span,
+                "`seq` tail produces no value but the chain continues",
+            )
+        })?;
+        // The seq value comes bare off its tail (the tail lowered under
+        // HeadlessSeed, so no lookahead `Dest::Ret` was taken). If the seq is the
+        // final stage of a return-position chain, write the value to Return here —
+        // the fn-body / map-fold-body tail handler ignores the returned wire and
+        // relies on the last stage having targeted Ret. Otherwise hand the value
+        // back as the wire: a following `-> ret` / bind / call stage consumes it
+        // exactly as a pre-existing wire (so `SeqBlock` is not a
+        // `stage_writes_value` — the `-> ret` marker routes through
+        // `emit_ret_existing`).
+        if next.is_none() && matches!(ctx, ChainCtx::FnBodyReturn { .. } | ChainCtx::BodyReturn) {
+            self.emit_ret_existing(fb, value, None, tail.span, ctx)?;
+            return Ok(None);
+        }
+        Ok(Some(value))
     }
 
     // --- map / fold ---------------------------------------------------------
@@ -3163,9 +3247,17 @@ enum BodyCtx {
 #[derive(Clone)]
 pub enum ChainCtx {
     Statement,
-    FnBodyReturn { effectful: bool },
+    FnBodyReturn {
+        effectful: bool,
+    },
     BodyReturn,
     HeadlessSeed(ObjectId),
+    /// A return-position tail whose value the caller consumes directly (the
+    /// effectful-B-present path packs it with the token — §8.1). Behaves like
+    /// `Statement` (the value is handed back, not written to Ret), but the chain
+    /// is in **return position**: a tail-less `seq` here demands a value it has
+    /// none of, so it draws L1611 rather than being a legal no-op (ADR-0019 pin c).
+    RetValue,
 }
 
 /// What a Phi-arm scan found (for the L1404/L1405/L1408 checks).
@@ -3259,6 +3351,17 @@ fn scan_chain(
                     }
                 }
             }
+            // Fanout branches and seq bodies lower in the enclosing scope (pin b /
+            // LD8), so an effect / `-> ret` / enclosing-mut rebind inside one is
+            // still an effect / ret / rebind in the Phi arm — it would be emitted
+            // unconditionally, exactly the hazard L1404/L1405/L1408 exist to catch.
+            // Descend into both, matching `effect_chain` (ADR-0019 §8.10).
+            StageKind::Fanout { branches, .. } => {
+                for b in branches {
+                    scan_chain(source, fn_sigs, b, scan);
+                }
+            }
+            StageKind::SeqBlock(body) => scan_block(source, fn_sigs, body, scan),
             _ => {}
         }
     }
@@ -3319,6 +3422,17 @@ fn collect_assigns_chain(source: &str, chain: &Chain, out: &mut Vec<String>) {
                     collect_assigns_payload(source, &arm.payload, out);
                 }
             }
+            // Fanout branches and seq bodies lower in the enclosing scope (pin b /
+            // LD8), so a rebind of an enclosing loop `mut` inside one is a
+            // loop-carried assignment — it MUST reach the carried-set discovery,
+            // else the state is dropped and the loop miscompiles. Descend into
+            // both, matching `effect_chain` (ADR-0019 §8.10).
+            StageKind::Fanout { branches, .. } => {
+                for b in branches {
+                    collect_assigns_chain(source, b, out);
+                }
+            }
+            StageKind::SeqBlock(body) => collect_loop_assigns(source, body, out),
             _ => {}
         }
     }
@@ -3390,6 +3504,7 @@ fn effect_chain(source: &str, chain: &Chain, fn_sigs: &BTreeMap<String, FnSig>, 
                     effect_chain(source, b, fn_sigs, found);
                 }
             }
+            StageKind::SeqBlock(body) => effect_block(source, body, fn_sigs, found),
             _ => {}
         }
     }

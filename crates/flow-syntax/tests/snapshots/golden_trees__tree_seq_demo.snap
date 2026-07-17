@@ -1,0 +1,64 @@
+---
+source: crates/flow-syntax/tests/golden_trees.rs
+expression: rendered
+---
+18:1 Program
+18:1   Fn ‹square›
+18:11     Param ‹x›
+18:14       Ty::Named ‹i32›
+18:22     ret_ty
+18:22       Ty::Named ‹i32›
+18:26     Block
+19:5       Stmt::Chain
+19:5         Chain
+19:5           head
+19:5             Binary *
+19:5               Var ‹x›
+19:9               Var ‹x›
+19:11           -> Ret
+22:1   Fn ‹double›
+22:11     Param ‹x›
+22:14       Ty::Named ‹i32›
+22:22     ret_ty
+22:22       Ty::Named ‹i32›
+22:26     Block
+23:5       Stmt::Chain
+23:5         Chain
+23:5           head
+23:5             Binary *
+23:5               Var ‹x›
+23:9               Int 2 ‹2›
+23:11           -> Ret
+26:1   Fn ‹main›
+26:11     Block
+27:5       Stmt::Chain
+27:5         Chain
+27:5           head
+27:5             Int 6 ‹6›
+27:7           -> Fanout plain (2)
+28:9             Chain
+28:9               -> Expr
+28:12                 Var ‹square›
+28:19               -> Expr
+28:22                 Var ‹sq›
+29:9             Chain
+29:9               -> Expr
+29:12                 Var ‹double›
+29:19               -> Expr
+29:22                 Var ‹db›
+32:5       tail
+32:5         Chain
+32:5           head
+32:5             Var ‹sq›
+32:8           -> SeqBlock
+32:15             Block
+33:9               Stmt::Chain
+33:9                 Chain
+33:9                   -> Expr
+33:12                     Var ‹println›
+34:9               Stmt::Chain
+34:9                 Chain
+34:9                   head
+34:9                     Var ‹db›
+34:12                   -> Expr
+34:15                     Var ‹println›

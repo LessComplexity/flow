@@ -445,13 +445,16 @@ impl<'a> TreeWriter<'a> {
             StageKind::Fanout { kind, branches } => {
                 let k = match kind {
                     FanoutKind::Plain => "plain",
-                    FanoutKind::Seq(_) => "seq",
                     FanoutKind::Void(_) => "void",
                 };
                 self.line(d, st.span, &format!("-> Fanout {k} ({})", branches.len()));
                 for b in branches {
                     self.chain(d + 1, b);
                 }
+            }
+            StageKind::SeqBlock(b) => {
+                self.line(d, st.span, "-> SeqBlock");
+                self.block(d + 1, b);
             }
             StageKind::MapFold { op, params, body } => {
                 let o = match op {

@@ -7,6 +7,7 @@ Increment map:
 
 - **§1–§11 (Session 02): the lexer.** Token model, lexical grammar, diagnostics, API, tests.
 - **§13–§21 (Session 03): the parser.** Two-tier grammar (ADR-0005), parse-tree data structures, P-code diagnostics + recovery (ADR-0008), `Ident {` law (ADR-0011), tests + bench. §12's pre-collected questions are resolved here.
+- **ADR-0019 (Session 11): `seq` is a statement block.** `StageKind::SeqBlock(Block)` replaces the `FanoutKind::Seq` summand; the `KwSeq` parser arm parses the ordinary block production; new **P0117** flags non-chain statements dropped from a fanout (`void`) block. Touches §14.3/§14.4 (seq out of the fanout classifier), §15 (shapes), §16 (P0117).
 
 ## Categorical model (Dat + Trn)
 
@@ -559,7 +560,7 @@ stage-body := 'ret' ('.' INT)?                  -- return target / projection (r
             | 'mut'? IDENT ':' type             -- typed binding stage  (5 -> x: i32)
             | 'mut' IDENT                       -- mut binding stage (untyped; uniformity)
             | op-shorthand
-            | 'seq' block                       -- branches classified like fanout
+            | 'seq' block                       -- ordered statement block → SeqBlock (ADR-0019, §14.4)
             | ⟦P0113⟧ 'void' block
             | ('map' | 'fold') op-block
             | block                             -- classified by content, §14.4
@@ -609,16 +610,34 @@ starts a general expression stage.
 
 ### 14.4 Block-stage classification
 
-A `{` in **stage position** (immediately after `->`, or after `seq`/`void`) parses as a
+A `{` in **stage position** (immediately after `->`, or after `void`) parses as a
 generic block, then classifies:
 
 | Content | Class | Notes |
 |---|---|---|
 | ≥1 item and all items guard arms | **GuardBlock** | arm order preserved (lowering: Phi slots) |
-| ≥1 item, all items headless chains, no tail | **Fanout** (plain / `seq` / `void`⟦P0113⟧) | branches = the chains |
+| ≥1 item, all items headless chains, no tail | **Fanout** (plain / `void`⟦P0113⟧) | branches = the chains |
 | anything else (headed statements and/or tail) | **StmtBlock** ⟦P0115⟧ | the user-guide §8.3 anonymous-block form; not in HANDOFF §4.1 |
 | arms mixed with non-arms | GuardBlock + **P0006** | the spaced-int case gets the bidirectional hint (§16) |
 | empty `{}` | Fanout(0) + **P0010** | |
+
+**`seq` is not classified (ADR-0019).** `seq { … }` does **not** go through this
+classifier: it parses directly to `StageKind::SeqBlock(Block)` via the ordinary block
+production (`parse_block`, `guard_ok=false`), so its body is an ordered *statement* block
+(chains — headed or headless — plus `x <- e` rebinds, `loop`s, and an optional tail),
+never a fanout. Consequences: the old bare-chain branch form (`seq { -> a; -> b; }`) still
+parses — the headless statements seed from the seq input in lowering (compat pin 3); a
+rebind or `loop` inside `seq` is a first-class statement (no more silent drop); an empty
+`seq { }` is clean (no P0010 — that is the `-> {}` fanout path); and guard arms are illegal
+in a `seq` body (a seq body is no guard block), rejected by whichever arm-form diagnostic
+fires: a **clean** guard token (`-true->`, `-7->`) is a stray guard → **P0004**; a
+*spaced* bool/default arm (`- true ->`) → **P0005** and a *pattern* arm (`-Some(x)->`) →
+**P0106** (both detected form-first in `classify_block_item`, independent of `guard_ok`);
+and any such arm mixed with a statement additionally draws **P0006** (arm/non-arm mixing).
+`seq` remains a block
+form for the optional-`;` termination rule (§14.3, W10). `void { … }` is the sole remaining
+form routed through `parse_fanout_block`, where a dropped non-chain statement now draws
+**P0117** (§16) instead of vanishing silently.
 
 Arm-payload braces and `map`/`fold` bodies are **not** classified — they are plain
 payload blocks (`-true-> { n -> print; … -> loop; }` legally mixes headed and headless
@@ -761,10 +780,11 @@ pub enum StageKind {
         // value-select, §4.4) vs Trace routing (arm reaches -> loop / exit, §4.5)
     Fanout { kind: FanoutKind, branches: Vec<Chain> }, // branches are headless chains
     MapFold { op: CollOp, params: Vec<Name>, body: Block },
+    SeqBlock(Block),                                   // `seq { … }` statement block (ADR-0019)
     StmtBlock(Block),                                  // ⟦P0115⟧ anonymous block stage — kept
     Error(SourceLoc),
 }
-pub enum FanoutKind { Plain, Seq(SourceLoc), Void(SourceLoc) }  // Void ⇒ P0113 reported
+pub enum FanoutKind { Plain, Void(SourceLoc) }  // Void ⇒ P0113 reported; seq is no longer a fanout kind (ADR-0019)
 pub enum CollOp { Map, Fold }
 
 pub struct GuardArm { pub discr: GuardDiscr, pub discr_span: SourceLoc,
@@ -814,6 +834,15 @@ Design notes:
 - `Call`/`Question`/`Dynamic`/`StmtBlock`/`LoopLabel::Custom`/`GuardDiscr::OutOfCore` are
   *rejected-but-kept* forms: the P-code is in `diagnostics`, the structure stays for
   span-precise downstream messages (C13).
+- **`SeqBlock(Block)`** (ADR-0019) is a **clean Core** form, not rejected-but-kept: the
+  `seq` keyword marks an ordered statement block in stage position. Its body is the
+  ordinary block production (`parse_block`, `guard_ok=false`) — statements (headed/headless
+  chains, `x <- e` rebinds, `loop`s) plus an optional tail chain. It is **not** a fanout:
+  the old bare-chain branch form parses unchanged (its headless statements now seed from the
+  seq input in lowering — compat pin 3), and rebinds/loops are first-class statements rather
+  than silently dropped. Guard arms are illegal in it: a clean guard token there is a stray
+  guard → P0004 (whose message — "outside a guard block" — fits, a seq body being no guard
+  block; ADR-0019 pins guard arms illegal in `seq`).
 
 ## 16. Parser diagnostics (P-codes) and recovery
 
@@ -857,6 +886,7 @@ end with the horizon, e.g. "out of Flow-Core (HANDOFF §4); planned for Core+1".
 | P0114 | collection operator beyond map/fold (`filter { x -> … }`) | op-block-shaped `Ident {` heuristic, §14.4 |
 | P0115 | anonymous block stage (`-> { expr } -> r`, user-guide §8.3) | parsed as StmtBlock; flagged to Sapir (scope reading) |
 | P0116 | destructuring op-block parameter (`map { (x, y) -> … }`) | |
+| P0117 | a non-chain statement (`x <- e` rebind, `loop { }`) inside a fanout block (`void { … }` — the sole `parse_fanout_block` caller after ADR-0019 moved `seq` to a statement block) | **structural, not out-of-Core**: only chains are fanout branches; each dropped statement draws P0117 at its span (replacing the old silent `filter_map` drop, ADR-0019 defect #3 — reported by direct push, not `self.diag`, so the cursor-settled cooldown cannot collapse the 2nd+ drops into silence). All chains are kept as branches, including a final branch written without a trailing `;` (the block tail, likewise no longer silently dropped); stray/spaced arms already carry P0004/P0005/P0006 and stay silent here |
 
 In expression position, generic-argument syntax (`channel<i32>` as an *expression*) is
 indistinguishable from comparisons and surfaces as P0007/P0001 — documented imprecision

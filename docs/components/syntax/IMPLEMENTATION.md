@@ -28,7 +28,7 @@ category.
 | `Block` | product `BlockItem* × Chain? × SourceLoc` | `crates/flow-syntax/src/ast.rs:Block` | built |
 | `Chain` | product `Expr? × Stage* × SourceLoc` (flat spine, C11) | `crates/flow-syntax/src/ast.rs:Chain` | built |
 | `Stage` | product (arrow_span × StageKind × span) | `crates/flow-syntax/src/ast.rs:Stage` | built |
-| `StageKind` | sum (Expr/Bind/Ret/LoopJump/OpShorthand/Guard/Fanout/MapFold/StmtBlock/Error) | `crates/flow-syntax/src/ast.rs:StageKind` | built |
+| `StageKind` | sum (Expr/Bind/Ret/LoopJump/OpShorthand/Guard/Fanout/MapFold/**SeqBlock**/StmtBlock/Error); `SeqBlock(Block)` is `seq { … }` (ADR-0019) | `crates/flow-syntax/src/ast.rs:StageKind` | built |
 | `Expr` | recursive product/sum tree, each node `× SourceLoc` | `crates/flow-syntax/src/ast.rs:Expr` | built |
 | `Ty` | product `TyKind × SourceLoc` (surface type, distinct from IR `Ty`) | `crates/flow-syntax/src/ast.rs:Ty` | built |
 | `LexOutput` | product `Token* × Diagnostic*` | `crates/flow-syntax/src/lexer.rs:LexOutput` | built |
@@ -103,3 +103,10 @@ vice versa.
   done right, not a morphism.
 - **`keyword_kind` and `SourceLoc::{new,empty_at,len,is_empty}`** are lexer-internal helpers
   with no model element; expected for a Level-B crate. Not divergences.
+- **`seq` statement block (ADR-0019).** The `KwSeq` arm of `crates/flow-syntax/src/parser.rs:Parser::parse_stage_body`
+  builds `StageKind::SeqBlock` via `Parser::parse_block` (the ordinary block production,
+  `guard_ok=false`), not `parse_fanout_block`. `FanoutKind` lost its `Seq` summand.
+  **P0117** is emitted in `crates/flow-syntax/src/parser.rs:Parser::parse_fanout_block`
+  (now `void`-only) for each dropped non-chain statement — a diagnostic, not a model
+  morphism (like the other P-codes, off the `Dat`/`Trn` tables). `SeqBlock` is a block form
+  in `stage_is_block_form` and widened in `stage_kind_extent` (both `parser.rs`).

@@ -6,13 +6,15 @@
 //!    [`ty_contains_token`] on `f`'s input **or** output object ty — the lowered
 //!    signature already *is* the transitive effect closure (ir §8 token
 //!    synthesis), so there is no fixpoint here (CK4).
-//! 2. **The context-sensitive walk.** `seq { … }` parses to the *same*
-//!    `StageKind::Fanout` node as a parallel fanout, differing only in its
-//!    `kind` field. The walk opens an illegal-effect context **only at
-//!    `FanoutKind::Plain`** stages; inside a `Plain` branch the context is
-//!    sticky through *every* nested construct — including inner `seq` blocks
-//!    (CK5, C-check-4) — and clears only on leaving the branch. In context, any
-//!    effectful morphism is a T0201 at its own site: a `print`/`println`
+//! 2. **The context-sensitive walk.** Since ADR-0019, `seq { … }` is its own
+//!    node (`StageKind::SeqBlock`), distinct from a parallel `Fanout`. The walk
+//!    discriminates on **node kind** (the natural reading): a `Fanout` opens an
+//!    illegal-effect context **unconditionally** (`FanoutKind` is `Plain |
+//!    Void`; `Void` is P0113-rejected at parse and unreachable here), and a
+//!    `SeqBlock` recurses with the context **unchanged (sticky)** — a top-level
+//!    `seq` never opens it, a `seq` inside a `Plain` branch does not clear it
+//!    (C-check-4). The context clears only on leaving the branch. In context,
+//!    any effectful morphism is a T0201 at its own site: a `print`/`println`
 //!    builtin use, or a **call** — a stage-position bare `Var` not shadowed by
 //!    an in-scope local (scope-aware, mirroring lower's effect walk) — whose
 //!    resolved function is `effectful?`. Map/fold bodies and guard arms cannot
@@ -22,8 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use flow_ir::{CategoryIr, ty_contains_token};
 use flow_syntax::{
-    self as syn, ArmPayload, Block, BlockItem, Chain, ExprKind, FanoutKind, Program, StageKind,
-    StmtKind,
+    self as syn, ArmPayload, Block, BlockItem, Chain, ExprKind, Program, StageKind, StmtKind,
 };
 
 use crate::diag::{TCode, diag};
@@ -163,16 +164,23 @@ impl Walk<'_> {
                         self.arm(&arm.payload, scope, in_fanout);
                     }
                 }
-                StageKind::Fanout { kind, branches } => {
-                    // The illegal-effect context opens at `Plain`; `Seq`/`Void`
-                    // propagate the current context unchanged (a top-level `seq`
-                    // never opens it; a `seq` inside a `Plain` branch does not
-                    // clear it — CK5). Branches lower in the enclosing scope (no
-                    // child scope), mirroring lower.
-                    let branch_ctx = in_fanout || matches!(kind, FanoutKind::Plain);
+                StageKind::Fanout { branches, .. } => {
+                    // A `Fanout` node opens the illegal-effect context
+                    // **unconditionally** (`FanoutKind` is `Plain | Void`;
+                    // `Void` is P0113-rejected at parse and unreachable behind
+                    // check's parse-clean precondition). Branches lower in the
+                    // enclosing scope (no child scope), mirroring lower.
                     for b in branches {
-                        self.chain(b, scope, branch_ctx);
+                        self.chain(b, scope, true);
                     }
+                }
+                StageKind::SeqBlock(body) => {
+                    // `seq` recurses with **sticky** context (C-check-4): a
+                    // top-level `seq` never opens the illegal context, a `seq`
+                    // inside a `Plain` branch does not clear it (its composite is
+                    // effectful iff its body is — ADR-0019). Statements + tail
+                    // lower in the enclosing scope (bindings escape — pin b).
+                    self.block(body, scope, in_fanout);
                 }
                 // Ret/LoopJump/OpShorthand carry no call site; map/fold bodies and
                 // anonymous stmt-blocks are token-free / rejected upstream (§4).

@@ -552,16 +552,24 @@ data -> {
 
 ### 5.2 Forced sequential execution — `seq`
 
-When ordering matters (logging, I/O, mutation), wrap the fanout in `seq`:
+When ordering matters (logging, I/O, mutation), use a `seq` statement block. The
+body is an ordinary block of statements; source order is the guaranteed order:
 
 ```flow
 data -> seq {
-    -> { "Step 1" -> log };
-    -> { "Step 2" -> log };
-    -> { "Step 3" -> log };
+    "Step 1" -> log;
+    "Step 2" -> log;
+    "Step 3" -> log;
 }
 // output order guaranteed: 1, 2, 3
 ```
+
+> **Corrected per ADR-0019 — see docs/spec/ERRATA.md (LC-5).** `seq { … }` is a
+> statement block in stage position, not a fanout of anonymous blocks. Its body is
+> the ordinary block production (chains, `x <- e` rebinds, `loop`s, optional tail);
+> headless statements seed from the seq input; bindings escape to the enclosing
+> scope; the ordering guarantee is the effect-token thread, so `seq` carries no IR
+> node of its own.
 
 ### 5.3 Execution models (`executor`)
 

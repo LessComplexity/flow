@@ -75,3 +75,9 @@ fn golden_zip_demo() {
 fn golden_vector_add() {
     check_example("vector_add");
 }
+
+/// seq_demo (ADR-0019): the `seq { … }` statement-block showcase.
+#[test]
+fn golden_seq_demo() {
+    check_example("seq_demo");
+}

@@ -109,6 +109,15 @@ fn golden_countdown() {
     assert_eq!(run(&ir, BUDGET).output, "5\n4\n3\n2\n1\n0\n");
 }
 
+#[test]
+fn golden_seq_demo() {
+    // ADR-0019: pure fanout (sq=36, db=12) then a `seq` block prints them in a
+    // guaranteed order. The no-IR-delta claim end to end — `seq` produces no
+    // node; the IoToken thread orders the two `Println`s.
+    let ir = build(&example("seq_demo"));
+    assert_eq!(run(&ir, BUDGET).output, "36\n12\n");
+}
+
 // --- by-execution value contracts (interp DESIGN §11.2) -------------------
 
 fn func_named(ir: &CategoryIr, name: &str) -> FuncId {
@@ -121,6 +130,21 @@ fn func_named(ir: &CategoryIr, name: &str) -> FuncId {
 #[test]
 fn sum_to_n_value_contract() {
     let ir = build(&example("sum_to_n"));
+    let f = func_named(&ir, "sum_to_n");
+    let out = flow_interp::eval_call(&ir, f, RValue::Scalar(Value::I32(10)), BUDGET);
+    assert_eq!(out, Outcome::Done(RValue::Scalar(Value::I32(55))));
+}
+
+/// WP2 fixer regression (flow-lower finding F3): a loop-carried `mut` reassigned
+/// inside a `seq` (or a fanout branch) in the loop body must still be threaded
+/// through the loop merge. The carried-set discovery descends into both
+/// containers (ADR-0019 §8.10); without the descent `acc` was dropped, the loop
+/// recomputed it from the constant 0 each iteration, and `sum_to_n(10)` yielded 0.
+#[test]
+fn sum_to_n_seq_wrapped_reassign_value_contract() {
+    // `acc + i -> acc` wrapped in a `seq` inside the loop body.
+    let src = "fn sum_to_n(n: i32) -> i32 {\n    mut i: i32 <- 1;\n    mut acc: i32 <- 0;\n    loop {\n        (i <= n) -> {\n            -true-> {\n                acc -> seq { acc + i -> acc; };\n                i + 1 -> i;\n                -> loop;\n            }\n            -false-> acc -> ret;\n        }\n    }\n}\nfn main() {}\n";
+    let ir = build(src);
     let f = func_named(&ir, "sum_to_n");
     let out = flow_interp::eval_call(&ir, f, RValue::Scalar(Value::I32(10)), BUDGET);
     assert_eq!(out, Outcome::Done(RValue::Scalar(Value::I32(55))));

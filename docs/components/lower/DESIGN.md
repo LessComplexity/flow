@@ -138,6 +138,7 @@ each is realized in code at the cited seam.
 | `enumerate` (builtin) | `A^n → Enumerate` | Partial | single-source `Enumerate` → `(i32×A)^n`; L1609/L1610 (§8.9; ADR-0018) |
 | `guard` | `Guard → Phi` | Partial | pure arms → right-folded `Phi` over `Tuple[T,T,Bool]`; routing arms → loop route |
 | `loop` | `Loop → inline cycle` | Partial | `LoopMerge` + `LoopEnter`/`LoopBack`/`LoopExit`; no stored `Trace` (D3) |
+| `seq` | `SeqBlock → statement thread` | Partial | ADR-0019: **no IR footprint** — statements lower in-scope in source order, tail = value; ordering *is* the token thread (§8.10); L1611 if it continues with no tail |
 | `seal` (Pass E) | `Builder ⇀ CategoryIr` | Partial | freeze with `entry=main`; post-check failure ⇒ L1901 (lower bug) (`emit.rs` tail) |
 | `ir_err` | `IrError → Diagnostic` | Total | builder = "second line of type checking"; maps to L12xx or L1901 (LD12) |
 | `feeds` (TT/EF/TI → BU) | `TypeTable × Effects × TypeInfo → IrBuilder` | Total | data availability: these three Dat objects are all inputs consumed by the Pass C/D2/D3 emission block; no copying — FRAMEWORK §7.1 degenerate case |
@@ -393,6 +394,7 @@ available (§10). Catalogue (each gets ≥1 rejection test, §14):
 | L1608 | ZipSizeMismatch | the two `zip` arrays differ in length (ADR-0018) |
 | L1609 | EnumerateNonArray | `enumerate` applied to a non-array wire (ADR-0018) |
 | L1610 | EnumerateOverflow | `enumerate` array length > `i32::MAX` — the index `i32` could not name every element (F4/SND-3 precedent; ADR-0018) |
+| L1611 | SeqNoValue | a `seq { … }` whose chain **continues** past the stage (a following stage, or return position) but whose block has **no tail value** (ADR-0019 pin c; §8.10). Its own code, not L1305: a fanout demands a value from *every* branch to join, a seq demands *one* tail — distinct conditions, distinct messages (the L1305 name/trigger are fanout-specific) |
 | L1901 | Internal | a builder call failed during emission (lower bug; message embeds the `IrError` debug form) |
 
 ## 5. Pass A — type table
@@ -601,6 +603,7 @@ flagship shape).
 | `Guard(arms)` | §8.4 |
 | `Fanout` | §8.6 |
 | `MapFold` | §8.7 |
+| `SeqBlock` | §8.10 (statements in enclosing scope, tail = value, no IR footprint; L1611 continues-no-tail) |
 | `StmtBlock`/`Error` | L1000 |
 
 Statement-level headless chains: `-> ret;` (a no-value return marker: legal in
@@ -722,7 +725,7 @@ through both merges (the inner `LoopEnter`'s source lands inside the merged SCC 
 third route consumer (I4 sanctions exactly two). Lifting these needs an flow-ir ADR
 (OQ7).
 
-### 8.6 Fanout (`Plain` / `Seq`)
+### 8.6 Fanout (`Plain`)
 
 Branches are headless chains seeded with the fanout source; each lowers in the
 **enclosing** scope (LD8). No join object is emitted (golden f1: two slot-writes, no
@@ -730,11 +733,12 @@ join). If the chain *continues* past the fanout stage (corpus-backed: user-guide
 chains a fanout's result onward as a tuple), the join is materialized as
 `pack(branch tail values in branch order)` → `cur` (golden f2); a value-less branch then
 draws L1305, and a **single-branch** fanout's join is the branch's tail value itself —
-no pack (`pack` of one is `SingletonTuple`; review FAN-1). `Seq` lowers identically (LD14): the flavor exists for E2's *surface* rule
-— effects either way thread the **current token in branch source order**, which makes
-effect order dataflow (TL-7) regardless of flavor; rejecting effectful `Plain` branches
-is flow-check's E2 obligation (ADR-0013 consequences: "flow-check still owes the surface
-seq-context rule"). `Void` is P0113 (never reaches lower; L1000 defensively).
+no pack (`pack` of one is `SingletonTuple`; review FAN-1). Effects thread the **current
+token in branch source order**, which makes effect order dataflow (TL-7); rejecting
+effectful `Plain` branches is flow-check's E2 obligation (ADR-0013 consequences:
+"flow-check still owes the surface seq-context rule"). Since ADR-0019 `FanoutKind` is
+`Plain | Void` — the `Seq` summand migrated to the `SeqBlock` node (§8.10). `Void` is
+P0113 (never reaches lower; L1000 defensively).
 
 ### 8.7 map / fold (LC-2, ADR-0009)
 
@@ -781,6 +785,61 @@ map/fold bodies.
   loc)`; the builder re-derives the bound defensively (LD12).
 - Owner side: the §8.1 lookahead Dest names the result (`-> c: [i32; 4]`). Both re-checks in
   the builder are an **independent** re-derivation, never shared with emission's checks.
+
+### 8.10 seq statement block (ADR-0019)
+
+`data -> seq { … }` is an **ordered statement block in stage position**, not a fanout
+flavor (ADR-0019 split the node off `FanoutKind::Seq`). `seq` has **no IR footprint**
+(pin d): its ordering guarantee *is* the token thread that source-order statement
+lowering already produces (§8.8 / TL-7) — the dump of a `seq { "a" -> println; "b" ->
+println }` shows only the two `Println` primitives, threaded io → io → io, with no seq
+node (golden `seq_two_printlns`). Emission (`emit_seq_block`, one arm off the §8.3
+stage dispatch, next to `Fanout`):
+
+- **Statements lower in order in the enclosing scope** (no child scope — bindings
+  escape, pin b, exactly the `fanout.flow`/LD8 idiom). A **headless chain statement
+  seeds `cur := seq input`** (pin a — the old bare-chain branch form parses unchanged
+  and means the same); `Bind`/`Loop` statements lower as ordinary statements (`emit_stmt`).
+  This chain-seeding is the one place seq diverges from `emit_block`'s non-seeding
+  statement loop, so it does not call `emit_block` directly.
+- **The seq's value is its tail chain's value** (pin c), the tail lowered via
+  `ChainCtx::HeadlessSeed(input)`. A seq whose chain **continues** past the stage (a
+  following stage, or return position) with **no tail value** draws **L1611** (no more
+  silent pack-of-tails — the old `FanoutKind::Seq` in body-return position packed branch
+  tails into a baffling join). In statement position with no continuation, a tail-less
+  seq is a legal no-op (`empty seq { }`). The return-position guarantee holds **uniformly**
+  for pure *and* effectful fns: an effectful-B-present body-tail whose value is packed with
+  the token lowers under `ChainCtx::RetValue` (a return-position context that still hands
+  the value back for the pack), so a tail-less seq there also draws L1611 — not the outer
+  L1306 it fell through to before the WP2 fixer pass.
+- The seq value comes **bare** off its tail (the tail took no lookahead `Dest::Ret`, since
+  it lowered under `HeadlessSeed`), so `SeqBlock` is **not** a `stage_writes_value` — a
+  following `-> ret` marker routes the value through `emit_ret_existing` exactly as a
+  pre-existing wire, and a seq that *is* the final stage of a return-position chain
+  (`FnBodyReturn`/`BodyReturn`) writes its value to Return itself (the tail handler
+  ignores the returned wire). Value → next `-> f`/bind consumes it, unchanged.
+- **Effects:** `seq` is the E2 legal effect site (pin e). A `print` inside a seq **does**
+  make the owner effectful (the effects walk, `effects.rs`, recurses the seq body in the
+  enclosing scope — unlike a map/fold body, LD24). An **effectful seq inside a `Plain`
+  (parallel) fanout** opens no escape hatch: an effectful branch that joins produces no
+  value → the existing **L1305**, exactly as a bare effectful branch (parity test
+  `effectful_seq_in_fanout_join_rejected`). The E2 *surface* rejection of a pure-position
+  effect stays flow-check's obligation (§1).
+- **Every** block-walking sub-pass descends into **both** `Fanout` branches and `SeqBlock`
+  bodies — they are enclosing-scope sub-chains (pin b / LD8), so anything inside one is
+  subject to the same rule as if it sat directly in the arm/body: the D2 map/fold collector
+  (`collect_chain`), the D1 type walk (`stage`), the loop-body effect detectors
+  (`effect_chain`, `walk_chain_stages`), **and** the three that gate on unconditional
+  execution — the Phi-arm scan (`scan_chain`: an effect/`-> ret`/enclosing-`mut` rebind
+  inside a fanout/seq in a Phi arm still fires unconditionally → L1404/L1405/L1408), the
+  loop-assign collector (`collect_assigns_chain`: a rebind inside a fanout/seq in a loop
+  body is loop-carried, so it must reach the carried-set discovery or the loop drops state
+  and miscompiles), and the map/fold capture check (`capture_chain`: a capture inside one
+  is still L1108, not a misleading L1101). The earlier "do not descend, matching the
+  sibling" parity was a **bug**: for the phi-scan and loop-assign collector it produced
+  validate-clean miscompiles (effect hoisted out of a Phi; loop-carried state silently
+  dropped), so the parity now runs the other way — descend into both, matching
+  `effect_chain`.
 
 ## 9. Worked contracts (what the goldens will show)
 
@@ -919,7 +978,7 @@ clean tree + bounded recursion + fail-fast emission ⇒ never panics/hangs.
 | LD11 | Bodies = `{owner}::{map\|fold}@{i}` fns; no captures (L1108); lower enforces arity (supersedes W19's deferral) | blocks aren't closures (LC-2); arity is structural — without it there is no lowering to hand check |
 | LD12 | Typing pass collects errors; emission fail-fast; builder errors = L1901 internal — D1 owns every user-reachable completeness check (L1306/L1209/L1010) so L1901 stays internal | half-built graphs are useless; duplicate checking avoided — the builder is the second line, not the diagnostic surface (RET-2/CP-3/SF-8/TY-1) |
 | LD13 | Clean-tree precondition (J3); L1000 defensively | parser owns P-codes; lower never re-diagnoses surface syntax |
-| LD14 | `Seq` lowers like `Plain`; token threads branches in source order; E2 surface rule deferred to check | token linearity already serializes effects structurally (TL-7); seq-ness needs no IR representation |
+| LD14 | `seq` (ADR-0019) is `StageKind::SeqBlock`, **not** a `FanoutKind`: an ordered statement block (§8.10), statements in the enclosing scope, headless chains seeded from the seq input, tail = value (L1611 if it continues with no tail), no IR footprint; token thread orders it; E2 surface rule deferred to check | token linearity already serializes effects structurally (TL-7); seq-ness needs no IR representation — the `Seq` summand's old pack-of-tails is gone (`FanoutKind` is now `Plain \| Void`) |
 | LD15 | General-expression stages rejected (L1302) | E4/UG §3.6 define only the parse; no wire-discard semantics exists in the corpus (OQ2) |
 | LD16 | Lower owns L1xxx within the `L` namespace | next-session's "L-code" vocabulary; lexer occupies L0xxx |
 | LD17 | Object names = surface-bound identifiers only; goldens are shape-contracts not label-contracts | ir goldens' `init`/`next`/`cond` names were hand-built cosmetics |
@@ -1040,7 +1099,7 @@ In `-true-> { i + 1 -> i; -> loop; }` (§4.5) and the array-sum body `total + he
 `data -> { -> process1 -> r1; -> process2 -> r2; -> process3 -> r3; }` (user-guide §3.3) is a product/parallel fanout. The tree must carry each branch (each beginning with a bare `->` taking the fanned-out value as source) and the fact that there is an **implicit join at the closing brace**. "The implicit join at the closing brace waits for all branches to complete" (user-guide §3.3). Lowering: branches have disjoint successor sets and become bifunctor-product images (§4.5 visual; §9.5 "if the two morphisms appear in the image of a bifunctor `(f × g)` ... independent ... The IR records which morphisms came from such bifunctor images"). For the memory model the join point IS the free-frontier ("the join point of a fanout *is* the frontier synchronization point", §10), so the tree must make the block boundary recoverable. Ref: user-guide §3.3/§4.5, §9.5, §10.
 
 16. **`seq` blocks — the sequencing keyword must be preserved as a distinct fanout flavor.**
-`data -> seq { ... }` (user-guide §5.2) forces sequential execution. The tree must distinguish a `seq`-block from a plain fanout block, because effectful branches (`print`) are "**Not permitted in parallel fanout** — must `seq`" (user-guide §5.4; ERRATA E2). The effect checker (built per E2) depends on knowing a fanout is `seq`-wrapped. Ref: user-guide §5.2/§5.4, ERRATA E2.
+`data -> seq { ... }` (user-guide §5.2) forces sequential execution. The tree must distinguish a `seq`-block from a plain fanout block, because effectful branches (`print`) are "**Not permitted in parallel fanout** — must `seq`" (user-guide §5.4; ERRATA E2). The effect checker (built per E2) depends on knowing a fanout is `seq`-wrapped. Ref: user-guide §5.2/§5.4, ERRATA E2. **[Superseded by ADR-0019: `seq` is **not** a fanout flavor but its own `StageKind::SeqBlock` — an ordered statement block (§8.10). `FanoutKind` shrank to `Plain \| Void`; effect legality of a `seq` block is a composite morphism (E2 by ADR-0003), CK5 a theorem, OQ-C1 closed.]**
 
 17. **`void` blocks — the discard keyword must be preserved as a distinct fanout flavor.**
 `data -> void { ... }` introduces "a fanout whose results are discarded ... for side-effects-only branches" (user-guide §3.3). The tree must mark `void` distinctly; lowering maps discarded results to the terminal object `1`/`drop` (§2.4 "Terminal object `1` ... This is `drop` or 'discard the value.'"). Ref: user-guide §3.3, §2.4.

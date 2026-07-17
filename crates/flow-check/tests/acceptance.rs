@@ -86,6 +86,13 @@ fn accept_calc() {
     assert_clean("calc");
 }
 
+/// seq_demo (ADR-0019): effectful `println`s inside a top-level `seq` block are
+/// legal (sticky context stays sequential — the seq never opens the E2 context).
+#[test]
+fn accept_seq_demo() {
+    assert_clean("seq_demo");
+}
+
 // --- determinism (DESIGN §7.5) --------------------------------------------
 
 /// A program that violates E2 twice (two `print`s in a `Plain` fanout branch),

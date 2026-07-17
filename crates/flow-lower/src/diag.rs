@@ -71,6 +71,7 @@ pub enum LCode {
     ZipSizeMismatch,       // L1608
     EnumerateNonArray,     // L1609
     EnumerateOverflow,     // L1610
+    SeqNoValue,            // L1611
     Internal,              // L1901
 }
 
@@ -136,6 +137,7 @@ impl LCode {
             LCode::ZipSizeMismatch => "L1608",
             LCode::EnumerateNonArray => "L1609",
             LCode::EnumerateOverflow => "L1610",
+            LCode::SeqNoValue => "L1611",
             LCode::Internal => "L1901",
         }
     }

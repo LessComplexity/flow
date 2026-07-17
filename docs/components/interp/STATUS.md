@@ -1,15 +1,15 @@
 # Component: interp
 
 Status: tested
-Last updated: 2026-06-15 · Session 08
+Last updated: 2026-07-17 · Session 11
 Spec references: interp/DESIGN.md (increment 1, M1) · ADR-0002 (E1 fueled/Elgot loop semantics) · **ADR-0016 (guard-first loop branch evaluation)** · ADR-0013 (traps: int div/mod-zero, OOB Index; float IEEE) · ADR-0015 (print/println) · ir/DESIGN §5.1/§7/§8/§13 · category-ir.md §2.6–2.8/§11.4.
 Depends on: ir (only — borrowed `&CategoryIr`, never mutated; + `slotmap` for the env/buffer `SecondaryMap`s). Tests also use lower + syntax (dev-deps) for the `parse→lower→run` pipeline.
 Depended on by: rewrite, backend-llvm, backend-cuda, backend-verilog, cli (the differential-test oracle).
 
 ## What works
 
-The fueled reference interpreter (THE ORACLE) — `parse → lower → run` for all eight `examples/*.flow` produces the exact pinned output:
-`abs "7\n"` · `sum_to_n "55\n"` · `pipeline "f(10) = 25\n"` · `fanout "36\n12\n"` · `fir "5.375\n"` · `sepia "4080\n"` · `zip_demo "c[0]  = 100\nc[15] = 115\ne[0]  = 0\ne[15] = 30\n"` (ADR-0018 zip + enumerate) · `vector_add "c[0]  = 100\nc[15] = 115\nsum   = 1720\n"`. Plus the committed `countdown` fixture → `"5\n4\n3\n2\n1\n0\n"`.
+The fueled reference interpreter (THE ORACLE) — `parse → lower → run` for all nine `examples/*.flow` produces the exact pinned output:
+`abs "7\n"` · `sum_to_n "55\n"` · `pipeline "f(10) = 25\n"` · `fanout "36\n12\n"` · `fir "5.375\n"` · `sepia "4080\n"` · `zip_demo "c[0]  = 100\nc[15] = 115\ne[0]  = 0\ne[15] = 30\n"` (ADR-0018 zip + enumerate) · `vector_add "c[0]  = 100\nc[15] = 115\nsum   = 1720\n"` · `seq_demo "36\n12\n"` (ADR-0019 — no interp code change, pin d: `seq` has no IR footprint, ordering is the token thread). Plus the committed `countdown` fixture → `"5\n4\n3\n2\n1\n0\n"`.
 
 - **Value domain (§1):** `RValue = Scalar(flow_ir::Value) | Tuple | Struct | Array | Token(String) | Unit`; `Outcome = Done | Diverged | Trapped(TrapKind)`; internal `Result<RValue, Abort>` with `?`, lifted to `Outcome` at the boundary.
 - **Evaluator (§2/§3):** env (`SecondaryMap<ObjectId, RValue>`) + topo walk; per-slot `Pair` product assembly into Tuple/Struct/Array; all Core ops (arith at operand width, Div/Mod int-trap & float-IEEE, Neg fneg, comparisons with **IEEE NaN ordering**, And/Or/Not, Phi, Proj, Call, Map, Fold, Index, **Zip**, **Enumerate**, Print{newline}, Output).
@@ -35,7 +35,7 @@ The fueled reference interpreter (THE ORACLE) — `parse → lower → run` for 
 
 ## Test coverage (golden / property / differential / skipped+why)
 
-32 tests, all green. `tests/acceptance.rs` (12): eight example goldens (incl. zip_demo + vector_add, ADR-0018) + countdown + `eval_call(sum_to_n,10)==Done(I32(55))` + `fir4(...)==Done(F32(5.375))` + sepia-input-ty sanity. `tests/traps.rs` (8): int div/mod-0, Index `i=n`/`i=-1`, float `1.0/0.0=Done`, **`nan_ordering_is_ieee`** (Lt/Gt/Le/Ge/Eq false, Neq true on NaN), in-bounds/nonzero sanity. `tests/divergence.rs` (3): budget boundary on `sum_to_n` + constant-`true`-guard loop ⇒ `Diverged` (returns). `tests/determinism.rs` (6): each example byte-identical across two runs. `tests/zip_enumerate.rs` (3, ADR-0018): zip'd add value contract (`c[0]=100`, `c[15]=115`), enumerate `i32` index pairing, enumerate-under-fanout — IR built directly via the `flow-ir` builder (lower's builtin routing is WP2, landing concurrently). Differential (backend-vs-oracle) lands with the backends (P5+).
+34 tests, all green. `tests/acceptance.rs` (14): nine example goldens (incl. zip_demo + vector_add ADR-0018, seq_demo ADR-0019) + countdown + `eval_call(sum_to_n,10)==Done(I32(55))` + `fir4(...)==Done(F32(5.375))` + sepia-input-ty sanity + `sum_to_n_seq_wrapped_reassign_value_contract` (ADR-0019 pin b: a loop-carried `mut` reassigned inside a `seq` still threads the loop merge — oracle-pinned to 55; the S11 fix for lower's carried-set walker). `tests/traps.rs` (8): int div/mod-0, Index `i=n`/`i=-1`, float `1.0/0.0=Done`, **`nan_ordering_is_ieee`** (Lt/Gt/Le/Ge/Eq false, Neq true on NaN), in-bounds/nonzero sanity. `tests/divergence.rs` (3): budget boundary on `sum_to_n` + constant-`true`-guard loop ⇒ `Diverged` (returns). `tests/determinism.rs` (6): each example byte-identical across two runs. `tests/zip_enumerate.rs` (3, ADR-0018): zip'd add value contract (`c[0]=100`, `c[15]=115`), enumerate `i32` index pairing, enumerate-under-fanout — IR built directly via the `flow-ir` builder (lower's builtin routing is WP2, landing concurrently). Differential (backend-vs-oracle) lands with the backends (P5+).
 
 ## Performance notes (numbers + bench name + date; regressions flagged)
 
@@ -45,4 +45,4 @@ The fueled reference interpreter (THE ORACLE) — `parse → lower → run` for 
 
 - IN6 float ÷0 (IEEE, no trap) still wants the one-line ADR-0013 amendment (integer-trap / float-IEEE) before it is normative across backends.
 - Multi-merge / multi-back-or-exit loop SCCs are out of M1 (§4 scope); lifting waits on lower OQ7.
-- `flow-check` owes the §9 assumptions (Return exclusivity IN3, `seq` effect legality E2, full typing/E3).
+- ~~`flow-check` owes the §9 assumptions (Return exclusivity IN3, `seq` effect legality E2, full typing/E3)~~ — discharged: T0101 + T0201 delivered S10; E2 walk rebased node-kind (ADR-0019, S11); typing at the validate boundary; E3 vacuous-by-proof.

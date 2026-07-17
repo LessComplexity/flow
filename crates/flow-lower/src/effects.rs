@@ -201,6 +201,13 @@ impl NameWalk<'_> {
                         self.chain(b, scope);
                     }
                 }
+                StageKind::SeqBlock(body) => {
+                    // The seq body lowers in the enclosing scope (ADR-0019 pin b —
+                    // bindings escape). A `print` inside DOES make the owner
+                    // effectful: `seq` is the E2 legal effect site (pin e), unlike
+                    // a map/fold body (LD24). Reuse the block walker directly.
+                    self.block(body, scope);
+                }
                 StageKind::MapFold { params, body, .. } => {
                     // Block body: calls inside count as owner→callee edges (LD24);
                     // direct print inside is per-block (L1605), NOT owner-effectful.

@@ -1,0 +1,23 @@
+---
+source: crates/flow-lower/tests/golden.rs
+expression: dump
+---
+flowchart LR
+    subgraph f0["fn main"]
+        f0o0(("io"))
+        f0o1(("ret: io"))
+        f0o2(("42: i32"))
+        f0o3(("#quot;first#quot;: str"))
+        f0o4(("(io, str)"))
+        f0o5(("io"))
+        f0o6(("#quot;second#quot;: str"))
+        f0o7(("(io, str)"))
+        f0o8(("io"))
+        f0o0 -- "Pair 0/2" --> f0o4
+        f0o3 -- "Pair 1/2" --> f0o4
+        f0o4 -- "Println" --> f0o5
+        f0o5 -- "Pair 0/2" --> f0o7
+        f0o6 -- "Pair 1/2" --> f0o7
+        f0o7 -- "Println" --> f0o8
+        f0o8 -- "Output" --> f0o1
+    end
