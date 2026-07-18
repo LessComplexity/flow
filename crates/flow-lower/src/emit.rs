@@ -583,6 +583,52 @@ impl Emitter<'_> {
                 Ok(())
             }
             StmtKind::Bind(bnd) => {
+                // `c[i] <- v` (ADR-0021 §2 wiring a): an *indexed* bind is a
+                // rebind, never a fresh shadow. Resolve `c` as a rebindable local
+                // (unbound → L1101, loop-poisoned → L1107, non-`mut` → L1104),
+                // emit `Update(cur, i, v)`, then rebind the symbol to the fresh
+                // array via the same `rebind()` a bare-Var chain rebind uses. Pure
+                // — the builder threads no token (L1204/L1201 surface via `ir_err`
+                // for a non-array target / element-ty clash; no new L-code needed).
+                if let Some(idx_expr) = &bnd.index {
+                    let bn = name_text(self.source, bnd.name).to_string();
+                    let (bind, poisoned) = self
+                        .scope
+                        .resolve(&bn)
+                        .map(|(b, p)| (b.clone(), p))
+                        .ok_or_else(|| {
+                            diag(LCode::UnknownName, bnd.span, format!("unknown name `{bn}`"))
+                        })?;
+                    if poisoned {
+                        return Err(diag(
+                            LCode::ReadAfterLoop,
+                            bnd.span,
+                            format!(
+                                "`{bn}` is a loop-carried name updated after its loop; bind the exit value instead"
+                            ),
+                        ));
+                    }
+                    if !bind.mutable {
+                        return Err(diag(
+                            LCode::AssignImmutable,
+                            bnd.span,
+                            format!("cannot update `{bn}`: not `mut`"),
+                        ));
+                    }
+                    let idx = self.emit_expr(fb, idx_expr)?;
+                    let val = self.emit_expr(fb, &bnd.value)?;
+                    let arr = self.update(
+                        fb,
+                        bind.obj,
+                        idx,
+                        val,
+                        Dest::Fresh(Some(bn.clone())),
+                        bnd.span,
+                    )?;
+                    let ty = self.ty_of(fb, arr);
+                    self.rebind(&bn, arr, ty, true);
+                    return Ok(());
+                }
                 let v = self.emit_expr(fb, &bnd.value)?;
                 let ty = self.ty_of(fb, v);
                 let bn = name_text(self.source, bnd.name).to_string();
@@ -3121,6 +3167,27 @@ impl Emitter<'_> {
         Ok(self.record(o, out))
     }
 
+    /// `Update(a, i, v)` (ADR-0021): the pure element-write op. Result ty = the
+    /// array's ty (a fresh array, slot `i` replaced). Mirrors `index`: the
+    /// builder owns the shape checks (non-array → `NotAProduct`/L1204, element or
+    /// index-ty clash → `TypeMismatch`/L1201, both via `ir_err`).
+    fn update(
+        &mut self,
+        fb: &mut FnBuilder,
+        a: ObjectId,
+        i: ObjectId,
+        v: ObjectId,
+        dest: Dest,
+        sp: syn::SourceLoc,
+    ) -> ER<ObjectId> {
+        let out = self.tyq(a);
+        let o = fb
+            .update(a, i, v, dest, ir_loc(sp))
+            .map_err(|e| ir_err(e, sp))?;
+        self.prop(o, &[a, i, v]);
+        Ok(self.record(o, out))
+    }
+
     pub(crate) fn pack(
         &mut self,
         fb: &mut FnBuilder,
@@ -3305,6 +3372,13 @@ fn scan_block(
 fn scan_stmt(source: &str, fn_sigs: &BTreeMap<String, FnSig>, stmt: &Stmt, scan: &mut PhiArmScan) {
     match &stmt.kind {
         StmtKind::Chain(c) => scan_chain(source, fn_sigs, c, scan),
+        // An *indexed* bind `c[i] <- v` (ADR-0021 §2 wiring c) rebinds `c`
+        // unconditionally; inside a Phi-position arm that is an enclosing-mut
+        // assignment → L1408 (the check_phi_arm loop filters to enclosing muts).
+        StmtKind::Bind(b) if b.index.is_some() => {
+            scan.assigns
+                .push((name_text(source, b.name).to_string(), stmt.span));
+        }
         StmtKind::Bind(_) => {}
         StmtKind::Loop(_) => {}
         StmtKind::Error => {}
@@ -3393,6 +3467,13 @@ fn collect_loop_assigns(source: &str, block: &Block, out: &mut Vec<String>) {
 fn collect_assigns_stmt(source: &str, stmt: &Stmt, out: &mut Vec<String>) {
     match &stmt.kind {
         StmtKind::Chain(c) => collect_assigns_chain(source, c, out),
+        // An *indexed* bind `c[i] <- v` (ADR-0021 §2 wiring b) rebinds `c` — a
+        // mut array written in a loop body joins the carried set (else it is
+        // dropped from the merge and the loop miscompiles). A plain bind is a
+        // fresh local, not an assignment to an enclosing name.
+        StmtKind::Bind(b) if b.index.is_some() => {
+            out.push(name_text(source, b.name).to_string());
+        }
         StmtKind::Bind(_) => {}
         StmtKind::Loop(_) => {
             // Nested-loop interiors cannot assign outer-carried muts (L1504); we

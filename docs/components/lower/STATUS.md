@@ -1,8 +1,8 @@
 # Component: lower
 
 Status: tested
-Last updated: 2026-07-17 · ADR-0019 seq-block WP2 (flow-lower)
-Spec references: category-ir.md §4 (lowering rules, as corrected by ERRATA LC-4) + §11.1; ERRATA LC-2 (map/fold law); ADR-0013 (realization: edges-only, inline-cycle loops, IO token laws); ADR-0015 (print/println builtins); ADR-0018 (zip/enumerate pure collection builtins); ADR-0019 (`seq` statement block — no IR footprint); user-guide §3/§5; lower/DESIGN.md §0.1 pins 1–5 (binding).
+Last updated: 2026-07-18 · Session 13 (ADR-0021 element-update `c[i] <- x`)
+Spec references: category-ir.md §4 (lowering rules, as corrected by ERRATA LC-4) + §11.1; ERRATA LC-2 (map/fold law); ADR-0013 (realization: edges-only, inline-cycle loops, IO token laws); ADR-0015 (print/println builtins); ADR-0018 (zip/enumerate pure collection builtins); ADR-0019 (`seq` statement block — no IR footprint); ADR-0021 (array element update — `c[i] <- x` desugars to `Update`-then-rebind); user-guide §3/§5; lower/DESIGN.md §0.1 pins 1–5 (binding).
 Depends on: syntax, ir Depended on by: check, interp, rewrite, backend-llvm, backend-cuda, backend-verilog, cli
 
 ## What works
@@ -23,7 +23,17 @@ the shapes/bound defensively (LD12/LD26). `seq { … }` (ADR-0019) lowers as an 
 statement block (`emit_seq_block`) with **no IR footprint** — its ordering guarantee is
 the token thread source-order lowering already produces (pin d); statements land in the
 enclosing scope (bindings escape), the tail is the value, and a seq that continues with
-no tail draws L1611. `FanoutKind` shrank to `Plain | Void`.
+no tail draws L1611. `FanoutKind` shrank to `Plain | Void`. **Element update `c[i] <- x`
+(ADR-0021, S13):** an indexed `BindStmt` is a **rebind** of `c` — emit takes an
+`Update(cur,i,x)`-then-`rebind()` path (never `bind_new`), reusing existing diagnostics
+(non-`mut`/L1104; no new L-codes); the three enclosing-scope sub-passes each recognize it
+(carried-set `collect_assigns_stmt`, Phi-arm `scan_stmt` → L1408); typing unifies the value
+with the array element type (LD27). **U3-1 capture fix:** `typing.rs:capture_stmt`'s
+indexed-bind branch capture-checks the target/index/value as reads without registering the
+target as a fresh body-local — so a target/index that captures an enclosing local draws
+L1108, not a misleading L1101. Golden: `array_update_straightline` + loop-carried
+`mut c` element writes (`array_update_loop_carried_rides_merge` /
+`array_update_emits_no_token_edges`); pure (no token).
 
 ## What does not / known issues
 
@@ -54,14 +64,18 @@ no tail draws L1611. `FanoutKind` shrank to `Plain | Void`.
 
 ## Test coverage (golden / property / differential / skipped+why)
 
-127 tests: 16 golden Mermaid snaps (8 examples incl. zip_demo + vector_add,
+139 tests: 18 golden Mermaid snaps (8 examples incl. zip_demo + vector_add,
 ADR-0018 zip form; + countdown + effectful-call + zip_builtin + enumerate_builtin +
 4 seq: two-printlns/mid-chain/return-tail/explicit-ret, ADR-0019 — the two-printlns snap shows the
 token thread alone ordering the prints with no seq node; explicit-ret pins that a seq
-followed by `-> ret` routes through `emit_ret_existing` with no double-write; every snap
-hand-read against DESIGN §9), 1 fanout-legality
-acceptance (pure zip/enumerate in a parallel fanout lower + validate clean), 8 structural
-shape assertions (55-contract, token order, Phi counts, signature table), 100 rejection-matrix
+followed by `-> ret` routes through `emit_ret_existing` with no double-write; +
+`array_update_straightline` (ADR-0021) pinning the `Update` op takes no token in-edge;
+every snap hand-read against DESIGN §9), 1 fanout-legality
+acceptance (pure zip/enumerate in a parallel fanout lower + validate clean), 10 structural
+shape assertions (55-contract, token order, Phi counts, signature table; + ADR-0021
+`array_update_loop_carried_rides_merge` — a loop-carried `mut c` element write rides the
+merge, one `Update` emitted — and `array_update_emits_no_token_edges` — the `Update` op is
+token-free even in an effectful `main`), 108 rejection-matrix
 tests (all L-codes incl. L1606–L1611 + `fn zip`/`fn enumerate` L1009 collision parity + ATK-finding regressions from the soundness attack + 11 seq: L1611 continues/return + effectful-return-position, valued-effectful-return positive, L1404 effectful seq/fanout in a Phi arm, L1108 capture in seq in map body, effectful-seq-in-fanout L1305 parity, empty/bindings-escape/headless-seed positives),
 2 bounded proptests (never-panics + Ok⇒validate-empty+lint-clean; literal-width vs
 annotations). The seq `sum_to_n`-reassign value contract (55) lives in

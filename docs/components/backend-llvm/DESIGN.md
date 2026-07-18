@@ -33,7 +33,7 @@ Three payoffs. (1) **§8.5 piecewise correctness is the code shape**: `emit` wal
 
 ### Composition rules
 
-- **L1 — oracle parity (ADR-0020 §3).** For every program the harness runs: `Done` ⟺ exit 0 ∧ stdout byte-equal to `RunResult.output`; `Trapped(_)` ⟺ exit 101 (⊥-identified per rewrite R1); classes never cross. Integer `Add/Sub/Mul/Neg` wrap (**no `nsw`** — the spec §8.1 `nsw` is illustrative; ADR-0020); `Div/Mod` zero-guard → `flow_trap(div_zero)`, and signed `MIN / -1` guard → result `MIN` (parity with `wrapping_div/rem`); `Index` bounds-guard → `flow_trap(index_oob)`; floats IEEE at width; all text via `flow-rt`.
+- **L1 — oracle parity (ADR-0020 §3).** For every program the harness runs: `Done` ⟺ exit 0 ∧ stdout byte-equal to `RunResult.output`; `Trapped(_)` ⟺ exit 101 (⊥-identified per rewrite R1); classes never cross. Integer `Add/Sub/Mul/Neg` wrap (**no `nsw`** — the spec §8.1 `nsw` is illustrative; ADR-0020); `Div/Mod` zero-guard → `flow_trap(div_zero)`, and signed `MIN / -1` guard → **Div result `MIN`, Mod result `0`** (parity with `wrapping_div` and `wrapping_rem` respectively — `x.wrapping_rem(-1)` is always 0; S13 review blocker); `Index`/`Update` bounds-guard → `flow_trap(index_oob)` with **type-directed index extension** (u8 `zext`+`ult`, signed `sext`+two-sided — §2); floats IEEE at width; all text via `flow-rt`.
 - **L2 — determinism.** Byte-identical `.ll` for the same sealed IR; names derived from deterministic per-dump ordinals (`f{i}o{j}` scheme like Mermaid), never slotmap bits.
 - **L3 — capability totality on Core.** Every §5.1 op emits; the ✋ row of the capability matrix stays empty for llvm **except** non-canonical loop shapes (multi-merge nested SCC) → `Unsupported { "nested loops" }` — same scope boundary as interp M1 and rewrite R6 (the whole toolchain is honest about the one degenerate shape; lifting it is one recorded increment across all three).
 - **L4 — token erasure.** `IoToken` has no runtime representation; effect order is the token chain's topo order, already linear (ir I4). A token-bearing tuple materializes only its non-token components; `Print` emits a `flow_rt` call at its topo position; token-only objects get no slot.
@@ -51,7 +51,7 @@ Three payoffs. (1) **§8.5 piecewise correctness is the code shape**: `emit` wal
 
 ## 0. Scope of increment 1 (P5 → M2)
 
-In: `crates/flow-rt` (ADR-0020 §2 — the shared runtime, workspace member); full Core emission per §2–§4; the `@main` wrapper; golden `.ll` snapshots; the compile-and-run differential harness (examples + testgen, raw + rewritten IR); the sepia-at-N perf baseline.
+In: `crates/flow-rt` (ADR-0020 §2 — the shared runtime, workspace member); full Core emission per §2–§4 **including `Update` (ADR-0021, S13)**; the `@main` wrapper; golden `.ll` snapshots; the compile-and-run differential harness (examples + testgen incl. Update-bearing programs, raw + rewritten IR); the sepia-at-N perf baseline.
 
 Out: nested-loop emission (L3 — `Unsupported`, one increment with interp/rewrite when needed); any LLVM optimization flags beyond `-O0` for differentials (a `-O2` differential row is a cheap later add); FFI/inkwell bindings (text emission per HANDOFF §5.5); WASM (spec §8.4, post-M5).
 
@@ -68,9 +68,13 @@ flow_trap(u32) -> !          // 0 = div_zero, 1 = index_oob; stderr "flow trap: 
 
 Bodies: `print!("{v}")` / `println!` — Rust shortest-round-trip `Display` = interp `render` **by definition** (both call the same formatter; interp value.rs `render` is the reference; a unit test in flow-rt pins a table of values incl. `4080.0 → "4080"`, `5.375`, `-0.0`, `NaN`, `inf` against `flow_interp`-rendered strings). Stdout flushed on every call (differential reads pipes).
 
+**ABI attributes (S13 review major):** rustc lowers `extern "C"` `u8`/`bool` params as `i8 zeroext`/`i1 zeroext` (AAPCS64 requires the caller to zero the high bits; SysV tolerates it). The emitter must carry `zeroext` on **every i8/i1-typed parameter** in the `declare` lines *and* every call site — that includes the trailing newline `i1` on all seven print externs and both params of `flow_print_u8`/`flow_print_bool`. A missing `zeroext` prints garbage for u8 > 127 on arm64 (sepia's Pixel channels) and the flow-rt unit table cannot catch it — only the differential would. **(as-built S13)** In a *call argument* the attribute goes **after** the type (`call void @flow_print_u8(i8 zeroext %v, i1 zeroext true)`); the attr-before-type form is invalid LLVM — this was the zeroext bug the u8 differential caught and fixed (`func.rs:emit_print`, `module.rs:print_call`). The `declare` lines keep the same after-type placement (`module.rs:RT_DECLS`).
+
 ## 2. Emission scheme — types, slots, ops
 
-**Types.** `i32→i32, i64→i64, u8→i8` (unsigned ops), `f32→float, f64→double, bool→i1`, `Tuple/Struct→` literal `{…}` struct, `Array{T,n}→[n x T]`, `Unit→` erased (no slot), `IoToken→` erased (L4), `Str→` private unnamed global constant (only ever a `Print` operand). Token-bearing products erase their token components — a `(IoToken, i32)` object materializes as `i32` (component index remapping recorded in `FnCtx`).
+**Types.** `i32→i32, i64→i64, u8→i8` (unsigned ops), `f32→float, f64→double, bool→i1`, `Tuple/Struct→` literal `{…}` struct, `Array{T,n}→[n x T]`, `Unit→` erased (no slot), `IoToken→` erased (L4), `Str→` private unnamed global constant (only ever a `Print` operand — lower rejects strings-as-data, so Str never occurs inside aggregates).
+
+**Erased representation rule (S13 review — position-agnostic; token may be packed first or last).** A product's *residual* is its component list minus `IoToken`/`Unit` components. Residual arity ≥ 2 ⇒ `{…}` struct, `Pair`/`Proj` = GEP store/load through the **remapped** index (skip erased components when counting). Residual arity 1 ⇒ the object materializes as the **bare** component type; `Pair` into it / `Proj` out of it = plain store/load (no GEP — a `{i32}` GEP against a bare `i32` slot is invalid LLVM). Residual arity 0 ⇒ no slot at all (token-only objects). The component→erased-index remap is **derived on demand from `object(id).ty`** (deduce-don't-store); `FnCtx` holds only the slot map.
 
 **Slot scheme (mem2reg-friendly classic).** Every materialized object gets one `alloca` in the function's entry block; a morphism emission loads its operand slots, computes, stores its target slot. Products assemble in place: `Pair{slot k}` = GEP into the aggregate alloca + store (the staging buffer, made of memory); `Proj{k}` = GEP + load; `Index` = bounds-check then dynamic GEP + load. This makes every §5.1 row a local template and leaves optimization to LLVM (`-O0` for differentials; the perf baseline may also record `-O2`).
 
@@ -79,7 +83,8 @@ Bodies: `print!("{v}")` / `println!` — Rust shortest-round-trip `Display` = in
 | op | LLVM |
 |---|---|
 | `Add/Sub/Mul` int | `add`/`sub`/`mul` (no `nsw`/`nuw` — wraps, L1) |
-| `Div/Mod` int signed | `icmp eq 0` → trap-block; `icmp eq -1 && lhs == MIN` → result `MIN` (skip div); else `sdiv`/`srem` |
+| `Div` int signed | `icmp eq 0` → trap-block; `icmp eq -1 && lhs == MIN` → result `MIN` (skip `sdiv`); else `sdiv` |
+| `Mod` int signed | `icmp eq 0` → trap-block; `icmp eq -1 && lhs == MIN` → result `0` (skip `srem` — `wrapping_rem(MIN,-1) = 0`, NOT `MIN`; S13 review blocker); else `srem` |
 | `Div/Mod` u8 | zero-guard → trap; `udiv`/`urem` |
 | `Add..Mod, Neg` float | `fadd/fsub/fmul/fdiv/frem`, `fneg` |
 | `Neg` int | `sub 0, x` (wraps) |
@@ -88,18 +93,21 @@ Bodies: `print!("{v}")` / `println!` — Rust shortest-round-trip `Display` = in
 | `And/Or/Not` | `and`/`or` on i1, `xor i1 …, true` (strict — operands already computed, matching the oracle) |
 | `Phi` | **`select`** — both branch values already in slots (strict Phi, no control flow; trap parity: branch cones always execute, exactly like the oracle) |
 | `Pair/Proj` | GEP store / GEP load (token components erased per L4) |
-| `Index` | `icmp` range guard (0 ≤ i < n, signed) → trap-block; GEP + load |
+| `Index` | **type-directed** range guard (S13 review — the oracle's `as_int` zero-extends u8): i32/i64 index ⇒ `sext` to i64, `icmp slt i, 0` ∨ `icmp sge i, n` → trap-block; u8 index ⇒ `zext` to i64, `icmp uge i, n` only (no lower bound — u8 ≥ 128 at i8 must NOT read as negative); then GEP + load |
+| `Update` (ADR-0021) | same guard as `Index` (same trap, same extension rule); `llvm.memcpy` source array slot → target slot (distinct allocas — rebind mints a fresh object, slots never alias); dynamic GEP + store the element. Naive copy is the semantics; in-place elision via last-use is recorded headroom, not this increment |
 | `Zip/Enumerate` | counted mini-loop writing the target aggregate (pair / `(i32, elem)` per ADR-0018) |
 | `Call(g)` | direct `call` to the internal fn (aggregates by value — internal ABI, private linkage) |
 | `Map/Fold{body}` | counted loop calling the body fn per element / with the accumulator threaded |
 | `Print{newline}` | call the ty-matched `flow_rt` extern at the edge's topo position (L4) |
 | `Output` | load + store (the identity move) |
 
-**Functions.** Every `FuncDef` → `define internal` with the lowered signature minus erased components; `main : IoToken → IoToken` → `define internal void @flow_main()`. The public wrapper: `define i32 @main() { call void @flow_main(); ret i32 0 }`. One shared `trap_bb` per function per kind, calling `flow_trap` (`noreturn`) — reached only from guards.
+**Functions.** Every `FuncDef` → `define internal` with the lowered signature minus erased components; `main : IoToken → IoToken` → `define internal void @flow_main()`. The public wrapper: `define i32 @main() { call void @flow_main(); ret i32 0 }`. **(as-built S13)** Trap blocks are emitted **per-site inline**, not as one shared `trap_bb` per function per kind: `func.rs:trap_if` mints a fresh `trap`/`cont` label pair at each guard, the trap block calling `flow_trap` + `unreachable`. Two extra blocks per guard, no shared join — simpler emission, `-O0` cleans it up; a shared block is unclaimed headroom, not a correctness point.
+
+**(as-built S13) Index guard.** `func.rs:guard_index` emits the **two-sided signed compare on the zext'd i64** (`icmp slt i64 %i, 0` ∨ `icmp sge i64 %i, n`) for **every** index type, not the uge-only form §2's `Index` row specifies for u8. It is semantically identical: `load_index` already `zext`s a u8 (and `sext`s a signed index) to i64, and a zero-extended value is provably ≥ 0, so `slt 0` is dead-false for u8 and the two-sided check reduces to the same trap set as `uge`. One guard template covers both extension paths; the dead u8 lower-bound compare is recorded cleanup, not a bug.
 
 ## 3. Loops — ADR-0016 as CFG (the canonical quartet only, L3)
 
-Per merge (recognized exactly like the interp driver derives its plan — same attribution rules):
+Per merge — recognized by the **same predicate the interp driver and rewrite use, extracted into `flow-ir` as the one source of truth** (S13 review, BL7): exit/body attribution is *route-feeder-in-this-merge's-SCC, never per-fn union or reachability* — the rule whose two independent copies both regressed in S12. This increment exports the predicate from `flow-ir` (e.g. a `loop_plan(f, merge)`-shaped accessor over `loop_structure`) and the emitter consumes it; migrating interp's `derive_plan` and rewrite's `is_canonical`/`exit_of` onto the export is attempted in the same change if mechanical (their S12 pins prove equivalence), else recorded as a suggestions row:
 
 ```
 entry:   … store init → %merge.slot; br %header
@@ -114,8 +122,8 @@ The decide cone runs **every** iteration including the exit one (countdown print
 ## 4. Differential harness + perf baseline (tests/)
 
 - `golden_ll.rs`: insta snapshots of emitted `.ll` for micro programs + the 10 in-Core examples (byte-stable, L2; snapshots read before accepting).
-- `differential.rs`: for each of the 10 examples **and** testgen programs (default mode — traps allowed), on **raw and `rewrite()`d IR**: emit → write tempdir → `clang <prog>.ll <libflow_rt.a> -o prog` (`-O0`) → run → compare per L1 (`Done` ⇒ exit 0 + stdout byte-equal; `Trapped` ⇒ exit 101, stdout ignored). `clang` located via `which`/`CC`; absent ⇒ skip-with-reason recorded in STATUS (HANDOFF §5.5). `libflow_rt.a` built once per test-run via `cargo build -p flow-rt` (workspace target dir).
-- `perf_baseline.rs` (ignored-by-default long run): sepia-shaped synthetic at N ∈ {16, 4096, 262144} (builder-generated map+fold over `[Pixel; N]`): wall-clock native (`-O0` and `-O2`) vs interp; numbers recorded in STATUS (HANDOFF §8 P5 "first perf baseline — sepia at N×N").
+- `differential.rs`: for each of the 10 examples **and** *closed-mode* testgen programs (default mode — traps allowed; **open mode `i32 → i32` is excluded** — it has no native `@main` analog, its oracle observable is `eval_call`'s return with random args; S13 review), on **raw and `rewrite()`d IR**: emit → write tempdir → `clang <prog>.ll <libflow_rt.a> -o prog` (`-O0`) → run **with a timeout** (belt-and-braces against a non-terminating generated loop; timeout ⇒ test failure naming the program) → compare per L1 (`Done` ⇒ exit 0 + stdout byte-equal; `Trapped` ⇒ exit 101, stdout ignored). Closed entry shapes and their wrappers (BL8): `main : IoToken → IoToken` ⇒ the §2 void wrapper, compared against `run()`; `main : Unit → i32` ⇒ `define i32 @main() { %r = call i32 @flow_main(); call void @flow_print_i32(i32 %r, i1 zeroext true); ret i32 0 }` — the result is *printed through flow-rt* so the differential observes the value, not just a constant exit code. `clang` located via `which`/`CC`; absent ⇒ skip-with-reason recorded in STATUS (HANDOFF §5.5). `libflow_rt.a` built once per test-run via `cargo build -p flow-rt` (workspace target dir; serialize the build behind a `OnceLock` so parallel test binaries don't race).
+- `perf_baseline.rs` (ignored-by-default long run): sepia-shaped synthetic (builder-generated map+fold over `[Pixel; N]`): wall-clock native (`-O0` and `-O2`) vs interp; numbers recorded in STATUS (HANDOFF §8 P5 "first perf baseline — sepia at N×N"). **(as-built S13)** Top N is **65536**, not 262144: the array is a literal of N `Pair` stores (Core has no array-fill), so N = 262144 is a ~1M-line module clang `-O2` needs >25 min CPU on (observed S13). 65536 times the same map+fold shape; an array-fill primitive / heap lowering (recorded headroom) restores 262144. The alloca-slot scheme also puts the whole `[Pixel; N]` in the frame, so the runner raises the stack via `ulimit -s hard` (`run_big_stack`) — the perf shape is the only place the 8 MB default is exceeded.
 
 ## 5. Module layout
 
@@ -136,8 +144,8 @@ Deps: `flow-ir`; dev-deps: `flow-syntax`, `flow-lower`, `flow-interp`, `flow-rew
 ## 6. Test plan (what P5-green / M2 means)
 
 1. flow-rt render-parity unit table (§1) — incl. `-0.0`, `NaN`, `inf`, `4080.0`, `5.375`.
-2. Golden `.ll` per example + micro shapes (loop CFG, trap guards, select-Phi, token erasure visible as absent slots).
-3. **Differential green on all 10 examples** (raw + rewritten) — the M2 line — plus testgen sweep (≥ 256 cases), trap cases asserting exit 101.
+2. Golden `.ll` per example + micro shapes (loop CFG, trap guards, select-Phi, token erasure visible as absent slots, `Update` memcpy+store, **two sequential loops in one fn** — the S12 P0 shape, uncovered by the 10 examples; S13 review).
+3. **Differential green on all 10 examples** (raw + rewritten) — the M2 line — plus closed-mode testgen sweep (≥ 256 cases; pool includes Update ops and multi-loop fns per plan-array-update U5), trap cases asserting exit 101, and a **two-sequential-loops compile-and-run differential**.
 4. Determinism: emit twice → byte-equal.
 5. `Unsupported` on the hand-built nested-loop graph (L3 pin).
 6. Perf baseline recorded in STATUS (§4).
@@ -152,6 +160,8 @@ Deps: `flow-ir`; dev-deps: `flow-syntax`, `flow-lower`, `flow-interp`, `flow-rew
 | BL4 | Token fully erased; effect order = topo order of the token chain | ir I4 linearity makes the chain total order; no runtime token value exists to carry |
 | BL5 | Internal ABI: aggregates by value, `internal` linkage, `@main` wrapper | private to the translation unit; no FFI surface beyond flow-rt |
 | BL6 | Nested loops `Unsupported` (with interp M1 + rewrite RW8 as one scope boundary) | one honest ceiling across the toolchain; lifted together or not at all |
+| BL7 | Loop exit/body attribution predicate exported from `flow-ir`, consumed here (interp/rewrite migrated if mechanical) | the per-merge-SCC rule regressed twice in S12 precisely because it lived in two hand-maintained copies; a third copy is how the next P0 ships (one-source-of-truth, FRAMEWORK §5) |
+| BL8 | Differential sweep is closed-mode only; `Unit → i32` entry gets a result-printing wrapper; native runs time-boxed | open-mode has no native observable; a constant exit-0 wrapper would compare nothing; a hung native run must fail loudly, not hang the suite (S13 review) |
 
 ## 8. Open questions (→ ADR candidates / later)
 

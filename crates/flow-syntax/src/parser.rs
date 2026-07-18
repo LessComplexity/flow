@@ -1350,18 +1350,73 @@ impl<'a> Parser<'a> {
         false
     }
 
-    /// `bind-stmt := 'mut'? IDENT (':' type)? '<-' expr` — a second `<-` in one
-    /// statement draws P0008 (DESIGN §14.3 / §16).
+    /// `bind-stmt := 'mut'? IDENT ('[' expr ']')? (':' type)? '<-' expr` — a
+    /// second `<-` in one statement draws P0008 (DESIGN §14.3 / §16). The
+    /// optional `[' expr ']` is the element-update sugar `c[i] <- x` (ADR-0021):
+    /// it excludes `mut` (P0013) and a type annotation (P0014); a nested target
+    /// `c[i][j]` draws P0015.
     fn parse_bind_stmt(&mut self) -> Stmt {
         let start = self.cur_span().start;
         let mut_span = self.eat(TokenKind::KwMut);
         let name = self.expect_name("binding name");
+        // Optional element-update index `[' expr ']` (ADR-0021 §2).
+        let index = if self.at(TokenKind::LBracket) {
+            self.bump(); // `[`
+            self.paren_depth += 1;
+            let idx = self.parse_expr();
+            self.paren_depth -= 1;
+            if self.eat(TokenKind::RBracket).is_none() {
+                self.diag("P0002", self.cur_span(), "unclosed `[` in update target");
+            }
+            // A nested index target `c[i][j] <- x` is out of this increment
+            // (ADR-0021 §2, one-dimensional update only): P0015, extra
+            // `[' … ']` groups consumed and dropped so the recovered node is a
+            // clean one-dimensional indexed bind.
+            while self.at(TokenKind::LBracket) {
+                let open = self.cur_span();
+                self.bump(); // `[`
+                self.paren_depth += 1;
+                let _ = self.parse_expr();
+                self.paren_depth -= 1;
+                let close = self
+                    .eat(TokenKind::RBracket)
+                    .unwrap_or_else(|| self.cur_span());
+                self.diag(
+                    "P0015",
+                    self.span(open.start, close.end),
+                    "nested element-update target `c[i][j] <- x` is out of Flow-Core \
+                     (ADR-0021: one-dimensional update only); planned for a later increment",
+                );
+            }
+            // `mut c[i] <- x` — the index form is a rebind, not a fresh
+            // declaration, so `mut` is meaningless (ADR-0021 §2): P0013.
+            if let Some(m) = mut_span {
+                self.diag(
+                    "P0013",
+                    m,
+                    "`mut` is not allowed on an element-update target (`c[i] <- x` is a \
+                     rebind, not a new binding)",
+                );
+            }
+            Some(idx)
+        } else {
+            None
+        };
         let ty = if self.at(TokenKind::Colon) {
             self.bump();
             Some(self.parse_type())
         } else {
             None
         };
+        // `c[i]: T <- x` — an element-update target takes no type annotation
+        // (ADR-0021 §2; the slot type is already fixed by the array): P0014.
+        if let (Some(_), Some(t)) = (&index, &ty) {
+            self.diag(
+                "P0014",
+                t.span,
+                "an element-update target (`c[i] <- x`) takes no type annotation",
+            );
+        }
         // Consume `<-`.
         if self.eat(TokenKind::BackArrow).is_none() {
             self.diag("P0001", self.cur_span(), "expected `<-` in binding");
@@ -1381,15 +1436,19 @@ impl<'a> Parser<'a> {
         }
         // Statement terminator `;`.
         self.expect_semi("binding statement");
-        // Cover the bound value (and its type) so recovery placeholders nest (J2).
+        // Cover the bound value (and its type/index) so recovery placeholders nest (J2).
         let mut span = self.node_span_covering(start, value.span);
         if let Some(t) = &ty {
             span = SourceLoc::new(span.start.min(t.span.start), span.end.max(t.span.end));
+        }
+        if let Some(i) = &index {
+            span = SourceLoc::new(span.start.min(i.span.start), span.end.max(i.span.end));
         }
         Stmt {
             kind: StmtKind::Bind(BindStmt {
                 mut_span,
                 name,
+                index,
                 ty,
                 value,
                 span,

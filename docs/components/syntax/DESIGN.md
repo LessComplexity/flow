@@ -550,8 +550,11 @@ loop-stmt  := 'loop' block
             | ⟦P0110⟧ ':' IDENT block           -- labeled block (ADR-0012); parsed, Core+1
                                                 -- (un-sigiled `IDENT block` is NOT a loop form —
                                                 --  see the §14.5 heuristic)
-bind-stmt  := 'mut'? IDENT (':' type)? '<-' expr
+bind-stmt  := 'mut'? IDENT ('[' expr ']')? (':' type)? '<-' expr
                                                 -- second '<-' in one statement → P0008
+                                                -- '[' expr ']' = element-update sugar `c[i] <- x`
+                                                --   (ADR-0021): index excludes `mut` (P0013) and
+                                                --   a type annotation (P0014); nested `c[i][j]` → P0015
 chain      := expr stage* | stage+              -- headed | headless (e.g. '-> loop;', fanout branches)
 stage      := '->' stage-body
 stage-body := 'ret' ('.' INT)?                  -- return target / projection (ret.0)
@@ -764,6 +767,7 @@ pub enum StmtKind {
 pub struct LoopStmt { pub label: LoopLabel, pub body: Block, pub span: SourceLoc }
 pub enum LoopLabel { Loop(SourceLoc), Custom(Name) }   // Custom ⇒ P0110 was reported
 pub struct BindStmt { pub mut_span: Option<SourceLoc>, pub name: Name,
+                      pub index: Option<Expr>,         // Some ⇒ element-update `c[i] <- x` (ADR-0021)
                       pub ty: Option<Ty>, pub value: Expr, pub span: SourceLoc }
 
 pub struct Chain { pub head: Option<Expr>, pub stages: Vec<Stage>, pub span: SourceLoc }
@@ -865,6 +869,9 @@ end with the horizon, e.g. "out of Flow-Core (HANDOFF §4); planned for Core+1".
 | P0010 | empty block `{}` in stage position | classify Fanout(0) |
 | P0011 | nesting depth > 128 (expressions or blocks) | unwind to statement sync — **totality guard, J1** |
 | P0012 | statement at top level | parse it for spans, store `Item::Error` |
+| P0013 | `mut` on an element-update target (`mut c[i] <- x`) — the indexed form is a rebind (ADR-0021), not a fresh binding, so `mut` is meaningless | span = the `mut` keyword; node kept as an indexed bind |
+| P0014 | type annotation on an element-update target (`c[i]: T <- x`) — the slot type is already fixed by the array (ADR-0021) | span = the annotation type; node kept as an indexed bind |
+| P0015 | nested/chained element-update target (`c[i][j] <- x`) — one-dimensional update only this increment (ADR-0021); ceiling: multi-dimensional update planned for a later increment | span = the extra `[…]` group(s); recovered as a clean one-dimensional indexed bind (outer index kept, inner dropped) |
 
 **Out-of-Core class (C8/C13):**
 

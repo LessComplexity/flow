@@ -109,6 +109,11 @@ pub enum Operation {
     /// `[A; n] → [(i32, A); n]` (ADR-0018): pairs each element with its index,
     /// index pinned `i32` with the extra bound `n ≤ i32::MAX`. Pure — no token.
     Enumerate,
+    /// `(Array{T,n} × I × T) → Array{T,n}` (ADR-0021): a fresh array with slot
+    /// `i` replaced. Source is the internal 3-tuple product. `I` is exactly
+    /// `Index`'s integer-scalar set; OOB (`i < 0 ∨ i ≥ n`) = trap (`IndexOob`,
+    /// the same class as `Index`). Pure — no token; may-trap.
+    Update,
     // effects (§8)
     /// `(IoToken × P) → IoToken`, `P` printable — the effectful op. `newline: true`
     /// is `println` (appends `\n`), `false` is `print` (raw) — ADR-0015.

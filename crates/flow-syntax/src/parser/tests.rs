@@ -1169,6 +1169,96 @@ fn w17_double_bind_p0008() {
     assert!(pcodes("fn m() { x <- a <- b; }").contains(&"P0008"));
 }
 
+// --- ADR-0021 element-update sugar `c[i] <- x` --------------------------
+
+/// The first block statement of the single fn, as a `BindStmt`, panicking
+/// otherwise.
+fn first_bind(src: &str) -> BindStmt {
+    let f = parse_one_fn(src);
+    match f.body.items.into_iter().next() {
+        Some(BlockItem::Stmt(Stmt {
+            kind: StmtKind::Bind(b),
+            ..
+        })) => b,
+        other => panic!("expected first stmt to be a bind, got {other:?}"),
+    }
+}
+
+#[test]
+fn index_bind_top_level() {
+    // `c[t] <- v;` at statement position: a clean indexed bind (ADR-0021).
+    let src = "fn m() { c[t] <- v; }";
+    no_diags(src);
+    let b = first_bind(src);
+    assert!(b.index.is_some(), "index target parsed");
+    assert!(b.mut_span.is_none() && b.ty.is_none());
+    assert_eq!(
+        &src[b.name.span.start as usize..b.name.span.end as usize],
+        "c"
+    );
+    // index is `t`, value is `v`.
+    assert!(matches!(b.index.as_ref().unwrap().kind, ExprKind::Var(_)));
+    assert!(matches!(b.value.kind, ExprKind::Var(_)));
+}
+
+#[test]
+fn index_bind_in_loop_body() {
+    // The motivating shape: `c[t] <- v;` inside a loop body. Clean parse.
+    let src = "fn m() { loop { c[t] <- v; } }";
+    no_diags(src);
+}
+
+#[test]
+fn index_bind_computed_index() {
+    // The index is a full expression (`a[i * 4 + k] <- x`), not just a name.
+    let src = "fn m() { a[i * 4 + k] <- x; }";
+    no_diags(src);
+    let b = first_bind(src);
+    assert!(matches!(
+        b.index.as_ref().unwrap().kind,
+        ExprKind::Binary { .. }
+    ));
+}
+
+#[test]
+fn index_bind_mut_rejected_p0013() {
+    // `mut c[i] <- x` — the index form is a rebind, `mut` is meaningless: P0013.
+    assert_eq!(pcodes("fn m() { mut c[i] <- x; }"), vec!["P0013"]);
+}
+
+#[test]
+fn index_bind_type_annotation_rejected_p0014() {
+    // `c[i]: T <- x` — an element-update target takes no type annotation: P0014.
+    assert_eq!(pcodes("fn m() { c[i]: i32 <- x; }"), vec!["P0014"]);
+}
+
+#[test]
+fn index_bind_nested_rejected_p0015() {
+    // `c[i][j] <- x` — nested update is out of this increment: P0015. The
+    // recovered node is a clean one-dimensional indexed bind.
+    let src = "fn m() { c[i][j] <- x; }";
+    assert_eq!(pcodes(src), vec!["P0015"]);
+    let b = first_bind(src);
+    assert!(b.index.is_some(), "outer index kept for recovery");
+}
+
+#[test]
+fn index_chain_target_unaffected() {
+    // The chain form `c[0] -> println;` is NOT a bind (no `<-`): untouched by
+    // the sugar. `looks_like_bind` returns false (Arrow at depth 0), so this
+    // stays a chain statement with an Index head. Regression guard.
+    let src = "fn m() { c[0] -> println; }";
+    no_diags(src);
+    let f = parse_one_fn(src);
+    assert!(matches!(
+        f.body.items[0],
+        BlockItem::Stmt(Stmt {
+            kind: StmtKind::Chain(_),
+            ..
+        })
+    ));
+}
+
 #[test]
 fn w18_mixed_direction_p0001() {
     // `a -> b <- c` → P0001.

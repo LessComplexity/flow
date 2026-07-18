@@ -345,6 +345,21 @@ impl Walk<'_> {
             }
             StmtKind::Bind(b) => {
                 let v = self.expr(&b.value, scope);
+                // `c[i] <- v` (ADR-0021): an *indexed* bind is an element write,
+                // not a fresh binding. Type the index, unify `v` with `c`'s
+                // element ty (so a bare literal resolves to the element width, not
+                // a spurious i32 clash — this is how width-unification covers the
+                // element-ty mismatch, L1201/L1203), and leave `c`'s binding
+                // intact (its array ty is unchanged).
+                if let Some(idx) = &b.index {
+                    let _ = self.expr(idx, scope);
+                    if let Some((bt, _)) = scope.resolve(name_text(self.source, b.name))
+                        && let Some(elem) = array_elem_wty(&bt.clone())
+                    {
+                        self.unify(&v, &elem, b.span);
+                    }
+                    return;
+                }
                 if let Some(annot) = &b.ty
                     && let Some(t) = self.types.resolve(self.source, annot, &mut self.diags)
                 {
@@ -1183,6 +1198,16 @@ fn array_elem(ty: &Ty) -> Option<Ty> {
     }
 }
 
+/// The element WTy of an array binding (for `c[i] <- v` element-ty unification,
+/// ADR-0021). Handles both a fully-known array and a var-carrying element.
+fn array_elem_wty(w: &WTy) -> Option<WTy> {
+    match w {
+        WTy::Array(e, _) => Some((**e).clone()),
+        WTy::Known(Ty::Array { elem, .. }) => Some(WTy::Known((**elem).clone())),
+        _ => None,
+    }
+}
+
 /// The span of the first effectful stage (a direct `print`, or a call to an
 /// effectful fn) inside a map/fold body (L1605), if any.
 fn body_effect_span(
@@ -1249,6 +1274,22 @@ fn capture_stmt(
 ) -> Option<(String, syn::SourceLoc)> {
     match &stmt.kind {
         StmtKind::Chain(c) => capture_chain(source, c, local, fn_sigs),
+        // An *indexed* bind `c[i] <- v` (ADR-0021) is a rebind, not a fresh
+        // shadow: the target `c` references an existing binding, so capture-check
+        // it (and the index expr + value) as a read, and do NOT register it as a
+        // body-local — else a target/index capturing an enclosing local evades
+        // L1108 and later surfaces as a misleading L1101 (parallel to the
+        // emit.rs wiring points b/c).
+        StmtKind::Bind(b) if b.index.is_some() => {
+            let name = name_text(source, b.name);
+            if !local.contains(name) && fn_sigs.get(name).is_none() {
+                return Some((name.to_string(), b.name.span));
+            }
+            if let Some(c) = capture_expr(source, b.index.as_ref().unwrap(), local, fn_sigs) {
+                return Some(c);
+            }
+            capture_expr(source, &b.value, local, fn_sigs)
+        }
         StmtKind::Bind(b) => {
             let cap = capture_expr(source, &b.value, local, fn_sigs);
             local.insert(name_text(source, b.name).to_string());

@@ -313,6 +313,7 @@ fn reads_packed_source(op: Operation) -> bool {
             | Phi
             | Index
             | Zip
+            | Update
             | Print { .. }
             | LoopBack
             | LoopExit

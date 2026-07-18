@@ -143,6 +143,7 @@ Order and region structure are **deduced morphisms** out of `CategoryIr`, never 
 | `topo_order` | `CategoryIr × FuncId → MorphismId*` | the dataflow/execution order (Kahn, `LoopBack` non-gating). A *different* ordering of the same edge set than the stored insertion (construction) order — a pure function of adjacency, so storing it would be a copy that could drift |
 | `sccs` | `CategoryIr × FuncId → Vec<ObjectId>*` | iterative Tarjan over adjacency; non-trivial SCCs **are** the loop regions, back edges **are** the `LoopBack` morphisms |
 | `loop_structure` | `CategoryIr × FuncId → LoopScc*` | `sccs ∘ kind-filter ∘ merge-tag` — the backend capability predicate (D3) |
+| `loop_plan` | `CategoryIr × FuncId × ObjectId → LoopPlan?` | per-merge canonical-loop layout (init/carried/back-route/exit-route feeders) recovered from adjacency; `None` for any non-canonical shape. The one source of truth for the loop CFG shared by interp's driver, rewrite's canonicity gate, and backend-llvm (BL7) — see §13 |
 
 This is the load-bearing instance of "Deduce, don't store": **`Operation::Trace` is not materialized — the trace IS the cycle** (D3). A stored `Trace` payload (or stored topo/region fields) would be a *stored copy of a deduced morphism* — exactly the redundant-morphism smell — that could drift from the back edges. `seal` itself recomputes `sccs(f)` for its I4/I5 checks rather than caching, confirming the discipline. (Honest cost, recorded once: each call is `O(V+E)` and recursion-free per call; on Core's single-file programs this is cheap and is the right trade for zero-drift determinism. If a future profile shows `seal`/codegen hot on large graphs, the §5-sanctioned move is a single post-seal memo — legal precisely because the graph is immutable after seal, so the cache cannot drift — added in its own ADR, not now.)
 
@@ -198,7 +199,7 @@ pub struct CategoryIr {
 - Fields are `pub(crate)`: integration tests and downstream crates construct graphs **only** through the builder; in-crate unit tests may corrupt graphs to negative-test `validate()`.
 - `SourceLoc { pub start: u32, pub end: u32 }` is defined **in this crate**, field-identical to `flow_syntax::SourceLoc` (half-open byte range). flow-ir keeps zero dependencies on flow-syntax (per ir/STATUS.md); flow-lower converts trivially.
 
-Read API (all `&self`, no `Display` impls anywhere — C3 convention): `object(id)`, `morphism(id)`, `objects()`, `morphisms()`, `in_edges(id) -> &[MorphismId]`, `out_edges(id) -> &[MorphismId]`, `owner(id) -> FuncId`, `func(id)`, `funcs()`, `entry()`, plus §13's `sccs(f)` / `topo_order(f)` / `loop_structure(f)` and §14's `to_mermaid()`.
+Read API (all `&self`, no `Display` impls anywhere — C3 convention): `object(id)`, `morphism(id)`, `objects()`, `morphisms()`, `in_edges(id) -> &[MorphismId]`, `out_edges(id) -> &[MorphismId]`, `owner(id) -> FuncId`, `func(id)`, `funcs()`, `entry()`, plus §13's `sccs(f)` / `topo_order(f)` / `loop_structure(f)` / `loop_plan(f, merge)` and §14's `to_mermaid()`.
 
 ## 3. Ty and Value (Core subset — ADR-0013 delta from §3.4)
 
@@ -282,6 +283,7 @@ pub enum Operation {
     Index,                           // ([T; n] × I) → T; OOB = trap in Core (ADR-0013)
     Zip,                             // ([A; n] × [B; n]) → [(A, B); n]         (ADR-0018)
     Enumerate,                       // [A; n] → [(i32, A); n]; n ≤ i32::MAX    (ADR-0018)
+    Update,                          // (Array{T,n} × I × T) → Array{T,n}; slot i replaced; OOB=trap (ADR-0021)
     // effects (§8)
     Print { newline: bool },         // (IoToken × P) → IoToken; println appends \n, print raw (ADR-0015)
     // loops (§7) — the inline-cycle realization of Tr^U (CHANGES §1.3)
@@ -316,6 +318,7 @@ Notation: `N` = Core numeric scalar (`i32`/`i64`/`u8`/`f32`/`f64`), `I` = Core i
 | `Index` | `(Array{T, n}, I)` | `T` | OOB traps in Core |
 | `Zip` | `([A, n], [B, n])` 2-tuple, sizes equal | `[(A, B); n]` | ADR-0018; source is the 2-tuple product (Pair-then-primitive); elem tys arbitrary Core tys; result depth bound I10 applies |
 | `Enumerate` | `[A, n]` | `[(i32, A); n]` | ADR-0018; index pinned `i32`; extra condition `n ≤ i32::MAX` (builder rejects; `check_edges` re-derives — a graph-shape *extra condition*, not a typing judgment, so `edge_type_ok`/its golden stays pure) |
+| `Update` | `(Array{T, n}, I, T)` 3-tuple | `Array{T, n}` | ADR-0021; source is the 3-tuple product (Pair-then-primitive); `I` = `Index`'s integer-scalar set; OOB (`i < 0 ∨ i ≥ n`) traps (same class as `Index`) |
 | `Print {newline}` | `(IoToken, P)` | `IoToken` | the effectful op (HANDOFF §4.1); `newline` selects `println`/`print` (ADR-0015), typing identical |
 | `LoopEnter` | `U` | `U` (target kind LoopMerge) | exactly one per merge |
 | `LoopBack` | `(U, Bool)` | `U` (target kind LoopMerge) | ≥1 per merge; source inside the loop SCC (I5) |
@@ -487,6 +490,7 @@ Numbering aligned with §11 in earlier drafts; intentionally unused.
 - `topo_order(f: FuncId) -> Vec<MorphismId>` — Kahn's algorithm over the function's morphisms with **LoopBack edges excluded**, where a morphism becomes ready when its source object is *complete*: Parameters/Constants start complete; a product object completes when all `arity` slot edges have been emitted; a LoopMerge completes on its `LoopEnter` alone (header-first canonical order, §5.2); other objects complete on their one definer. **LoopExit edges are ordinary gating edges** (their source route must complete first; their target — outside the SCC — is ordered after the loop body). Only LoopBack is special: appended after its source's completion, never gating (it is *in* the output — interp needs it). Ties broken by insertion order (deterministic). Multi-merge SCCs (nested loops, §7) order their headers by insertion order. **LoopEnter deferral (S12):** a ready `LoopEnter` is released only when no other morphism is ready — so every morphism not transitively gated by a merge (every *loop-invariant* computation, however many hops from its sources) precedes the loop header. Consumers rely on this: the interp driver reads invariant operands when the header fires, and straight-line backends emit invariants before the loop. Before S12, FIFO readiness ordered *derived* invariants (`x * 2` — pair then Mul) after `LoopEnter`, and the driver read them before write (found by a user matmul program; pinned by `topo_orders_multi_hop_invariants_before_loop_enter` and interp `loop_invariants.rs`).
 - **Why Kahn terminates (graph-minus-LoopBack is a DAG, by construction):** every builder call mints a fresh target object except the two sanctioned existing-object targets — Return (out-degree 0, so no cycle can pass through it) and LoopMerge (targetable only by `LoopEnter` at creation and `LoopBack` thereafter). Hence every cycle contains a LoopBack edge, and removing them leaves a DAG. Seal asserts this anyway (a Kahn residue is an internal error — defense in depth), and the §16 SCC tests assert "LoopBack edges are exactly the cycle-breakers" rather than assuming it.
 - `loop_structure(f) -> Vec<LoopScc>` (§7) — derived from `sccs(f)` + kind filter; the backend capability predicate.
+- `loop_plan(f: FuncId, merge: ObjectId) -> Option<LoopPlan>` — the **one source of truth for the canonical loop CFG** (BL7). Given a `LoopMerge` object it recovers, purely from adjacency, the per-merge layout every loop consumer needs: the init (`LoopEnter`) source, the carried-state slots, the back-route feeders (next-state + condition) and the exit-route feeders (value + condition), with exit attribution by route-feeder membership in *this* merge's SCC (not reachability — S12). Returns `None` for any non-canonical shape (≠1 enter/back/exit per merge, multi-merge SCC), which is exactly the shape predicate the consumers gate on. `interp`'s `run_loop` (interp §4) and `rewrite`'s `is_canonical`/loop replay (rewrite §5) both delegate here rather than re-deriving the CFG, so all three emitters (incl. backend-llvm) agree by construction.
 
 All are `O(V + E)` and recursion-free.
 

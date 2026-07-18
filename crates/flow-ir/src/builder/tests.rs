@@ -885,3 +885,54 @@ fn enumerate_oversize_rejects() {
     let e = fb.enumerate(a, Dest::Fresh(None), L).unwrap_err();
     assert_eq!(e, IrError::EnumerateIndexOverflow);
 }
+
+// --- Update (ADR-0021): (Array{T,n}, I, T) -> Array{T,n} -------------------
+
+#[test]
+fn update_builds_and_validates() {
+    use crate::validate::validate;
+    // main : [i32;3] -> [i32;3]; c[i] <- v with i, v constants.
+    let (mut b, f) = one_fn(i32_arr(3), i32_arr(3));
+    {
+        let mut fb = b.build_fn(f).unwrap();
+        let a = fb.input();
+        let i = fb.constant(Value::I32(1), L).unwrap();
+        let v = fb.constant(Value::I32(99), L).unwrap();
+        fb.update(a, i, v, Dest::Ret { slot: None }, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(f).unwrap();
+    assert!(validate(&ir).is_empty(), "{:?}", validate(&ir));
+}
+
+#[test]
+fn update_non_array_rejects() {
+    let (mut b, f) = one_fn(Ty::i32(), Ty::i32());
+    let mut fb = b.build_fn(f).unwrap();
+    let x = fb.input();
+    let i = fb.constant(Value::I32(0), L).unwrap();
+    let e = fb.update(x, i, x, Dest::Fresh(None), L).unwrap_err();
+    assert_eq!(e, IrError::NotAProduct);
+}
+
+#[test]
+fn update_index_not_int_rejects() {
+    let (mut b, f) = one_fn(i32_arr(3), i32_arr(3));
+    let mut fb = b.build_fn(f).unwrap();
+    let a = fb.input();
+    let bad = fb.constant(Value::F32(1.0), L).unwrap();
+    let v = fb.constant(Value::I32(0), L).unwrap();
+    let e = fb.update(a, bad, v, Dest::Fresh(None), L).unwrap_err();
+    assert!(matches!(e, IrError::TypeMismatch { .. }));
+}
+
+#[test]
+fn update_value_elem_mismatch_rejects() {
+    let (mut b, f) = one_fn(i32_arr(3), i32_arr(3));
+    let mut fb = b.build_fn(f).unwrap();
+    let a = fb.input();
+    let i = fb.constant(Value::I32(0), L).unwrap();
+    let bad = fb.constant(Value::F32(1.0), L).unwrap();
+    let e = fb.update(a, i, bad, Dest::Fresh(None), L).unwrap_err();
+    assert!(matches!(e, IrError::TypeMismatch { .. }));
+}

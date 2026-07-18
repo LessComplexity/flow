@@ -225,10 +225,16 @@ fn reconstruct_loop(
 ) {
     let merge_obj = ir.object(merge).expect("merge");
 
+    // One source of truth for the loop's attribution (DESIGN §3, BL7 —
+    // flow-ir's loop_plan). `replay` is gated by `is_canonical`, so `Some` here.
+    let lp = ir
+        .loop_plan(ir.owner(merge), merge)
+        .expect("canonical loop (is_canonical gated)");
+
     // The SCC set: its objects are body objects (plus the merge and back route).
     let scc: SecondaryMap<ObjectId, bool> = {
         let mut m = SecondaryMap::new();
-        for s in scc_containing(ir, ir.owner(merge), merge) {
+        for &s in &lp.scc_objects {
             m.insert(s, true);
         }
         m
@@ -236,7 +242,7 @@ fn reconstruct_loop(
 
     // init → begin_loop. The init is loop-invariant (topo defers LoopEnter), so
     // it is already mapped.
-    let init = enter_source(ir, merge).expect("loop enter source");
+    let init = lp.init;
     let lh = fb
         .begin_loop(feed(plan, remap, init), merge_obj.loc)
         .expect("replay: begin_loop");
@@ -266,7 +272,7 @@ fn reconstruct_loop(
     }
 
     // Back edge: the LoopBack route packs (next_state, cond).
-    let back_route = back_source(ir, merge).expect("loop back route");
+    let back_route = lp.back_route;
     let bf = slot_feeders(ir, back_route);
     let back_loc = back_morph_loc(ir, merge);
     fb.loop_back(
@@ -277,8 +283,10 @@ fn reconstruct_loop(
     )
     .expect("replay: loop_back");
 
-    // Exit edge: the single LoopExit reachable from the merge, leaving the SCC.
-    let (exit_route, exit_tgt, exit_loc) = exit_of(ir, merge, &scc).expect("loop exit");
+    // Exit edge: the single attributed LoopExit, leaving the SCC.
+    let exit_route = lp.exit_route;
+    let exit_morph = ir.morphism(lp.exits[0]).expect("loop exit");
+    let (exit_tgt, exit_loc) = (exit_morph.target, exit_morph.loc);
     let ef = slot_feeders(ir, exit_route);
     let tgt_obj = ir.object(exit_tgt).expect("exit target");
     let dest = if exit_tgt == ret_obj {
@@ -412,6 +420,17 @@ fn emit_op(
         Enumerate => fb
             .enumerate(feed(plan, remap, src), dest, loc)
             .expect("replay: enumerate"),
+        Update => {
+            let f = slot_feeders(ir, src);
+            fb.update(
+                feed(plan, remap, f[0]),
+                feed(plan, remap, f[1]),
+                feed(plan, remap, f[2]),
+                dest,
+                loc,
+            )
+            .expect("replay: update")
+        }
         Call(g) => fb
             .call(fmap[g], feed(plan, remap, src), dest, loc)
             .expect("replay: call"),
@@ -519,6 +538,7 @@ fn reads_packed_source(op: Operation) -> bool {
             | Phi
             | Index
             | Zip
+            | Update
             | Print { .. }
             | LoopBack
             | LoopExit
@@ -570,22 +590,6 @@ fn feed(plan: &RewritePlan, remap: &SecondaryMap<ObjectId, ObjectId>, o: ObjectI
 
 // --- loop structure helpers -----------------------------------------------
 
-/// The source object of `merge`'s `LoopEnter` in-edge (the loop init).
-fn enter_source(ir: &CategoryIr, merge: ObjectId) -> Option<ObjectId> {
-    ir.in_edges(merge).iter().find_map(|&m| {
-        let mo = ir.morphism(m).unwrap();
-        (mo.op == Operation::LoopEnter).then_some(mo.source)
-    })
-}
-
-/// The source (route) object of `merge`'s `LoopBack` in-edge.
-fn back_source(ir: &CategoryIr, merge: ObjectId) -> Option<ObjectId> {
-    ir.in_edges(merge).iter().find_map(|&m| {
-        let mo = ir.morphism(m).unwrap();
-        (mo.op == Operation::LoopBack).then_some(mo.source)
-    })
-}
-
 /// The loc of `merge`'s `LoopBack` morphism.
 fn back_morph_loc(ir: &CategoryIr, merge: ObjectId) -> flow_ir::SourceLoc {
     ir.in_edges(merge)
@@ -597,90 +601,22 @@ fn back_morph_loc(ir: &CategoryIr, merge: ObjectId) -> flow_ir::SourceLoc {
         .expect("loop back morphism")
 }
 
-/// The single `LoopExit` for the loop whose merge is `merge`: the exit route
-/// (its source), the exit target, and the morphism loc. Attribution is by
-/// route-feeder membership in THIS merge's SCC (the interp driver's rule) —
-/// never by reachability, which would attribute a downstream loop's exit to an
-/// upstream merge in a two-sequential-loop function (S12).
-fn exit_of(
-    ir: &CategoryIr,
-    _merge: ObjectId,
-    scc: &SecondaryMap<ObjectId, bool>,
-) -> Option<(ObjectId, ObjectId, flow_ir::SourceLoc)> {
-    for (_, m) in ir.morphisms() {
-        if m.op != Operation::LoopExit {
-            continue;
-        }
-        if scc.contains_key(m.target) {
-            continue;
-        }
-        if route_fed_by(ir, m.source, scc) {
-            return Some((m.source, m.target, m.loc));
-        }
-    }
-    None
-}
-
-/// Whether `route`'s slot feeders include an object of `scc` (the interp
-/// driver's exit-attribution rule).
-fn route_fed_by(ir: &CategoryIr, route: ObjectId, scc: &SecondaryMap<ObjectId, bool>) -> bool {
-    ir.in_edges(route).iter().any(|&pm| {
-        let pmo = ir.morphism(pm).unwrap();
-        matches!(pmo.op, Operation::Pair { .. }) && scc.contains_key(pmo.source)
-    })
-}
-
-/// The SCC (as an object list) that contains `o`, within function `f`.
-fn scc_containing(ir: &CategoryIr, f: FuncId, o: ObjectId) -> Vec<ObjectId> {
-    for comp in ir.sccs(f) {
-        if comp.contains(&o) {
-            return comp;
-        }
-    }
-    vec![o]
-}
-
 // --- canonicity gate (R6) -------------------------------------------------
 
 /// Whether every loop in `ir` is the canonical quartet: one merge per SCC, one
 /// back and one exit per merge (DESIGN §5, R6). A non-canonical shape makes
 /// `replay` return [`ReplayError::NonCanonicalLoop`].
+///
+/// Delegates the per-merge attribution to [`flow_ir::CategoryIr::loop_plan`]
+/// (DESIGN §3, BL7 — one source of truth): a merge is canonical iff its SCC has
+/// exactly one merge and `loop_plan` yields `Some` (which itself encodes the
+/// one-back / one-attributed-exit conditions).
 pub fn is_canonical(ir: &CategoryIr) -> bool {
-    for (f, _) in ir.funcs() {
-        for lscc in ir.loop_structure(f) {
-            if lscc.merges.len() != 1 {
-                return false;
-            }
-            let merge = lscc.merges[0];
-            let backs = ir
-                .in_edges(merge)
-                .iter()
-                .filter(|&&m| ir.morphism(m).unwrap().op == Operation::LoopBack)
-                .count();
-            if backs != 1 {
-                return false;
-            }
-            let scc: SecondaryMap<ObjectId, bool> = {
-                let mut m = SecondaryMap::new();
-                for &s in &lscc.objects {
-                    m.insert(s, true);
-                }
-                m
-            };
-            let exits = ir
-                .morphisms()
-                .filter(|(_, m)| {
-                    m.op == Operation::LoopExit
-                        && !scc.contains_key(m.target)
-                        && route_fed_by(ir, m.source, &scc)
-                })
-                .count();
-            if exits != 1 {
-                return false;
-            }
-        }
-    }
-    true
+    ir.funcs().all(|(f, _)| {
+        ir.loop_structure(f)
+            .iter()
+            .all(|lscc| lscc.merges.len() == 1 && ir.loop_plan(f, lscc.merges[0]).is_some())
+    })
 }
 
 // --- object topo order ----------------------------------------------------

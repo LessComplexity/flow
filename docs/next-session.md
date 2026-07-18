@@ -1,43 +1,45 @@
 # Next Session
 
-Written: 2026-07-18 · end of Session 12 · by: Claude (Fable 5 orchestrator; Opus workflow agents; category-architect skill)
+Written: 2026-07-18 · end of Session 13 · by: Claude (Fable 5 orchestrator; Opus workflow agents; category-architect skill)
 
 ## Where things stand (≤5 lines)
 
-**P4 COMPLETE (S12).** `flow-rewrite` shipped: plan+replay over sealed IR (rebuild-through-builder, ir §17), const fold + CSE + DCE + map fusion, fixpoint driver, R1 property harness over the new **testgen** random-program generator (P5–P7 will reuse it). Two interp **P0s found & fixed** (multi-hop loop-invariants; two-sequential-loops — both via Sapir's matmul exploration). **P5 prep is banked**: ADR-0020 (emission contract + `flow-rt`) and backend-llvm DESIGN are written; verilator + icarus installed; vastai CLI verified for P6. Full detail: `sessions/2026-07-18-p4-rewrites.md`.
+**P5 COMPLETE — M2 REACHED (S13).** `flow-backend-llvm` + `flow-rt` shipped: full textual-LLVM emitter, differential-tested against the oracle on real clang (10 examples + 320-case testgen sweep, raw **and** rewritten IR; native loop-driven matmul `8\n136\n`; traps = exit 101; ~80× native over interp at sepia N=4096). **ADR-0021** landed the same session: `c[i] <- x` array update, pipeline-wide. Sapir ratified ADR-0013 (+IN6 float-÷0 amendment), 0016, 0020, RW2. `flow_ir::loop_plan` is now the single loop-attribution predicate (BL7). Full detail: `sessions/2026-07-18-s13-array-update-p5-llvm.md`.
 
 ## Test state: ALL GREEN
 
-`cargo test --workspace`: **511 passed, 0 failed** (192 syntax · 102 ir · 128 lower · 29 check · 37 interp · 23 rewrite). fmt + clippy clean.
+`cargo test --workspace`: **558 passed, 0 failed** (199 syntax · 106 ir · 139 lower · 29 check · 44 interp · 27 rewrite · 13 backend-llvm · 1 flow-rt). fmt + clippy clean.
 
 ## Do next (ordered, smallest-first)
 
-1. **P5 backend-llvm (M2)** — DESIGN.md is written and review-ready (`components/backend-llvm/DESIGN.md`): implement `crates/flow-rt` (ADR-0020 §2) + the alloca-slot emitter + differential harness (10 examples + testgen, raw + rewritten IR) + sepia perf baseline. Suggested flow: adversarial design-review pass on the DESIGN first (S12 did this for rewrite and it killed 4 blockers pre-code), then the sequenced-TDD workflow, then orchestrator line-by-line review.
-2. (Optional, small) suggestions #6 (lower `ChainCtx::RetValue` uniformity) and #7 headroom items (precise DCE / constant dedup) — any session.
-3. P6 CUDA (vast.ai RTX 4090 route, backend-cuda/STATUS.md) after P5; P7 Verilog (verilator installed) after; M5 CLI last.
+1. **P6 backend-cuda (M3)** — nothing written yet (STATUS stub only). Flow: DESIGN model-first (ADR-0020 contract; map-kernels via nvcc; host-side prints — E2 keeps effects out of kernels; the H↔D `Trm` makes the physical pair real for the first time) → adversarial design review (the S12/S13 pattern kills blockers pre-code) → implementation workflow → orchestrator line-by-line review. **GPU leg:** nvcc absent locally — rent the vast.ai RTX 4090 box (memory `vast-ai-gpu-access`; `vastai show instances` currently empty). The backend-llvm differential harness + testgen port directly (closed-mode, raw+rewritten, exit-101).
+2. (Small, mechanical) migrate rewrite's `is_canonical`/`exit_of` onto `flow_ir::loop_plan` (open item P3 — S12 pins prove equivalence; one predicate, three consumers).
+3. (Optional headroom, any session) backend-llvm suggestions (in-place Update via last-use; array-fill/heap lowering → restores perf N=262144; `-O2` differential row; `frem` parity pin) · rewrite suggestions (#5 `reoperand` → laws L-b/L-c; #7 precise DCE).
+4. P7 Verilog (verilator installed) after P6; M5 CLI last.
 
 ## Open questions for Sapir
 
-- **New (S12):** RATIFY or amend **ADR-0020** (emission contract: flow-rt runtime, exit-101 traps, no-`nsw` wrapping) — P5 builds on it. RATIFY **rewrite R1/RW2** (traps ⊥-identified, fuel-insensitive oracle equality) — the P4 "interpreter-equal" pin; ADR if contested. **Array-update design note** (`notes/array-update-design.md`): recommendation = pure `Update` op + `c[i] <- x` desugar onto mut-rebind, in-place via E3 last-use (the answer to your S12 question; Core+1 ADR candidate).
-- **Carried:** RATIFY ADR-0016 (guard-first loops); ADR-0013 review; IN6 float ÷0 amendment; lower §16 OQ1–OQ8.
+- **Lower §16 OQ1–OQ8** — still open: these are *questions*, the S13 blanket ratification covered decisions only. Answer individually when convenient.
+- Nothing else pending — the S12 ratification stack is fully closed (ADR-0013+IN6, 0016, 0020, RW2, ADR-0021).
 
 ## Gotchas / warnings (things that will waste the next session's time)
 
-- **All S08–S11 gotchas stand** (guard-first driver; `LineIndex<'a>`; `Name` carries no string; check runs no typing pass; CK/LD/RW ledgers no-relitigate; Fanout+SeqBlock walker rule).
-- **New S12 loop-walker rule:** `topo_order` **defers LoopEnter** — every non-merge-gated morphism precedes its loop header (ir §13). Anything walking loops must attribute exits/body **per-merge-SCC, never the per-fn union** (two sequential loops per fn are legal + supported; the union pattern panicked interp and mis-skipped rewrite — both pinned). Backends: emission order = the same `topo_order`, so invariants-before-header transfers for free.
-- **Rewrite plan laws P1–P3** (DESIGN §1.2) are load-bearing: plans key non-SCC `Temporary` objects only; alias preserves SCC membership; fusion needs loop-free bodies. Three review blockers converged there — do not relax casually.
-- **testgen lives at `crates/flow-rewrite/tests/testgen/mod.rs`** — consumed cross-crate via `#[path]` include (the lower `tests/common` pattern), NOT a library export (HANDOFF §9 placement).
-- **`vector.flow` is out-of-Core** (generics sketch) — the example set for harnesses is the 10 in-Core files.
-- **`RewriteResult` is Debug-only** (CategoryIr not Clone); `rewrite` takes the graph **by value** — differential harnesses must run the oracle on the input *before* rewriting.
-- **P6 CUDA:** nvcc absent locally; vast.ai CLI verified (no instances running). Order stays P5 → P6.
+- **All S08–S12 gotchas stand** (guard-first driver; `Name` carries no string; CK/LD/RW ledgers no-relitigate; Fanout+SeqBlock walker rule; per-merge attribution; testgen via `#[path]`, not a library export).
+- **New S13:** loop attribution lives in **`flow_ir::loop_plan`** — use it, never re-derive (backend-llvm `loops.rs` + interp consume it; rewrite still has its own copy, open item P3). The emitter's `walk()` skips driver-owned morphisms by **plan membership ∪ SCC incidence** — SCC incidence alone double-emits exit-only chains (a duplicated exit-arm `Print` breaks R1; pinned by `exit_only_payload_emitted_once`).
+- **LLVM text ABI:** parameter attrs go **after** the type in call args (`i8 zeroext %v`); `zeroext` on every i8/i1 flow-rt param at declare AND call sites. This was invalid-LLVM in the first draft and only the u8 differential caught it — keep that test.
+- **Alloca-slot stack ceiling (BL1):** whole arrays live in frames; huge-N shapes need `ulimit -s hard` (see `perf_baseline.rs:run_big_stack`). Perf N capped at 4096 — the array literal (no array-fill in Core) makes clang -O2 time explode at large N.
+- **Differential harness rules:** oracle runs BEFORE `rewrite()` (IR taken by value); closed-mode testgen only (open `i32 → i32` has no native observable); `Unit → i32` entries get the result-printing wrapper; Diverged programs skip.
+- **CUDA design seeds (from S13 decisions):** flow-rt links into the host side unchanged (prints/traps host-side); wrapping ints no-`nsw` transfers; the capability matrix `array update` row is `planned` for cuda — naive per-thread copy is correct, in-place is headroom.
 
 ## Commands (build/test/bench invocations that currently work)
 
 ```sh
-cargo test --workspace                                   # 511 green (192+102+128+29+37+23)
-cargo test -p flow-rewrite --test property               # R1 battery (PROPTEST_CASES=2000 for a deep run)
-cargo test -p flow-interp --test loop_invariants         # the S12 P0 pins (matmul4, two-loops)
-cargo bench -p flow-rewrite                              # rewrite_scale (chain/grid, ~linear)
-cargo run -p flow-lower --example dump_ir -- examples/sepia.flow   # Mermaid dump
-git log --oneline -3                                     # S12 commit(s)
+cargo test --workspace                                        # 558 green
+cargo test -p flow-backend-llvm --test differential           # the M2 line (needs clang; ~4 min)
+cargo test -p flow-backend-llvm --test golden_ll              # 13 .ll snapshots, fast
+cargo test -p flow-backend-llvm --test perf_baseline -- --ignored --nocapture   # sepia numbers
+cargo test -p flow-interp --test update_pipeline              # loop-driven matmul oracle pin
+cargo test -p flow-rewrite --test property                    # R1 battery (PROPTEST_CASES=2000 deep)
+vastai show instances                                         # P6 GPU box (expect: none yet)
+git log --oneline -3                                          # S13 commit(s)
 ```

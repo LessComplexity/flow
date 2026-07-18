@@ -42,6 +42,9 @@ enum Step {
     Zip(usize, usize),
     /// `enumerate(a)` — succeeds only when `a` is an array (ADR-0018).
     Enum(usize),
+    /// `update(a, i, v)` — succeeds only when `a` is an array, `i` integer, and
+    /// `v` matches the elem ty (ADR-0021).
+    Update(usize, usize, usize),
     /// Open a loop seeded from a pool object (leaving it possibly unclosed).
     BeginLoop(usize),
     /// Back-edge the most recently opened loop with a pool object as next-state.
@@ -65,6 +68,8 @@ fn step_strategy() -> impl Strategy<Value = Step> {
         (any::<usize>(), any::<usize>()).prop_map(|(a, b)| Step::MakeArr(a, b)),
         (any::<usize>(), any::<usize>()).prop_map(|(a, b)| Step::Zip(a, b)),
         any::<usize>().prop_map(Step::Enum),
+        (any::<usize>(), any::<usize>(), any::<usize>())
+            .prop_map(|(a, b, c)| Step::Update(a, b, c)),
         any::<usize>().prop_map(Step::BeginLoop),
         (any::<usize>(), any::<usize>()).prop_map(|(a, b)| Step::LoopBackLast(a, b)),
         (any::<usize>(), any::<usize>()).prop_map(|(a, b)| Step::EndLoopLast(a, b)),
@@ -119,6 +124,13 @@ proptest! {
                         fb.zip(pick(&pool, a), pick(&pool, c), Dest::Fresh(None), L)
                     }
                     Step::Enum(a) => fb.enumerate(pick(&pool, a), Dest::Fresh(None), L),
+                    Step::Update(a, i, v) => fb.update(
+                        pick(&pool, a),
+                        pick(&pool, i),
+                        pick(&pool, v),
+                        Dest::Fresh(None),
+                        L,
+                    ),
                     Step::BeginLoop(a) => {
                         match fb.begin_loop(pick(&pool, a), L) {
                             Ok(lh) => {

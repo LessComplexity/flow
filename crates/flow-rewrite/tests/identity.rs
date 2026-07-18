@@ -78,6 +78,60 @@ fn identity_replay_matches_every_example() {
     }
 }
 
+/// ADR-0021 U1: an `Update`-bearing graph survives the optimizer as an identity
+/// on observable behavior — `rewrite` returns a validate-clean graph whose interp
+/// `RunResult` is byte-equal to the original (the op is may-trap-kept, no L-a
+/// operand to fold here). Built via `IrBuilder` (lower sugar is WP U3).
+#[test]
+fn update_graph_round_trips_through_rewrite() {
+    let mut b = IrBuilder::new();
+    let arr_ty = Ty::Array {
+        elem: Box::new(Ty::i32()),
+        size: 4,
+    };
+    let f = b
+        .declare(FuncKind::Named, "main", arr_ty.clone(), arr_ty, L)
+        .unwrap();
+    {
+        let mut fb = b.build_fn(f).unwrap();
+        let a = fb.input();
+        let i = fb.constant(Value::I32(2), L).unwrap();
+        let v = fb.constant(Value::I32(99), L).unwrap();
+        fb.update(a, i, v, Dest::Ret { slot: None }, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(f).unwrap();
+    assert!(validate(&ir).is_empty());
+
+    let arg = flow_interp::RValue::Array(
+        (0..4)
+            .map(|n| flow_interp::RValue::Scalar(Value::I32(n)))
+            .collect(),
+    );
+    let before = flow_interp::eval_call(&ir, f, arg.clone(), BUDGET);
+
+    let res = rewrite(ir);
+    assert!(
+        validate(&res.ir).is_empty(),
+        "rewrite output validate-clean"
+    );
+    let after = flow_interp::eval_call(&res.ir, res.ir.entry(), arg, BUDGET);
+    assert_eq!(
+        after, before,
+        "Update-bearing graph must round-trip interp-equal"
+    );
+    // Sanity: the write landed (slot 2 replaced), proving replay rebuilt the op.
+    assert_eq!(
+        after,
+        flow_interp::Outcome::Done(flow_interp::RValue::Array(vec![
+            flow_interp::RValue::Scalar(Value::I32(0)),
+            flow_interp::RValue::Scalar(Value::I32(1)),
+            flow_interp::RValue::Scalar(Value::I32(99)),
+            flow_interp::RValue::Scalar(Value::I32(3)),
+        ]))
+    );
+}
+
 /// A multi-merge nested loop (two loops cross-fed into one SCC) — not the
 /// canonical quartet. Shape copied from
 /// `crates/flow-ir/tests/algos.rs::nested_loops_multi_merge_one_scc`.

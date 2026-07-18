@@ -32,7 +32,7 @@ mod mermaid;
 mod ty;
 mod validate;
 
-pub use algo::LoopScc;
+pub use algo::{LoopPlan, LoopScc};
 pub use builder::{Dest, FnBuilder, IrBuilder, IrError, LoopHandle};
 pub use graph::{
     CategoryIr, FuncDef, FuncId, FuncKind, Morphism, MorphismId, Object, ObjectId, ObjectKind,

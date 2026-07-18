@@ -285,6 +285,19 @@ binds); a `mut` rebind keeps the original `decl_seq` (LD4).
 - **One-definition rule (ADR-0013):** re-assignment `e -> x` requires `mut` (else L1104;
   mut params are rebindable like mut bindings) and allocates a **fresh object** (named
   `x` again); the symbol rebinds. No object is ever mutated.
+- **Element update `c[i] <- x` (ADR-0021; LD27):** an *indexed* `BindStmt` (`b.index.is_some()`)
+  is a **rebind of `c`**, never a fresh shadow — it desugars to `Update(cur, i, x)` (ir §5.1)
+  producing a fresh array, then rebinds the symbol via the same `rebind()` a bare `x -> c` uses.
+  `c` must resolve to a rebindable local/mut param (else L1104 / not-`mut`); the write is pure
+  (no token). Inheritance is **not** automatic — three explicit wiring points (S13 review):
+  (a) `emit` — `StmtKind::Bind` with `index.is_some()` takes the `update()`-then-`rebind()` path,
+  never `bind_new`; (b) `collect_assigns_stmt` records the indexed target so a `mut c` updated in
+  a loop body joins the carried set (the ADR's motivating shape); (c) `scan_stmt` (Phi-arm scan)
+  records it so `c[i] <- x` in a Phi arm draws **L1408** like any other enclosing-mut rebind.
+  Typing (`typing.rs`): an indexed bind unifies `x` with `array_elem_wty(c)` and re-reads the
+  index; `capture_stmt`'s indexed-bind branch reads target+index+value without registering a
+  body-local (else a captured enclosing local would evade capture). Precedent: LD4/LD23 rebind
+  machinery, LD26 builtin-emission.
 - **Scopes (LD8/LD10):** function body = root scope. Guard-arm payloads and loop bodies
   open child scopes (new bindings are arm/body-local). Updates to outer `mut` names
   rebind the **outer** symbol **only in statement position** (loop-body statements
@@ -991,6 +1004,7 @@ clean tree + bounded recursion + fail-fast emission ⇒ never panics/hangs.
 | LD24 | Pass B's L1008 graph = I6's reference graph (owner→callee edges include block-internal calls) | owner-via-body recursion must be a user diagnostic, not seal `RecursiveCall` (SF-9/IR-3) |
 | LD25 | `print`/`println` are one builtin family behind `is_print_builtin` (ADR-0015); `println` lowers to `Print{newline:true}`, `print` to `Print{newline:false}` | `print` was special-cased in 9 effect/typing/emit sites — a single predicate stops them drifting (FRAMEWORK §5); `println` regressed an un-updated site, which is why the helper exists |
 | LD26 | `zip`/`enumerate` are the **pure** collection builtins behind `is_collection_builtin` (ADR-0018); routed at call-shaped stages (§8.9), emit owns L1606–L1610, builder re-derives defensively (LD12); no token ⇒ legal in fanout/bodies | mirrors LD25's one-predicate rule for the emit dispatch + two bare-name-binding lookahead sites; pure-ness (no effects-walk entry) is what makes them fanout-legal, the property the fanout golden guards |
+| LD27 | `c[i] <- x` (indexed `BindStmt`, ADR-0021) is a **rebind**, not a fresh shadow: emit's `index.is_some()` path emits `Update(cur,i,x)` then `rebind()` (never `bind_new`); the three sub-passes each recognize it — `collect_assigns_stmt` (carried set), `scan_stmt` (L1408 in Phi arms); typing unifies `x` with `array_elem_wty(c)` and `capture_stmt` reads target/index/value without a body-local binding | reuses LD4/LD23 rebind machinery + LD26 emit-dispatch precedent; the pure (token-free) `Update` keeps it fanout/body-legal like the collection builtins |
 
 ## 16. Open questions (→ next-session / ADR candidates)
 

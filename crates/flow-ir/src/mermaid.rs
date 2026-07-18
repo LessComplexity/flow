@@ -152,6 +152,7 @@ fn edge_label(op: &Operation) -> String {
         Operation::Index => "Index".into(),
         Operation::Zip => "Zip".into(),
         Operation::Enumerate => "Enumerate".into(),
+        Operation::Update => "Update".into(),
         Operation::Print { newline: true } => "Println".into(),
         Operation::Print { newline: false } => "Print".into(),
         Operation::LoopEnter => "LoopEnter".into(),

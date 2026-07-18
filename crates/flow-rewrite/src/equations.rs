@@ -1,6 +1,7 @@
 //! Layer 3 (DESIGN §2) — constant folding + algebraic identities. Pure analysis:
 //! `&CategoryIr → RewritePlan`. Fills `constify` (folded scalars, `x*0→0`) and
-//! `alias` (algebraic forwards, `proj∘pack`, index-of-const, phi-select).
+//! `alias` (algebraic forwards, `proj∘pack`, index-of-const, index∘update L-a,
+//! phi-select).
 //!
 //! Justifying law: per-op axioms **at the oracle's exact semantics** (interp
 //! `eval.rs`): integers wrap, `Div`/`Mod` fold only on a non-zero constant
@@ -103,6 +104,28 @@ fn try_fold_object(
                     let elems = slot_feeders(ir, arr);
                     if i >= 0 && (i as u128) < elems.len() as u128 {
                         forward(ir, scc, plan, o, elems[i as usize]);
+                    }
+                } else if let Some(m) = op_edge(ir, arr)
+                    && ir.morphism(m).expect("update edge").op == Update
+                {
+                    // L-a (ADR-0021 §3): `index_i ∘ update_i` with both indices
+                    // CONSTANT, equal, and in-bounds ⇒ the Index result IS the
+                    // written value. Aliases to the Update's value operand (an
+                    // already-existing object — the alias channel). OOB or unequal
+                    // index does not fold (a real OOB read is a trap = the program's
+                    // meaning, R4; the base-read law L-b and update∘update L-c need
+                    // the operand-rewrite channel that does not exist — headroom).
+                    let triple = ir.morphism(m).expect("update edge").source;
+                    let uf = slot_feeders(ir, triple);
+                    let (uidx, uval) = (uf[1], uf[2]);
+                    let n = ir.object(arr).and_then(|x| x.ty.product_arity());
+                    if let (Some(u @ (Value::I32(_) | Value::I64(_) | Value::U8(_))), Some(n)) =
+                        (const_val(ir, uidx), n)
+                        && int_val(u) == i
+                        && i >= 0
+                        && (i as u128) < n as u128
+                    {
+                        forward(ir, scc, plan, o, uval);
                     }
                 }
             }

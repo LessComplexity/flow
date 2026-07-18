@@ -11,6 +11,134 @@ use flow_rewrite::{analyze_const_fold, is_canonical, rewrite};
 const BUDGET: u64 = 100_000;
 const L: SourceLoc = SourceLoc { start: 0, end: 0 };
 
+fn arr_ty(size: u64) -> Ty {
+    Ty::Array {
+        elem: Box::new(Ty::i32()),
+        size,
+    }
+}
+
+/// L-a HIT (ADR-0021 §3): `main([i32;3]) -> i32 { c = a[1] <- 7; c[1] }` — the
+/// Index reads the slot the Update wrote, both indices the constant 1, in-bounds
+/// ⇒ const-fold aliases the Index result to the written value `7`. One alias, and
+/// the run is unchanged (still 7).
+#[test]
+fn index_of_update_equal_const_in_bounds_folds() {
+    let mut b = IrBuilder::new();
+    let f = b
+        .declare(FuncKind::Named, "main", arr_ty(3), Ty::i32(), L)
+        .unwrap();
+    {
+        let mut fb = b.build_fn(f).unwrap();
+        let a = fb.input();
+        let one = fb.constant(Value::I32(1), L).unwrap();
+        let seven = fb.constant(Value::I32(7), L).unwrap();
+        let c = fb
+            .update(a, one, seven, Dest::Fresh(Some("c".into())), L)
+            .unwrap();
+        let one2 = fb.constant(Value::I32(1), L).unwrap();
+        // Route the Index through a Temporary (Dest::Fresh): a Return-writer would
+        // be P1-skipped, so the alias target must be a Temporary consumed by Output.
+        let r = fb.index(c, one2, Dest::Fresh(Some("r".into())), L).unwrap();
+        fb.output(r, None, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(f).unwrap();
+    assert!(validate(&ir).is_empty());
+    assert!(is_canonical(&ir));
+
+    let plan = analyze_const_fold(&ir);
+    assert_eq!(
+        plan.alias.len(),
+        1,
+        "L-a: index∘update at equal const folds"
+    );
+
+    let before = eval_call(&ir, ir.entry(), arr(&[10, 20, 30]), BUDGET);
+    let res = rewrite(ir);
+    assert!(validate(&res.ir).is_empty());
+    let after = eval_call(&res.ir, res.ir.entry(), arr(&[10, 20, 30]), BUDGET);
+    assert_eq!(before, Outcome::Done(RValue::Scalar(Value::I32(7))));
+    assert_eq!(after, before);
+}
+
+/// L-a NOT folded, OOB: `main([i32;3]) -> i32 { c = a[5] <- 7; c[5] }` — index 5
+/// is out of bounds, so the Update traps (`IndexOob`). Folding to `7` would erase
+/// an observable trap (R4). Const-fold must find no alias, and the run stays
+/// `Trapped`.
+#[test]
+fn index_of_update_oob_not_folded() {
+    let mut b = IrBuilder::new();
+    let f = b
+        .declare(FuncKind::Named, "main", arr_ty(3), Ty::i32(), L)
+        .unwrap();
+    {
+        let mut fb = b.build_fn(f).unwrap();
+        let a = fb.input();
+        let five = fb.constant(Value::I32(5), L).unwrap();
+        let seven = fb.constant(Value::I32(7), L).unwrap();
+        let c = fb
+            .update(a, five, seven, Dest::Fresh(Some("c".into())), L)
+            .unwrap();
+        let five2 = fb.constant(Value::I32(5), L).unwrap();
+        let r = fb
+            .index(c, five2, Dest::Fresh(Some("r".into())), L)
+            .unwrap();
+        fb.output(r, None, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(f).unwrap();
+    assert!(validate(&ir).is_empty());
+
+    assert!(
+        analyze_const_fold(&ir).alias.is_empty(),
+        "L-a: an OOB index∘update must not fold (trap = meaning, R4)"
+    );
+
+    let before = eval_call(&ir, ir.entry(), arr(&[10, 20, 30]), BUDGET);
+    assert!(matches!(before, Outcome::Trapped(_)));
+    let res = rewrite(ir);
+    assert!(validate(&res.ir).is_empty());
+    let after = eval_call(&res.ir, res.ir.entry(), arr(&[10, 20, 30]), BUDGET);
+    assert!(matches!(after, Outcome::Trapped(_)));
+}
+
+/// L-a NOT folded, non-const index: `main([i32;3]) -> i32 { c = a[i] <- 7; c[i] }`
+/// where `i` is the runtime input's slot 0. The Update index is not a constant, so
+/// L-a cannot prove equality/in-bounds ⇒ no alias.
+#[test]
+fn index_of_update_non_const_not_folded() {
+    let mut b = IrBuilder::new();
+    let f = b
+        .declare(FuncKind::Named, "main", arr_ty(3), Ty::i32(), L)
+        .unwrap();
+    {
+        let mut fb = b.build_fn(f).unwrap();
+        let a = fb.input();
+        // A non-const index derived from the array (a[0]).
+        let zero = fb.constant(Value::I32(0), L).unwrap();
+        let i = fb.index(a, zero, Dest::Fresh(Some("i".into())), L).unwrap();
+        let seven = fb.constant(Value::I32(7), L).unwrap();
+        let c = fb
+            .update(a, i, seven, Dest::Fresh(Some("c".into())), L)
+            .unwrap();
+        fb.index(c, i, Dest::Ret { slot: None }, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(f).unwrap();
+    assert!(validate(&ir).is_empty());
+
+    assert!(
+        analyze_const_fold(&ir).alias.is_empty(),
+        "L-a: a non-const index∘update must not fold"
+    );
+}
+
+/// An i32 array `RValue`.
+fn arr(xs: &[i32]) -> RValue {
+    RValue::Array(xs.iter().map(|&x| RValue::Scalar(Value::I32(x))).collect())
+}
+
 /// F1 (I4 token linearity) — const-fold must NOT alias a token-bearing
 /// `proj∘pack` result: `main(io) -> io { tup = (io, 5); tup.0 }`. Aliasing
 /// `tup.0 → io` would give `io` two token consumers (the re-packed tuple and the

@@ -1,6 +1,6 @@
 # ADR-0020: Backend emission contract — one convention, one runtime, oracle-parity semantics
 
-Date: 2026-07-17 · Status: accepted — autonomous (Session 12, under Sapir's S12 "complete all" pre-authorization), **flagged for Sapir's review** (next-session.md), revisable
+Date: 2026-07-17 · Status: accepted — autonomous (Session 12, under Sapir's S12 "complete all" pre-authorization); **ratified by Sapir 2026-07-18 (Session 13)**
 
 ## Context (what forced the decision; spec refs)
 

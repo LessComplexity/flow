@@ -235,6 +235,11 @@ pub(crate) fn eval_morphism(
             write(ctx, target, v);
             Ok(())
         }
+        Operation::Update => {
+            let v = update(ctx, source)?;
+            write(ctx, target, v);
+            Ok(())
+        }
         Operation::Zip => {
             // src is the internal 2-tuple (Array A, Array B); pair elementwise
             // (ADR-0018 denotation: [(a[0],b[0]), …, (a[n-1],b[n-1])]). Sizes are
@@ -481,6 +486,23 @@ fn index(ctx: &EvalCtx, source: ObjectId) -> Result<RValue, Abort> {
         return Err(Abort::Trapped(TrapKind::IndexOob));
     }
     Ok(arr[i as usize].clone())
+}
+
+/// `Update`: `(Array, I, T)`; `i < 0 ∨ i ≥ n ⇒ Trapped(IndexOob)`; else a fresh
+/// array with slot `i` replaced by the value operand (ADR-0021). The index
+/// zero/sign-extends exactly like `Index` (shared `as_int` path).
+fn update(ctx: &EvalCtx, source: ObjectId) -> Result<RValue, Abort> {
+    let triple = read(ctx, source);
+    let mut arr = match component(triple, 0) {
+        RValue::Array(es) => es.clone(),
+        _ => unreachable!("Update on a non-array"),
+    };
+    let i = as_int(scalar(component(triple, 1)));
+    if i < 0 || i as u128 >= arr.len() as u128 {
+        return Err(Abort::Trapped(TrapKind::IndexOob));
+    }
+    arr[i as usize] = component(triple, 2).clone();
+    Ok(RValue::Array(arr))
 }
 
 /// `Print { newline }`: `(IoToken, P) → IoToken`.

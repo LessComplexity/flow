@@ -1,0 +1,54 @@
+---
+source: crates/flow-backend-llvm/tests/golden_ll.rs
+expression: ll
+---
+; flow-backend-llvm emitted module
+declare void @flow_print_i32(i32, i1 zeroext)
+declare void @flow_print_i64(i64, i1 zeroext)
+declare void @flow_print_u8(i8 zeroext, i1 zeroext)
+declare void @flow_print_bool(i1 zeroext, i1 zeroext)
+declare void @flow_print_f32(float, i1 zeroext)
+declare void @flow_print_f64(double, i1 zeroext)
+declare void @flow_print_str(ptr, i64, i1 zeroext)
+declare void @flow_trap(i32)
+declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
+
+define internal [4 x i32] @flow_main([4 x i32] %arg) {
+entry:
+  %o0 = alloca [4 x i32]
+  %o1 = alloca [4 x i32]
+  %o2 = alloca { [4 x i32], i32, i32 }
+  store [4 x i32] %arg, ptr %o0
+  %t0 = load [4 x i32], ptr %o0
+  %t1 = getelementptr { [4 x i32], i32, i32 }, ptr %o2, i32 0, i32 0
+  store [4 x i32] %t0, ptr %t1
+  %t2 = getelementptr { [4 x i32], i32, i32 }, ptr %o2, i32 0, i32 1
+  store i32 2, ptr %t2
+  %t3 = getelementptr { [4 x i32], i32, i32 }, ptr %o2, i32 0, i32 2
+  store i32 99, ptr %t3
+  %t4 = getelementptr { [4 x i32], i32, i32 }, ptr %o2, i32 0, i32 0
+  %t5 = getelementptr { [4 x i32], i32, i32 }, ptr %o2, i32 0, i32 1
+  %t6 = load i32, ptr %t5
+  %t7 = sext i32 %t6 to i64
+  %t8 = icmp slt i64 %t7, 0
+  %t9 = icmp sge i64 %t7, 4
+  %t10 = or i1 %t8, %t9
+  br i1 %t10, label %bb11, label %bb12
+bb11:
+  call void @flow_trap(i32 1)
+  unreachable
+bb12:
+  call void @llvm.memcpy.p0.p0.i64(ptr %o1, ptr %t4, i64 ptrtoint (ptr getelementptr ([4 x i32], ptr null, i64 1) to i64), i1 false)
+  %t13 = getelementptr [4 x i32], ptr %o1, i64 0, i64 %t7
+  %t14 = getelementptr { [4 x i32], i32, i32 }, ptr %o2, i32 0, i32 2
+  %t15 = load i32, ptr %t14
+  store i32 %t15, ptr %t13
+  %t16 = load [4 x i32], ptr %o1
+  ret [4 x i32] %t16
+}
+
+define i32 @main() {
+entry:
+  %r = call [4 x i32] @flow_main([4 x i32] zeroinitializer)
+  ret i32 0
+}

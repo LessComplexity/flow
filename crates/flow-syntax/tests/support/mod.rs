@@ -374,11 +374,16 @@ impl<'a> TreeWriter<'a> {
             }
             StmtKind::Bind(b) => {
                 let m = if b.mut_span.is_some() { "mut " } else { "" };
+                let idx = if b.index.is_some() { "[]" } else { "" };
                 self.line(
                     d,
                     s.span,
-                    &format!("Stmt::Bind {}{}", m, self.quoted(b.name.span)),
+                    &format!("Stmt::Bind {}{}{}", m, self.quoted(b.name.span), idx),
                 );
+                if let Some(index) = &b.index {
+                    self.line(d + 1, index.span, "index");
+                    self.expr(d + 2, index);
+                }
                 if let Some(ty) = &b.ty {
                     self.ty(d + 1, ty);
                 }

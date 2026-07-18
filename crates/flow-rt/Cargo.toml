@@ -1,0 +1,11 @@
+[package]
+name = "flow-rt"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dev-dependencies]
+flow-ir = { path = "../flow-ir" }
+flow-interp = { path = "../flow-interp" }

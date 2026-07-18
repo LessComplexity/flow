@@ -29,7 +29,7 @@ and is **not** re-modeled here (errata E5 firewall).
 | `check` | E2 effect legality (tree×graph) + Return exclusivity; typing discharged at boundary; E3 vacuity proof | [`components/check/DESIGN.md`](../components/check/DESIGN.md) | modeled |
 | `interp` | Fueled reference interpreter (the oracle): the `RValue` domain, the `eval` `Trn`, the SCC loop driver, token-as-Writer | [`components/interp/DESIGN.md`](../components/interp/DESIGN.md) | modeled |
 | `rewrite` | Plan+replay rewriter: layers 3–4 (const fold, DCE, CSE) + layer 1 (map fusion) over sealed `CategoryIr`; R1 oracle-equality contract | [`components/rewrite/DESIGN.md`](../components/rewrite/DESIGN.md) | modeled |
-| `backend-llvm` | `F_LLVM` piecewise emitter: alloca-slot scheme, ADR-0016 loop CFG, flow-rt seam (ADR-0020), L1 oracle parity | [`components/backend-llvm/DESIGN.md`](../components/backend-llvm/DESIGN.md) | modeled |
+| `backend-llvm` | `F_LLVM` piecewise emitter: alloca-slot scheme, ADR-0016 loop CFG, `flow-rt` seam (ADR-0020, DESIGN §1 — the runtime crate is owned here, not a modeled component of its own), L1 oracle parity | [`components/backend-llvm/DESIGN.md`](../components/backend-llvm/DESIGN.md) | modeled · built/tested (S13) |
 | `backend-cuda` | `F_CUDA` (the one place `Loc`/`Trm` are real — host↔device) | `components/backend-cuda/DESIGN.md` | planned |
 | `backend-verilog` | `F_Verilog : Flow-Cat → Clocked-Cat` (E1 done-protocol) | `components/backend-verilog/DESIGN.md` | planned |
 | `cli` | `flow build\|run\|dump-ir\|test`; the lone renderer of structured diagnostics | `components/cli/DESIGN.md` | planned |

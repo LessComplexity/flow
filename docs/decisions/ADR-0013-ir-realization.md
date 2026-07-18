@@ -1,6 +1,8 @@
 # ADR-0013: IR realization — all dataflow is edges; Core operation set; loops as inline cycles; IO as a linear world token
 
-Date: 2026-06-12 · Status: accepted (autonomous session — flagged for Sapir's review in next-session.md, revisable by superseding ADR)
+Date: 2026-06-12 · Status: accepted (autonomous session); **ratified by Sapir 2026-07-18 (Session 13)**, revisable by superseding ADR
+
+> **Amendment (S13, ratified with the ADR — closes interp IN6):** "division by zero traps" is *integer-only*. Integer `Div`/`Mod` by zero ⇒ `Trapped(DivZero)`; **float ÷0 follows IEEE 754** (±inf / NaN, no trap). This makes interp's IN6 reading normative for all backends.
 
 ## Context (what forced the decision; spec refs)
 

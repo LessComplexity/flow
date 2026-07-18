@@ -216,3 +216,22 @@ fn main() {}
 fn golden_seq_explicit_ret() {
     snap("seq_explicit_ret", SEQ_EXPLICIT_RET);
 }
+
+// --- array element update (ADR-0021) ----------------------------------------
+
+/// Straight-line `c[i] <- v` (ADR-0021 §2 wiring a): the indexed bind is a
+/// rebind emitting one `Update` (an internal `(arr, idx, val)` 3-tuple → the
+/// pure `Update` op), then reads `c[0]`. `main` is effectful (`println`) — the
+/// snapshot pins that the `Update` op takes NO token in-edge (pure), while the
+/// IoToken thread runs only through the `println`.
+const ARRAY_UPDATE_STRAIGHTLINE: &str = r#"fn main() {
+    mut c: [i32; 4] <- [0, 0, 0, 0];
+    c[2] <- 9;
+    c[0] -> println;
+}
+"#;
+
+#[test]
+fn golden_array_update_straightline() {
+    snap("array_update_straightline", ARRAY_UPDATE_STRAIGHTLINE);
+}

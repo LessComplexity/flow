@@ -1,6 +1,6 @@
 # ADR-0016: Loop branch evaluation is guard-first — the continue-branch is not speculatively evaluated on the exit step (E1 refinement)
 
-Date: 2026-06-15 · Status: **accepted** — autonomous (Session 08), decided from Sapir's "pick the best place per the language's design" delegation; **flagged for Sapir's explicit review in next-session.md**, revisable by superseding ADR
+Date: 2026-06-15 · Status: **accepted** — autonomous (Session 08), decided from Sapir's "pick the best place per the language's design" delegation; **ratified by Sapir 2026-07-18 (Session 13)**, revisable by superseding ADR
 
 ## Context (what forced the decision; spec refs)
 

@@ -40,6 +40,7 @@ pub enum Step {
     PackProj { a: u8, b: u8, snd: bool },
     MakeArray { a: u8, b: u8, c: u8 },
     Index { arr: u8, idx: u8 },
+    Update { arr: u8, idx: u8, val: u8 },
     MapArr { arr: u8, body: u8 },
     FoldArr { arr: u8, seed: u8, body: u8 },
     Zip { a: u8, b: u8 },
@@ -108,6 +109,7 @@ fn main_step() -> impl Strategy<Value = Step> {
         6 => scalar_step(),
         1 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(a, b, c)| Step::MakeArray { a, b, c }),
         1 => (any::<u8>(), any::<u8>()).prop_map(|(arr, idx)| Step::Index { arr, idx }),
+        1 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(arr, idx, val)| Step::Update { arr, idx, val }),
         1 => (any::<u8>(), any::<u8>()).prop_map(|(arr, body)| Step::MapArr { arr, body }),
         1 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(arr, seed, body)| Step::FoldArr { arr, seed, body }),
         1 => (any::<u8>(), any::<u8>()).prop_map(|(a, b)| Step::Zip { a, b }),
@@ -166,10 +168,17 @@ struct Pool {
     i32s: Vec<flow_ir::ObjectId>,
     bools: Vec<flow_ir::ObjectId>,
     arrs: Vec<flow_ir::ObjectId>, // [i32; ARR]
-    /// The interp attributes `LoopExit`s per-function (M1), so a function holds
-    /// at most one loop — later `Loop` steps are skipped.
-    loop_used: bool,
+    /// Count of loops emitted so far. The interp scopes loop layout per-merge
+    /// SCC (S12 fix: two sequential loops are supported — `interp
+    /// tests/loop_invariants.rs::two_sequential_loops`), so up to `MAX_LOOPS`
+    /// sequential loops are generable (the S12 P0 / llvm-review-F1 shape); each
+    /// is a self-contained canonical quartet, so they nest not, only sequence.
+    loops_used: u8,
 }
+
+/// Sequential loops per function (S12 P0 shape needs ≥ 2; kept small so build
+/// stays cheap). Each `build_loop` is statically bounded (`i < k`, `k ≤ 64`).
+const MAX_LOOPS: u8 = 2;
 
 fn pick<T: Copy>(v: &[T], i: u8) -> Option<T> {
     if v.is_empty() {
@@ -507,6 +516,23 @@ fn emit_step(
             pool.i32s
                 .push(fb.index(a, i, Dest::Fresh(None), L).unwrap());
         }
+        Step::Update { arr, idx, val } if collections => {
+            let (Some(a), Some(v)) = (pick(&pool.arrs, arr), pick(&pool.i32s, val)) else {
+                return;
+            };
+            // trap_free: index literal-and-in-bounds by construction; default:
+            // an arbitrary pool feeder (sometimes OOB — the exit-101 trap path).
+            let i = if ctx.trap_free {
+                fb.constant(Value::I32(idx as i32 % ARR as i32), L).unwrap()
+            } else {
+                match pick(&pool.i32s, idx) {
+                    Some(x) => x,
+                    None => return,
+                }
+            };
+            pool.arrs
+                .push(fb.update(a, i, v, Dest::Fresh(None), L).unwrap());
+        }
         Step::MapArr { arr, body } if collections => {
             let (Some(a), Some(bd)) = (pick(&pool.arrs, arr), pick(&ctx.map_bodies, body)) else {
                 return;
@@ -548,8 +574,8 @@ fn emit_step(
             };
             pool.i32s.push(fb.call(g, x, Dest::Fresh(None), L).unwrap());
         }
-        Step::Loop { k } if collections && !pool.loop_used => {
-            pool.loop_used = true;
+        Step::Loop { k } if collections && pool.loops_used < MAX_LOOPS => {
+            pool.loops_used += 1;
             pool.i32s.push(build_loop(fb, (k % 65) as i32));
         }
         // Collection/loop steps in a scalar body: skipped.

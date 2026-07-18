@@ -1,0 +1,86 @@
+---
+source: crates/flow-backend-llvm/tests/golden_ll.rs
+expression: ll
+---
+; flow-backend-llvm emitted module
+declare void @flow_print_i32(i32, i1 zeroext)
+declare void @flow_print_i64(i64, i1 zeroext)
+declare void @flow_print_u8(i8 zeroext, i1 zeroext)
+declare void @flow_print_bool(i1 zeroext, i1 zeroext)
+declare void @flow_print_f32(float, i1 zeroext)
+declare void @flow_print_f64(double, i1 zeroext)
+declare void @flow_print_str(ptr, i64, i1 zeroext)
+declare void @flow_trap(i32)
+declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
+
+define internal i32 @fn0(i32 %arg) {
+entry:
+  %o0 = alloca i32
+  %o1 = alloca i32
+  %o2 = alloca { i32, i32 }
+  %o3 = alloca i1
+  %o4 = alloca { i32, i32 }
+  %o5 = alloca i32
+  %o6 = alloca { i32, i32, i1 }
+  store i32 %arg, ptr %o0
+  %t0 = load i32, ptr %o0
+  %t1 = getelementptr { i32, i32 }, ptr %o2, i32 0, i32 0
+  store i32 %t0, ptr %t1
+  %t2 = load i32, ptr %o0
+  %t3 = getelementptr { i32, i32 }, ptr %o4, i32 0, i32 0
+  store i32 %t2, ptr %t3
+  %t4 = load i32, ptr %o0
+  %t5 = getelementptr { i32, i32, i1 }, ptr %o6, i32 0, i32 0
+  store i32 %t4, ptr %t5
+  %t6 = getelementptr { i32, i32 }, ptr %o2, i32 0, i32 1
+  store i32 0, ptr %t6
+  %t7 = getelementptr { i32, i32 }, ptr %o4, i32 0, i32 1
+  store i32 -1, ptr %t7
+  %t8 = getelementptr { i32, i32 }, ptr %o2, i32 0, i32 0
+  %t9 = load i32, ptr %t8
+  %t10 = getelementptr { i32, i32 }, ptr %o2, i32 0, i32 1
+  %t11 = load i32, ptr %t10
+  %t12 = icmp sgt i32 %t9, %t11
+  store i1 %t12, ptr %o3
+  %t13 = getelementptr { i32, i32 }, ptr %o4, i32 0, i32 0
+  %t14 = load i32, ptr %t13
+  %t15 = getelementptr { i32, i32 }, ptr %o4, i32 0, i32 1
+  %t16 = load i32, ptr %t15
+  %t17 = mul i32 %t14, %t16
+  store i32 %t17, ptr %o5
+  %t18 = load i1, ptr %o3
+  %t19 = getelementptr { i32, i32, i1 }, ptr %o6, i32 0, i32 2
+  store i1 %t18, ptr %t19
+  %t20 = load i32, ptr %o5
+  %t21 = getelementptr { i32, i32, i1 }, ptr %o6, i32 0, i32 1
+  store i32 %t20, ptr %t21
+  %t22 = getelementptr { i32, i32, i1 }, ptr %o6, i32 0, i32 0
+  %t23 = load i32, ptr %t22
+  %t24 = getelementptr { i32, i32, i1 }, ptr %o6, i32 0, i32 1
+  %t25 = load i32, ptr %t24
+  %t26 = getelementptr { i32, i32, i1 }, ptr %o6, i32 0, i32 2
+  %t27 = load i1, ptr %t26
+  %t28 = select i1 %t27, i32 %t23, i32 %t25
+  store i32 %t28, ptr %o1
+  %t29 = load i32, ptr %o1
+  ret i32 %t29
+}
+
+define internal void @flow_main() {
+entry:
+  %o2 = alloca i32
+  %o3 = alloca i32
+  %t0 = call i32 @fn0(i32 -7)
+  store i32 %t0, ptr %o2
+  %t1 = load i32, ptr %o2
+  store i32 %t1, ptr %o3
+  %t2 = load i32, ptr %o3
+  call void @flow_print_i32(i32 %t2, i1 zeroext true)
+  ret void
+}
+
+define i32 @main() {
+entry:
+  call void @flow_main()
+  ret i32 0
+}

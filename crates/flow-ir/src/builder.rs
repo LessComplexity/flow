@@ -1625,6 +1625,73 @@ impl FnBuilder<'_> {
         Ok(self.emit_to_dest(plan, arr, Operation::Enumerate, loc))
     }
 
+    /// `Update` (DESIGN §5.1; ADR-0021): `(Array{T,n}, I, T) → Array{T,n}`. Builds
+    /// the internal 3-tuple `(arr, idx, val)` (Pair-then-primitive, as `phi`), then
+    /// applies `Update`. `I` is a Core integer scalar (exactly `index`); `val` must
+    /// match the element ty. Result is the same array ty (fresh array, slot `i`
+    /// replaced); OOB is a run-time trap, not a shape error.
+    pub fn update(
+        &mut self,
+        arr: ObjectId,
+        idx: ObjectId,
+        val: ObjectId,
+        dest: Dest,
+        loc: SourceLoc,
+    ) -> Result<ObjectId, IrError> {
+        self.check_obj(arr)?;
+        self.check_obj(idx)?;
+        self.check_obj(val)?;
+        let aty = self.ty_of(arr);
+        let ity = self.ty_of(idx);
+        let vty = self.ty_of(val);
+        let elem = match &aty {
+            Ty::Array { elem, .. } => (**elem).clone(),
+            _ => return Err(IrError::NotAProduct),
+        };
+        if !ity.is_integer() {
+            return Err(IrError::TypeMismatch {
+                expected: Ty::i32(),
+                found: ity,
+                loc,
+            });
+        }
+        if vty != elem {
+            return Err(IrError::TypeMismatch {
+                expected: elem,
+                found: vty,
+                loc,
+            });
+        }
+        let triple_ty = Ty::Tuple(vec![aty.clone(), ity.clone(), vty.clone()]);
+        self.b.intake_ty(&triple_ty)?;
+        let triple = self
+            .b
+            .mint_object(self.f, triple_ty, None, ObjectKind::Temporary, None, loc);
+        self.b.add_edge(
+            self.f,
+            arr,
+            triple,
+            Operation::Pair { slot: 0, arity: 3 },
+            loc,
+        );
+        self.b.add_edge(
+            self.f,
+            idx,
+            triple,
+            Operation::Pair { slot: 1, arity: 3 },
+            loc,
+        );
+        self.b.add_edge(
+            self.f,
+            val,
+            triple,
+            Operation::Pair { slot: 2, arity: 3 },
+            loc,
+        );
+        let plan = self.dest_target(&dest, &aty, loc)?;
+        Ok(self.emit_to_dest(plan, triple, Operation::Update, loc))
+    }
+
     /// `Call(f)` (DESIGN §5.1): `f` is `FuncKind::Named`; arg ty = input ty.
     pub fn call(
         &mut self,

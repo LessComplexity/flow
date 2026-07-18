@@ -1,0 +1,129 @@
+---
+source: crates/flow-backend-llvm/tests/golden_ll.rs
+expression: ll
+---
+; flow-backend-llvm emitted module
+declare void @flow_print_i32(i32, i1 zeroext)
+declare void @flow_print_i64(i64, i1 zeroext)
+declare void @flow_print_u8(i8 zeroext, i1 zeroext)
+declare void @flow_print_bool(i1 zeroext, i1 zeroext)
+declare void @flow_print_f32(float, i1 zeroext)
+declare void @flow_print_f64(double, i1 zeroext)
+declare void @flow_print_str(ptr, i64, i1 zeroext)
+declare void @flow_trap(i32)
+declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
+
+define internal i32 @fn0({ i32, i32 } %arg) {
+entry:
+  %o0 = alloca { i32, i32 }
+  %o1 = alloca i32
+  %o2 = alloca i32
+  %o3 = alloca i32
+  %o4 = alloca { i32, i32 }
+  %o5 = alloca i32
+  %o6 = alloca { i32, i32 }
+  %o7 = alloca i32
+  %o8 = alloca { i32, i32 }
+  store { i32, i32 } %arg, ptr %o0
+  %t0 = getelementptr { i32, i32 }, ptr %o0, i32 0, i32 0
+  %t1 = load i32, ptr %t0
+  store i32 %t1, ptr %o2
+  %t2 = getelementptr { i32, i32 }, ptr %o0, i32 0, i32 1
+  %t3 = load i32, ptr %t2
+  store i32 %t3, ptr %o3
+  %t4 = load i32, ptr %o2
+  %t5 = getelementptr { i32, i32 }, ptr %o4, i32 0, i32 0
+  store i32 %t4, ptr %t5
+  %t6 = load i32, ptr %o2
+  %t7 = getelementptr { i32, i32 }, ptr %o6, i32 0, i32 0
+  store i32 %t6, ptr %t7
+  %t8 = load i32, ptr %o3
+  %t9 = getelementptr { i32, i32 }, ptr %o4, i32 0, i32 1
+  store i32 %t8, ptr %t9
+  %t10 = load i32, ptr %o3
+  %t11 = getelementptr { i32, i32 }, ptr %o6, i32 0, i32 1
+  store i32 %t10, ptr %t11
+  %t12 = getelementptr { i32, i32 }, ptr %o4, i32 0, i32 0
+  %t13 = load i32, ptr %t12
+  %t14 = getelementptr { i32, i32 }, ptr %o4, i32 0, i32 1
+  %t15 = load i32, ptr %t14
+  %t16 = icmp eq i32 %t15, 0
+  br i1 %t16, label %bb17, label %bb18
+bb17:
+  call void @flow_trap(i32 0)
+  unreachable
+bb18:
+  %t19 = icmp eq i32 %t15, -1
+  %t20 = icmp eq i32 %t13, -2147483648
+  %t21 = and i1 %t19, %t20
+  br i1 %t21, label %bb22, label %bb23
+bb22:
+  store i32 -2147483648, ptr %o5
+  br label %bb24
+bb23:
+  %t25 = sdiv i32 %t13, %t15
+  store i32 %t25, ptr %o5
+  br label %bb24
+bb24:
+  %t26 = getelementptr { i32, i32 }, ptr %o6, i32 0, i32 0
+  %t27 = load i32, ptr %t26
+  %t28 = getelementptr { i32, i32 }, ptr %o6, i32 0, i32 1
+  %t29 = load i32, ptr %t28
+  %t30 = icmp eq i32 %t29, 0
+  br i1 %t30, label %bb31, label %bb32
+bb31:
+  call void @flow_trap(i32 0)
+  unreachable
+bb32:
+  %t33 = icmp eq i32 %t29, -1
+  %t34 = icmp eq i32 %t27, -2147483648
+  %t35 = and i1 %t33, %t34
+  br i1 %t35, label %bb36, label %bb37
+bb36:
+  store i32 0, ptr %o7
+  br label %bb38
+bb37:
+  %t39 = srem i32 %t27, %t29
+  store i32 %t39, ptr %o7
+  br label %bb38
+bb38:
+  %t40 = load i32, ptr %o5
+  %t41 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 0
+  store i32 %t40, ptr %t41
+  %t42 = load i32, ptr %o7
+  %t43 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 1
+  store i32 %t42, ptr %t43
+  %t44 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 0
+  %t45 = load i32, ptr %t44
+  %t46 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 1
+  %t47 = load i32, ptr %t46
+  %t48 = add i32 %t45, %t47
+  store i32 %t48, ptr %o1
+  %t49 = load i32, ptr %o1
+  ret i32 %t49
+}
+
+define internal void @flow_main() {
+entry:
+  %o2 = alloca { i32, i32 }
+  %o3 = alloca i32
+  %o4 = alloca i32
+  %t0 = getelementptr { i32, i32 }, ptr %o2, i32 0, i32 0
+  store i32 7, ptr %t0
+  %t1 = getelementptr { i32, i32 }, ptr %o2, i32 0, i32 1
+  store i32 3, ptr %t1
+  %t2 = load { i32, i32 }, ptr %o2
+  %t3 = call i32 @fn0({ i32, i32 } %t2)
+  store i32 %t3, ptr %o3
+  %t4 = load i32, ptr %o3
+  store i32 %t4, ptr %o4
+  %t5 = load i32, ptr %o4
+  call void @flow_print_i32(i32 %t5, i1 zeroext true)
+  ret void
+}
+
+define i32 @main() {
+entry:
+  call void @flow_main()
+  ret i32 0
+}

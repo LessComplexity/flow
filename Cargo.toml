@@ -6,6 +6,7 @@ members = [
     "crates/flow-lower",
     "crates/flow-check",
     "crates/flow-interp",
+    "crates/flow-rt",
     "crates/flow-rewrite",
     "crates/flow-backend-llvm",
     "crates/flow-backend-cuda",

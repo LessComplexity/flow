@@ -19,6 +19,36 @@ pub struct LoopScc {
     pub merges: Vec<ObjectId>,
 }
 
+/// The per-merge loop attribution the interp driver, rewrite replayer, and the
+/// backend-llvm emitter all derive from one graph (DESIGN §3, BL7 — the one
+/// source of truth for the rule whose two hand-maintained copies both regressed
+/// in S12). Produced by [`CategoryIr::loop_plan`], which returns `None` for any
+/// non-canonical shape (multi-merge SCC, ≠1 `LoopBack`, ≠1 attributed
+/// `LoopExit`) — so `is_canonical`-style gates read `.is_some()` and the interp
+/// / backend drivers, which only ever run on gated-canonical loops, `.expect()`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LoopPlan {
+    /// The `LoopMerge` object this plan is for.
+    pub merge: ObjectId,
+    /// `source(LoopEnter → merge)` — the init value object (loop-invariant).
+    pub init: ObjectId,
+    /// `source(LoopBack → merge)` — the `(next_state, cond)` route object.
+    pub back_route: ObjectId,
+    /// The attributed `LoopExit` morphisms (canonical: exactly one).
+    pub exits: Vec<MorphismId>,
+    /// `source(the unique attributed LoopExit)` — the `(payload, cond)` route.
+    pub exit_route: ObjectId,
+    /// The SCC's objects (membership set; deterministic order).
+    pub scc_objects: Vec<ObjectId>,
+    /// Decide phase (ADR-0016): body morphisms whose target is backward-reachable
+    /// from `exit_route` — the cond + exit-route feeders, run every iteration.
+    pub decide_order: Vec<MorphismId>,
+    /// Advance phase: the rest of the body (next-state), skipped on the exit step.
+    pub advance_order: Vec<MorphismId>,
+    /// Product objects assembled by `Pair` edges across the body (reset/iter).
+    pub product_targets: Vec<ObjectId>,
+}
+
 impl CategoryIr {
     /// The objects owned by function `f`, in deterministic order.
     fn func_objects(&self, f: FuncId) -> Vec<ObjectId> {
@@ -295,6 +325,161 @@ impl CategoryIr {
             out.push(LoopScc { objects, merges });
         }
         out
+    }
+
+    /// The per-merge loop attribution for the loop headed by `merge` in function
+    /// `f` (DESIGN §3, BL7). Returns `None` for any non-canonical shape: `merge`
+    /// not in a nontrivial SCC, a multi-merge SCC, ≠1 `LoopEnter`/`LoopBack` into
+    /// `merge`, or ≠1 `LoopExit` attributed to this merge's SCC.
+    ///
+    /// **Exit attribution** is by *route-feeder membership* (the S12 rule): a
+    /// `LoopExit` belongs to this merge iff its route object is `Pair`-fed by an
+    /// object of THIS merge's SCC — never per-function union or reachability,
+    /// which mis-attribute a downstream loop's exit to an upstream merge in a
+    /// two-sequential-loop function.
+    ///
+    /// **Decide/advance split** (ADR-0016): the decide cone is every body
+    /// morphism whose target is backward-reachable from `exit_route` (cond +
+    /// exit-route feeders, incl. exit-feeding effects); the advance cone is the
+    /// rest (next-state), unreachable on the exit step.
+    pub fn loop_plan(&self, f: FuncId, merge: ObjectId) -> Option<LoopPlan> {
+        // Single-merge SCC (M1 canonical shape) — THIS merge's SCC only, never
+        // the per-function union.
+        let scc = self
+            .loop_structure(f)
+            .into_iter()
+            .find(|s| s.merges.contains(&merge))?;
+        if scc.merges.len() != 1 {
+            return None;
+        }
+        let in_scc: SecondaryMap<ObjectId, ()> = {
+            let mut m = SecondaryMap::new();
+            for &o in &scc.objects {
+                m.insert(o, ());
+            }
+            m
+        };
+
+        // init / back_route from the merge's in-edges.
+        let mut init = None;
+        let mut back_routes: Vec<ObjectId> = Vec::new();
+        for &m in self.in_edges(merge) {
+            let morph = &self.morphisms[m];
+            match morph.op {
+                Operation::LoopEnter => {
+                    if init.is_some() {
+                        return None;
+                    }
+                    init = Some(morph.source);
+                }
+                Operation::LoopBack => back_routes.push(morph.source),
+                _ => {}
+            }
+        }
+        let init = init?;
+        if back_routes.len() != 1 {
+            return None;
+        }
+        let back_route = back_routes[0];
+
+        // exits: LoopExit morphisms whose route object is fed (slot-Pair source)
+        // by an in-SCC value — attribute by route-feeder membership.
+        let mut exits: Vec<MorphismId> = Vec::new();
+        for (mid, morph) in self.morphisms() {
+            if self.try_owner(morph.source) != Some(f) {
+                continue;
+            }
+            if morph.op != Operation::LoopExit {
+                continue;
+            }
+            let route = morph.source;
+            let fed_by_scc = self.in_edges(route).iter().any(|&pm| {
+                let pmo = &self.morphisms[pm];
+                matches!(pmo.op, Operation::Pair { .. }) && in_scc.contains_key(pmo.source)
+            });
+            if fed_by_scc {
+                exits.push(mid);
+            }
+        }
+        if exits.len() != 1 {
+            return None;
+        }
+        let exit_route = self.morphisms[exits[0]].source;
+
+        // body_order: topo_order filtered to morphisms incident to SCC(merge) OR
+        // feeding a route object, excluding loop ops. Route objects sit outside
+        // the SCC, but every Pair edge assembling them must re-fire each iteration
+        // — including loop-invariant feeds whose source is outside the SCC — so
+        // membership-by-SCC alone would drop them.
+        let body_order: Vec<MorphismId> = self
+            .topo_order(f)
+            .into_iter()
+            .filter(|&m| {
+                let morph = &self.morphisms[m];
+                if matches!(
+                    morph.op,
+                    Operation::LoopEnter | Operation::LoopBack | Operation::LoopExit
+                ) {
+                    return false;
+                }
+                in_scc.contains_key(morph.source)
+                    || in_scc.contains_key(morph.target)
+                    || morph.target == back_route
+                    || morph.target == exit_route
+            })
+            .collect();
+
+        // Decide set (ADR-0016): objects backward-reachable within body_order's
+        // edges from exit_route. Fixpoint over the (small) body.
+        let mut in_d: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+        in_d.insert(exit_route, ());
+        loop {
+            let mut changed = false;
+            for &m in &body_order {
+                let morph = &self.morphisms[m];
+                if in_d.contains_key(morph.target) && !in_d.contains_key(morph.source) {
+                    in_d.insert(morph.source, ());
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let mut decide_order = Vec::new();
+        let mut advance_order = Vec::new();
+        for &m in &body_order {
+            let morph = &self.morphisms[m];
+            if in_d.contains_key(morph.target) {
+                decide_order.push(m);
+            } else {
+                advance_order.push(m);
+            }
+        }
+
+        // Product targets assembled by Pair edges across the whole body.
+        let mut product_targets: Vec<ObjectId> = Vec::new();
+        for &m in &body_order {
+            let morph = &self.morphisms[m];
+            if matches!(morph.op, Operation::Pair { .. })
+                && !product_targets.contains(&morph.target)
+            {
+                product_targets.push(morph.target);
+            }
+        }
+
+        Some(LoopPlan {
+            merge,
+            init,
+            back_route,
+            exits,
+            exit_route,
+            scc_objects: scc.objects,
+            decide_order,
+            advance_order,
+            product_targets,
+        })
     }
 
     /// Whether `o` has an edge to itself (the only way a 1-object SCC is a loop).

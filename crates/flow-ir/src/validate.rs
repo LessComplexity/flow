@@ -284,6 +284,15 @@ fn edge_type_ok(ir: &CategoryIr, m: &crate::graph::Morphism, sty: &Ty, tty: &Ty)
             }
             _ => false,
         },
+        // ADR-0021: (Array{T,n}, I, T) -> Array{T,n}. I any Core integer scalar;
+        // val ty = elem ty; target = the source array ty (fresh, same shape).
+        Operation::Update => match sty {
+            Ty::Tuple(ts) if ts.len() == 3 => match &ts[0] {
+                Ty::Array { elem, .. } => ts[1].is_integer() && **elem == ts[2] && ts[0] == *tty,
+                _ => false,
+            },
+            _ => false,
+        },
         Operation::Print { .. } => match sty {
             Ty::Tuple(ts) if ts.len() == 2 => {
                 ts[0] == Ty::IoToken && ts[1].is_printable() && *tty == Ty::IoToken
@@ -1601,6 +1610,72 @@ mod typing_table_golden {
                 Enumerate,
                 arr(f32t(), 4),
                 arr(f32t(), 4),
+                p,
+                false,
+            ),
+            // Update (ADR-0021): (Array{T,n}, I, T) -> Array{T,n}.
+            (
+                "Update ok",
+                Update,
+                tup(&[arr(i32t.clone(), 3), i32t.clone(), i32t.clone()]),
+                arr(i32t.clone(), 3),
+                p,
+                true,
+            ),
+            // I = any Core integer scalar, unsigned included (mirrors Index).
+            (
+                "Update u8 idx ok",
+                Update,
+                tup(&[arr(i32t.clone(), 3), Ty::u8(), i32t.clone()]),
+                arr(i32t.clone(), 3),
+                p,
+                true,
+            ),
+            (
+                "Update idx not int",
+                Update,
+                tup(&[arr(i32t.clone(), 3), f32t(), i32t.clone()]),
+                arr(i32t.clone(), 3),
+                p,
+                false,
+            ),
+            (
+                "Update val not elem",
+                Update,
+                tup(&[arr(i32t.clone(), 3), i32t.clone(), f32t()]),
+                arr(i32t.clone(), 3),
+                p,
+                false,
+            ),
+            (
+                "Update src not array",
+                Update,
+                tup(&[i32t.clone(), i32t.clone(), i32t.clone()]),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            (
+                "Update wrong arity",
+                Update,
+                tup(&[arr(i32t.clone(), 3), i32t.clone()]),
+                arr(i32t.clone(), 3),
+                p,
+                false,
+            ),
+            (
+                "Update target size mismatch",
+                Update,
+                tup(&[arr(i32t.clone(), 3), i32t.clone(), i32t.clone()]),
+                arr(i32t.clone(), 4),
+                p,
+                false,
+            ),
+            (
+                "Update target not source array",
+                Update,
+                tup(&[arr(i32t.clone(), 3), i32t.clone(), i32t.clone()]),
+                arr(f32t(), 3),
                 p,
                 false,
             ),

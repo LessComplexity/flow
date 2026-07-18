@@ -245,6 +245,17 @@ version = "0.0.1"
 [[package]]
 name = "flow-backend-llvm"
 version = "0.0.1"
+dependencies = [
+ "flow-interp",
+ "flow-ir",
+ "flow-lower",
+ "flow-rewrite",
+ "flow-syntax",
+ "insta",
+ "proptest",
+ "slotmap",
+ "tempfile",
+]
 
 [[package]]
 name = "flow-backend-verilog"
@@ -307,6 +318,14 @@ dependencies = [
  "insta",
  "proptest",
  "slotmap",
+]
+
+[[package]]
+name = "flow-rt"
+version = "0.0.1"
+dependencies = [
+ "flow-interp",
+ "flow-ir",
 ]
 
 [[package]]

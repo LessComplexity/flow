@@ -721,6 +721,35 @@ fn l1108_capture_in_seq_in_map_body() {
 }
 
 #[test]
+fn l1108_indexed_bind_captures_enclosing_local_in_map_body() {
+    // Sibling of `l1108_capture_in_seq_in_map_body` for the ADR-0021 sugar: an
+    // indexed bind `c[i] <- v` whose target `c` is an enclosing local (not a
+    // body-local) captures it — must draw L1108, not the misleading L1101
+    // "unresolved name". The map/fold-body capture check (typing.rs
+    // `capture_stmt`) must NOT treat the indexed-bind target as a fresh local.
+    assert_rejects(
+        "fn main() { mut c: [i32; 3] <- [0,0,0]; [1,2,3] -> map { e -> e -> seq { c[0] <- e; e } } -> r; r[0] -> println; }\n",
+        "L1108",
+    );
+    // The index expression is capture-checked too: `k` here is an enclosing
+    // local read inside the map body's indexed bind → L1108.
+    assert_rejects(
+        "fn main() { 2 -> k; mut c: [i32; 3] <- [0,0,0]; [1,2,3] -> map { e -> e -> seq { c[k] <- e; e } } -> r; r[0] -> println; }\n",
+        "L1108",
+    );
+}
+
+#[test]
+fn indexed_update_of_body_local_in_map_body_lowers_clean() {
+    // Inverse control for the fix above: an indexed bind whose target is a
+    // *body-local* (declared inside the map body) is not a capture — it lowers
+    // clean (ADR-0021 §1 "legal in map/fold bodies").
+    let _ = lower_ok(
+        "fn main() { [1,2,3] -> map { e -> e -> seq { mut d: [i32; 2] <- [0,0]; d[0] <- e; d[0] } } -> r; r[0] -> println; }\n",
+    );
+}
+
+#[test]
 fn effectful_seq_in_fanout_join_rejected() {
     // ADR-0019 pin e / plan WP2 item 5: an effectful `seq` branch inside a
     // *Plain* (parallel) fanout that joins is rejected by lower's existing
@@ -1175,4 +1204,101 @@ fn atk_14_loop_in_map_body_lowers_clean() {
 "#;
     let ir = lower_ok(src);
     assert!(flow_ir::validate(&ir).is_empty());
+}
+
+// --- ADR-0021: array element update `c[i] <- v` -----------------------------
+// The indexed bind is a *rebind* (wiring point a). No new L-codes: a non-array
+// target reuses L1204 (index on non-array), an element-ty clash reuses L1201/
+// L1203 (width-unification), a non-`mut` target reuses L1104, and an assignment
+// in a Phi arm reuses L1408 (wiring point c).
+
+#[test]
+fn array_update_non_mut_is_l1104() {
+    // `c` bound non-`mut`; `c[0] <- 9` is an immutable rebind → L1104.
+    let src = r#"fn main() {
+    [0, 0, 0, 0] -> c: [i32; 4];
+    c[0] <- 9;
+    c[0] -> println;
+}
+"#;
+    assert_rejects(src, "L1104");
+}
+
+#[test]
+fn array_update_unbound_is_l1101() {
+    // `d` never bound; `d[0] <- 9` targets an unknown name → L1101.
+    let src = r#"fn main() {
+    d[0] <- 9;
+}
+"#;
+    assert_rejects(src, "L1101");
+}
+
+#[test]
+fn array_update_non_array_target_is_l1204() {
+    // `c` is a scalar; `c[0] <- 9` is an index-write on a non-array → L1204.
+    let src = r#"fn main() {
+    mut c: i32 <- 5;
+    c[0] <- 9;
+    c -> println;
+}
+"#;
+    assert_rejects(src, "L1204");
+}
+
+#[test]
+fn array_update_elem_ty_clash_is_l1201() {
+    // A concrete element-ty clash (`bool` written into an `i32` array) is caught
+    // by width-unification → L1201.
+    let src = r#"fn main() {
+    mut c: [i32; 4] <- [0, 0, 0, 0];
+    c[0] <- true;
+    c[0] -> println;
+}
+"#;
+    assert_rejects(src, "L1201");
+}
+
+#[test]
+fn array_update_in_phi_arm_is_l1408() {
+    // `c[0] <- 1` inside a Phi-position arm rebinds an enclosing `mut`
+    // unconditionally → L1408 (wiring point c: scan_stmt records the indexed
+    // bind's target).
+    let src = r#"fn main() {
+    mut c: [i32; 4] <- [0, 0, 0, 0];
+    5 -> x: i32;
+    (x > 0) -> {
+        -true-> { c[0] <- 1; x }
+        -false-> x
+    } -> r: i32;
+    r -> println;
+}
+"#;
+    assert_rejects(src, "L1408");
+}
+
+#[test]
+fn lone_indexed_update_loop_not_l1502() {
+    // A loop whose ONLY enclosing-mut mutation is `c[0] <- …` must NOT be
+    // L1502-rejected (wiring point b: collect_assigns_stmt records the indexed
+    // bind's target, so the mut array joins the carried set). It lowers clean.
+    let src = r#"fn main() {
+    mut c: [i32; 4] <- [1, 0, 0, 0];
+    loop {
+        c[0] <- c[0] + 1;
+        (c[0] < 4) -> {
+            -true-> -> loop;
+            -false-> c -> result;
+        }
+    }
+    result[0] -> println;
+}
+"#;
+    let codes = lower_err_codes(src);
+    assert!(
+        !codes.iter().any(|c| c == "L1502"),
+        "L1502 must not fire for a lone indexed-update loop; got {codes:?}"
+    );
+    // In fact it lowers clean.
+    let _ = lower_ok(src);
 }

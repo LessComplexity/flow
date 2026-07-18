@@ -113,10 +113,10 @@ The builder exposes **typed primitives only** (no raw add-object/add-edge); comp
 | `Constant` | — | `constant(value, loc)` (ty follows value, I7) |
 | product, ≥1 *explicit* consumer (`Proj`, `Fold` seed-and-arr, `Call` arg, `Map` arr, `LoopEnter` init, `Output`, ≥2 consumers) | `Pair×arity` | `pack` / `pack_struct` / `pack_array` from replayed slot feeders (declaration order = slot order) |
 | product consumed **only** as one internally-packing primitive's source | `Pair×arity` | **not materialized** — the primitive call rebuilds it internally from the slot feeders |
-| defined by `Add..Or` / `Neg,Not` / `Proj` / `Index` / `Zip` / `Enumerate` / `Phi` / `Call` / `Map` / `Fold` / `Print` | one op edge | the matching builder primitive, feeders = replayed slot sources (operand order = slot order; load-bearing for non-commutative ops) |
+| defined by `Add..Or` / `Neg,Not` / `Proj` / `Index` / `Update` / `Zip` / `Enumerate` / `Phi` / `Call` / `Map` / `Fold` / `Print` | one op edge | the matching builder primitive, feeders = replayed slot sources (operand order = slot order; load-bearing for non-commutative ops — `Update`'s `(arr,i,v)` triple, ADR-0021, replays via `fb.update`) |
 | defined by `Output` | op edge | `output(replayed_src, slot, loc)` |
 | Return slot writes | `Pair` into Return | the writing primitive replayed with `Dest::Ret{slot}` (canonical form, ir L3-4) |
-| `LoopMerge` + routes + exits | the quartet | recognized per `loop_structure` entry (single merge / single back / single exit, else R6-skip): replay init → `begin_loop` → in-SCC morphisms in body order (merge ↦ `merge_of(lh)`) → `loop_back(next_state', cond')` from the back route's slot feeders → `loop_exit(value', cond', dest)` from the exit route's slot feeders → `end_loop`. Route objects are never materialized. **Exit attribution (S12): by route-feeder membership in the specific merge's SCC (the interp driver's rule) — never by reachability, which mis-attributed a downstream loop's exit to an upstream merge; two sequential canonical loops in one fn are canonical and rewritable** (pinned by `identity.rs::two_sequential_loops_rewrite_not_skipped`) |
+| `LoopMerge` + routes + exits | the quartet | canonicity and per-merge layout are **delegated to `flow_ir::CategoryIr::loop_plan(f, merge)`** (ir §13, BL7 — the one source of truth; `is_canonical` gates on `loop_plan(...).is_some()` for every `loop_structure` merge, `replay` reads the same `LoopPlan` back). Replay init → `begin_loop` → in-SCC morphisms in body order (merge ↦ `merge_of(lh)`) → `loop_back(next_state', cond')` from the back route's slot feeders → `loop_exit(value', cond', dest)` from the exit route's slot feeders → `end_loop`. Route objects are never materialized. **Exit attribution (S12): by route-feeder membership in the specific merge's SCC (the interp driver's rule, now encapsulated in `loop_plan`) — never by reachability, which mis-attributed a downstream loop's exit to an upstream merge; two sequential canonical loops in one fn are canonical and rewritable** (pinned by `identity.rs::two_sequential_loops_rewrite_not_skipped`) |
 
 - **Id remap**: `SecondaryMap<ObjectId_old, ObjectId_new>`, built during the walk. `alias?` is resolved (transitively) *before* lookup; `constify?` short-circuits to a fresh `constant(v)`; `drop` objects are skipped.
 - **Names and locs preserved** (`Dest::Fresh(name)`, original `loc`s) — Mermaid diffs stay readable; folded constants carry the folded morphism's `loc`.
@@ -140,6 +140,7 @@ All §2 rules produce plan entries and are therefore bounded by §1.2 P1/P2 (key
 
 - **proj∘pack forwarding**: `Proj{k}` whose source product's slot-`k` feeder is `x` ⇒ `alias[target] = x`. (Also collapses lower's zip round-trip re-pair, the fusion seeded in lower §8.9.)
 - **Index-of-const**: `Index` with constant index `i` on a `pack_array`-built source with `0 ≤ i < n` ⇒ `alias[target] = feeder(i)`; OOB or non-literal array: untouched (R4).
+- **Index∘Update (L-a, ADR-0021 §3)**: `Index_i` reading a source produced by `Update_i`, both indices **constant, equal, and in-bounds** ⇒ the read is the written value ⇒ `alias[target] = update's value operand`. OOB or unequal/non-const index does not fold (a real OOB read is a trap = the program's meaning, R4; the base-read law L-b and update∘update L-c need an operand-rewrite channel that does not exist yet — headroom §11).
 - **Phi-select**: `Phi` with constant cond ⇒ `alias[target] = chosen branch object` (branch cones remain; DCE decides their fate under R4).
 
 **Algebraic identities** (table-driven; **integer types only** for arithmetic — float identities are IEEE-unsound: `-0.0 + 0.0 = 0.0 ≠ -0.0`, `NaN * 0 ≠ 0`): `x+0 → x`, `0+x → x`, `x-0 → x`, `x*1 → x`, `1*x → x`, `x*0 → 0`* , `0*x → 0`*, `x/1 → x`, `x%1 → 0`*, `Not(Not(x)) → x`, `x && true → x`, `true && x → x`, `x && false → false`*, `x || false → x`, `x || true → true`*. Entries marked `*` produce a constant while `x`'s cone remains in the graph — sound because DCE is trap-conservative (R4); the cone is removed only if independently provably-safe. No strength reduction (Core has no shift op).
@@ -155,6 +156,7 @@ Liveness = backward reachability from the function's Return object over `in_edge
 | `Pair, Proj, Output, Zip, Enumerate, Eq..Ge, And, Or, Not, Neg, Add, Sub, Mul, Phi` | always (wrapping ⇒ no trap) |
 | `Div, Mod` | divisor feeder is a `Constant ≠ 0`, or float ty — **as-built (S12): conservatively never removed** (kept as a keep-root); the refinement is recorded headroom (§11) |
 | `Index` | index feeder is a `Constant` in `[0, n)` — **as-built: conservatively never removed**; same headroom |
+| `Update` (ADR-0021) | index feeder is a `Constant` in `[0, n)` — may-trap (OOB ⇒ `IndexOob`), so **as-built: conservatively never removed** (excluded from `is_pure`, kept as a keep-root like `Index`); same headroom |
 | `Call, Map, Fold` | callee/body is transitively **total** (no loops, removable-class ops only) — **as-built: conservatively never removed**; same headroom |
 | `Print`, loop ops, `LoopMerge`-related | **pinned live unconditionally** (no removal, no assertion). Token chains reach Return by I4b, but a *pure* bounded loop whose exit feeds a dead Temporary is validate-clean, lower-reachable, and oracle-evaluated (review SND-2, CONFIRMED) — it is genuinely dead by the reachability definition and must simply be kept (it spends fuel and may diverge; removing it could flip `Diverged → Done`) |
 
@@ -241,7 +243,7 @@ crates/flow-rewrite/benches/rewrite_scale.rs
 | id | decision | why |
 |---|---|---|
 | RW1 | Rebuild-through-builder, never mutate; one shared replayer, plans per pass | ir §17 sanctions it; well-formedness by construction; one seam (§5) |
-| RW2 | R1's `≈`: exact on `Done`+output, ⊥-identified on `Trapped`, fuel-insensitive | traps are one ⊥ in the §2.6 error monad; rebuild permutes trap identity among independent morphisms; flagged to Sapir |
+| RW2 | R1's `≈`: exact on `Done`+output, ⊥-identified on `Trapped`, fuel-insensitive | traps are one ⊥ in the §2.6 error monad; rebuild permutes trap identity among independent morphisms; **ratified by Sapir S13** |
 | RW3 | Trap-conservative DCE; fold only non-trapping applications | the oracle evaluates dead morphisms (interp §2) — dead traps are observable |
 | RW4 | Arithmetic identities integer-only | IEEE: `-0.0+0.0`, `NaN*0` falsify float identities |
 | RW5 | Const-fold at wrapping semantics | parity with eval.rs `wrapping_*` — the oracle is the spec |

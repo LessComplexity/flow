@@ -158,11 +158,17 @@ pub enum LoopLabel {
     Custom(Name),
 }
 
-/// `bind-stmt := 'mut'? IDENT (':' type)? '<-' expr` (DESIGN §14.3).
+/// `bind-stmt := 'mut'? IDENT ('[' expr ']')? (':' type)? '<-' expr`
+/// (DESIGN §14.3). The optional `[' expr ']` is the element-update target
+/// (`c[i] <- x`, ADR-0021): an *indexed* bind is a rebind (never a fresh
+/// shadow). `index.is_some()` excludes `mut` (P0013) and a type annotation
+/// (P0014); a nested target `c[i][j]` draws P0015.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BindStmt {
     pub mut_span: Option<SourceLoc>,
     pub name: Name,
+    /// `Some` for the element-update sugar `c[i] <- x` (ADR-0021).
+    pub index: Option<Expr>,
     pub ty: Option<Ty>,
     pub value: Expr,
     pub span: SourceLoc,

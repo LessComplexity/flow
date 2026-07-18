@@ -272,3 +272,82 @@ fn main() {
     // validate clean (asserted in lower_ok) ⇒ no dangling token (I4b): the final
     // `9 -> print` consumes a live token rebound off the exit.
 }
+
+// --- array element update (ADR-0021) ----------------------------------------
+
+/// A `mut` array written by `c[t] <- t` inside a loop body rides the loop merge
+/// (ADR-0021 §2 wiring b: `collect_assigns_stmt` records the indexed bind's
+/// target, so the array joins the carried set). Asserts the LoopMerge `U`
+/// carries the array ty — the shape the motivating matmul depends on.
+#[test]
+fn array_update_loop_carried_rides_merge() {
+    let src = r#"fn main() {
+    mut c: [i32; 4] <- [0, 0, 0, 0];
+    mut t: i32 <- 0;
+    loop {
+        c[t] <- t;
+        (t < 4) -> {
+            -true-> { t + 1 -> t; -> loop; }
+            -false-> c -> result;
+        }
+    }
+    result[0] -> println;
+}
+"#;
+    let ir = lower_ok(src);
+    let merge = ir
+        .objects()
+        .find(|(_, o)| o.kind == ObjectKind::LoopMerge)
+        .map(|(_, o)| o)
+        .expect("loop merge");
+    // The merge carries the `[i32; 4]` array (the carried mut array).
+    let carries_array = |ty: &flow_ir::Ty| -> bool {
+        match ty {
+            flow_ir::Ty::Array { .. } => true,
+            flow_ir::Ty::Tuple(cs) => cs.iter().any(|c| matches!(c, flow_ir::Ty::Array { .. })),
+            _ => false,
+        }
+    };
+    assert!(
+        carries_array(&merge.ty),
+        "the loop merge must carry the mut array (merge ty = {:?})",
+        merge.ty
+    );
+    // Exactly one Update was emitted (the `c[t] <- t` element write).
+    assert_eq!(count_op(&ir, |o| *o == Operation::Update), 1);
+}
+
+/// `Update` is a *pure* op (ADR-0021 §1): it threads no IoToken. Even inside an
+/// effectful `main`, the `Update` op's source 3-tuple, its target, and every one
+/// of its operand in-edges are token-free — the element write never joins the
+/// token thread.
+#[test]
+fn array_update_emits_no_token_edges() {
+    let src = r#"fn main() {
+    mut c: [i32; 4] <- [0, 0, 0, 0];
+    c[2] <- 9;
+    c[0] -> println;
+}
+"#;
+    let ir = lower_ok(src);
+    let upd = ir
+        .morphisms()
+        .find(|(_, m)| m.op == Operation::Update)
+        .map(|(_, m)| m)
+        .expect("one Update morphism");
+    assert!(
+        !flow_ir::ty_contains_token(&ir.object(upd.source).unwrap().ty),
+        "Update source (the (arr, idx, val) triple) must be token-free"
+    );
+    assert!(
+        !flow_ir::ty_contains_token(&ir.object(upd.target).unwrap().ty),
+        "Update result (the fresh array) must be token-free"
+    );
+    for &mid in ir.in_edges(upd.source).iter() {
+        let m = ir.morphism(mid).unwrap();
+        assert!(
+            !flow_ir::ty_contains_token(&ir.object(m.source).unwrap().ty),
+            "no Update operand may carry a token"
+        );
+    }
+}

@@ -110,3 +110,10 @@ vice versa.
   (now `void`-only) for each dropped non-chain statement — a diagnostic, not a model
   morphism (like the other P-codes, off the `Dat`/`Trn` tables). `SeqBlock` is a block form
   in `stage_is_block_form` and widened in `stage_kind_extent` (both `parser.rs`).
+- **Element-update bind `c[i] <- x` (ADR-0021).** `BindStmt` gained an optional
+  `index: Option<Expr>` field (`crates/flow-syntax/src/ast.rs:BindStmt`): `Some` = the indexed
+  form, parsed in `crates/flow-syntax/src/parser.rs:parse_bind_stmt` (the optional `[' expr ']`
+  after the name). Three warnings, all diagnostics (off the `Dat`/`Trn` tables like every P-code):
+  **P0013** `mut` on an indexed target, **P0014** type annotation on one, **P0015** a nested
+  `c[i][j]` target (recovered to a clean one-dimensional bind). The desugar to `Update` is
+  lower's job (lower §8 / IMPLEMENTATION `element update` row), not syntax's.

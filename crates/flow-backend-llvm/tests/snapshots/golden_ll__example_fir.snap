@@ -1,0 +1,250 @@
+---
+source: crates/flow-backend-llvm/tests/golden_ll.rs
+expression: ll
+---
+; flow-backend-llvm emitted module
+declare void @flow_print_i32(i32, i1 zeroext)
+declare void @flow_print_i64(i64, i1 zeroext)
+declare void @flow_print_u8(i8 zeroext, i1 zeroext)
+declare void @flow_print_bool(i1 zeroext, i1 zeroext)
+declare void @flow_print_f32(float, i1 zeroext)
+declare void @flow_print_f64(double, i1 zeroext)
+declare void @flow_print_str(ptr, i64, i1 zeroext)
+declare void @flow_trap(i32)
+declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
+
+define internal float @fn0({ [8 x float], [4 x float] } %arg) {
+entry:
+  %o0 = alloca { [8 x float], [4 x float] }
+  %o1 = alloca float
+  %o2 = alloca [8 x float]
+  %o3 = alloca [4 x float]
+  %o4 = alloca { i32, float }
+  %o5 = alloca { i32, float }
+  %o6 = alloca i32
+  %o7 = alloca float
+  %o8 = alloca { i32, i32 }
+  %o9 = alloca i1
+  %o10 = alloca { [4 x float], i32 }
+  %o11 = alloca float
+  %o12 = alloca { i32, i32 }
+  %o13 = alloca i32
+  %o14 = alloca { [8 x float], i32 }
+  %o15 = alloca float
+  %o16 = alloca { float, float }
+  %o17 = alloca float
+  %o18 = alloca { float, float }
+  %o19 = alloca float
+  %o20 = alloca { i32, i32 }
+  %o21 = alloca i32
+  %o22 = alloca { i32, float }
+  %o23 = alloca { { i32, float }, i1 }
+  %o24 = alloca { float, i1 }
+  store { [8 x float], [4 x float] } %arg, ptr %o0
+  %t0 = getelementptr { [8 x float], [4 x float] }, ptr %o0, i32 0, i32 0
+  %t1 = load [8 x float], ptr %t0
+  store [8 x float] %t1, ptr %o2
+  %t2 = getelementptr { [8 x float], [4 x float] }, ptr %o0, i32 0, i32 1
+  %t3 = load [4 x float], ptr %t2
+  store [4 x float] %t3, ptr %o3
+  %t4 = getelementptr { i32, float }, ptr %o4, i32 0, i32 0
+  store i32 0, ptr %t4
+  %t5 = getelementptr { i32, float }, ptr %o4, i32 0, i32 1
+  store float 0x0000000000000000, ptr %t5
+  %t6 = load { i32, float }, ptr %o4
+  store { i32, float } %t6, ptr %o5
+  br label %bb7
+bb7:
+  %t11 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 1
+  store i32 4, ptr %t11
+  %t12 = getelementptr { i32, float }, ptr %o5, i32 0, i32 0
+  %t13 = load i32, ptr %t12
+  store i32 %t13, ptr %o6
+  %t14 = getelementptr { i32, float }, ptr %o5, i32 0, i32 1
+  %t15 = load float, ptr %t14
+  store float %t15, ptr %o7
+  %t16 = load i32, ptr %o6
+  %t17 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 0
+  store i32 %t16, ptr %t17
+  %t18 = load float, ptr %o7
+  %t19 = getelementptr { float, i1 }, ptr %o24, i32 0, i32 0
+  store float %t18, ptr %t19
+  %t20 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 0
+  %t21 = load i32, ptr %t20
+  %t22 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 1
+  %t23 = load i32, ptr %t22
+  %t24 = icmp slt i32 %t21, %t23
+  store i1 %t24, ptr %o9
+  %t25 = load i1, ptr %o9
+  %t26 = getelementptr { float, i1 }, ptr %o24, i32 0, i32 1
+  store i1 %t25, ptr %t26
+  %t27 = getelementptr { float, i1 }, ptr %o24, i32 0, i32 1
+  %t28 = load i1, ptr %t27
+  br i1 %t28, label %bb8, label %bb9
+bb8:
+  %t29 = getelementptr { i32, i32 }, ptr %o12, i32 0, i32 0
+  store i32 4, ptr %t29
+  %t30 = getelementptr { i32, i32 }, ptr %o20, i32 0, i32 1
+  store i32 1, ptr %t30
+  %t31 = load [8 x float], ptr %o2
+  %t32 = getelementptr { [8 x float], i32 }, ptr %o14, i32 0, i32 0
+  store [8 x float] %t31, ptr %t32
+  %t33 = load [4 x float], ptr %o3
+  %t34 = getelementptr { [4 x float], i32 }, ptr %o10, i32 0, i32 0
+  store [4 x float] %t33, ptr %t34
+  %t35 = load i32, ptr %o6
+  %t36 = getelementptr { [4 x float], i32 }, ptr %o10, i32 0, i32 1
+  store i32 %t35, ptr %t36
+  %t37 = load i32, ptr %o6
+  %t38 = getelementptr { i32, i32 }, ptr %o12, i32 0, i32 1
+  store i32 %t37, ptr %t38
+  %t39 = load i32, ptr %o6
+  %t40 = getelementptr { i32, i32 }, ptr %o20, i32 0, i32 0
+  store i32 %t39, ptr %t40
+  %t41 = load float, ptr %o7
+  %t42 = getelementptr { float, float }, ptr %o18, i32 0, i32 0
+  store float %t41, ptr %t42
+  %t43 = getelementptr { [4 x float], i32 }, ptr %o10, i32 0, i32 0
+  %t44 = getelementptr { [4 x float], i32 }, ptr %o10, i32 0, i32 1
+  %t45 = load i32, ptr %t44
+  %t46 = sext i32 %t45 to i64
+  %t47 = icmp slt i64 %t46, 0
+  %t48 = icmp sge i64 %t46, 4
+  %t49 = or i1 %t47, %t48
+  br i1 %t49, label %bb50, label %bb51
+bb50:
+  call void @flow_trap(i32 1)
+  unreachable
+bb51:
+  %t52 = getelementptr [4 x float], ptr %t43, i64 0, i64 %t46
+  %t53 = load float, ptr %t52
+  store float %t53, ptr %o11
+  %t54 = getelementptr { i32, i32 }, ptr %o12, i32 0, i32 0
+  %t55 = load i32, ptr %t54
+  %t56 = getelementptr { i32, i32 }, ptr %o12, i32 0, i32 1
+  %t57 = load i32, ptr %t56
+  %t58 = add i32 %t55, %t57
+  store i32 %t58, ptr %o13
+  %t59 = getelementptr { i32, i32 }, ptr %o20, i32 0, i32 0
+  %t60 = load i32, ptr %t59
+  %t61 = getelementptr { i32, i32 }, ptr %o20, i32 0, i32 1
+  %t62 = load i32, ptr %t61
+  %t63 = add i32 %t60, %t62
+  store i32 %t63, ptr %o21
+  %t64 = load i1, ptr %o9
+  %t65 = getelementptr { { i32, float }, i1 }, ptr %o23, i32 0, i32 1
+  store i1 %t64, ptr %t65
+  %t66 = load float, ptr %o11
+  %t67 = getelementptr { float, float }, ptr %o16, i32 0, i32 0
+  store float %t66, ptr %t67
+  %t68 = load i32, ptr %o13
+  %t69 = getelementptr { [8 x float], i32 }, ptr %o14, i32 0, i32 1
+  store i32 %t68, ptr %t69
+  %t70 = load i32, ptr %o21
+  %t71 = getelementptr { i32, float }, ptr %o22, i32 0, i32 0
+  store i32 %t70, ptr %t71
+  %t72 = getelementptr { [8 x float], i32 }, ptr %o14, i32 0, i32 0
+  %t73 = getelementptr { [8 x float], i32 }, ptr %o14, i32 0, i32 1
+  %t74 = load i32, ptr %t73
+  %t75 = sext i32 %t74 to i64
+  %t76 = icmp slt i64 %t75, 0
+  %t77 = icmp sge i64 %t75, 8
+  %t78 = or i1 %t76, %t77
+  br i1 %t78, label %bb79, label %bb80
+bb79:
+  call void @flow_trap(i32 1)
+  unreachable
+bb80:
+  %t81 = getelementptr [8 x float], ptr %t72, i64 0, i64 %t75
+  %t82 = load float, ptr %t81
+  store float %t82, ptr %o15
+  %t83 = load float, ptr %o15
+  %t84 = getelementptr { float, float }, ptr %o16, i32 0, i32 1
+  store float %t83, ptr %t84
+  %t85 = getelementptr { float, float }, ptr %o16, i32 0, i32 0
+  %t86 = load float, ptr %t85
+  %t87 = getelementptr { float, float }, ptr %o16, i32 0, i32 1
+  %t88 = load float, ptr %t87
+  %t89 = fmul float %t86, %t88
+  store float %t89, ptr %o17
+  %t90 = load float, ptr %o17
+  %t91 = getelementptr { float, float }, ptr %o18, i32 0, i32 1
+  store float %t90, ptr %t91
+  %t92 = getelementptr { float, float }, ptr %o18, i32 0, i32 0
+  %t93 = load float, ptr %t92
+  %t94 = getelementptr { float, float }, ptr %o18, i32 0, i32 1
+  %t95 = load float, ptr %t94
+  %t96 = fadd float %t93, %t95
+  store float %t96, ptr %o19
+  %t97 = load float, ptr %o19
+  %t98 = getelementptr { i32, float }, ptr %o22, i32 0, i32 1
+  store float %t97, ptr %t98
+  %t99 = load { i32, float }, ptr %o22
+  %t100 = getelementptr { { i32, float }, i1 }, ptr %o23, i32 0, i32 0
+  store { i32, float } %t99, ptr %t100
+  %t101 = getelementptr { { i32, float }, i1 }, ptr %o23, i32 0, i32 0
+  %t102 = load { i32, float }, ptr %t101
+  store { i32, float } %t102, ptr %o5
+  br label %bb7
+bb9:
+  %t103 = getelementptr { float, i1 }, ptr %o24, i32 0, i32 0
+  %t104 = load float, ptr %t103
+  store float %t104, ptr %o1
+  br label %bb10
+bb10:
+  %t105 = load float, ptr %o1
+  ret float %t105
+}
+
+define internal void @flow_main() {
+entry:
+  %o2 = alloca [8 x float]
+  %o3 = alloca [4 x float]
+  %o4 = alloca { [8 x float], [4 x float] }
+  %o5 = alloca float
+  %o6 = alloca float
+  %t0 = getelementptr [8 x float], ptr %o2, i64 0, i64 0
+  store float 0x3FF0000000000000, ptr %t0
+  %t1 = getelementptr [8 x float], ptr %o2, i64 0, i64 1
+  store float 0x4000000000000000, ptr %t1
+  %t2 = getelementptr [8 x float], ptr %o2, i64 0, i64 2
+  store float 0x4008000000000000, ptr %t2
+  %t3 = getelementptr [8 x float], ptr %o2, i64 0, i64 3
+  store float 0x4010000000000000, ptr %t3
+  %t4 = getelementptr [8 x float], ptr %o2, i64 0, i64 4
+  store float 0x4014000000000000, ptr %t4
+  %t5 = getelementptr [8 x float], ptr %o2, i64 0, i64 5
+  store float 0x4018000000000000, ptr %t5
+  %t6 = getelementptr [8 x float], ptr %o2, i64 0, i64 6
+  store float 0x401C000000000000, ptr %t6
+  %t7 = getelementptr [8 x float], ptr %o2, i64 0, i64 7
+  store float 0x4020000000000000, ptr %t7
+  %t8 = getelementptr [4 x float], ptr %o3, i64 0, i64 0
+  store float 0x3FE0000000000000, ptr %t8
+  %t9 = getelementptr [4 x float], ptr %o3, i64 0, i64 1
+  store float 0x3FD0000000000000, ptr %t9
+  %t10 = getelementptr [4 x float], ptr %o3, i64 0, i64 2
+  store float 0x3FC0000000000000, ptr %t10
+  %t11 = getelementptr [4 x float], ptr %o3, i64 0, i64 3
+  store float 0x3FB0000000000000, ptr %t11
+  %t12 = load [8 x float], ptr %o2
+  %t13 = getelementptr { [8 x float], [4 x float] }, ptr %o4, i32 0, i32 0
+  store [8 x float] %t12, ptr %t13
+  %t14 = load [4 x float], ptr %o3
+  %t15 = getelementptr { [8 x float], [4 x float] }, ptr %o4, i32 0, i32 1
+  store [4 x float] %t14, ptr %t15
+  %t16 = load { [8 x float], [4 x float] }, ptr %o4
+  %t17 = call float @fn0({ [8 x float], [4 x float] } %t16)
+  store float %t17, ptr %o5
+  %t18 = load float, ptr %o5
+  store float %t18, ptr %o6
+  %t19 = load float, ptr %o6
+  call void @flow_print_f32(float %t19, i1 zeroext true)
+  ret void
+}
+
+define i32 @main() {
+entry:
+  call void @flow_main()
+  ret i32 0
+}
