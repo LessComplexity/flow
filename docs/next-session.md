@@ -6,6 +6,17 @@ Written: 2026-07-18 · end of Session 13 · by: Claude (Fable 5 orchestrator; Op
 
 **P5 COMPLETE — M2 REACHED (S13).** `flow-backend-llvm` + `flow-rt` shipped: full textual-LLVM emitter, differential-tested against the oracle on real clang (10 examples + 320-case testgen sweep, raw **and** rewritten IR; native loop-driven matmul `8\n136\n`; traps = exit 101; ~80× native over interp at sepia N=4096). **ADR-0021** landed the same session: `c[i] <- x` array update, pipeline-wide. Sapir ratified ADR-0013 (+IN6 float-÷0 amendment), 0016, 0020, RW2. `flow_ir::loop_plan` is now the single loop-attribution predicate (BL7). Full detail: `sessions/2026-07-18-s13-array-update-p5-llvm.md`.
 
+## ⚠ Live infrastructure (found at S13 close — needs Sapir's eyes)
+
+**Two vast.ai RTX 4090 instances are RUNNING and billing** (found by the end-of-session check at 2026-07-18; S12/S13 logs said "no instances", so these appeared outside the recorded sessions — presumably rented by Sapir for P6, possibly forgotten):
+
+| # | ID | Model | Util at check |
+|---|---|---|---|
+| 1 | 45170851 | RTX 4090 | 0% |
+| 2 | 45170852 | RTX 4090 | 12% |
+
+Inspect: `vastai show instances` · stop: `vastai destroy instance <ID>` (Sapir's call — not stopped by the orchestrator). If intentional for P6: S14 can use one directly and should destroy the other (P6 needs a single box).
+
 ## Test state: ALL GREEN
 
 `cargo test --workspace`: **558 passed, 0 failed** (199 syntax · 106 ir · 139 lower · 29 check · 44 interp · 27 rewrite · 13 backend-llvm · 1 flow-rt). fmt + clippy clean.
@@ -40,6 +51,6 @@ cargo test -p flow-backend-llvm --test golden_ll              # 13 .ll snapshots
 cargo test -p flow-backend-llvm --test perf_baseline -- --ignored --nocapture   # sepia numbers
 cargo test -p flow-interp --test update_pipeline              # loop-driven matmul oracle pin
 cargo test -p flow-rewrite --test property                    # R1 battery (PROPTEST_CASES=2000 deep)
-vastai show instances                                         # P6 GPU box (expect: none yet)
+vastai show instances                                         # ⚠ 2 RTX 4090s RUNNING at S13 close — see warning above
 git log --oneline -3                                          # S13 commit(s)
 ```
