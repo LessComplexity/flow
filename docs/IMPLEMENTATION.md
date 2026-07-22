@@ -32,6 +32,7 @@ them (detail: [categorical-model.md §6–§7](architecture/categorical-model.md
 | type-resolution functor | `flow_syntax::TyKind ⇀ flow_ir::Ty` (partial) | `crates/flow-lower/src/tys.rs:resolve_ty` / `tys.rs:TypeTable::resolve` | deduced (a pass) |
 | Diagnostic seam | `Diagnostic ⊕ IrError ⊕ IrViolation ⇀ rendered 𝕊` | per-crate enums; renderer reserved to `flow-cli` (planned) | deduced at the CLI |
 | loop attribution `LoopPlan` (BL7) | `(FuncId, merge ObjectId) ⇀ LoopPlan` — one canonical-loop predicate | exported `flow_ir::CategoryIr::loop_plan` (`crates/flow-ir/src/algo.rs`); consumed by `flow-interp` (`src/loops.rs`), `flow-backend-llvm` (`src/{lib,func,loops}.rs`), `flow-backend-cuda` (`src/{lib,func,kernel,loops}.rs`), `flow-rewrite` | deduced (recomputed, never stored) |
+| emission classification `EmissionPlan` (S22, plan-minimal-emission) | `FuncId ⇀ (Obj ⇀ Dissolved \| Inline \| Named)` — the minimal-emission split rule (fanout/boundary/guard-driven) | exported `flow_ir::CategoryIr::emission_plan` (`algo.rs`); consumed by `flow-backend-cuda` (`src/{kernel,func}.rs` — DevEmit/FnEmit); llvm assessment = WP-E | deduced (recomputed, never stored) |
 
 ## System entry points
 
