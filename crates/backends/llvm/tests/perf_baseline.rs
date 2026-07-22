@@ -129,7 +129,7 @@ fn rt_lib() -> PathBuf {
             .unwrap();
     });
     PathBuf::from(format!(
-        "{}/../../target/debug/libflow_rt.a",
+        "{}/../../../target/debug/libflow_rt.a",
         env!("CARGO_MANIFEST_DIR")
     ))
 }

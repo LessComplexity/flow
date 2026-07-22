@@ -8,7 +8,7 @@ Maps the DESIGN's model (`DESIGN.md` §"Categorical model (Dat + Trn)" + §1–�
 
 | Model object | Realised at | State |
 | --- | --- | --- |
-| `CuText` (𝕊) | `pub fn emit(&CategoryIr) -> Result<String, EmitError>` — the String IS the `.cu` TU (ADR-0020 §1) — `crates/flow-backend-cuda/src/lib.rs` | built |
+| `CuText` (𝕊) | `pub fn emit(&CategoryIr) -> Result<String, EmitError>` — the String IS the `.cu` TU (ADR-0020 §1) — `crates/backends/cuda/src/lib.rs` | built |
 | `EmitError` ⊕ | `pub enum EmitError { Unsupported { feature, loc }, Internal(String) }` — renderer-free (C3) — `src/lib.rs` | built |
 | `HostScalar` | hoisted C++ locals `o{ord}` (ordinal scheme; constants fold into use sites) — `src/func.rs` `FnEmit::{slots, decls}` | built |
 | `DevHandle` | host `T*` variable; `n` + strides from the `Ty`, never in the text — `src/ty.rs:lower_ty` (`Array → T*`); rebind = pointer assignment (`FnEmit::copy_obj`) | built |

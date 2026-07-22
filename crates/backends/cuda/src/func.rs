@@ -2144,7 +2144,7 @@ mod tests {
     #[test]
     fn array_bulk_ops_emit_wp3() {
         let path = format!(
-            "{}/../../examples/vector_add.flow",
+            "{}/../../../examples/vector_add.flow",
             env!("CARGO_MANIFEST_DIR")
         );
         let src = std::fs::read_to_string(&path).unwrap();

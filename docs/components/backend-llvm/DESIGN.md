@@ -1,6 +1,6 @@
 # Component: backend-llvm — DESIGN
 
-Written: 2026-07-17 · Session 12 · Status of this doc: increment 1 (P5 → M2) — authoritative for `crates/flow-backend-llvm` (+ the shared `crates/flow-rt` runtime it introduces per ADR-0020)
+Written: 2026-07-17 · Session 12 · Status of this doc: increment 1 (P5 → M2) — authoritative for `crates/backends/llvm` (+ the shared `crates/flow-rt` runtime it introduces per ADR-0020)
 Spec authority: **ADR-0020 (backend emission contract)** > category-ir.md §8.1 (`F_LLVM`) + §8.5 (piecewise correctness) > ADR-0013 / ir/DESIGN (§5.1 typing table, §7 loop quartet D7, §8 tokens) > **ADR-0016** (guard-first loops — mirrored in CFG) > interp/DESIGN (the oracle: wrapping integers, traps, IEEE, render) > rewrite/DESIGN R1 (the differential equality relation) > architecture.md §4.1. DoD: HANDOFF §8 P5.
 
 ## Categorical model (Dat + Trn)
@@ -129,13 +129,13 @@ The decide cone runs **every** iteration including the exit one (countdown print
 
 ```
 crates/flow-rt/src/lib.rs            # §1 (new workspace member, ADR-0020)
-crates/flow-backend-llvm/src/
+crates/backends/llvm/src/
   lib.rs        # emit, EmitError + curated pub use
   ty.rs         # Ty → LLVM type text, token-component erasure maps
   module.rs     # skeleton: externs, Str globals, main wrapper
   func.rs       # emit_fn: slots, topo walk, op table (§2)
   loops.rs      # §3 quartet CFG
-crates/flow-backend-llvm/tests/
+crates/backends/llvm/tests/
   golden_ll.rs  differential.rs  perf_baseline.rs
 ```
 

@@ -2810,7 +2810,10 @@ mod tests {
     }
 
     fn build_example(name: &str) -> CategoryIr {
-        let path = format!("{}/../../examples/{name}.flow", env!("CARGO_MANIFEST_DIR"));
+        let path = format!(
+            "{}/../../../examples/{name}.flow",
+            env!("CARGO_MANIFEST_DIR")
+        );
         let src = std::fs::read_to_string(&path).unwrap();
         lower_src(&src)
     }

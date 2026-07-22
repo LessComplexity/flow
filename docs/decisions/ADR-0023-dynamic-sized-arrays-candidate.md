@@ -4,7 +4,7 @@ Date: 2026-07-18 · Status: **accepted — decided by Sapir 2026-07-18 (S14), sc
 
 ## Context (what forced the decision; spec refs)
 
-Core arrays are exactly `[T; N]` with literal `N`: `n` is part of the type (`flow_ir::Ty::Array { elem, size: u64 }`, `crates/flow-ir/src/ty.rs:48`), storage is static (stack allocas today, `crates/flow-backend-llvm/src/func.rs:196–215`), and every bound is a compile-time constant (`guard_index(&i64idx, size: u64)`, `func.rs:608`). ADR-0021 kept it that way deliberately: its non-goals record "dynamic array sizes (`[T]`): out, unchanged… dynamic `n` requires heap allocation and reopens [E3]… Reopening is its own ADR." This is that ADR — written as a **candidate**, because the pinned reopen trigger has been reached on paper: `flow-as-implemented.md` §5 item 3 records E3 as vacuous-by-proof with "the first heap-op ADR (dynamic arrays being the expected one)" as the trigger.
+Core arrays are exactly `[T; N]` with literal `N`: `n` is part of the type (`flow_ir::Ty::Array { elem, size: u64 }`, `crates/flow-ir/src/ty.rs:48`), storage is static (stack allocas today, `crates/backends/llvm/src/func.rs:196–215`), and every bound is a compile-time constant (`guard_index(&i64idx, size: u64)`, `func.rs:608`). ADR-0021 kept it that way deliberately: its non-goals record "dynamic array sizes (`[T]`): out, unchanged… dynamic `n` requires heap allocation and reopens [E3]… Reopening is its own ADR." This is that ADR — written as a **candidate**, because the pinned reopen trigger has been reached on paper: `flow-as-implemented.md` §5 item 3 records E3 as vacuous-by-proof with "the first heap-op ADR (dynamic arrays being the expected one)" as the trigger.
 
 Why dynamic sizing is wanted, with repo evidence rather than appeal:
 

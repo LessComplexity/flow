@@ -57,6 +57,14 @@ contract, one 2-category) and scales with the growth axis (verilog P7, TT P8/ADR
 ecosystem backends out-of-tree). Execute as its own atomic commit AFTER the S14–S21
 tree lands — not on top of the uncommitted mountain.
 
+> **Executed 2026-07-22 (S22)** — one atomic commit (move by codex per the delegation
+> split; reviewed + completed by the orchestrator). As-built deviation from "zero
+> source edits": 13 depth-sensitive relative paths inside the moved crates needed one
+> more `../` — the two `#[path] mod testgen` includes of `flow-rewrite/tests/testgen`
+> (llvm/cuda `tests/differential.rs`) and 11 `CARGO_MANIFEST_DIR`-relative runtime
+> strings (`examples/*.flow` loaders ×8, `target/debug/libflow_rt.a` ×3). "Zero source
+> edits" held for names/imports, as intended — not for filesystem-relative test paths.
+
 ## Consequences / open questions
 
 - The CLI crate (not-started) is the natural owner of dump-ir, backend resolution, and

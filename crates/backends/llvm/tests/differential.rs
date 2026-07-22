@@ -24,7 +24,7 @@ use flow_ir::{CategoryIr, Ty};
 use flow_rewrite::rewrite;
 
 // The testgen program generator (shared with flow-rewrite's differential duty).
-#[path = "../../flow-rewrite/tests/testgen/mod.rs"]
+#[path = "../../../flow-rewrite/tests/testgen/mod.rs"]
 mod testgen;
 
 use proptest::strategy::{Strategy, ValueTree};
@@ -74,7 +74,7 @@ fn rt_lib() -> PathBuf {
         assert!(ok, "cargo build -p flow-rt failed");
     });
     PathBuf::from(format!(
-        "{}/../../target/debug/libflow_rt.a",
+        "{}/../../../target/debug/libflow_rt.a",
         env!("CARGO_MANIFEST_DIR")
     ))
 }
@@ -182,7 +182,7 @@ fn lower_src(src: &str) -> CategoryIr {
 
 fn build_example(name: &str) -> CategoryIr {
     let path = format!(
-        "{}/../../examples/{}.flow",
+        "{}/../../../examples/{}.flow",
         env!("CARGO_MANIFEST_DIR"),
         name
     );

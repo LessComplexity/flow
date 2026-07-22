@@ -8,7 +8,7 @@
 ## Objects (Dat) → code
 | Object | Form / shape | Realised at | State |
 | --- | --- | --- | --- |
-| crate root | stub | `crates/flow-backend-verilog/src/lib.rs` | planned |
+| crate root | stub | `crates/backends/verilog/src/lib.rs` | planned |
 
 ## Morphisms (Trn / relations) → code
 _None mapped — awaits DESIGN.md's `## Categorical model (Dat + Trn)` section (ADR-0014);

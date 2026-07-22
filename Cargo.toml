@@ -8,9 +8,9 @@ members = [
     "crates/flow-interp",
     "crates/flow-rt",
     "crates/flow-rewrite",
-    "crates/flow-backend-llvm",
-    "crates/flow-backend-cuda",
-    "crates/flow-backend-verilog",
+    "crates/backends/llvm",
+    "crates/backends/cuda",
+    "crates/backends/verilog",
     "crates/flow-cli",
 ]
 

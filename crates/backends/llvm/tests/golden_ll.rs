@@ -36,7 +36,7 @@ fn lower_src(src: &str) -> CategoryIr {
 
 fn build_example(name: &str) -> CategoryIr {
     let path = format!(
-        "{}/../../examples/{}.flow",
+        "{}/../../../examples/{}.flow",
         env!("CARGO_MANIFEST_DIR"),
         name
     );

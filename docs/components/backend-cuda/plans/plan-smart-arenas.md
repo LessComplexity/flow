@@ -93,7 +93,7 @@ if (o8 != o1) cu_check(cudaFree(o8), …);   if (!escaped0) cu_check(cudaFree(ar
 
 ## 7. Perf contract (structural, CI-safe — counted on emitted text, deterministic by L2)
 
-Static text counts, asserted in `crates/flow-backend-cuda/tests/golden_cu.rs` (idioms per agent-2 §5: whole-module `matches().count()` + fn-slice counts + per-line filter pins). **Before** = current snapshots (measured by agent-2); **After** = this plan's gates. Counts exclude `d_trap` (noted +1 where relevant).
+Static text counts, asserted in `crates/backends/cuda/tests/golden_cu.rs` (idioms per agent-2 §5: whole-module `matches().count()` + fn-slice counts + per-line filter pins). **Before** = current snapshots (measured by agent-2); **After** = this plan's gates. Counts exclude `d_trap` (noted +1 where relevant).
 
 | program | `cudaMalloc` before → after | `cudaFree` before → after | notes |
 | --- | --- | --- | --- |

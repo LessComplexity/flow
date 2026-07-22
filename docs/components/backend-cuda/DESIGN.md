@@ -1,6 +1,6 @@
 # Component: backend-cuda — DESIGN
 
-Written: 2026-07-18 · Session 14 (plan.md Phase 2, worker CudaDESIGN_Author) · Status of this doc: **implemented + M3 green (2026-07-21 · Session 15)** — model-first per HANDOFF §7.1.5; the Phase 2 Stage 2 adversarial design review (2026-07-18, four lenses) adjudicated 22 findings CONFIRMED, all fixed in this revision — see the Review ledger and `reviews/review-design-p6.md`. The crate is built and M3 is green on an RTX 4090 (115 tests; the §6 sweep ran oracle-equal, zero divergences — STATUS.md). The S15 implementation review's as-built deltas are patched inline (marked **(as-built S15)**) and summarized in the **As-built (S15)** section at the end. This doc remains authoritative for `crates/flow-backend-cuda` (P6 → M3).
+Written: 2026-07-18 · Session 14 (plan.md Phase 2, worker CudaDESIGN_Author) · Status of this doc: **implemented + M3 green (2026-07-21 · Session 15)** — model-first per HANDOFF §7.1.5; the Phase 2 Stage 2 adversarial design review (2026-07-18, four lenses) adjudicated 22 findings CONFIRMED, all fixed in this revision — see the Review ledger and `reviews/review-design-p6.md`. The crate is built and M3 is green on an RTX 4090 (115 tests; the §6 sweep ran oracle-equal, zero divergences — STATUS.md). The S15 implementation review's as-built deltas are patched inline (marked **(as-built S15)**) and summarized in the **As-built (S15)** section at the end. This doc remains authoritative for `crates/backends/cuda` (P6 → M3).
 Spec authority (ADR-0022 D1 order): **oracle behavior is the final arbiter** (HANDOFF §5.4 — interp) > **ADR-0020** (backend emission contract) > the newer ADRs — **ADR-0013** (+S13 float-÷0 amendment), **ADR-0016** (guard-first loops — host-driven here), **ADR-0021** (`Update`) > interp/DESIGN > rewrite/DESIGN R1 > the v0.2 corpus — category-ir.md §8 (`F_CUDA`), §8.2 (kernel fusion), §8.5 (piecewise correctness) — **informative where unamended** > `docs/notes/array-scale-plan.md` (W1–W3, informative). **ADR-0022 D2** (**ratified by Sapir 2026-07-18**, amended at ratification: the backend-seam exception is standing practice for new backends, paid in the backend's DESIGN): the contract-level modeling was paid by ADR-0020; this doc's categorical section is per-backend residue under D2's standing backend-seam practice (the `F_CUDA` class reserved in categorical-model §7.5) — it re-opens nothing. DoD: §7 (the M3 line).
 
 ## Categorical model (Dat + Trn)
@@ -192,14 +192,14 @@ Out: kernel fusion beyond what rewrite `fuse` already delivers; any parallel/red
 ## 8. Module layout
 
 ```
-crates/flow-backend-cuda/src/
+crates/backends/cuda/src/
   lib.rs      # emit, EmitError + curated pub use (ADR-0020 §1)
   ty.rs       # Ty → CUDA C++ type text; Unit/token/Str residual-erasure maps (llvm ty.rs scheme)
   module.rs   # skeleton: flow-rt externs, Str globals, the trap flag, kernel decls, main wrapper
   func.rs     # emit_fn: host body, topo walk with the driver-ownership skip (§1), op table, launch emission
   kernel.rs   # emit_kernel + __device__ body fns (the inline form)
   loops.rs    # host-driven quartet per loop_plan (ADR-0016)
-crates/flow-backend-cuda/tests/
+crates/backends/cuda/tests/
   golden_cu.rs  differential.rs
 ```
 

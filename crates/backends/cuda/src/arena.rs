@@ -224,7 +224,7 @@ mod tests {
         // three 1-cell readback temps (4 B each) — every member 256 B-slot
         // aligned, capacity = 7 × 256.
         let path = format!(
-            "{}/../../examples/vector_add.flow",
+            "{}/../../../examples/vector_add.flow",
             env!("CARGO_MANIFEST_DIR")
         );
         let src = std::fs::read_to_string(&path).unwrap();

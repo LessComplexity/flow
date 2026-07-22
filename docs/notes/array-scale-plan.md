@@ -1,7 +1,7 @@
 # Design note: the three array scale walls — options and sequencing
 
 Written: 2026-07-18 · post-review critique-mitigation pass (plan.md item 7).
-Status: **design plan, not an ADR**. Nothing here changes semantics; every option below is a backend emission-scheme or analysis change except where explicitly marked Core+1 (those rows need their own ADR and are Sapir's call — Core scope stays frozen). Ground truth: `crates/flow-backend-llvm/src/func.rs`, `docs/components/backend-llvm/{STATUS,DESIGN}.md`, ADR-0021, `tests/perf_baseline.rs`.
+Status: **design plan, not an ADR**. Nothing here changes semantics; every option below is a backend emission-scheme or analysis change except where explicitly marked Core+1 (those rows need their own ADR and are Sapir's call — Core scope stays frozen). Ground truth: `crates/backends/llvm/src/func.rs`, `docs/components/backend-llvm/{STATUS,DESIGN}.md`, ADR-0021, `tests/perf_baseline.rs`.
 
 ## The three walls (as recorded)
 
