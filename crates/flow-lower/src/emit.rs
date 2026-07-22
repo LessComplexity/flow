@@ -1062,6 +1062,8 @@ impl Emitter<'_> {
                     let r = match text.as_str() {
                         "zip" => self.emit_zip(fb, wire, dest, e.span)?,
                         "enumerate" => self.emit_enumerate(fb, wire, dest, e.span)?,
+                        "iota" => self.emit_iota_stage(fb, wire, dest, e.span)?,
+                        "fill" => self.emit_fill_stage(fb, wire, dest, e.span)?,
                         _ => self.emit_widen(
                             fb,
                             wire,
@@ -1536,20 +1538,10 @@ impl Emitter<'_> {
                 self.pack_struct(fb, sty, &comps, dest, sp)
                     .map_err(|e| ir_err(e, sp))
             }
-            ExprKind::Call { callee, args } => {
-                let name = match &callee.kind {
-                    ExprKind::Var(n) => name_text(self.source, *n),
-                    _ => "",
-                };
-                if name == "iota" {
-                    self.emit_iota(fb, args, dest, sp)
-                } else if name == "fill" {
-                    self.emit_fill(fb, args, dest, sp)
-                } else {
-                    Err(diag(LCode::UncleanTree, sp, "unclean expression node"))
-                }
-            }
-            ExprKind::Question(_) | ExprKind::Error => {
+            // ADR-0031: `Call` is always P0108-rejected upstream (the ADR-0029
+            // carve is gone — iota/fill are pipeline stages); no clean tree
+            // reaches here with one.
+            ExprKind::Call { .. } | ExprKind::Question(_) | ExprKind::Error => {
                 Err(diag(LCode::UncleanTree, sp, "unclean expression node"))
             }
         }
@@ -2517,75 +2509,53 @@ impl Emitter<'_> {
         Ok(self.record(o, target))
     }
 
-    /// `iota(n)` (ADR-0029): `[i32; n]` of `0..n-1`, the count a positive
-    /// literal ≤ i32::MAX (the static-n rule). Owns L1612 (arity / non-literal
-    /// count / out-of-range count); the builder re-derives (`NonStaticCount`).
-    fn emit_iota(
+    /// `n -> iota` (ADR-0031): `[i32; n]` of `0..n-1` — the count flows in and
+    /// must be a literal `Constant` (the ADR-0029 static-n rule, builder-owned:
+    /// `NonStaticCount` / `EnumerateIndexOverflow`). Owns the L1612 teaching
+    /// diagnostic; the output ty is the builder's (never re-derived here).
+    fn emit_iota_stage(
         &mut self,
         fb: &mut FnBuilder,
-        args: &[Expr],
+        wire: ObjectId,
         dest: Dest,
         sp: syn::SourceLoc,
     ) -> ER<ObjectId> {
-        let n = self.static_count_arg(args, 1, sp, LCode::IotaArgs)?;
-        let c = self.constant(fb, Value::I32(n as i32), sp)?;
-        let out = Ty::Array {
-            elem: Box::new(Ty::i32()),
-            size: n,
-        };
-        let o = fb.iota(c, dest, ir_loc(sp)).map_err(|e| ir_err(e, sp))?;
+        let o = fb.iota(wire, dest, ir_loc(sp)).map_err(|e| match e {
+            IrError::NonStaticCount | IrError::EnumerateIndexOverflow => diag(
+                LCode::IotaArgs,
+                sp,
+                "the iota count must be a positive literal ≤ i32::MAX flowing in — \
+                 write `4096 -> iota` (a runtime size is out of Core, ADR-0023 territory)",
+            ),
+            other => ir_err(other, sp),
+        })?;
+        let out = fb.ty_of(o);
         Ok(self.record(o, out))
     }
 
-    /// `fill(x, n)` (ADR-0029): `[T; n]` with every element `x` (T from x).
-    /// Owns L1613 (arity / non-literal count / out-of-range count).
-    fn emit_fill(
+    /// `(x, n) -> fill` (ADR-0031): `[T; n]` with every element `x` (T from x).
+    /// The wire is the assembled 2-tuple; the builder's `fill_from` (the S21
+    /// replay entry) consumes it, minting nothing — slot-1 must feed from a
+    /// literal `Constant` (`NonStaticCount`). Owns the L1613 teaching
+    /// diagnostic.
+    fn emit_fill_stage(
         &mut self,
         fb: &mut FnBuilder,
-        args: &[Expr],
+        wire: ObjectId,
         dest: Dest,
         sp: syn::SourceLoc,
     ) -> ER<ObjectId> {
-        let n = self.static_count_arg(args, 2, sp, LCode::FillArgs)?;
-        let x = self.emit_expr_dest(fb, &args[0], Dest::Fresh(None))?;
-        let c = self.constant(fb, Value::I32(n as i32), sp)?;
-        let out = Ty::Array {
-            elem: Box::new(self.ty_of(fb, x)),
-            size: n,
-        };
-        let o = fb.fill(x, c, dest, ir_loc(sp)).map_err(|e| ir_err(e, sp))?;
+        let o = fb.fill_from(wire, dest, ir_loc(sp)).map_err(|e| match e {
+            IrError::NonStaticCount => diag(
+                LCode::FillArgs,
+                sp,
+                "fill takes `(value, count)` with a positive literal count ≤ i32::MAX — \
+                 write `(x, 4096) -> fill` (a runtime size is out of Core, ADR-0023 territory)",
+            ),
+            other => ir_err(other, sp),
+        })?;
+        let out = fb.ty_of(o);
         Ok(self.record(o, out))
-    }
-
-    /// The ADR-0029 static-n rule: exactly `arity` args, the last a positive
-    /// literal integer ≤ i32::MAX.
-    fn static_count_arg(
-        &mut self,
-        args: &[Expr],
-        arity: usize,
-        sp: syn::SourceLoc,
-        code: LCode,
-    ) -> ER<u64> {
-        if args.len() != arity {
-            return Err(diag(
-                code,
-                sp,
-                format!("expected {arity} argument(s), got {}", args.len()),
-            ));
-        }
-        match &args[arity - 1].kind {
-            ExprKind::Int(n) if *n > 0 && *n <= i32::MAX as u64 => Ok(*n),
-            ExprKind::Int(_) => Err(diag(
-                code,
-                sp,
-                "count must be a positive integer ≤ i32::MAX",
-            )),
-            _ => Err(diag(
-                code,
-                sp,
-                "count must be a literal integer (a runtime size is out of Core — ADR-0023 territory)",
-            )),
-        }
     }
 
     // --- loops --------------------------------------------------------------

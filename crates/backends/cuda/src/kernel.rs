@@ -3182,7 +3182,7 @@ mod tests {
 
     #[test]
     fn widen_is_trap_free_device_scalar_with_no_kernel_site() {
-        let src = "fn main() {\n    iota(2) -> a;\n    a -> map { x -> x -> widen_f64 } -> b;\n    b[1] -> println;\n}\n";
+        let src = "fn main() {\n    2 -> iota -> a;\n    a -> map { x -> x -> widen_f64 } -> b;\n    b[1] -> println;\n}\n";
         let ir = lower_src(src);
         let body = ir
             .funcs()
@@ -3349,8 +3349,8 @@ mod tests {
     #[test]
     fn iota_fill_host_kernels_are_64_bit_trap_free_and_deduped() {
         let cu = emit_src(
-            "fn main() {\n    iota(4) -> a;\n    iota(5) -> b;\n    \
-             fill(7, 4) -> c;\n    fill(8, 5) -> d;\n}\n",
+            "fn main() {\n    4 -> iota -> a;\n    5 -> iota -> b;\n    \
+             (7, 4) -> fill -> c;\n    (8, 5) -> fill -> d;\n}\n",
         );
         assert_eq!(cu.matches("__global__ void").count(), 2, "{cu}");
         assert!(
@@ -3563,8 +3563,8 @@ mod tests {
         let src = r#"
 fn main() {
     [1, 2] -> map { x ->
-        iota(4) -> a;
-        fill(x, 4) -> b;
+        4 -> iota -> a;
+        (x, 4) -> fill -> b;
         a[1] + b[2]
     } -> rs;
     rs[0] -> println;

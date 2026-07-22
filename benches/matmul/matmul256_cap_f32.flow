@@ -1,8 +1,8 @@
 fn main() {
-    iota(65536) -> ta;
+    65536 -> iota -> ta;
     ta -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
     ta -> map { t -> (t * 7 + 57) % 101 - 50 -> widen_f32 } -> b;
-    iota(256) -> krange;
+    256 -> iota -> krange;
     ta -> map { t ->
         t / 256 -> i;
         t % 256 -> j;

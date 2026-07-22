@@ -934,7 +934,10 @@ impl FnBuilder<'_> {
         Ok(())
     }
 
-    fn ty_of(&self, id: ObjectId) -> Ty {
+    /// The builder-owned ty of an object in this fn — the one source of truth
+    /// for result types the builder synthesizes itself (`iota`/`fill_from`
+    /// array sizes, ADR-0031: lower reads this instead of re-deriving).
+    pub fn ty_of(&self, id: ObjectId) -> Ty {
         self.b.objects[id].ty.clone()
     }
 

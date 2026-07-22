@@ -396,8 +396,13 @@ impl Walk<'_> {
             Some(h) => self.expr(h, scope),
             None => seed,
         };
+        let mut prev: Option<&Expr> = chain.head.as_ref();
         for stage in &chain.stages {
-            cur = self.stage(&stage.kind, stage.span, cur, scope);
+            cur = self.stage(&stage.kind, stage.span, cur, prev, scope);
+            prev = match &stage.kind {
+                StageKind::Expr(e) => Some(e),
+                _ => None,
+            };
         }
     }
 
@@ -406,6 +411,7 @@ impl Walk<'_> {
         kind: &StageKind,
         stage_span: syn::SourceLoc,
         cur: WTy,
+        prev: Option<&Expr>,
         scope: &mut ScopeStack<WTy>,
     ) -> WTy {
         match kind {
@@ -437,6 +443,33 @@ impl Walk<'_> {
                     } else if text == "enumerate" {
                         // enumerate: cur is `[A;n]`; result `[(i32, A);n]`.
                         self.enumerate_result(&cur)
+                    } else if text == "iota" {
+                        // ADR-0031: `n -> iota` — the count flows in. Size
+                        // synthesized from the visible literal stage; emit
+                        // re-derives and the builder owns static-n (L1612).
+                        match prev.map(|p| &p.kind) {
+                            Some(ExprKind::Int(n)) if *n > 0 && *n <= i32::MAX as u64 => {
+                                WTy::Array(Box::new(WTy::Known(Ty::i32())), *n)
+                            }
+                            _ => WTy::Unknown,
+                        }
+                    } else if text == "fill" {
+                        // ADR-0031: `(x, n) -> fill` — elem from the tuple's
+                        // first component, size from the visible literal
+                        // (emit re-derives; L1613).
+                        let elem = match &cur {
+                            WTy::Tuple(ws) if ws.len() == 2 => ws[0].clone(),
+                            _ => WTy::Unknown,
+                        };
+                        match prev.map(|p| &p.kind) {
+                            Some(ExprKind::Tuple(xs)) if xs.len() == 2 => match &xs[1].kind {
+                                ExprKind::Int(n) if *n > 0 && *n <= i32::MAX as u64 => {
+                                    WTy::Array(Box::new(elem), *n)
+                                }
+                                _ => WTy::Unknown,
+                            },
+                            _ => WTy::Unknown,
+                        }
                     } else if let Some(target) = crate::widen_target(text) {
                         // emit owns L1614; typing only synthesizes the target.
                         WTy::Known(target)
@@ -582,8 +615,13 @@ impl Walk<'_> {
             Some(h) => self.expr(h, scope),
             None => scrutinee.clone(),
         };
+        let mut prev: Option<&Expr> = chain.head.as_ref();
         for stage in &chain.stages {
-            cur = self.stage(&stage.kind, stage.span, cur, scope);
+            cur = self.stage(&stage.kind, stage.span, cur, prev, scope);
+            prev = match &stage.kind {
+                StageKind::Expr(e) => Some(e),
+                _ => None,
+            };
         }
         cur
     }
@@ -953,35 +991,8 @@ impl Walk<'_> {
                     WTy::Unknown
                 }
             }
-            // ADR-0029: `iota(n)` / `fill(x, n)` builtin call stages. Best-effort
-            // synthesis — emit.rs owns the L1612/L1613 misuse diagnostics. The
-            // count is a positive literal ≤ i32::MAX (the static-n rule); the
-            // element WTy stays nested so a downstream annotation resolves the
-            // literal width (the literal-array mechanism).
-            ExprKind::Call { callee, args } => {
-                let name = match &callee.kind {
-                    ExprKind::Var(n) => name_text(self.source, *n),
-                    _ => "",
-                };
-                let lit = |e: &Expr| match &e.kind {
-                    ExprKind::Int(n) if *n > 0 && *n <= i32::MAX as u64 => Some(*n),
-                    _ => None,
-                };
-                match (name, &args[..]) {
-                    ("iota", [n]) => match lit(n) {
-                        Some(n) => WTy::Array(Box::new(WTy::Known(Ty::i32())), n),
-                        None => WTy::Unknown,
-                    },
-                    ("fill", [x, n]) => match lit(n) {
-                        Some(n) => {
-                            let w = self.expr(x, scope);
-                            WTy::Array(Box::new(w), n)
-                        }
-                        None => WTy::Unknown,
-                    },
-                    _ => WTy::Unknown,
-                }
-            }
+            // ADR-0031: `ExprKind::Call` is always P0108-rejected upstream
+            // (the ADR-0029 carve is gone); no clean tree contains one.
             _ => WTy::Unknown,
         }
     }

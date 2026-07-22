@@ -754,7 +754,7 @@ fn differential_iota_fill() {
 fn differential_widen() {
     let src = r#"
 fn main() {
-    iota(2) -> a;
+    2 -> iota -> a;
     a[1] - 2 -> x;
     x -> widen_i64 -> i;
     x -> widen_f32 -> f;

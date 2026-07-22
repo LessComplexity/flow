@@ -1344,37 +1344,51 @@ fn lone_indexed_update_loop_not_l1502() {
     let _ = lower_ok(src);
 }
 
-// --- L1612–L1613: iota / fill (ADR-0029) -------------------------------------
+// --- L1612–L1613: iota / fill (ADR-0031 pipeline form) -----------------------
 
 #[test]
-fn l1612_iota_arity_rejects() {
-    assert_rejects("fn main() { iota(4, 5) -> t; }\n", "L1612");
+fn l1612_iota_tuple_wire_rejects() {
+    // The old call-arity case in arrow clothes: a tuple is not a count.
+    assert_rejects("fn main() { (4, 5) -> iota -> t; }\n", "L1612");
 }
 
 #[test]
 fn l1612_iota_non_literal_count_rejects() {
+    // An array wire is not a static count (a runtime size is ADR-0023).
     assert_rejects(
-        "fn main() { iota(4) -> t; t -> k; iota(k) -> u; }\n",
+        "fn main() { 4 -> iota -> t; t -> k; k -> iota -> u; }\n",
         "L1612",
     );
 }
 
 #[test]
-fn l1612_iota_zero_and_oversize_reject() {
-    assert_rejects("fn main() { iota(0) -> t; }\n", "L1612");
-    assert_rejects("fn main() { iota(2147483648) -> t; }\n", "L1612");
+fn l1612_iota_zero_rejects_and_oversize_is_width_owned() {
+    assert_rejects("fn main() { 0 -> iota -> t; }\n", "L1612");
+    // ADR-0031: an oversize literal never reaches iota — the literal-width
+    // system rejects it first (L1202). The IR-level oversize twin
+    // (`EnumerateIndexOverflow`) is pinned in flow-ir's builder tests.
+    assert_rejects("fn main() { 2147483648 -> iota -> t; }\n", "L1202");
 }
 
 #[test]
-fn l1613_fill_arity_rejects() {
-    assert_rejects("fn main() { fill(1.0) -> s; }\n", "L1613");
-    assert_rejects("fn main() { fill(1.0, 2, 3) -> s; }\n", "L1613");
+fn l1613_fill_wire_shape_rejects() {
+    // Not a 2-tuple: a scalar and a 3-tuple both miss the (value, count) shape.
+    assert_rejects("fn main() { 1.0 -> fill -> s; }\n", "L1613");
+    assert_rejects("fn main() { (1.0, 2, 3) -> fill -> s; }\n", "L1613");
 }
 
 #[test]
-fn l1613_fill_zero_and_oversize_reject() {
-    assert_rejects("fn main() { fill(1.0, 0) -> s; }\n", "L1613");
-    assert_rejects("fn main() { fill(1.0, 2147483648) -> s; }\n", "L1613");
+fn l1613_fill_zero_rejects_and_oversize_is_width_owned() {
+    assert_rejects("fn main() { (1.0, 0) -> fill -> s; }\n", "L1613");
+    // Same width-system ownership as iota (L1202 fires on the literal).
+    assert_rejects("fn main() { (1.0, 2147483648) -> fill -> s; }\n", "L1202");
+}
+
+#[test]
+fn iota_bound_literal_count_lowers() {
+    // ADR-0031 consequence: a NAME bound to a literal is the same Constant
+    // object — still static. Strictly more expressive than the old AST check.
+    lower_ok("fn main() { 4 -> n; n -> iota -> t; t[2] -> println; }\n");
 }
 
 // --- L1614: explicit numeric widening (ADR-0029) ----------------------------

@@ -156,7 +156,7 @@ pub(crate) fn is_print_builtin(name: &str) -> bool {
 /// Pure bare-stage builtins (ADR-0018/ADR-0029). Resolved by name like
 /// `print`/`println`, but token-free and legal in parallel fanout.
 pub(crate) fn is_pure_builtin(name: &str) -> bool {
-    matches!(name, "zip" | "enumerate") || widen_target(name).is_some()
+    matches!(name, "zip" | "enumerate" | "iota" | "fill") || widen_target(name).is_some()
 }
 
 /// Target type selected by an ADR-0029 widening builtin name.

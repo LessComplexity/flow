@@ -1593,19 +1593,25 @@ fn line_index_span_starts() {
     assert_eq!((lc.line, lc.col), (2, 9), "`?` is at line 2, col 9");
 }
 
-// --- ADR-0029: the iota/fill P0108 carve -------------------------------------
+// --- ADR-0031: call expressions are uniformly out (the ADR-0029 carve died) --
 
 #[test]
-fn iota_fill_calls_are_core_p0108_carve() {
-    // ADR-0029: `iota(n)` / `fill(x, n)` are the only legal call expressions.
-    no_diags("fn main() { iota(4) -> t; fill(1.0, 4) -> s; }\n");
-    // An ordinary call keeps the P0108 rejection.
+fn iota_fill_calls_are_p0108_rejected_with_teaching_text() {
+    // ADR-0031: `iota`/`fill` are pipeline stages; their CALL forms reject
+    // like every other call — with the arrow-form teaching message.
+    let ds = parse("fn main() { iota(4) -> t; fill(1.0, 4) -> s; }\n").diagnostics;
+    assert_eq!(ds.len(), 2, "{ds:?}");
+    assert!(ds.iter().all(|d| d.code.0 == "P0108"), "{ds:?}");
+    assert!(
+        ds.iter().all(|d| d.message.contains("-> iota")),
+        "teaching text names the arrow form: {ds:?}"
+    );
+    // An ordinary call keeps the generic P0108 rejection.
     assert!(
         pcodes("fn main() { foo(4) -> t; }\n").contains(&"P0108"),
         "{:?}",
         pcodes("fn main() { foo(4) -> t; }\n")
     );
-    // A builtin *name* misused as a bare value is not the carve's business
-    // (lower's L-codes own arity/count misuse — the parser stays shape-blind).
-    no_diags("fn main() { iota(4, 5) -> t; }\n");
+    // The arrow forms parse clean.
+    no_diags("fn main() { 4 -> iota -> t; (1.0, 4) -> fill -> s; }\n");
 }

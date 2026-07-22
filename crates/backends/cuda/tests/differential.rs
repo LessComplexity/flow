@@ -390,8 +390,8 @@ fn differential_examples_raw_and_rewritten() {
 fn differential_iota_fill() {
     let src = r#"
 fn main() {
-    iota(4) -> a;
-    fill(7, 4) -> b;
+    4 -> iota -> a;
+    (7, 4) -> fill -> b;
     (a, b) -> zip -> map { p -> p.0 + p.1 } -> c;
     c[3] -> println;
 }
@@ -417,7 +417,7 @@ fn main() {
 fn differential_widen() {
     let src = r#"
 fn main() {
-    iota(2) -> a;
+    2 -> iota -> a;
     a[1] - 2 -> x;
     x -> widen_i64 -> i;
     a -> map { y -> y - 2 -> widen_f32 } -> fs;

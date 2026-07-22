@@ -40,9 +40,9 @@ fn build_example(name: &str) -> CategoryIr {
 
 const IOTA_FILL_SRC: &str = r#"
 fn main() {
-    iota(4) -> a;
-    iota(4) -> b;
-    fill(7, 4) -> sevens;
+    4 -> iota -> a;
+    4 -> iota -> b;
+    (7, 4) -> fill -> sevens;
     (a, b) -> zip -> map { p -> p.0 + p.1 } -> twice;
     (twice, sevens) -> zip -> map { p -> p.0 + p.1 } -> out;
     out[3] -> println;

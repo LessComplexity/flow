@@ -427,8 +427,8 @@ fn main() {
 fn capture_array_staging_never_loads_whole() {
     let src = r#"
 fn main() {
-    iota(32) -> a;
-    iota(32) -> ids;
+    32 -> iota -> a;
+    32 -> iota -> ids;
     ids -> map { i -> a[i] } -> b;
     b[31] -> println;
 }

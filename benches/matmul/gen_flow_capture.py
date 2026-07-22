@@ -10,10 +10,10 @@ def gen(n: int, width: str = "f64") -> str:
     nn = n * n
     widen = f"widen_{width}"
     return f"""fn main() {{
-    iota({nn}) -> ta;
+    {nn} -> iota -> ta;
     ta -> map {{ t -> (t * 7 + 13) % 101 - 50 -> {widen} }} -> a;
     ta -> map {{ t -> (t * 7 + 57) % 101 - 50 -> {widen} }} -> b;
-    iota({n}) -> krange;
+    {n} -> iota -> krange;
     ta -> map {{ t ->
         t / {n} -> i;
         t % {n} -> j;

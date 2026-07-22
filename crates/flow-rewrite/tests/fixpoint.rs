@@ -13,8 +13,8 @@ const BUDGET: u64 = 10_000_000;
 fn build() -> flow_ir::CategoryIr {
     let src = r#"
 fn main() {
-    iota(4) -> a;
-    fill(7, 4) -> b;
+    4 -> iota -> a;
+    (7, 4) -> fill -> b;
     (a, b) -> zip -> map { p -> p.0 + p.1 } -> c;
     c[3] -> println;
 }

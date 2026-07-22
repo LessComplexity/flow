@@ -145,20 +145,21 @@ fn run_src(src: &str) -> flow_interp::RunResult {
     flow_interp::run(&ir, BUDGET)
 }
 
-/// `iota(4) -> t; fill(1.5, 4) -> s;` end to end: parse (the P0108 carve),
+/// `4 -> iota -> t; (1.5, 4) -> fill -> s;` end to end: parse (ADR-0031),
 /// lower (constant minting + the ops), interp (the stage-1 oracle arms).
 #[test]
 fn iota_fill_pipeline_e2e() {
     let rr = run_src(
-        "fn main() {\n    iota(4) -> t;\n    fill(1.5, 4) -> s;\n    t[2] -> println;\n    s[3] -> println;\n}\n",
+        "fn main() {\n    4 -> iota -> t;\n    (1.5, 4) -> fill -> s;\n    t[2] -> println;\n    s[3] -> println;\n}\n",
     );
     assert_eq!(rr.output, "2\n1.5\n");
 }
 
-/// An annotated fill: `fill(0.0, 4) -> s: [f32; 4]` — the literal-width
+/// An annotated fill: `(0.0, 4) -> fill -> s: [f32; 4]` — the literal-width
 /// unification reaches the element through the produced array.
 #[test]
 fn fill_annotated_f32_pipeline() {
-    let rr = run_src("fn main() {\n    fill(0.0, 4) -> s: [f32; 4];\n    s[1] -> println;\n}\n");
+    let rr =
+        run_src("fn main() {\n    (0.0, 4) -> fill -> s: [f32; 4];\n    s[1] -> println;\n}\n");
     assert_eq!(rr.output, "0\n");
 }
