@@ -8,7 +8,7 @@
 use slotmap::SecondaryMap;
 
 use crate::graph::{CategoryIr, FuncId, MorphismId, ObjectId, ObjectKind, Operation};
-use crate::ty::{Ty, Value};
+use crate::ty::{Ty, Value, ty_contains_token};
 
 /// A non-trivial loop SCC and its merge objects (DESIGN §7; the backend
 /// capability predicate). One entry per non-trivial SCC.
@@ -68,6 +68,52 @@ impl BoundsProof {
     /// Whether `m` (an `Operation::Index` morphism) is provably in-bounds.
     pub fn proven(&self, m: MorphismId) -> bool {
         self.proven.contains_key(m)
+    }
+}
+
+/// How an owned, non-constant, non-token object participates in minimal
+/// emission. Derived only from the sealed graph by
+/// [`CategoryIr::emission_plan`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmissionClass {
+    /// A structural product whose fields flow directly to primitive operands
+    /// or projections; the product itself never materializes.
+    Dissolved,
+    /// A pure, guard-free value with exactly one effective consumer.
+    Inline,
+    /// A boundary, guarded producer, or value without exactly one consumer.
+    Named,
+}
+
+impl EmissionClass {
+    /// Whether this is [`Self::Dissolved`].
+    pub fn is_dissolved(self) -> bool {
+        self == Self::Dissolved
+    }
+
+    /// Whether this is [`Self::Inline`].
+    pub fn is_inline(self) -> bool {
+        self == Self::Inline
+    }
+
+    /// Whether this is [`Self::Named`].
+    pub fn is_named(self) -> bool {
+        self == Self::Named
+    }
+}
+
+/// The minimal-emission classification for one function. Constants and
+/// token-carrying objects are absent because neither materializes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EmissionPlan {
+    class: SecondaryMap<ObjectId, EmissionClass>,
+}
+
+impl EmissionPlan {
+    /// The object's class, or `None` when it is not owned by the queried
+    /// function, is a constant, or carries a token.
+    pub fn class(&self, o: ObjectId) -> Option<EmissionClass> {
+        self.class.get(o).copied()
     }
 }
 
@@ -174,6 +220,179 @@ impl CategoryIr {
             .filter(|(id, _)| self.owner.get(*id) == Some(&f))
             .map(|(id, _)| id)
             .collect()
+    }
+
+    /// The per-function minimal-emission query. Classification is total over
+    /// owned, non-constant, non-token objects and is a pure function of the
+    /// sealed graph.
+    ///
+    /// Products are dissolved first. Consumer counts are then taken through
+    /// those transparent products, so a field used by two consumers is named
+    /// once rather than duplicated when its product wrapper disappears.
+    pub fn emission_plan(&self, f: FuncId) -> EmissionPlan {
+        let bounds = self.bounds_proof(f);
+        let mut boundary: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+
+        if let Some(fd) = self.func(f) {
+            boundary.insert(fd.output, ());
+        }
+        for &o in &self.func_objects(f) {
+            let obj = &self.objects[o];
+            if obj.kind == ObjectKind::LoopMerge || matches!(obj.ty, Ty::Array { .. }) {
+                boundary.insert(o, ());
+            }
+        }
+
+        for (_, morph) in self.morphisms() {
+            if self.try_owner(morph.source) != Some(f) {
+                continue;
+            }
+            if self.emission_guarded(morph.id, &bounds) {
+                boundary.insert(morph.target, ());
+            }
+            match morph.op {
+                Operation::Output => {
+                    boundary.insert(morph.source, ());
+                    boundary.insert(morph.target, ());
+                }
+                Operation::Call(_) => {
+                    boundary.insert(morph.source, ());
+                }
+                Operation::Map { .. }
+                | Operation::Fold { .. }
+                | Operation::Zip
+                | Operation::Enumerate
+                | Operation::Update
+                | Operation::Iota
+                | Operation::Fill
+                    if self.objects[morph.source].ty.product_arity().is_some() =>
+                {
+                    boundary.insert(morph.source, ());
+                }
+                Operation::LoopEnter | Operation::LoopBack | Operation::LoopExit => {
+                    boundary.insert(morph.source, ());
+                    boundary.insert(morph.target, ());
+                }
+                _ => {}
+            }
+        }
+
+        // Every object incident to a canonical loop's decide/advance cone is a
+        // statement point. Non-canonical loop endpoints were covered above.
+        for scc in self.loop_structure(f) {
+            for merge in scc.merges {
+                if let Some(plan) = self.loop_plan(f, merge) {
+                    for &m in plan.decide_order.iter().chain(&plan.advance_order) {
+                        let morph = &self.morphisms[m];
+                        boundary.insert(morph.source, ());
+                        boundary.insert(morph.target, ());
+                    }
+                }
+            }
+        }
+
+        let mut dissolved: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+        for &o in &self.func_objects(f) {
+            let obj = &self.objects[o];
+            let Some(arity) = obj.ty.product_arity_u32() else {
+                continue;
+            };
+            if obj.kind == ObjectKind::Constant
+                || ty_contains_token(&obj.ty)
+                || boundary.contains_key(o)
+            {
+                continue;
+            }
+            // Dissolution requires the product be FULLY Pair-built: the
+            // redistribution below resolves fields via `pair_slot_source`,
+            // which is `None` for a Proj-produced tuple — dissolving one
+            // would silently drop its consumers from the counts, letting a
+            // shared field chain classify Inline and duplicate textually
+            // (an R-NODUP break). Proj-produced products stay countable.
+            if (0..arity).all(|i| self.pair_slot_source(o, i).is_some())
+                && self.out_edges(o).iter().all(|&m| {
+                    matches!(self.morphisms[m].op, Operation::Proj { .. })
+                        || is_pair_primitive(self.morphisms[m].op)
+                })
+            {
+                dissolved.insert(o, ());
+            }
+        }
+
+        // Ordinary edges count directly, except Pair edges into transparent
+        // products. Those are replaced below by the product's actual field
+        // uses: all fields for a primitive, one field for Proj.
+        let mut consumers: SecondaryMap<ObjectId, u32> = SecondaryMap::new();
+        for &o in &self.func_objects(f) {
+            let obj = &self.objects[o];
+            if obj.kind == ObjectKind::Constant
+                || ty_contains_token(&obj.ty)
+                || dissolved.contains_key(o)
+            {
+                continue;
+            }
+            let count = self
+                .out_edges(o)
+                .iter()
+                .filter(|&&m| {
+                    !matches!(self.morphisms[m].op, Operation::Pair { .. })
+                        || !dissolved.contains_key(self.morphisms[m].target)
+                })
+                .count() as u32;
+            consumers.insert(o, count);
+        }
+        for (product, _) in dissolved.iter() {
+            for &m in self.out_edges(product) {
+                match self.morphisms[m].op {
+                    Operation::Proj { index } => {
+                        if let Some(source) = self.pair_slot_source(product, index) {
+                            increment(&mut consumers, source);
+                        }
+                    }
+                    op if is_pair_primitive(op) => {
+                        for &pair in self.in_edges(product) {
+                            if matches!(self.morphisms[pair].op, Operation::Pair { .. }) {
+                                increment(&mut consumers, self.morphisms[pair].source);
+                            }
+                        }
+                    }
+                    _ => unreachable!("dissolved products have only transparent consumers"),
+                }
+            }
+        }
+
+        let mut class = SecondaryMap::new();
+        for &o in &self.func_objects(f) {
+            let obj = &self.objects[o];
+            if obj.kind == ObjectKind::Constant || ty_contains_token(&obj.ty) {
+                continue;
+            }
+            let c = if dissolved.contains_key(o) {
+                EmissionClass::Dissolved
+            } else if boundary.contains_key(o) || consumers.get(o).copied().unwrap_or(0) != 1 {
+                EmissionClass::Named
+            } else {
+                EmissionClass::Inline
+            };
+            class.insert(o, c);
+        }
+        EmissionPlan { class }
+    }
+
+    /// Whether the producer needs statement-form guards.
+    fn emission_guarded(&self, m: MorphismId, bounds: &BoundsProof) -> bool {
+        let morph = &self.morphisms[m];
+        match morph.op {
+            Operation::Div | Operation::Mod => {
+                if matches!(self.objects[morph.target].ty, Ty::Float { .. }) {
+                    return false;
+                }
+                self.pair_slot_source(morph.source, 1)
+                    .is_none_or(|o| !safe_integer_divisor(&self.objects[o]))
+            }
+            Operation::Index | Operation::Update => !bounds.proven(m),
+            _ => false,
+        }
     }
 
     /// Strongly-connected components of function `f`'s object subgraph, via
@@ -1202,6 +1421,46 @@ impl CategoryIr {
             .iter()
             .position(|(id, _)| id == o)
             .unwrap_or(usize::MAX)
+    }
+}
+
+/// Pair-fed primitives whose product source can disappear into the operation.
+fn is_pair_primitive(op: Operation) -> bool {
+    matches!(
+        op,
+        Operation::Add
+            | Operation::Sub
+            | Operation::Mul
+            | Operation::Div
+            | Operation::Mod
+            | Operation::Eq
+            | Operation::Neq
+            | Operation::Lt
+            | Operation::Gt
+            | Operation::Le
+            | Operation::Ge
+            | Operation::And
+            | Operation::Or
+            | Operation::Phi
+            | Operation::Index
+    )
+}
+
+fn safe_integer_divisor(object: &crate::graph::Object) -> bool {
+    if object.kind != ObjectKind::Constant {
+        return false;
+    }
+    match object.value.as_ref() {
+        Some(Value::I32(v)) => *v != 0 && *v != -1,
+        Some(Value::I64(v)) => *v != 0 && *v != -1,
+        Some(Value::U8(v)) => *v != 0,
+        _ => false,
+    }
+}
+
+fn increment(counts: &mut SecondaryMap<ObjectId, u32>, o: ObjectId) {
+    if let Some(&n) = counts.get(o) {
+        counts.insert(o, n + 1);
     }
 }
 
