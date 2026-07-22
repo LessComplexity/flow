@@ -50,19 +50,24 @@ for n in (4, 16, 32, 64, 128):
 # timeout).
 for leg, fmt, sizes, cap_at, cap_ms in (
     ("flow-llvm", "./mm_ll_{}", (4, 16, 32, 64, 128), 64, 600_000),
-    ("flow-cuda-cap-f64", "./mm_cu_cap_{}", (16, 64, 128, 256, 512), 64, 600_000),
-    ("flow-cuda-cap-f32", "./mm_cu_cap_f32_{}", (16, 64, 128, 256, 512), 64, 600_000),
+    ("flow-cuda-cap-f64", "./mm_cu_cap_{}", (16, 64, 128, 256, 512, 1024, 2048, 4096), 64, 600_000),
+    ("flow-cuda-cap-f32", "./mm_cu_cap_f32_{}", (16, 64, 128, 256, 512, 1024, 2048, 4096), 64, 600_000),
     # S21: the llvm cap legs run every size — WP3b killed the by-value/aggregate
     # walls; the 256-checkpoint cap still guards the 512 leg adaptively.
-    ("flow-llvm-cap-f64", "./mm_ll_cap_{}", (16, 64, 128, 256, 512), 256, 60_000),
-    ("flow-llvm-cap-f32", "./mm_ll_cap_f32_{}", (16, 64, 128, 256, 512), 256, 60_000),
+    ("flow-llvm-cap-f64", "./mm_ll_cap_{}", (16, 64, 128, 256, 512, 1024), 256, 60_000),
+    ("flow-llvm-cap-f32", "./mm_ll_cap_f32_{}", (16, 64, 128, 256, 512, 1024), 256, 60_000),
 ):
     for n in sizes:
         try:
             best, out = float("inf"), ""
+            cmd = [fmt.format(n)]
+            if leg.startswith("flow-llvm"):
+                # allocas hold the arrays; N>=1024 needs a big stack (heap
+                # lowering is the recorded fix)
+                cmd = ["bash", "-c", f"ulimit -s unlimited 2>/dev/null || ulimit -s hard; exec {cmd[0]}"]
             for _ in range(3):
                 t0 = time.perf_counter()
-                r = run([fmt.format(n)], timeout=3600)
+                r = run(cmd, timeout=3600)
                 dt = (time.perf_counter() - t0) * 1e3
                 if r.returncode != 0:
                     print(f"{leg} N={n} FAILED rc={r.returncode}: {r.stderr[-300:]}", flush=True)
@@ -90,7 +95,7 @@ for leg, fmt in (
     ("flow-cuda-cap-kernel-f64", "./mm_cu_cap_perf_{}"),
     ("flow-cuda-cap-kernel-f32", "./mm_cu_cap_f32_perf_{}"),
 ):
-    for n in (16, 64, 128, 256, 512):
+    for n in (16, 64, 128, 256, 512, 1024, 2048, 4096):
         try:
             best, note = float("inf"), ""
             for _ in range(3):

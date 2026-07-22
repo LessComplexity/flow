@@ -17,7 +17,7 @@ for n in 4 16 32 64 128; do
   fi
 done
 echo "== flow-cuda-cap builds (pinned recipe, same as the loop legs) =="
-for n in 16 64 128 256 512; do
+for n in 16 64 128 256 512 1024 2048 4096; do
   for v in "cap" "cap_f32" "cap_perf" "cap_f32_perf"; do
     if [ -f "matmul${n}_${v}.cu" ] && [ ! -f "mm_cu_${v}_$n" ]; then
       nvcc -std=c++17 -fmad=false -arch=sm_89 "matmul${n}_${v}.cu" libflow_rt.a -o "mm_cu_${v}_$n" -lpthread -ldl -lm
@@ -36,7 +36,7 @@ if command -v clang >/dev/null; then
       pids+=($!)
     fi
   done
-  for n in 16 64 128 256 512; do
+  for n in 16 64 128 256 512 1024 2048 4096; do
     for v in "cap" "cap_f32"; do
       if [ -f "matmul${n}_${v}.ll" ] && [ ! -f "mm_ll_${v}_$n" ]; then
         clang -O2 -march=native "matmul${n}_${v}.ll" libflow_rt.a -o "mm_ll_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_${v}_$n" &
