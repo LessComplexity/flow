@@ -1840,7 +1840,15 @@ impl<'a> DevEmit<'a> {
         let mut force_named: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
         for &m in &fd.morphisms {
             let morph = ir.morphism(m).expect("morphism resolves");
-            if matches!(morph.op, Operation::Call(_)) {
+            // Call: the §3 post-call trap check is anchored to a statement.
+            // Fold: an in-twin fold is a LOOP — its scalar result is written
+            // by the loop's acc updates and needs an lvalue; the query may
+            // class it Inline (one pure consumer, no boundary) but no
+            // expression form exists. The other bulk ops produce arrays,
+            // which the query keeps Named. (S23 fix: the box differential
+            // caught fold-result-into-scalar-op dropping the value — the
+            // `neg operand` panic class, 27/640 testgen emissions.)
+            if matches!(morph.op, Operation::Call(_) | Operation::Fold { .. }) {
                 force_named.insert(morph.target, ());
             }
         }

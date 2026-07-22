@@ -862,6 +862,35 @@ fn captured_twin_fold_hoists_invariant_fields() {
     }
 }
 
+/// S23 regression (the box differential's `neg operand` class): an in-twin
+/// fold's SCALAR result consumed by a pure scalar op. The query may class it
+/// Inline (one consumer, no boundary), but the fold emits as a loop — no
+/// expression form exists; DevEmit must force-Name it. Pre-fix this panicked
+/// in `load_whole` (27/640 testgen emissions); the local `emit_sweep` example
+/// runs the full deterministic sweep without nvcc.
+#[test]
+fn twin_fold_scalar_result_into_scalar_op_is_named() {
+    let src = r#"
+fn main() {
+    [1, 2, 3, 4] -> xs;
+    [10, 20] -> seeds;
+    seeds -> map { s ->
+        (s, xs) -> fold { acc, x -> acc + x } -> t;
+        t * 3
+    } -> c;
+    c[0] -> println;
+    c[1] -> println;
+}
+"#;
+    let cu = emit(&lower_src(src)).unwrap();
+    assert!(cu.contains("for (unsigned long long"), "fold loop missing");
+    assert_eq!(
+        cu.matches("* (uint32_t)3").count(),
+        1,
+        "fold result duplicated:\n{cu}"
+    );
+}
+
 // --- plan-smart-arenas §7: the structural perf gates (#18) -------------------
 
 /// Whole-module `cudaMalloc` count EXCLUDING the prelude's `d_trap` pair

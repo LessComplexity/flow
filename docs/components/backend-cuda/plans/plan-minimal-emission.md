@@ -162,6 +162,19 @@ Deviations/decisions, all emitter-side (the query is untouched):
    (was 23 locals / 15 assembles); d_fn4's duplicate-wrapper and wrap/unwrap
    classes gone. `-fn1`-class `__host__ __device__` bodies are func.rs's lane —
    WP-C.
+6. **Fold targets force-Named (S23 correction — found by the box
+   differential, the first hardware run of the S22 emitters).** An in-twin
+   fold is a LOOP; its scalar result has no expression form, but the query
+   classes it Inline when its one consumer is pure and non-boundary — the
+   value silently dropped in `store_obj` and every downstream operand load
+   panicked (`neg operand` class, 27/640 testgen emissions; the corpus never
+   hit it because d_fn4's fold feeds `Output`, a boundary). Fix mirrors the
+   WP-C host rule: `DevEmit::new` force-Names `Fold` targets (the other
+   bulk ops produce arrays, already Named). Regression:
+   `twin_fold_scalar_result_into_scalar_op_is_named` + the new
+   `examples/emit_sweep.rs` — the differential's deterministic 320-draw
+   emission sweep runnable WITHOUT nvcc, closing the local blind spot that
+   let this ship in S22.
 
 ## 3c. As-built (WP-C, S22 — orchestrator inline, same session)
 
