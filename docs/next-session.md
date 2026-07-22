@@ -17,13 +17,17 @@ Written: 2026-07-22 · close of Session 23 · by: Claude Fable (orchestrator; ca
 - cap wall flat ~270 ms at every N (context startup); loop form Θ(N³) launches unchanged (region v2's target).
 - flow-llvm cap f32 = single-thread C++ parity; f64 0.86× (S21's 1.30× reversed — znver3 box variance, recorded; compare within one box only).
 
-## The S24 agenda (the numbers direct it; nothing is mandated-in-flight — Sapir sets the next mandate)
+## The S24 agenda (Sapir directives at S23 close + the numbers)
 
-1. **`-fmad` decision (Sapir):** a labeled `-fmad=true` non-oracle perf row would close a chunk of the 1.6×. Standing since S21.
-2. **Launch geometry (#5):** grid-stride + block-size tuning — the other half of the 1.6×; measure-first on the existing FLOW_PERF rows.
-3. **Region emission v2 (S17 directive):** the loop form's Θ(N³)-launches fix; the multi-merge-SCC oracle boundary is the design blocker — orchestrator's lane, plan exists (`plan-region-emission.md`).
-4. **P2 standing:** arena v1.1 (18a), tree-fold (ADR-0028), 17b dedup key, llvm heap lowering, `time` builtin (Sapir), procedural sepia, chapel-gpu, P7 Verilog, ADR-0030 protocol behind the CLI crate.
-5. **Docs debt:** ADR-0029/0031 `flow-as-implemented` patch rows (standing "on ledger close").
+1. **flow-llvm parallel orchestrator (Sapir, S23 close — "it should be parallel first, this is the idea"):** the CPU backend is single-thread; design a threading orchestrator so map/fold bulk sites fan across cores (the 60× chapel-48-core gap at N=512 is this). Design sketch to start from: the cuda backend's bulk-site machinery is the template — a bulk op site becomes `flow_par_for(n, body, ctx)` in flow-rt (pthreads in the dependency-free staticlib) instead of a kernel launch; E2/purity already legalizes the fan-out (the same proof that legalizes kernels); first-trap-wins via a shared flag (the cuda trap-protocol shape); float folds stay sequential-pinned unless ADR-0028's tree class applies. Model-first plan before code (§6.1); orchestrator's design lane, codex codes.
+2. **chapel-gpu leg (Sapir, S23 close — "compare cpu to cpu and gpu to gpu"):** the .deb is CPU-locale only; the GPU leg needs a `CHPL_LOCALE_MODEL=gpu` source build with CUDA on the box (budget ~20-30 min box time for the chapel build; cache the tarball). Lands in the s24 report's GPU table against flow-cuda.
+3. **`-fmad` decision (Sapir):** a labeled `-fmad=true` non-oracle perf row would close a chunk of the 1.6×. Standing since S21.
+4. **Launch geometry (#5):** grid-stride + block-size tuning — the other half of the 1.6×; measure-first on the existing FLOW_PERF rows.
+5. **Region emission v2 (S17 directive):** the loop form's Θ(N³)-launches fix; the multi-merge-SCC oracle boundary is the design blocker — orchestrator's lane, plan exists (`plan-region-emission.md`).
+6. **P2 standing:** arena v1.1 (18a), tree-fold (ADR-0028), 17b dedup key, llvm heap lowering, `time` builtin (Sapir), procedural sepia, P7 Verilog, ADR-0030 protocol behind the CLI crate.
+7. **Docs debt:** ADR-0029/0031 `flow-as-implemented` patch rows (standing "on ledger close").
+
+**Perf-report format is now a standing rule (S23, Sapir):** per-session files `docs/performance/matmul/sNN.md` + thin index; compute-only tables grouped GPU-vs-GPU / CPU-vs-CPU; wall tables separate; ratios ONLY vs flow with the numbers visible; no box-ID/cost noise in perf docs. Memory: `perf-report-format`.
 
 ## Open questions for Sapir
 
