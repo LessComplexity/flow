@@ -1,6 +1,6 @@
 # Flow — Model Index
 
-Last updated: 2026-07-16 · Session 10
+Last updated: 2026-07-18 · Session 13
 Authority: ADR-0014 (FRAMEWORK adoption) · FRAMEWORK.md §6 (process), §2 (model-section shape)
 
 The index of categorical models for the Flow compiler, per FRAMEWORK §6 ("Add it to
@@ -30,10 +30,10 @@ and is **not** re-modeled here (errata E5 firewall).
 | `interp` | Fueled reference interpreter (the oracle): the `RValue` domain, the `eval` `Trn`, the SCC loop driver, token-as-Writer | [`components/interp/DESIGN.md`](../components/interp/DESIGN.md) | modeled |
 | `rewrite` | Plan+replay rewriter: layers 3–4 (const fold, DCE, CSE) + layer 1 (map fusion) over sealed `CategoryIr`; R1 oracle-equality contract | [`components/rewrite/DESIGN.md`](../components/rewrite/DESIGN.md) | modeled |
 | `backend-llvm` | `F_LLVM` piecewise emitter: alloca-slot scheme, ADR-0016 loop CFG, `flow-rt` seam (ADR-0020, DESIGN §1 — the runtime crate is owned here, not a modeled component of its own), L1 oracle parity | [`components/backend-llvm/DESIGN.md`](../components/backend-llvm/DESIGN.md) | modeled · built/tested (S13) |
-| `backend-cuda` | `F_CUDA` (the one place `Loc`/`Trm` are real — host↔device) | `components/backend-cuda/DESIGN.md` | planned |
+| `backend-cuda` | `F_CUDA` (the one place `Loc`/`Trm` are real — host↔device; model paid in its DESIGN per ADR-0022 D2's backend-seam practice) | [`components/backend-cuda/DESIGN.md`](../components/backend-cuda/DESIGN.md) | modeled · built/tested (S15, M3) |
 | `backend-verilog` | `F_Verilog : Flow-Cat → Clocked-Cat` (E1 done-protocol) | `components/backend-verilog/DESIGN.md` | planned |
 | `cli` | `flow build\|run\|dump-ir\|test`; the lone renderer of structured diagnostics | `components/cli/DESIGN.md` | planned |
 
-The six `planned` rows have a DESIGN.md but no `## Categorical model (Dat + Trn)`
+The two `planned` rows have a DESIGN.md but no `## Categorical model (Dat + Trn)`
 section yet; modeling each is part of its component increment (HANDOFF §7.2 step 2).
 Add the model **and** flip its status here in the same change.

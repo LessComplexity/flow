@@ -3,7 +3,8 @@
 //! `F_LLVM : Flow-Cat → LLVM-Cat` as a String — the translation unit **is** the
 //! artifact (ADR-0020). Semantics are the interpreter oracle's by construction:
 //! every `Print`/trap routes through the shared `flow-rt` runtime (ADR-0020 §2),
-//! integer arithmetic wraps, `Div`/`Mod`/`Index`/`Update` are guarded, and floats
+//! integer arithmetic wraps, `Div`/`Mod`/`Index`/`Update` are guarded (an S20
+//! `bounds_proof`-proven `Index` elides its statically-dead guard), and floats
 //! are IEEE at width.
 //!
 //! Emission is deterministic (L2): all names come from per-function ordinals and
@@ -19,7 +20,7 @@ mod ty;
 use flow_ir::{CategoryIr, SourceLoc};
 use slotmap::SecondaryMap;
 
-use crate::func::FnEmit;
+use crate::func::{FnAttrs, FnEmit};
 use crate::module::{RT_DECLS, collect_str_globals, emit_main_wrapper, emit_str_globals};
 
 /// A structured, renderer-free emission error (ADR-0020 §1; C3).
@@ -58,6 +59,10 @@ pub fn emit(ir: &CategoryIr) -> Result<String, EmitError> {
 
     let strings = collect_str_globals(ir);
 
+    // Suggestions #7's attribute-capability pre-pass (func.rs `FnAttrs`):
+    // clean fns get `readonly nounwind` (+ `willreturn`), unclean fns nothing.
+    let attrs = FnAttrs::analyze(ir);
+
     // Deterministic function names: entry → @flow_main, others → @fn{ordinal}.
     let mut fnames: SecondaryMap<flow_ir::FuncId, String> = SecondaryMap::new();
     let entry = ir.entry();
@@ -82,7 +87,7 @@ pub fn emit(ir: &CategoryIr) -> Result<String, EmitError> {
     }
 
     for (id, _) in ir.funcs() {
-        let fe = FnEmit::new(ir, id, &fnames, &strings);
+        let fe = FnEmit::new(ir, id, &fnames, &strings, &attrs);
         out.push_str(&fe.emit());
         out.push('\n');
     }

@@ -72,6 +72,11 @@ struct Emitter<'a> {
     enclosing_token_loop: bool,
     /// names carried by an enclosing loop (an inner loop assigning one is L1504).
     outer_carried: std::collections::BTreeSet<String>,
+    /// The current map/fold body's read-capture names (ADR-0027; empty outside
+    /// a body). A `-> name` targeting one is a fresh body-local shadow, never
+    /// a rebind of the shared capture (D2b — a rebind after a read is already
+    /// the typing walk's teaching L1108).
+    captures: std::collections::BTreeSet<String>,
 }
 
 /// Map a builder `IrError` to an L-code diagnostic at `span`. User-diagnosable
@@ -102,6 +107,19 @@ fn ir_err(e: IrError, span: syn::SourceLoc) -> syn::Diagnostic {
         IrError::RetTypeMismatch => (
             LCode::TypeMismatch,
             "return value type does not match the declared output".to_string(),
+        ),
+        // A token inside a map/fold body (e.g. a token-typed capture — the
+        // surface can't name tokens, so this is IrBuilder-driven): the same
+        // user-facing family as L1605 (bodies are effect-free), never the
+        // internal catch-all.
+        IrError::TokenInBody => (
+            LCode::BodyEffectful,
+            "effect token inside a map/fold body: bodies are pure (effects belong in the enclosing function)".to_string(),
+        ),
+        IrError::InvalidWiden => (
+            LCode::InvalidWiden,
+            "illegal widening pair; legal lattice: i32→i64, i32→f32, i32→f64, f32→f64"
+                .to_string(),
         ),
         other => (
             LCode::Internal,
@@ -193,6 +211,7 @@ pub fn lower_program(
                 derived: std::collections::BTreeSet::new(),
                 enclosing_token_loop: false,
                 outer_carried: std::collections::BTreeSet::new(),
+                captures: std::collections::BTreeSet::new(),
             };
             let fb = b.build_fn(fid).map_err(|e| vec![ir_err(e, fd.span)])?;
             em.emit_fn(fd, fb).map_err(|d| vec![d])?;
@@ -298,9 +317,18 @@ fn build_bodies(
             derived: std::collections::BTreeSet::new(),
             enclosing_token_loop: false,
             outer_carried: std::collections::BTreeSet::new(),
+            captures: std::collections::BTreeSet::new(),
         };
         let fb = b.build_fn(bid).map_err(|e| ir_err(e, stage.span))?;
-        em.emit_body(op, params, body, &body_in_ty, &body_out_ty, fb)?;
+        em.emit_body(
+            op,
+            params,
+            body,
+            &body_in_ty,
+            &body_out_ty,
+            &sig.captures,
+            fb,
+        )?;
     }
     Ok(())
 }
@@ -498,6 +526,7 @@ impl Emitter<'_> {
     }
 
     /// Build a map/fold body fn (D2).
+    #[allow(clippy::too_many_arguments)]
     fn emit_body(
         &mut self,
         op: CollOp,
@@ -505,35 +534,60 @@ impl Emitter<'_> {
         body: &Block,
         body_in: &Ty,
         body_out: &Ty,
+        caps: &[(String, Ty)],
         mut fb: FnBuilder,
     ) -> ER<()> {
         let input = fb.input();
         let span = body.span;
+        // ADR-0027: bind each capture to its leading input projection (the
+        // broadcast edge), then the visible params after them.
+        let k = caps.len() as u32;
+        self.captures = caps.iter().map(|(c, _)| c.clone()).collect();
+        self.record(input, body_in.clone());
+        for (i, (cap, ty)) in caps.iter().enumerate() {
+            let obj = fb
+                .proj(input, i as u32, Dest::Fresh(None), ir_loc(span))
+                .map_err(|e| ir_err(e, span))?;
+            self.record(obj, ty.clone());
+            self.bind_new(&cap.clone(), obj, ty.clone(), false);
+        }
         match op {
             CollOp::Map => {
-                // single param T = input.
+                // single param T = input (k=0: the whole input) or its last
+                // component (k>0: after the captures).
                 if let Some(p0) = params.first() {
-                    self.record(input, body_in.clone());
+                    let (obj, ty) = if k == 0 {
+                        (input, body_in.clone())
+                    } else {
+                        let o = fb
+                            .proj(input, k, Dest::Fresh(None), ir_loc(span))
+                            .map_err(|e| ir_err(e, span))?;
+                        let t = match body_in {
+                            Ty::Tuple(ts) => ts[k as usize].clone(),
+                            _ => return Err(internal(span, "captured map input not a product")),
+                        };
+                        self.record(o, t.clone());
+                        (o, t)
+                    };
                     let pn = name_text(self.source, *p0).to_string();
-                    self.bind_new(&pn, input, body_in.clone(), false);
+                    self.bind_new(&pn, obj, ty, false);
                 }
             }
             CollOp::Fold => {
-                // (Acc, T): proj 0, proj 1.
-                self.record(input, body_in.clone());
+                // (caps…, Acc, T): captures at 0..k, acc at k, t at k+1.
                 let acc = fb
-                    .proj(input, 0, Dest::Fresh(None), ir_loc(span))
+                    .proj(input, k, Dest::Fresh(None), ir_loc(span))
                     .map_err(|e| ir_err(e, span))?;
                 let t = fb
-                    .proj(input, 1, Dest::Fresh(None), ir_loc(span))
+                    .proj(input, k + 1, Dest::Fresh(None), ir_loc(span))
                     .map_err(|e| ir_err(e, span))?;
                 if let Ty::Tuple(ts) = body_in {
-                    self.record(acc, ts[0].clone());
-                    self.record(t, ts[1].clone());
+                    self.record(acc, ts[k as usize].clone());
+                    self.record(t, ts[k as usize + 1].clone());
                     let p0 = name_text(self.source, params[0]).to_string();
                     let p1 = name_text(self.source, params[1]).to_string();
-                    self.bind_new(&p0, acc, ts[0].clone(), false);
-                    self.bind_new(&p1, t, ts[1].clone(), false);
+                    self.bind_new(&p0, acc, ts[k as usize].clone(), false);
+                    self.bind_new(&p1, t, ts[k as usize + 1].clone(), false);
                 }
             }
         }
@@ -812,8 +866,7 @@ impl Emitter<'_> {
 
     /// Whether a stage emits a fresh-value primitive that takes the lookahead
     /// `Dest` (so a following `-> ret` is pre-wired; pin 2). A bare-name `Expr`
-    /// stage counts only when it is a *pure-fn call*; a rebind, alias-bind, or
-    /// `print` does not.
+    /// stage counts for a pure fn or pure builtin; bindings and `print` do not.
     fn stage_writes_value(&self, kind: &StageKind) -> bool {
         match kind {
             StageKind::OpShorthand { .. }
@@ -823,6 +876,9 @@ impl Emitter<'_> {
             StageKind::Expr(e) => {
                 if let ExprKind::Var(n) = &e.kind {
                     let text = name_text(self.source, *n);
+                    if crate::is_pure_builtin(text) {
+                        return true;
+                    }
                     if let Some(sig) = self.fn_sigs.get(text) {
                         return !sig.effectful;
                     }
@@ -960,6 +1016,18 @@ impl Emitter<'_> {
                     let wire = wire
                         .ok_or_else(|| diag(LCode::HeadlessChain, e.span, "rebind with no wire"))?;
                     if !bind.mutable {
+                        // ADR-0027: `-> name` of a read capture is a fresh
+                        // body-local shadow in the current frame, never a
+                        // rebind of the shared capture (D2b — rebinding a
+                        // capture the body has already READ is the typing
+                        // walk's teaching L1108, upstream of emission). The
+                        // shadow pops with its scope; reads outside it still
+                        // resolve to the capture.
+                        if self.captures.contains(&text) {
+                            let ty = self.ty_of(fb, wire);
+                            self.bind_new(&text, wire, ty, false);
+                            return Ok(Some(wire));
+                        }
                         return Err(diag(
                             LCode::AssignImmutable,
                             e.span,
@@ -986,15 +1054,21 @@ impl Emitter<'_> {
                         .ok_or_else(|| diag(LCode::HeadlessChain, e.span, "print with no value"))?;
                     self.emit_print(fb, wire, text == "println", e.span)?;
                     Ok(None) // print is a sink; chain ends.
-                } else if crate::is_collection_builtin(&text) {
+                } else if crate::is_pure_builtin(&text) {
                     let wire = wire.ok_or_else(|| {
-                        diag(LCode::HeadlessChain, e.span, "collection op with no source")
+                        diag(LCode::HeadlessChain, e.span, "builtin stage with no source")
                     })?;
                     let dest = self.lookahead_dest(next, ctx, next.is_none())?;
-                    let r = if text == "zip" {
-                        self.emit_zip(fb, wire, dest, e.span)?
-                    } else {
-                        self.emit_enumerate(fb, wire, dest, e.span)?
+                    let r = match text.as_str() {
+                        "zip" => self.emit_zip(fb, wire, dest, e.span)?,
+                        "enumerate" => self.emit_enumerate(fb, wire, dest, e.span)?,
+                        _ => self.emit_widen(
+                            fb,
+                            wire,
+                            crate::widen_target(&text).expect("pure widen builtin"),
+                            dest,
+                            e.span,
+                        )?,
                     };
                     self.maybe_bind_next(fb, next, r);
                     Ok(Some(r))
@@ -1064,7 +1138,7 @@ impl Emitter<'_> {
                         // bare name binding (unbound or mut) → name it.
                         if !self.fn_ids.contains_key(text)
                             && !crate::is_print_builtin(text)
-                            && !crate::is_collection_builtin(text)
+                            && !crate::is_pure_builtin(text)
                         {
                             return Ok(Dest::Fresh(Some(text.to_string())));
                         }
@@ -1462,7 +1536,20 @@ impl Emitter<'_> {
                 self.pack_struct(fb, sty, &comps, dest, sp)
                     .map_err(|e| ir_err(e, sp))
             }
-            ExprKind::Call { .. } | ExprKind::Question(_) | ExprKind::Error => {
+            ExprKind::Call { callee, args } => {
+                let name = match &callee.kind {
+                    ExprKind::Var(n) => name_text(self.source, *n),
+                    _ => "",
+                };
+                if name == "iota" {
+                    self.emit_iota(fb, args, dest, sp)
+                } else if name == "fill" {
+                    self.emit_fill(fb, args, dest, sp)
+                } else {
+                    Err(diag(LCode::UncleanTree, sp, "unclean expression node"))
+                }
+            }
+            ExprKind::Question(_) | ExprKind::Error => {
                 Err(diag(LCode::UncleanTree, sp, "unclean expression node"))
             }
         }
@@ -2199,6 +2286,27 @@ impl Emitter<'_> {
             .get(&(sp.start, sp.end))
             .ok_or_else(|| internal(sp, "missing body id"))?;
         let sig = self.info.block(sp).cloned();
+        // ADR-0027: the body's read captures (leading hidden input components),
+        // resolved from the enclosing scope into the op's source product.
+        let caps: Vec<(String, Ty)> = sig.as_ref().map(|s| s.captures.clone()).unwrap_or_default();
+        let mut cap_objs: Vec<ObjectId> = Vec::with_capacity(caps.len());
+        for (cap, _) in &caps {
+            // The poison bit travels with the capture: a loop-carried name
+            // read after its loop is L1107 here exactly as on the direct-read
+            // path (`ExprKind::Var`) — resolving through `.map(|(b, _)| …)`
+            // would discard it and let the read reach the interpreter.
+            match self.scope.resolve(cap) {
+                Some((b, false)) => cap_objs.push(b.obj),
+                Some((_, true)) => {
+                    return Err(diag(
+                        LCode::ReadAfterLoop,
+                        sp,
+                        format!("`{cap}` read after its loop; bind the exit value instead"),
+                    ));
+                }
+                None => return Err(internal(sp, "capture unbound in the enclosing scope")),
+            }
+        }
         match op {
             CollOp::Map => {
                 let wty = self.ty_of(fb, wire);
@@ -2207,12 +2315,23 @@ impl Emitter<'_> {
                     _ => return Err(diag(LCode::MapNonArray, sp, "map applied to a non-array")),
                 };
                 let out = Ty::Array {
-                    elem: Box::new(sig.map(|s| s.body_out).unwrap_or(Ty::Unit)),
+                    elem: Box::new(sig.as_ref().map(|s| s.body_out.clone()).unwrap_or(Ty::Unit)),
                     size,
                 };
-                let o = fb
-                    .map(bid, wire, dest, ir_loc(sp))
-                    .map_err(|e| ir_err(e, sp))?;
+                let o = if cap_objs.is_empty() {
+                    fb.map(bid, wire, dest, ir_loc(sp))
+                        .map_err(|e| ir_err(e, sp))?
+                } else {
+                    fb.map_captured(bid, &cap_objs, wire, dest, ir_loc(sp))
+                        .map_err(|e| ir_err(e, sp))?
+                };
+                // Derives-from-merge (§7.3): the op's inputs are its source
+                // product — the captures + the array — so the result derives
+                // iff any of them does (a captured map may legitimately feed
+                // a loop guard; L1503's derivation test).
+                let mut inputs = cap_objs.clone();
+                inputs.push(wire);
+                self.prop(o, &inputs);
                 Ok(self.record(o, out))
             }
             CollOp::Fold => {
@@ -2221,10 +2340,33 @@ impl Emitter<'_> {
                     Ty::Tuple(ts) if ts.len() == 2 && matches!(ts[1], Ty::Array { .. }) => {}
                     _ => return Err(diag(LCode::FoldShape, sp, "fold wire is not (init, array)")),
                 }
-                let out = sig.map(|s| s.body_out).unwrap_or(Ty::Unit);
-                let o = fb
-                    .fold(bid, wire, dest, ir_loc(sp))
-                    .map_err(|e| ir_err(e, sp))?;
+                let out = sig.as_ref().map(|s| s.body_out.clone()).unwrap_or(Ty::Unit);
+                let o = if cap_objs.is_empty() {
+                    fb.fold(bid, wire, dest, ir_loc(sp))
+                        .map_err(|e| ir_err(e, sp))?
+                } else {
+                    // `fold_captured` takes the seed/array separately: project
+                    // them out of the packed wire.
+                    let (seed_ty, arr_ty) = match &wty {
+                        Ty::Tuple(ts) => (ts[0].clone(), ts[1].clone()),
+                        _ => unreachable!("fold wire shape checked above"),
+                    };
+                    let seed = fb
+                        .proj(wire, 0, Dest::Fresh(None), ir_loc(sp))
+                        .map_err(|e| ir_err(e, sp))?;
+                    self.record(seed, seed_ty);
+                    let arr = fb
+                        .proj(wire, 1, Dest::Fresh(None), ir_loc(sp))
+                        .map_err(|e| ir_err(e, sp))?;
+                    self.record(arr, arr_ty);
+                    fb.fold_captured(bid, &cap_objs, seed, arr, dest, ir_loc(sp))
+                        .map_err(|e| ir_err(e, sp))?
+                };
+                // Derives-from-merge (§7.3): inputs are the captures + the
+                // packed (seed, array) wire — same rule as the map arm.
+                let mut inputs = cap_objs.clone();
+                inputs.push(wire);
+                self.prop(o, &inputs);
                 Ok(self.record(o, out))
             }
         }
@@ -2331,6 +2473,119 @@ impl Emitter<'_> {
             .enumerate(wire, dest, ir_loc(sp))
             .map_err(|e| ir_err(e, sp))?;
         Ok(self.record(o, out))
+    }
+
+    /// Explicit scalar widening (ADR-0029). Owns L1614; the builder validates
+    /// the same four-edge lattice independently.
+    fn emit_widen(
+        &mut self,
+        fb: &mut FnBuilder,
+        wire: ObjectId,
+        target: Ty,
+        dest: Dest,
+        sp: syn::SourceLoc,
+    ) -> ER<ObjectId> {
+        let source = self.ty_of(fb, wire);
+        let legal = matches!(
+            (&source, &target),
+            (
+                Ty::Int {
+                    bits: 32,
+                    signed: true
+                },
+                Ty::Int {
+                    bits: 64,
+                    signed: true
+                } | Ty::Float { bits: 32 | 64 }
+            ) | (Ty::Float { bits: 32 }, Ty::Float { bits: 64 })
+        );
+        if !legal {
+            return Err(diag(
+                LCode::InvalidWiden,
+                sp,
+                format!(
+                    "cannot widen `{}` to `{}`; legal lattice: i32→i64, i32→f32, i32→f64, f32→f64",
+                    ty_name(&source),
+                    ty_name(&target)
+                ),
+            ));
+        }
+        let o = fb
+            .widen(wire, target.clone(), dest, ir_loc(sp))
+            .map_err(|e| ir_err(e, sp))?;
+        self.prop(o, &[wire]);
+        Ok(self.record(o, target))
+    }
+
+    /// `iota(n)` (ADR-0029): `[i32; n]` of `0..n-1`, the count a positive
+    /// literal ≤ i32::MAX (the static-n rule). Owns L1612 (arity / non-literal
+    /// count / out-of-range count); the builder re-derives (`NonStaticCount`).
+    fn emit_iota(
+        &mut self,
+        fb: &mut FnBuilder,
+        args: &[Expr],
+        dest: Dest,
+        sp: syn::SourceLoc,
+    ) -> ER<ObjectId> {
+        let n = self.static_count_arg(args, 1, sp, LCode::IotaArgs)?;
+        let c = self.constant(fb, Value::I32(n as i32), sp)?;
+        let out = Ty::Array {
+            elem: Box::new(Ty::i32()),
+            size: n,
+        };
+        let o = fb.iota(c, dest, ir_loc(sp)).map_err(|e| ir_err(e, sp))?;
+        Ok(self.record(o, out))
+    }
+
+    /// `fill(x, n)` (ADR-0029): `[T; n]` with every element `x` (T from x).
+    /// Owns L1613 (arity / non-literal count / out-of-range count).
+    fn emit_fill(
+        &mut self,
+        fb: &mut FnBuilder,
+        args: &[Expr],
+        dest: Dest,
+        sp: syn::SourceLoc,
+    ) -> ER<ObjectId> {
+        let n = self.static_count_arg(args, 2, sp, LCode::FillArgs)?;
+        let x = self.emit_expr_dest(fb, &args[0], Dest::Fresh(None))?;
+        let c = self.constant(fb, Value::I32(n as i32), sp)?;
+        let out = Ty::Array {
+            elem: Box::new(self.ty_of(fb, x)),
+            size: n,
+        };
+        let o = fb.fill(x, c, dest, ir_loc(sp)).map_err(|e| ir_err(e, sp))?;
+        Ok(self.record(o, out))
+    }
+
+    /// The ADR-0029 static-n rule: exactly `arity` args, the last a positive
+    /// literal integer ≤ i32::MAX.
+    fn static_count_arg(
+        &mut self,
+        args: &[Expr],
+        arity: usize,
+        sp: syn::SourceLoc,
+        code: LCode,
+    ) -> ER<u64> {
+        if args.len() != arity {
+            return Err(diag(
+                code,
+                sp,
+                format!("expected {arity} argument(s), got {}", args.len()),
+            ));
+        }
+        match &args[arity - 1].kind {
+            ExprKind::Int(n) if *n > 0 && *n <= i32::MAX as u64 => Ok(*n),
+            ExprKind::Int(_) => Err(diag(
+                code,
+                sp,
+                "count must be a positive integer ≤ i32::MAX",
+            )),
+            _ => Err(diag(
+                code,
+                sp,
+                "count must be a literal integer (a runtime size is out of Core — ADR-0023 territory)",
+            )),
+        }
     }
 
     // --- loops --------------------------------------------------------------
@@ -2992,7 +3247,7 @@ impl Emitter<'_> {
             if self.scope.resolve(text).is_none()
                 && !self.fn_ids.contains_key(text)
                 && !crate::is_print_builtin(text)
-                && !crate::is_collection_builtin(text)
+                && !crate::is_pure_builtin(text)
             {
                 return Some(text.to_string());
             }
@@ -3027,7 +3282,17 @@ impl Emitter<'_> {
             if i + 1 == n {
                 break; // skip the final Ret/Bind marker.
             }
-            let next = chain.stages.get(i + 1);
+            // A stage directly before the terminal `-> ret` marker must NOT
+            // adopt `Dest::Ret` from the straight-line pin-2 lookahead: a loop
+            // exit value feeds the LoopExit route, and only the LoopExit writes
+            // the Return object. A direct Return writer here is read back by
+            // the route's Pair edge — a `ret → route → ret` cycle that wedges
+            // Kahn's topo_order (the Pair and LoopExit are never emitted).
+            let next = if is_ret && i + 2 == n {
+                None
+            } else {
+                chain.stages.get(i + 1)
+            };
             cur = self.emit_stage(fb, stage, next, false, cur, &ChainCtx::Statement)?;
         }
         Ok(cur)
@@ -3762,5 +4027,23 @@ fn map_binop(op: BinOp) -> Operation {
         BinOp::Ge => Operation::Ge,
         BinOp::And => Operation::And,
         BinOp::Or => Operation::Or,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_in_body_maps_to_user_facing_l1605_not_internal() {
+        // ADR-0027 review minor #13: a token-typed capture reaches
+        // `map_captured` → `IrError::TokenInBody` (constructible only via
+        // IrBuilder — the surface can't name tokens, so this unit test drives
+        // the mapping directly). It must surface as the user-facing body
+        // L-code (L1605 territory: bodies are effect-free), never L1901
+        // "internal lowering error".
+        let d = ir_err(IrError::TokenInBody, syn::SourceLoc { start: 0, end: 0 });
+        assert_eq!(d.code.0, "L1605", "{d:?}");
+        assert!(!d.message.contains("internal"), "{d:?}");
     }
 }

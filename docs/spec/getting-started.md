@@ -58,14 +58,16 @@ data -> {
 
 The two `expensive_*` calls run in parallel. The implicit join at `}` waits for both.
 
-If you need sequential ordering (logging, I/O), use `seq`:
+If you need sequential ordering (logging, I/O), use a `seq` statement block. The body is an ordinary block of statements; source order is the guaranteed order:
 
 ```flow
 data -> seq {
-    -> { "step 1" -> log };
-    -> { "step 2" -> log };
+    "step 1" -> println;
+    "step 2" -> println;
 }
 ```
+
+> **Corrected per ADR-0019 — see docs/spec/ERRATA.md (LC-5).** This example previously wrapped each step in an anonymous block (`-> { … }`), which the parser rejects (P0115, out of Flow-Core); `seq { … }` is a statement block in stage position whose body is the ordinary block production.
 
 ### 3.3 `-pattern->` is a guard
 
@@ -73,14 +75,13 @@ Guards match and branch:
 
 ```flow
 x -> {
-    -0->       "zero";
-    -1->       "one";
-    -Some(n)-> n -> to_string;
-    -_->       "other";
-} -> message;
+    -0->       10;
+    -1->       20;
+    -_->       30;
+} -> code;
 ```
 
-Booleans use `-true-> / -false->`. Enum variants use their constructor name. `_` is the default.
+Booleans use `-true-> / -false->`. `_` is the default. Enum-variant patterns like `-Some(n)->` are full-language — Flow-Core rejects them at parse (P0106, planned for Core+1). Guard arms are pure, and string values may only flow to `print`/`println` (L1206) — not through a guard join.
 
 ### 3.4 Variables declare with `<-` or `->`
 
@@ -159,12 +160,13 @@ The graph is not a separate artifact — it's exactly what the compiler holds in
 | Run two things in parallel | `x -> { -> a -> r1; -> b -> r2; }` |
 | Force sequential order | `x -> seq { ... }` |
 | Branch on a condition | `cond -> { -true-> A; -false-> B; } -> ret;` |
-| Loop with a counter | `loop { (i < n) -> { -true-> {... -> loop;} -false-> -> ret; } }` |
-| Propagate errors | `x -> step1? -> step2? -> ret;` |
+| Loop with a counter | `loop { (i < n) -> { -true-> {... -> loop;} -false-> i -> ret; } }` |
 | Declare a type | `type Point { x: f32, y: f32 }` |
 | Call with multiple args | `(a, b) -> f -> result;` |
 
 > **Erratum E5 applied — see docs/spec/ERRATA.md and ADR-0006.**
+>
+> **Cheat-sheet verified against Flow-Core (2026-07-18).** Removed the error-propagation row: the `?` operator is full-language (P0101, out of Core). The loop row's exit arm produces the counter (`-false-> i -> ret;`) — a value-less `-> ret` in a value-returning function is L1306.
 
 ---
 

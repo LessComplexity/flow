@@ -45,6 +45,7 @@ one `eval` pass. Flow programs are *not* modeled as categories here.
 | `Index` (§3) | `(Array, I) → T` (OOB ⇒ trap) | `crates/flow-interp/src/eval.rs:index` | built |
 | `Zip` (§3; ADR-0018) | `([A;n],[B;n]) → [(A,B);n]` elementwise pair | `crates/flow-interp/src/eval.rs:eval_morphism` (`Zip` arm) · `as_array` | built |
 | `Enumerate` (§3; ADR-0018) | `[A;n] → [(i32,A);n]` (index pinned `i32`) | `crates/flow-interp/src/eval.rs:eval_morphism` (`Enumerate` arm) | built |
+| `Iota`/`Fill` (ADR-0029, stage 1) | `n → [i32;n]` of `0..n-1` (count = `Constant` source); `(x,n) → [x;n]` (count = internal pair's slot-1 `Constant`) | `crates/flow-interp/src/eval.rs:eval_morphism` (`Iota`/`Fill` arms) | built (oracle contracts `tests/iota_fill.rs`) |
 | `Update` (§3; ADR-0021) | `(Array{T,n}, I, T) → Array{T,n}` (slot `i` replaced; OOB ⇒ `Trapped(IndexOob)`; pure) | `crates/flow-interp/src/eval.rs:eval_morphism` (`Update` arm) · `eval.rs:update` | built |
 | `Print{newline}` (§3/§5) | `(IoToken, P) → IoToken` | `crates/flow-interp/src/eval.rs:print_op` | built |
 | product assembly (§2) | `arity × Pair{slot} → Tuple/Struct/Array` | `crates/flow-interp/src/eval.rs:stage_pair` · `finalize_product` | built |

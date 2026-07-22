@@ -72,6 +72,9 @@ pub enum LCode {
     EnumerateNonArray,     // L1609
     EnumerateOverflow,     // L1610
     SeqNoValue,            // L1611
+    IotaArgs,              // L1612
+    FillArgs,              // L1613
+    InvalidWiden,          // L1614
     Internal,              // L1901
 }
 
@@ -138,6 +141,9 @@ impl LCode {
             LCode::EnumerateNonArray => "L1609",
             LCode::EnumerateOverflow => "L1610",
             LCode::SeqNoValue => "L1611",
+            LCode::IotaArgs => "L1612",
+            LCode::FillArgs => "L1613",
+            LCode::InvalidWiden => "L1614",
             LCode::Internal => "L1901",
         }
     }

@@ -1,0 +1,45 @@
+leg,N,ms,gflops,note
+flow-cuda,4,332.6132,0.00039,"out=-275/3748 (matches interp+numpy); startup-dominated"
+flow-cuda,16,481.8325,0.00002,out=1815/6944 ✓
+flow-cuda,32,1749.3608,0.00004,out=-1219/4392 ✓
+flow-cuda,64,12163.8199,0.00004,out=1047/2107 ✓
+flow-cuda,128,99766.8749,0.00004,out=-7312/-933 ✓
+flow-llvm-macos,4,2.34,0.05,"arm64 clang -O2, process wall min-of-5"
+flow-llvm-macos,16,2.64,0.003,
+flow-llvm-macos,32,5.14,0.013,
+flow-llvm-macos,64,316.16,0.0017,"the N⁴ naive-Update copy wall (W3)"
+naive-cuda,64,0.0032,163.84,c0=1047.0 clast=2107.0 ✓
+naive-cuda,128,0.0050,838.86,c0=-7312.0 clast=-933.0 ✓
+naive-cuda,256,0.0120,2796.20,
+naive-cuda,512,0.0857,3132.27,
+naive-cuda,1024,0.8688,2471.78,
+naive-cuda,2048,7.3560,2335.49,
+cublas,64,0.0100,52.43,
+cublas,128,0.0054,776.72,
+cublas,256,0.0098,3423.92,
+cublas,512,0.0123,21824.02,
+cublas,1024,0.0464,46281.98,
+cublas,2048,0.3273,52489.67,
+cublas,4096,2.4607,55853.60,"≈68% of fp32 peak"
+numpy,64,0.0107,49.2,
+numpy,128,0.0250,167.9,
+numpy,256,0.1326,253.0,
+numpy,512,0.7445,360.6,
+numpy,1024,4.2828,501.4,
+numpy,2048,12.9201,1329.7,
+numpy,4096,402.7098,341.3,"BLAS threading dip"
+rust-naive,64,0.2028,2.59,
+rust-naive,128,2.6150,1.60,
+rust-naive,256,20.0359,1.67,
+rust-naive,512,208.8085,1.29,
+rust-naive,1024,6491.8103,0.33,"cache collapse"
+flow-cuda-cap,16,278.206,0.03,"out=1815/6944 ✓; startup-dominated"
+flow-cuda-cap,64,277.092,0.00,"out=1047/2107 ✓; 44× vs S16 loop form"
+flow-cuda-cap,128,277.837,0.02,"out=-7312/-933 ✓; 359× vs S16 loop form"
+flow-cuda-cap,256,277.729,0.12,"out=-3694/10946 ✓; ~2800× vs extrapolated loop form"
+flow-llvm-cap,16,2.71,0.003,"macOS clang -O2; startup-bound"
+flow-llvm-cap,64,2076.15,0.00025,"macOS; by-value aggregate capture cost (vs 316ms loop form)"
+naive-cuda-wall,64,333,,process wall incl. context init (S18 box)
+naive-cuda-wall,256,311,,process wall (S18 box)
+cublas-wall,64,496,,process wall incl. ~150ms handle init (S18 box)
+cublas-wall,256,469,,process wall (S18 box)

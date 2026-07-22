@@ -1592,3 +1592,20 @@ fn line_index_span_starts() {
     let lc = idx.line_col(d.span.start);
     assert_eq!((lc.line, lc.col), (2, 9), "`?` is at line 2, col 9");
 }
+
+// --- ADR-0029: the iota/fill P0108 carve -------------------------------------
+
+#[test]
+fn iota_fill_calls_are_core_p0108_carve() {
+    // ADR-0029: `iota(n)` / `fill(x, n)` are the only legal call expressions.
+    no_diags("fn main() { iota(4) -> t; fill(1.0, 4) -> s; }\n");
+    // An ordinary call keeps the P0108 rejection.
+    assert!(
+        pcodes("fn main() { foo(4) -> t; }\n").contains(&"P0108"),
+        "{:?}",
+        pcodes("fn main() { foo(4) -> t; }\n")
+    );
+    // A builtin *name* misused as a bare value is not the carve's business
+    // (lower's L-codes own arity/count misuse — the parser stays shape-blind).
+    no_diags("fn main() { iota(4, 5) -> t; }\n");
+}

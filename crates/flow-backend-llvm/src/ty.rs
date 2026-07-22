@@ -43,6 +43,55 @@ pub(crate) fn lower_ty(ty: &Ty) -> Option<String> {
     }
 }
 
+/// The LLVM type of a map/fold body's input product with the first `k` Array
+/// components lowered to `ptr` — by-reference array captures (ADR-0027,
+/// suggestions #6). Capture semantics are read-only, so the pointer is
+/// observably identical to the inline array (the interp oracle is
+/// representation-blind; the CUDA backend passes a device handle the same
+/// way). A `ptr` component still survives erasure, so the residual arity and
+/// `erased_index` remap are unchanged. `k = 0` (or a non-product) is
+/// `lower_ty` verbatim.
+pub(crate) fn lower_body_input_ty(ty: &Ty, k: u32) -> Option<String> {
+    match ty {
+        Ty::Tuple(_) | Ty::Struct { .. } if k > 0 => {
+            let kept: Vec<String> = component_tys(ty)
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| match c {
+                    Ty::Array { .. } if (i as u32) < k => Some("ptr".into()),
+                    _ => lower_ty(c),
+                })
+                .collect();
+            match kept.len() {
+                0 => None,
+                1 => Some(kept.into_iter().next().unwrap()),
+                _ => Some(format!("{{ {} }}", kept.join(", "))),
+            }
+        }
+        _ => lower_ty(ty),
+    }
+}
+
+/// The lowered LLVM type of a **Named fn's** input with every top-level Array
+/// (the input itself, or a direct product component) lowered to `ptr` —
+/// by-reference array call arguments (BL5 amendment, suggestions #8). Flow
+/// value semantics make array parameters observably read-only (functional
+/// `Update` copies to a fresh alloca, so no callee writes through an array
+/// argument), so the pointer is observably identical to the inline array — the
+/// by-ref capture argument one call boundary down, and the interp oracle is
+/// representation-blind. Reuses the capture lowering with `k = u32::MAX`: a
+/// Named fn has no "leading captures" convention, so EVERY top-level Array
+/// component qualifies; nested products-in-products stay by value (a
+/// component that is itself a product lowers via `lower_ty`). Scalar-only
+/// inputs lower identically to `lower_ty` (byte-identical text).
+pub(crate) fn lower_named_input_ty(ty: &Ty) -> Option<String> {
+    match ty {
+        Ty::Array { .. } => Some("ptr".into()),
+        Ty::Tuple(_) | Ty::Struct { .. } => lower_body_input_ty(ty, u32::MAX),
+        _ => lower_ty(ty),
+    }
+}
+
 /// The lowered LLVM types of a product's surviving (non-erased) components, in
 /// order. Empty for a fully-erased product or a non-product.
 fn residual_tys(ty: &Ty) -> Vec<String> {

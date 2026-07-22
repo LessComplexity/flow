@@ -10,10 +10,10 @@ declare void @flow_print_bool(i1 zeroext, i1 zeroext)
 declare void @flow_print_f32(float, i1 zeroext)
 declare void @flow_print_f64(double, i1 zeroext)
 declare void @flow_print_str(ptr, i64, i1 zeroext)
-declare void @flow_trap(i32)
+declare void @flow_trap(i32) noreturn
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
 
-define internal float @fn0({ float, float, float } %arg) {
+define internal float @fn0({ float, float, float } %arg) readonly nounwind willreturn {
 entry:
   %o0 = alloca { float, float, float }
   %o1 = alloca float
@@ -119,13 +119,13 @@ entry:
   %o17 = alloca { float, float, float }
   %o18 = alloca [16 x { float, float, float }]
   %o19 = alloca [16 x { float, float, float }]
-  %o20 = alloca { float, [16 x { float, float, float }] }
+  %o20 = alloca { float, ptr }
   %o21 = alloca float
   %o22 = alloca float
   %s81 = alloca i64
-  %s97 = alloca float
-  %s98 = alloca i64
-  %s107 = alloca { float, { float, float, float } }
+  %s95 = alloca float
+  %s96 = alloca i64
+  %s105 = alloca { float, { float, float, float } }
   %t0 = getelementptr { float, float, float }, ptr %o2, i32 0, i32 0
   store float 0x4069000000000000, ptr %t0
   %t1 = getelementptr { float, float, float }, ptr %o2, i32 0, i32 1
@@ -222,7 +222,7 @@ entry:
   store float 0x4069000000000000, ptr %t46
   %t47 = getelementptr { float, float, float }, ptr %o17, i32 0, i32 2
   store float 0x4069000000000000, ptr %t47
-  %t48 = getelementptr { float, [16 x { float, float, float }] }, ptr %o20, i32 0, i32 0
+  %t48 = getelementptr { float, ptr }, ptr %o20, i32 0, i32 0
   store float 0x0000000000000000, ptr %t48
   %t49 = load { float, float, float }, ptr %o2
   %t50 = getelementptr [16 x { float, float, float }], ptr %o18, i64 0, i64 0
@@ -288,44 +288,42 @@ bb83:
   store i64 %t91, ptr %s81
   br label %bb82
 bb84:
-  %t92 = load [16 x { float, float, float }], ptr %o19
-  %t93 = getelementptr { float, [16 x { float, float, float }] }, ptr %o20, i32 0, i32 1
-  store [16 x { float, float, float }] %t92, ptr %t93
-  %t94 = getelementptr { float, [16 x { float, float, float }] }, ptr %o20, i32 0, i32 0
-  %t95 = load float, ptr %t94
-  %t96 = getelementptr { float, [16 x { float, float, float }] }, ptr %o20, i32 0, i32 1
-  store float %t95, ptr %s97
-  store i64 0, ptr %s98
-  br label %bb99
+  %t92 = getelementptr { float, ptr }, ptr %o20, i32 0, i32 1
+  store ptr %o19, ptr %t92
+  %t93 = getelementptr { float, ptr }, ptr %o20, i32 0, i32 0
+  %t94 = load float, ptr %t93
+  store float %t94, ptr %s95
+  store i64 0, ptr %s96
+  br label %bb97
+bb97:
+  %t100 = load i64, ptr %s96
+  %t101 = icmp uge i64 %t100, 16
+  br i1 %t101, label %bb99, label %bb98
+bb98:
+  %t102 = getelementptr [16 x { float, float, float }], ptr %o19, i64 0, i64 %t100
+  %t103 = load { float, float, float }, ptr %t102
+  %t104 = load float, ptr %s95
+  %t106 = getelementptr { float, { float, float, float } }, ptr %s105, i32 0, i32 0
+  store float %t104, ptr %t106
+  %t107 = getelementptr { float, { float, float, float } }, ptr %s105, i32 0, i32 1
+  store { float, float, float } %t103, ptr %t107
+  %t108 = load { float, { float, float, float } }, ptr %s105
+  %t109 = call float @fn3({ float, { float, float, float } } %t108)
+  store float %t109, ptr %s95
+  %t110 = add i64 %t100, 1
+  store i64 %t110, ptr %s96
+  br label %bb97
 bb99:
-  %t102 = load i64, ptr %s98
-  %t103 = icmp uge i64 %t102, 16
-  br i1 %t103, label %bb101, label %bb100
-bb100:
-  %t104 = getelementptr [16 x { float, float, float }], ptr %t96, i64 0, i64 %t102
-  %t105 = load { float, float, float }, ptr %t104
-  %t106 = load float, ptr %s97
-  %t108 = getelementptr { float, { float, float, float } }, ptr %s107, i32 0, i32 0
-  store float %t106, ptr %t108
-  %t109 = getelementptr { float, { float, float, float } }, ptr %s107, i32 0, i32 1
-  store { float, float, float } %t105, ptr %t109
-  %t110 = load { float, { float, float, float } }, ptr %s107
-  %t111 = call float @fn3({ float, { float, float, float } } %t110)
-  store float %t111, ptr %s97
-  %t112 = add i64 %t102, 1
-  store i64 %t112, ptr %s98
-  br label %bb99
-bb101:
-  %t113 = load float, ptr %s97
-  store float %t113, ptr %o21
-  %t114 = load float, ptr %o21
-  store float %t114, ptr %o22
-  %t115 = load float, ptr %o22
-  call void @flow_print_f32(float %t115, i1 zeroext true)
+  %t111 = load float, ptr %s95
+  store float %t111, ptr %o21
+  %t112 = load float, ptr %o21
+  store float %t112, ptr %o22
+  %t113 = load float, ptr %o22
+  call void @flow_print_f32(float %t113, i1 zeroext true)
   ret void
 }
 
-define internal { float, float, float } @fn2({ float, float, float } %arg) {
+define internal { float, float, float } @fn2({ float, float, float } %arg) readonly nounwind willreturn {
 entry:
   %o0 = alloca { float, float, float }
   %o1 = alloca { float, float, float }
@@ -616,7 +614,7 @@ entry:
   ret { float, float, float } %t168
 }
 
-define internal float @fn3({ float, { float, float, float } } %arg) {
+define internal float @fn3({ float, { float, float, float } } %arg) readonly nounwind willreturn {
 entry:
   %o0 = alloca { float, { float, float, float } }
   %o1 = alloca float

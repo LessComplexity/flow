@@ -147,11 +147,16 @@ fn edge_label(op: &Operation) -> String {
         Operation::Not => "Not".into(),
         Operation::Phi => "Phi".into(),
         Operation::Call(_) => "Call".into(),
-        Operation::Map { .. } => "Map".into(),
-        Operation::Fold { .. } => "Fold".into(),
+        // ADR-0027 (Q5): the capture count is visible in dumps.
+        Operation::Map { captures: 0, .. } => "Map".into(),
+        Operation::Map { captures: k, .. } => format!("Map (+{k} caps)"),
+        Operation::Fold { captures: 0, .. } => "Fold".into(),
+        Operation::Fold { captures: k, .. } => format!("Fold (+{k} caps)"),
         Operation::Index => "Index".into(),
         Operation::Zip => "Zip".into(),
         Operation::Enumerate => "Enumerate".into(),
+        Operation::Iota => "Iota".into(),
+        Operation::Fill => "Fill".into(),
         Operation::Update => "Update".into(),
         Operation::Print { newline: true } => "Println".into(),
         Operation::Print { newline: false } => "Print".into(),
@@ -159,6 +164,7 @@ fn edge_label(op: &Operation) -> String {
         Operation::LoopBack => "LoopBack ↩".into(),
         Operation::LoopExit => "LoopExit".into(),
         Operation::Output => "Output".into(),
+        Operation::Widen => "Widen".into(),
     }
 }
 
@@ -281,5 +287,55 @@ fn has_balanced_quoted_label(t: &str) -> bool {
             !inner.contains('"')
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::edge_label;
+    use crate::graph::Operation;
+    use crate::{FuncId, FuncKind, IrBuilder, SourceLoc, Ty};
+
+    const L: SourceLoc = SourceLoc { start: 0, end: 0 };
+
+    /// A declared (never sealed) MapBody — only its `FuncId` is needed.
+    fn fid() -> FuncId {
+        let mut b = IrBuilder::new();
+        b.declare(FuncKind::MapBody, "mb", Ty::i32(), Ty::i32(), L)
+            .unwrap()
+    }
+
+    #[test]
+    fn captured_map_fold_labels_show_the_capture_count() {
+        // ADR-0027 (Q5) pin: k > 0 renders the count; the k = 0 forms stay
+        // byte-identical to the pre-capture labels (`Map` / `Fold`).
+        assert_eq!(
+            edge_label(&Operation::Map {
+                body: fid(),
+                captures: 1,
+            }),
+            "Map (+1 caps)"
+        );
+        assert_eq!(
+            edge_label(&Operation::Map {
+                body: fid(),
+                captures: 0,
+            }),
+            "Map"
+        );
+        assert_eq!(
+            edge_label(&Operation::Fold {
+                body: fid(),
+                captures: 2,
+            }),
+            "Fold (+2 caps)"
+        );
+        assert_eq!(
+            edge_label(&Operation::Fold {
+                body: fid(),
+                captures: 0,
+            }),
+            "Fold"
+        );
     }
 }

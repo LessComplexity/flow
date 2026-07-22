@@ -8,6 +8,7 @@
 use slotmap::SecondaryMap;
 
 use crate::graph::{CategoryIr, FuncId, MorphismId, ObjectId, ObjectKind, Operation};
+use crate::ty::{Ty, Value};
 
 /// A non-trivial loop SCC and its merge objects (DESIGN §7; the backend
 /// capability predicate). One entry per non-trivial SCC.
@@ -47,6 +48,122 @@ pub struct LoopPlan {
     pub advance_order: Vec<MorphismId>,
     /// Product objects assembled by `Pair` edges across the body (reset/iter).
     pub product_targets: Vec<ObjectId>,
+}
+
+/// The per-fn bounds-proof plan (the deduced query
+/// `bounds_proof : IR × FuncId → BoundsProof` — the BL7 pattern alongside
+/// [`loop_plan`] / [`last_use_plan`]). Interval analysis over the fn's object
+/// graph, answering "is this `Index` provably in `[0, n)`?" so the backends
+/// can drop dead trap guards in counted loops (the S20 kernel-gap finding:
+/// guards inside the map/fold inner loops block unrolling/vectorization).
+/// Conservative by construction: any unknown/wraparound/unsupported shape is
+/// NOT proven, so today's guards stay (zero behavior change where unproven).
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoundsProof {
+    /// The `Operation::Index` morphisms proven statically in-bounds.
+    proven: SecondaryMap<MorphismId, ()>,
+}
+
+impl BoundsProof {
+    /// Whether `m` (an `Operation::Index` morphism) is provably in-bounds.
+    pub fn proven(&self, m: MorphismId) -> bool {
+        self.proven.contains_key(m)
+    }
+}
+
+/// A value range in the unsigned lattice (negative-capable shapes bail to
+/// unknown — wrapping ints mean a `Sub` past zero invalidates intervals).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Rng {
+    /// A value in `[lo, hi]`.
+    Int(u64, u64),
+    /// A `(i32, X)` enumerate element over `n`: its `.0` ∈ `[0, n)`.
+    EnumIdx(u64),
+}
+
+/// The per-fn last-use plan (docs/components/ir/plans/plan-last-use.md §2 —
+/// the deduced query `last_use : IR × FuncId → LastUsePlan`, the BL7 pattern
+/// alongside [`loop_plan`]): per-object death positions plus the escape and
+/// loop-carried classifications the backend consumers (in-place `Update`,
+/// back-edge freeing, arena coloring) read through [`LastUsePlan::dead_after`]
+/// and the accessors. Total and deterministic on any sealed fn (rules 5-6):
+/// non-canonical loops contribute no carried set and no position adjustment,
+/// so consumers fall back to today's behavior on `None`-shaped answers.
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LastUsePlan {
+    /// Rule 1's oracle-order position per morphism: `topo_order`, with every
+    /// canonical loop's morphisms re-ranked **decide < `LoopExit` < advance <
+    /// `LoopBack`** within the topo slots they already occupied (the
+    /// guard-first quartet's execution order, ADR-0016; a global permutation —
+    /// non-loop morphisms keep their topo positions).
+    position: SecondaryMap<MorphismId, u32>,
+    /// The greatest adjusted position of any use of the object, counting a
+    /// `Pair`/`Phi` edge as a use at the product's own last-use position —
+    /// rule 2's retention "through Pair fields and Phi arms" applied to
+    /// liveness: a packed handle lives as long as the product holding it.
+    /// Absent for objects with no uses.
+    use_pos: SecondaryMap<ObjectId, u32>,
+    /// Rule 2's escape set (conservative): every `Parameter`, plus anything
+    /// reaching the fn's output — but for the loop's own carried state (the
+    /// merge, its `Proj` views, the back-route `Pair` cone) the path through
+    /// that loop's own `LoopExit` does NOT count (the per-iteration release
+    /// valve: the escaping final instance is protected via the exit OBJECT,
+    /// which is not exempt). Every other escape path (a different loop's
+    /// exit excepted only when it, too, is the carrier's own) counts.
+    escapes: SecondaryMap<ObjectId, bool>,
+    /// `carried_by` (rule 3): object → the `LoopMerge` its value crosses a
+    /// `LoopBack` into — the back-route `Pair` cone, loop-body objects only
+    /// (a loop-invariant route feeder is not carried).
+    carried: SecondaryMap<ObjectId, ObjectId>,
+}
+
+impl LastUsePlan {
+    /// The morphism's adjusted position (rule 1's oracle-order ranking).
+    /// `Some` for every morphism of the fn.
+    pub fn position(&self, m: MorphismId) -> Option<u32> {
+        self.position.get(m).copied()
+    }
+
+    /// `death` (plan §2): the greatest adjusted position of any use of `o`.
+    /// `None` (⊥) for escaping objects (rule 2 — never dead inside the fn),
+    /// and also `None` for objects with no uses (no use position exists; such
+    /// an object is dead everywhere after its definition — [`Self::dead_after`]
+    /// answers `true` for it).
+    pub fn death(&self, o: ObjectId) -> Option<u32> {
+        if self.escapes(o) {
+            return None;
+        }
+        self.use_pos.get(o).copied()
+    }
+
+    /// `escapes` (rule 2): may this object's value outlive the fn (reachable
+    /// into `Output`/`Return` incl. through `Pair` fields and `Phi` arms, a
+    /// borrowed `Parameter`, or an outer fn's capture source — the last rides
+    /// the body fn's own `Parameter` seed, per-fn)? Escaping objects are
+    /// never freed and never written in place.
+    pub fn escapes(&self, o: ObjectId) -> bool {
+        self.escapes.get(o).copied().unwrap_or(false)
+    }
+
+    /// `carried_by` (rule 3): the `LoopMerge` this object's value crosses a
+    /// `LoopBack` into — it lives "into the next iteration" (two-iteration
+    /// liveness). `None` for everything else, the merge itself included.
+    pub fn carried_by(&self, o: ObjectId) -> Option<ObjectId> {
+        self.carried.get(o).copied()
+    }
+
+    /// `dead_after` (rule 4's consumer predicate): all uses of `o` sit at or
+    /// before `idx` (rule 1's ranking, retention pins included) AND `o` does
+    /// not escape AND `o` is not loop-carried. `idx` is typically
+    /// [`Self::position`] of the writing morphism (e.g. the `Update` whose
+    /// source is `o`). Rule 4's remaining half is the consumer's: a loop's
+    /// borrowed init (`escapes(init)` — rule 2) is never written in place.
+    pub fn dead_after(&self, o: ObjectId, idx: u32) -> bool {
+        !self.escapes(o)
+            && self.carried.get(o).is_none()
+            && self.use_pos.get(o).copied().is_none_or(|p| p <= idx)
+    }
 }
 
 impl CategoryIr {
@@ -406,11 +523,60 @@ impl CategoryIr {
         }
         let exit_route = self.morphisms[exits[0]].source;
 
+        // The loop-variant cone of the route feeders: every object the route
+        // Pair edges transitively depend on that is also forward-reachable
+        // from the merge, over non-loop morphisms of `f`. A computed payload
+        // (`t * 2 -> ret`) or an exit-arm fanout leaves the SCC — its chain
+        // feeds only a route, never cycles back to the merge — so
+        // SCC-incidence plus direct route Pairs never schedules it (ADR-0027
+        // review: interp read-before-write; llvm emitted it after the loop).
+        // Loop ops are never cone edges, so neither walk crosses into a
+        // neighboring loop (gated by its LoopExit) nor into the merge's own
+        // LoopEnter/LoopBack.
+        //
+        // The merge-reachability bound matters: a loop-INVARIANT producer
+        // (unreachable from the merge — e.g. a param proj also read by the
+        // init assembly) must stay walk-owned so it evaluates exactly once,
+        // before the driver fires (the S12 rule). Only its *uses* inside the
+        // cone re-fire per iteration; the invariant object itself is read
+        // from the pre-loop env.
+        let mut cone: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+        cone.insert(back_route, ());
+        cone.insert(exit_route, ());
+        let mut variant: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+        variant.insert(merge, ());
+        loop {
+            let mut changed = false;
+            for (_, morph) in self.morphisms() {
+                if self.try_owner(morph.source) != Some(f) {
+                    continue;
+                }
+                if matches!(
+                    morph.op,
+                    Operation::LoopEnter | Operation::LoopBack | Operation::LoopExit
+                ) {
+                    continue;
+                }
+                if cone.contains_key(morph.target) && !cone.contains_key(morph.source) {
+                    cone.insert(morph.source, ());
+                    changed = true;
+                }
+                if variant.contains_key(morph.source) && !variant.contains_key(morph.target) {
+                    variant.insert(morph.target, ());
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
         // body_order: topo_order filtered to morphisms incident to SCC(merge) OR
-        // feeding a route object, excluding loop ops. Route objects sit outside
-        // the SCC, but every Pair edge assembling them must re-fire each iteration
-        // — including loop-invariant feeds whose source is outside the SCC — so
-        // membership-by-SCC alone would drop them.
+        // targeting the loop-variant route cone, excluding loop ops. Route
+        // objects sit outside the SCC, but every morphism assembling them —
+        // direct Pair edges and the whole computed-payload chain behind them —
+        // must re-fire each iteration, so membership-by-SCC alone would drop
+        // them.
         let body_order: Vec<MorphismId> = self
             .topo_order(f)
             .into_iter()
@@ -424,8 +590,7 @@ impl CategoryIr {
                 }
                 in_scc.contains_key(morph.source)
                     || in_scc.contains_key(morph.target)
-                    || morph.target == back_route
-                    || morph.target == exit_route
+                    || (cone.contains_key(morph.target) && variant.contains_key(morph.target))
             })
             .collect();
 
@@ -482,6 +647,546 @@ impl CategoryIr {
         })
     }
 
+    /// The per-fn last-use plan (docs/components/ir/plans/plan-last-use.md §2,
+    /// rules 1-6): death positions + escape/carried classification, composed
+    /// from [`topo_order`](CategoryIr::topo_order) and
+    /// [`loop_plan`](CategoryIr::loop_plan) — never re-derived. `O(V + E)`,
+    /// recursion-free (J1), total on any sealed fn: non-canonical loops
+    /// contribute no carried set and no re-ranking, so consumers fall back.
+    pub fn last_use_plan(&self, f: FuncId) -> LastUsePlan {
+        let topo = self.topo_order(f);
+        let mut position: SecondaryMap<MorphismId, u32> = SecondaryMap::new();
+        for (i, &m) in topo.iter().enumerate() {
+            position.insert(m, i as u32);
+        }
+
+        // Canonical loops with their plans (non-canonical shapes contribute
+        // nothing — rule 6's graceful degradation).
+        let mut plans: Vec<LoopPlan> = Vec::new();
+        for scc in self.loop_structure(f) {
+            for &merge in &scc.merges {
+                if let Some(plan) = self.loop_plan(f, merge) {
+                    plans.push(plan);
+                }
+            }
+        }
+
+        // Rule 1's re-ranking: within each canonical loop, the guard-first
+        // quartet's execution order — decide cone, then the LoopExit, then
+        // the advance cone, then the LoopBack — spliced into the topo slots
+        // those morphisms already occupy (a global permutation: every other
+        // morphism keeps its topo position; ties inside a phase keep topo
+        // order). The LoopExit rank between the cones is what lets the
+        // exit-route retention pin land correctly: an exit-route Pair use of
+        // the merge precedes an advance-cone write (matmul4 — legal) but
+        // follows a decide-cone write into the same buffer (illegal).
+        let mut claimed: SecondaryMap<MorphismId, ()> = SecondaryMap::new();
+        for plan in &plans {
+            let mut members: Vec<(MorphismId, u8, u32)> = Vec::new();
+            for &m in &plan.decide_order {
+                members.push((m, 0, position[m]));
+            }
+            for &m in &plan.exits {
+                members.push((m, 1, position[m]));
+            }
+            for &m in &plan.advance_order {
+                members.push((m, 2, position[m]));
+            }
+            for &m in self.in_edges(plan.merge) {
+                if self.morphisms[m].op == Operation::LoopBack {
+                    members.push((m, 3, position[m]));
+                }
+            }
+            // Nested canonical loops overlap (the inner's body is part of the
+            // outer's): an already-claimed slot degrades this loop's ranking
+            // (rule 6 — consumers fall back; carried/escape are unaffected).
+            if members.iter().any(|&(m, _, _)| claimed.contains_key(m)) {
+                continue;
+            }
+            let mut slots: Vec<u32> = members.iter().map(|&(_, _, p)| p).collect();
+            slots.sort_unstable();
+            members.sort_by_key(|&(_, phase, p)| (phase, p));
+            for (slot, (m, _, _)) in slots.iter().zip(members.iter()) {
+                position.insert(*m, *slot);
+                claimed.insert(*m, ());
+            }
+        }
+
+        // carried_by (rule 3) + the exempt set (the merge, its Proj views —
+        // the current-state aliases — and the back-route Pair cone) per
+        // canonical loop. Body objects only: a loop-INVARIANT route feeder
+        // (not merge-reachable) is not carried — its single buffer would be
+        // re-read after a back-edge free.
+        let mut carried: SecondaryMap<ObjectId, ObjectId> = SecondaryMap::new();
+        let mut exempt: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+        for plan in &plans {
+            let mut body: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+            for &o in &plan.scc_objects {
+                body.insert(o, ());
+            }
+            for &m in plan.decide_order.iter().chain(plan.advance_order.iter()) {
+                body.insert(self.morphisms[m].target, ());
+            }
+            // The merge and its Proj-view closure.
+            let mut stack = vec![plan.merge];
+            while let Some(v) = stack.pop() {
+                if exempt.contains_key(v) {
+                    continue;
+                }
+                exempt.insert(v, ());
+                for &m in self.out_edges(v) {
+                    if matches!(self.morphisms[m].op, Operation::Proj { .. }) {
+                        stack.push(self.morphisms[m].target);
+                    }
+                }
+            }
+            // The back-route Pair cone (the next-state chain crossing the
+            // LoopBack), restricted to loop-body objects. Entry is through
+            // the route's STATE field (slot 0 — the `(U × Bool) → U`
+            // contract; the cond at slot 1 is consumed, not carried); from
+            // there, every Pair feeder is state structure (a product state
+            // packs its components at all slots).
+            carried.insert(plan.back_route, plan.merge);
+            exempt.insert(plan.back_route, ());
+            let mut stack: Vec<ObjectId> = self
+                .in_edges(plan.back_route)
+                .iter()
+                .filter(|&&m| matches!(self.morphisms[m].op, Operation::Pair { slot: 0, .. }))
+                .map(|&m| self.morphisms[m].source)
+                .collect();
+            while let Some(v) = stack.pop() {
+                if carried.contains_key(v) {
+                    continue;
+                }
+                carried.insert(v, plan.merge);
+                exempt.insert(v, ());
+                for &m in self.in_edges(v) {
+                    let morph = &self.morphisms[m];
+                    if matches!(morph.op, Operation::Pair { .. }) && body.contains_key(morph.source)
+                    {
+                        stack.push(morph.source);
+                    }
+                }
+            }
+        }
+
+        // Rule 2's escape sets, by reverse reachability from the fn's output:
+        // full (any path) and no-LoopExit (the exempt set's variant — carried
+        // state escapes only via a path that crosses NO loop exit, e.g. a
+        // direct post-loop consumer; its own loop's exit is the per-iteration
+        // release valve, and the escaping final instance rides the exit
+        // object, which is NOT exempt). Parameters always escape (borrowed —
+        // an outer fn's capture source rides the body fn's own Parameter).
+        let fd = self.func(f).expect("func resolves");
+        let esc_full = self.escape_reach(f, fd.output, true);
+        let esc_noexit = self.escape_reach(f, fd.output, false);
+        let mut escapes: SecondaryMap<ObjectId, bool> = SecondaryMap::new();
+        for (o, obj) in self.objects() {
+            if self.try_owner(o) != Some(f) {
+                continue;
+            }
+            let esc = obj.kind == ObjectKind::Parameter
+                || if exempt.contains_key(o) {
+                    esc_noexit.get(o).copied().unwrap_or(false)
+                } else {
+                    esc_full.get(o).copied().unwrap_or(false)
+                };
+            if esc {
+                escapes.insert(o, true);
+            }
+        }
+
+        // use_pos: the greatest adjusted use position, with Pair/Phi
+        // retention pins (a packed handle lives as long as the product
+        // holding it). Swept in descending definer-position order — a
+        // product's definer always outranks its components' (def-before-use
+        // survives the phase permutation), so its use_pos is settled first.
+        let mut definer: Vec<(ObjectId, Option<u32>)> = Vec::new();
+        for (o, obj) in self.objects() {
+            if self.try_owner(o) != Some(f) {
+                continue;
+            }
+            let d = match obj.kind {
+                ObjectKind::Parameter | ObjectKind::Constant => None,
+                ObjectKind::LoopMerge => self
+                    .in_edges(o)
+                    .iter()
+                    .filter(|&&m| self.morphisms[m].op == Operation::LoopEnter)
+                    .map(|&m| position[m])
+                    .max(),
+                _ => self.in_edges(o).iter().map(|&m| position[m]).max(),
+            };
+            definer.push((o, d));
+        }
+        // Descending definer position; no-definer objects (Parameters,
+        // Constants) strictly last. The sort is stable, so ties keep
+        // insertion order (deterministic, and no per-object position scans —
+        // object_seq would make this O(V² log V) on the §16 deep graph).
+        definer.sort_by_key(|&(_, d)| (d.is_none(), d.map_or(0, |p| u32::MAX - p)));
+        let mut use_pos: SecondaryMap<ObjectId, u32> = SecondaryMap::new();
+        for &(o, _) in &definer {
+            let mut best: Option<u32> = None;
+            for &m in self.out_edges(o) {
+                let p = position[m];
+                best = Some(best.map_or(p, |b: u32| b.max(p)));
+                if matches!(
+                    self.morphisms[m].op,
+                    Operation::Pair { .. } | Operation::Phi
+                ) && let Some(&up) = use_pos.get(self.morphisms[m].target)
+                {
+                    best = Some(best.map_or(up, |b: u32| b.max(up)));
+                }
+            }
+            if let Some(b) = best {
+                use_pos.insert(o, b);
+            }
+        }
+
+        LastUsePlan {
+            position,
+            use_pos,
+            escapes,
+            carried,
+        }
+    }
+
+    /// Reverse reachability from `root` over `f`'s in-edges — rule 2's escape
+    /// walk — traversing only the value-RETAINING/-aliasing morphisms: `Pair`
+    /// (the product holds the component), `Phi` (the result aliases either
+    /// arm — plan §7's note), `Output` (identity), `LoopExit` (payload
+    /// forwarding; dropped when `allow_loop_exit` is false — the
+    /// carried-state exemption's walk), `LoopEnter` (the init aliases the
+    /// merge's first instance), `Proj` (the projection aliases the product's
+    /// field), `Call` (the call boundary may return an alias of its borrowed
+    /// argument), and an array-typed `Index` (the sub-buffer alias).
+    /// Everything else — arithmetic, comparisons, `Update`/`Map`/`Fold`/
+    /// `Zip`/`Enumerate` (fresh buffers/results), `Print`, `Neg`, `Not` —
+    /// consumes and produces anew: no escape flows through it. Worklist BFS,
+    /// deterministic (in-edge insertion order), no HashMap (L2).
+    fn escape_reach(
+        &self,
+        f: FuncId,
+        root: ObjectId,
+        allow_loop_exit: bool,
+    ) -> SecondaryMap<ObjectId, bool> {
+        let mut seen: SecondaryMap<ObjectId, bool> = SecondaryMap::new();
+        let mut stack = vec![root];
+        while let Some(o) = stack.pop() {
+            if seen.get(o).copied().unwrap_or(false) {
+                continue;
+            }
+            seen.insert(o, true);
+            for &m in self.in_edges(o) {
+                let morph = &self.morphisms[m];
+                let retention = match morph.op {
+                    Operation::Pair { .. }
+                    | Operation::Phi
+                    | Operation::Output
+                    | Operation::LoopEnter
+                    | Operation::Proj { .. }
+                    | Operation::Call(_) => true,
+                    Operation::LoopExit => allow_loop_exit,
+                    // The sub-buffer alias: an array element shares the
+                    // parent's flat buffer region; a scalar element shares
+                    // nothing.
+                    Operation::Index => {
+                        matches!(self.objects[morph.target].ty, crate::ty::Ty::Array { .. })
+                    }
+                    _ => false,
+                };
+                if !retention {
+                    continue;
+                }
+                let s = morph.source;
+                if self.try_owner(s) == Some(f) {
+                    stack.push(s);
+                }
+            }
+        }
+        seen
+    }
+
+    /// The bounds-proof query: which of `f`'s `Index` morphisms are provably
+    /// in-bounds (`[0, n)`)? Interval analysis over the object graph — ranges
+    /// from `Constant`s, `Iota` elements, enumerate indices, literal-ramp
+    /// arrays, and Map/Fold body quantification (the element param of a body
+    /// fn rides the site source's element range: iota ⇒ `[0, n)`, enumerate ⇒
+    /// `.0` of `(i32, X)`, a literal array of int constants ⇒ `[min, max]`).
+    /// One `topo_order` pass; anything unknown/wrapping/loop-carried is NOT
+    /// proven (consumers keep today's guards there — zero behavior change).
+    pub fn bounds_proof(&self, f: FuncId) -> BoundsProof {
+        let mut visited: Vec<FuncId> = Vec::new();
+        self.bounds_proof_inner(f, &mut visited).0
+    }
+
+    /// The recursive worker: returns the proof AND the full range map so a
+    /// nested body's site owner can harvest capture ranges from it.
+    fn bounds_proof_inner(
+        &self,
+        f: FuncId,
+        visited: &mut Vec<FuncId>,
+    ) -> (BoundsProof, SecondaryMap<ObjectId, Rng>) {
+        let mut rng: SecondaryMap<ObjectId, Rng> = SecondaryMap::new();
+        let mut proven: SecondaryMap<MorphismId, ()> = SecondaryMap::new();
+
+        // --- seed: constants (non-negative ints) ------------------------------
+        for (o, obj) in self.objects() {
+            if self.try_owner(o) != Some(f) || obj.kind != ObjectKind::Constant {
+                continue;
+            }
+            match &obj.value {
+                Some(Value::I32(x)) if *x >= 0 => {
+                    rng.insert(o, Rng::Int(*x as u64, *x as u64));
+                }
+                Some(Value::I64(x)) if *x >= 0 => {
+                    rng.insert(o, Rng::Int(*x as u64, *x as u64));
+                }
+                Some(Value::U8(x)) => {
+                    rng.insert(o, Rng::Int(*x as u64, *x as u64));
+                }
+                _ => {}
+            }
+        }
+
+        // --- seed: the Map/Fold body context (the quantified element param) ---
+        let fd = self.func(f);
+        if let Some(fd) = fd {
+            for (_, morph) in self.morphisms() {
+                let (k, is_fold) = match morph.op {
+                    Operation::Map { body, captures } if body == f => (captures, false),
+                    Operation::Fold { body, captures } if body == f => (captures, true),
+                    _ => continue,
+                };
+                let arr = if is_fold {
+                    self.pair_slot_source(morph.source, k + 1)
+                } else if k == 0 {
+                    Some(morph.source)
+                } else {
+                    self.pair_slot_source(morph.source, k)
+                };
+                if let Some(er) = arr.and_then(|a| self.element_range(a)) {
+                    if !is_fold && k == 0 {
+                        // captures=0 map: the body input IS the element.
+                        rng.insert(fd.input, er);
+                    } else {
+                        let pos = if is_fold { k + 1 } else { k };
+                        for &m in self.out_edges(fd.input) {
+                            let mm = &self.morphisms[m];
+                            if mm.op == (Operation::Proj { index: pos }) {
+                                rng.insert(mm.target, er);
+                            }
+                        }
+                    }
+                }
+                // Capture-range threading: a capture at position j rides the
+                // site's slot-j feeder, whose range is computed by the site
+                // owner's own analysis (recursing out through nested bodies —
+                // the owner encloses the capture by construction). The matmul
+                // fold's `i`/`j` thus arrive ranged from the enclosing map body.
+                if let Some(of) = self.try_owner(morph.source)
+                    && of != f
+                    && !visited.contains(&of)
+                {
+                    visited.push(of);
+                    let (_, outer_rng) = self.bounds_proof_inner(of, visited);
+                    for j in 0..k {
+                        let co = self.pair_slot_source(morph.source, j);
+                        if let Some(co) = co
+                            && let Some(r) = outer_rng.get(co).copied()
+                        {
+                            for &m in self.out_edges(fd.input) {
+                                let mm = &self.morphisms[m];
+                                if mm.op == (Operation::Proj { index: j }) {
+                                    rng.insert(mm.target, r);
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
+        // --- one topo pass: propagate + collect proofs -------------------------
+        for m in self.topo_order(f) {
+            let morph = &self.morphisms[m];
+            match morph.op {
+                Operation::Add
+                | Operation::Sub
+                | Operation::Mul
+                | Operation::Div
+                | Operation::Mod => {
+                    let a = self.pair_slot_source(morph.source, 0);
+                    let b = self.pair_slot_source(morph.source, 1);
+                    if let (Some(ra), Some(rb)) = (
+                        a.and_then(|x| rng.get(x).copied()),
+                        b.and_then(|x| rng.get(x).copied()),
+                    ) {
+                        let wmax = width_max(&self.objects[morph.target].ty);
+                        if let Some(r) = arith_range(morph.op, ra, rb, wmax) {
+                            rng.insert(morph.target, r);
+                        }
+                    }
+                }
+                Operation::Proj { index } => {
+                    if let Some(r) = self.proj_range(&rng, morph.source, index) {
+                        rng.insert(morph.target, r);
+                    }
+                }
+                Operation::Index => {
+                    // A value read from an iota / literal-ramp array is ranged.
+                    if let Some(Rng::Int(lo, hi)) = self
+                        .pair_slot_source(morph.source, 0)
+                        .and_then(|a| self.element_range(a))
+                    {
+                        let _ = (lo, hi);
+                        rng.insert(morph.target, Rng::Int(lo, hi));
+                    }
+                    // The proof: the index's range inside the array's size.
+                    let idx = self.pair_slot_source(morph.source, 1);
+                    let arr = self.pair_slot_source(morph.source, 0);
+                    if let (Some(Rng::Int(_lo, hi)), Some(a)) =
+                        (idx.and_then(|x| rng.get(x).copied()), arr)
+                        && let Ty::Array { size, .. } = self.objects[a].ty
+                        && hi < size
+                    {
+                        proven.insert(m, ());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        (BoundsProof { proven }, rng)
+    }
+
+    /// The element range of an array object: iota ⇒ `[0, n)`; enumerate ⇒
+    /// `(i32, X)` elements over `n`; a literal array of int constants ⇒
+    /// `[min, max]`. Anything else is unknown (None). `Proj`-of-pair
+    /// indirection and body-input capture indirection (the array rides in as a
+    /// captured value — e.g. the fold site's `krange` captured by the map
+    /// body) are resolved first.
+    fn element_range(&self, arr: ObjectId) -> Option<Rng> {
+        let mut arr = arr;
+        for _ in 0..16 {
+            if let Some(next) = self.proj_of_pair(arr) {
+                arr = next;
+                continue;
+            }
+            if let Some(next) = self.capture_proj_of_input(arr) {
+                arr = next;
+                continue;
+            }
+            break;
+        }
+        let definer = self.in_edges(arr).first().copied()?;
+        let dm = &self.morphisms[definer];
+        let size = match &self.objects[arr].ty {
+            Ty::Array { size, .. } => *size,
+            _ => return None,
+        };
+        match dm.op {
+            Operation::Iota => Some(Rng::Int(0, size.saturating_sub(1))),
+            Operation::Enumerate => Some(Rng::EnumIdx(size)),
+            Operation::Pair { .. } => {
+                // A pack_array literal: every in-edge a Pair with a Constant
+                // int source — the element range is [min, max] of the values.
+                let mut lo = u64::MAX;
+                let mut hi = 0u64;
+                for &m in self.in_edges(arr) {
+                    let pm = &self.morphisms[m];
+                    if !matches!(pm.op, Operation::Pair { .. }) {
+                        return None;
+                    }
+                    let src = &self.objects[pm.source];
+                    if src.kind != ObjectKind::Constant {
+                        return None;
+                    }
+                    let v = match &src.value {
+                        Some(Value::I32(x)) if *x >= 0 => *x as u64,
+                        Some(Value::I64(x)) if *x >= 0 => *x as u64,
+                        Some(Value::U8(x)) => *x as u64,
+                        _ => return None,
+                    };
+                    lo = lo.min(v);
+                    hi = hi.max(v);
+                }
+                Some(Rng::Int(lo, hi))
+            }
+            _ => None,
+        }
+    }
+
+    /// The range of a `Proj{index}` result: `.0` of an enumerate element, else
+    /// the pair-slot feeder's own range (Parameters/products without one bail).
+    fn proj_range(
+        &self,
+        rng: &SecondaryMap<ObjectId, Rng>,
+        source: ObjectId,
+        index: u32,
+    ) -> Option<Rng> {
+        if let Some(Rng::EnumIdx(n)) = rng.get(source).copied()
+            && index == 0
+        {
+            return Some(Rng::Int(0, n.saturating_sub(1)));
+        }
+        self.pair_slot_source(source, index)
+            .and_then(|s| rng.get(s).copied())
+    }
+
+    /// If `o` is a `Proj{k}` of a pair-assembled tuple, the component object
+    /// (the `Pair{k}` feeder's source) — one indirection level.
+    fn proj_of_pair(&self, o: ObjectId) -> Option<ObjectId> {
+        let m = self.in_edges(o).first().copied()?;
+        let pm = &self.morphisms[m];
+        let Operation::Proj { index } = pm.op else {
+            return None;
+        };
+        self.pair_slot_source(pm.source, index)
+    }
+
+    /// If `o` is a `Proj{k}` of a body fn's input `Parameter` at a capture
+    /// position, the matching feeder of THAT fn's site source (the value the
+    /// enclosing fn actually passed) — one capture indirection level.
+    fn capture_proj_of_input(&self, o: ObjectId) -> Option<ObjectId> {
+        let m = self.in_edges(o).first().copied()?;
+        let pm = &self.morphisms[m];
+        let Operation::Proj { index } = pm.op else {
+            return None;
+        };
+        if self.objects[pm.source].kind != ObjectKind::Parameter {
+            return None;
+        }
+        let of = self.try_owner(pm.source)?;
+        for (_, morph) in self.morphisms() {
+            let k = match morph.op {
+                Operation::Map { body, captures } if body == of => captures,
+                Operation::Fold { body, captures } if body == of => captures,
+                _ => continue,
+            };
+            // Capture positions are 0..k (map: element at k; fold: acc at k,
+            // element at k+1) — only capture Projs resolve here.
+            if index < k {
+                return self.pair_slot_source(morph.source, index);
+            }
+            return None;
+        }
+        None
+    }
+
+    /// The source object feeding slot `slot` of a product object (the
+    /// `Pair{slot}` in-edge's source), if present.
+    fn pair_slot_source(&self, product: ObjectId, slot: u32) -> Option<ObjectId> {
+        self.in_edges(product).iter().find_map(|&m| {
+            let pm = &self.morphisms[m];
+            if matches!(pm.op, Operation::Pair { slot: s, .. } if s == slot) {
+                Some(pm.source)
+            } else {
+                None
+            }
+        })
+    }
+
     /// Whether `o` has an edge to itself (the only way a 1-object SCC is a loop).
     fn has_self_loop(&self, o: ObjectId) -> bool {
         self.out_edges(o)
@@ -497,5 +1202,67 @@ impl CategoryIr {
             .iter()
             .position(|(id, _)| id == o)
             .unwrap_or(usize::MAX)
+    }
+}
+
+/// The max value of an int width (the wraparound bound for range arithmetic).
+/// Floats/products are not range-typed (None).
+fn width_max(ty: &crate::ty::Ty) -> Option<u128> {
+    use crate::ty::Ty;
+    match ty {
+        Ty::Int { bits: 32, .. } => Some(i32::MAX as u128),
+        Ty::Int { bits: 64, .. } => Some(i64::MAX as u128),
+        Ty::Int { bits: 8, .. } => Some(u8::MAX as u128),
+        _ => None,
+    }
+}
+
+/// Interval arithmetic over non-negative ranges, wrapping-width-aware: any
+/// operation whose `hi` can exceed the int width's max is unknown (None) —
+/// wrapping would invalidate the interval.
+fn arith_range(op: Operation, a: Rng, b: Rng, wmax: Option<u128>) -> Option<Rng> {
+    let (Rng::Int(al, ah), Rng::Int(bl, bh)) = (a, b) else {
+        return None;
+    };
+    let w = wmax?;
+    match op {
+        Operation::Add => {
+            let hi = ah as u128 + bh as u128;
+            if hi > w {
+                None
+            } else {
+                Some(Rng::Int(al + bl, hi as u64))
+            }
+        }
+        Operation::Sub => {
+            if al >= bh {
+                Some(Rng::Int(al - bh, ah - bl))
+            } else {
+                None // could wrap negative
+            }
+        }
+        Operation::Mul => {
+            let hi = ah as u128 * bh as u128;
+            if hi > w {
+                None
+            } else {
+                Some(Rng::Int(al * bl, hi as u64))
+            }
+        }
+        Operation::Div => {
+            if bl >= 1 {
+                Some(Rng::Int(al / bh.max(1), ah / bl))
+            } else {
+                Some(Rng::Int(0, ah))
+            }
+        }
+        Operation::Mod => {
+            if bh >= 1 {
+                Some(Rng::Int(0, ah.min(bh - 1)))
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }

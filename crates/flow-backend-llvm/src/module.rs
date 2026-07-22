@@ -5,7 +5,7 @@
 use flow_ir::{CategoryIr, ObjectId, ObjectKind, Ty, Value};
 use slotmap::SecondaryMap;
 
-use crate::ty::lower_ty;
+use crate::ty::{lower_named_input_ty, lower_ty};
 
 /// A private `Str` constant global: its symbol name and byte length. `Print` of a
 /// `Str` passes `getelementptr(@name)` + `len` to `flow_print_str` (DESIGN §1).
@@ -25,6 +25,8 @@ impl StrGlobal {
 /// The `flow-rt` extern block + `llvm.memcpy` intrinsic (DESIGN §1). Every
 /// `i8`/`i1` parameter carries `zeroext` — the S13 ABI rule, load-bearing for u8
 /// values > 127 on arm64 (sepia's channels) and the trailing-newline `i1`.
+/// `flow_trap` alone carries `noreturn` (flow-rt defines it `-> !`, exit 101);
+/// the print externs stay attribute-free.
 pub(crate) const RT_DECLS: &str = "\
 declare void @flow_print_i32(i32, i1 zeroext)\n\
 declare void @flow_print_i64(i64, i1 zeroext)\n\
@@ -33,7 +35,7 @@ declare void @flow_print_bool(i1 zeroext, i1 zeroext)\n\
 declare void @flow_print_f32(float, i1 zeroext)\n\
 declare void @flow_print_f64(double, i1 zeroext)\n\
 declare void @flow_print_str(ptr, i64, i1 zeroext)\n\
-declare void @flow_trap(i32)\n\
+declare void @flow_trap(i32) noreturn\n\
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n";
 
 /// Collect every `Str` constant object → a private global (DESIGN §2). One
@@ -100,8 +102,10 @@ pub(crate) fn emit_main_wrapper(ir: &CategoryIr) -> String {
 
     // Build the argument list. Closed entries (Unit / IoToken input) pass none;
     // any other shape is not a native-observable closed program (BL8) but still
-    // gets a valid call with a zeroinitializer so emission is total.
-    let arg = match lower_ty(input_ty) {
+    // gets a valid call with a zeroinitializer so emission is total. The type
+    // is the entry fn's by-ref signature (suggestions #8: array components
+    // arrive as `ptr`; `zeroinitializer` nulls them).
+    let arg = match lower_named_input_ty(input_ty) {
         None => String::new(),
         Some(t) => format!("{t} zeroinitializer"),
     };

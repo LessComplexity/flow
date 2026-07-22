@@ -28,6 +28,7 @@ const ALL: &[PassId] = &[
     PassId::Cse,
     PassId::Dce,
     PassId::MapFusion,
+    PassId::Inline,
 ];
 
 /// R1's `≈` on whole-program runs.

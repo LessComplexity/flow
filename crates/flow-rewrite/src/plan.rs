@@ -1,7 +1,7 @@
 //! `RewritePlan` — the read-only analysis product every pass emits (DESIGN §1,
-//! morphism table). One replayer, four plan channels: `alias` / `constify` /
-//! `drop` / `fuse`. The plan is pure data; [`replay`](crate::replay) is the only
-//! consumer.
+//! morphism table). One replayer, five plan channels: `alias` / `constify` /
+//! `drop` / `fuse` / `inline`. The plan is pure data; [`replay`](crate::replay)
+//! is the only consumer.
 //!
 //! All maps are `SecondaryMap`/`Vec` keyed by the **input** graph's ids — no
 //! `HashMap` in any output-affecting path (determinism D2).
@@ -19,10 +19,15 @@ pub struct FusionSpec {
     pub f: FuncId,
     /// The second (outer) map body — applied to `f`'s result.
     pub g: FuncId,
+    /// The shared capture count of both maps (ADR-0027). Fusion is offered only
+    /// when the two maps read the *identical* capture objects (same ids, same
+    /// order); the fused map keeps them as its leading source components. `0`
+    /// for every pre-ADR-0027 chained map.
+    pub captures: u32,
 }
 
-/// The four plan channels (DESIGN §1 morphism table). Empty plan ⇒ identity
-/// replay (the WP1 anchor).
+/// The five plan channels (DESIGN §1 morphism table + the region-emission
+/// plan's Move 1 `inline`). Empty plan ⇒ identity replay (the WP1 anchor).
 #[derive(Debug, Default)]
 pub struct RewritePlan {
     /// `alias?`: consumers of the key read the value instead. Resolved
@@ -36,6 +41,11 @@ pub struct RewritePlan {
     pub drop: SecondaryMap<ObjectId, ()>,
     /// `fuse?`: a `Map` edge replaced by a fused `Map` (layer 1).
     pub fuse: SecondaryMap<MorphismId, FusionSpec>,
+    /// `inline?`: a `Call` edge stripped by graph substitution (region-emission
+    /// plan Move 1) — the callee's body is replayed into the caller with
+    /// `input ↦ call source`, `output ↦ call target`. Keys are Call-edge ids;
+    /// P1/P2 (object-keyed) do not apply.
+    pub inline: SecondaryMap<MorphismId, ()>,
 }
 
 impl RewritePlan {
@@ -51,6 +61,7 @@ impl RewritePlan {
             && self.constify.is_empty()
             && self.drop.is_empty()
             && self.fuse.is_empty()
+            && self.inline.is_empty()
     }
 
     /// Resolve an `alias` chain transitively to its terminal object (DESIGN §1).

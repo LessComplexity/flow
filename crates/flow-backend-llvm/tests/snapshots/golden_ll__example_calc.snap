@@ -10,7 +10,7 @@ declare void @flow_print_bool(i1 zeroext, i1 zeroext)
 declare void @flow_print_f32(float, i1 zeroext)
 declare void @flow_print_f64(double, i1 zeroext)
 declare void @flow_print_str(ptr, i64, i1 zeroext)
-declare void @flow_trap(i32)
+declare void @flow_trap(i32) noreturn
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
 
 @.str0 = private unnamed_addr constant [9 x i8] c"20 + 6 = "

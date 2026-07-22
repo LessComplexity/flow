@@ -1,0 +1,213 @@
+---
+source: crates/flow-backend-cuda/tests/golden_cu.rs
+expression: cu
+---
+// flow-backend-cuda emitted translation unit
+// build: nvcc -std=c++17 -fmad=false -arch=sm_89 prog.cu libflow_rt.a -lpthread -ldl -lm -o prog
+// DESIGN §4: -fmad=false pins oracle float parity; host -march=native/-mfma forbidden.
+
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstddef>
+#include <cmath>
+#include <cuda_runtime.h>
+
+extern "C" {
+void flow_print_i32(int32_t v, bool newline);
+void flow_print_i64(int64_t v, bool newline);
+void flow_print_u8(uint8_t v, bool newline);
+void flow_print_bool(bool v, bool newline);
+void flow_print_f32(float v, bool newline);
+void flow_print_f64(double v, bool newline);
+void flow_print_str(const uint8_t* ptr, size_t len, bool newline);
+// Matches the Rust `-> !` (flow-rt/src/lib.rs): lets the compiler drop the
+// dead fall-through after host guards. C++11 attribute, legal on an
+// extern "C" declaration; host-only, so no device-pass concern.
+[[noreturn]] void flow_trap(uint32_t kind);
+}
+
+// --- trap flag + CUDA error protocol (DESIGN §3) ---------------------------
+static unsigned int* d_trap = nullptr;
+
+// Assert one CUDA API return; on error print to stderr and exit 102 (the
+// harness-visible infra-failure class — never an R1 data point).
+static void cu_check(cudaError_t err, const char* what) {
+    if (err != cudaSuccess) {
+        fprintf(stderr, "flow-cuda infra error at %s: %s\n", what, cudaGetErrorString(err));
+        exit(102);
+    }
+}
+
+// Zero the trap flag — once per process, called at main start (H→D, §2 item 3).
+static void trap_init() {
+    cu_check(cudaMalloc((void**)&d_trap, sizeof(unsigned int)), "cudaMalloc(d_trap)");
+    cu_check(cudaMemset(d_trap, 0, sizeof(unsigned int)), "cudaMemset(d_trap)");
+}
+
+// Trap-capable launch sites call this after EVERY such kernel launch (#14:
+// a provably trap-free kernel takes no trap argument and skips this
+// readback): cudaGetLastError
+// (exit-102 protocol), then a host-synchronizing D→H read of the flag (the
+// memcpy is the sync point); nonzero kind ⇒ flow_trap(kind - 1) on the host
+// (exit 101) — the flag stores kind + 1 (0 = quiescent after trap_init's
+// memset; 1 = div_zero, 2 = index_oob), decoded here to the flow-rt kinds.
+[[maybe_unused]] static void trap_check_after_launch() {
+    cu_check(cudaGetLastError(), "kernel launch");
+    unsigned int kind = 0;
+    cu_check(cudaMemcpy(&kind, d_trap, sizeof(unsigned int), cudaMemcpyDeviceToHost),
+             "cudaMemcpy(d_trap)");
+    if (kind != 0) {
+        flow_trap(kind - 1);
+    }
+}
+
+struct FlowProd_int32_t_int32_t {
+    int32_t f0;
+    int32_t f1;
+};
+static_assert(sizeof(FlowProd_int32_t_int32_t) == 8, "FlowProd_int32_t_int32_t: abi_sizeof drift (plan-smart-arenas)");
+struct FlowProd_int32_tp_int32_tp {
+    int32_t* f0;
+    int32_t* f1;
+};
+static_assert(sizeof(FlowProd_int32_tp_int32_tp) == 16, "FlowProd_int32_tp_int32_tp: abi_sizeof drift (plan-smart-arenas)");
+struct FlowProd_int32_tp_int32_t {
+    int32_t* f0;
+    int32_t f1;
+};
+static_assert(sizeof(FlowProd_int32_tp_int32_t) == 16, "FlowProd_int32_tp_int32_t: abi_sizeof drift (plan-smart-arenas)");
+
+static __host__ __device__ int32_t fn1(FlowProd_int32_t_int32_t in);
+static __host__ __device__ int32_t fn2(FlowProd_int32_t_int32_t in);
+
+static __host__ __device__ int32_t fn1(FlowProd_int32_t_int32_t in) {
+  FlowProd_int32_t_int32_t o0;
+  int32_t o1;
+  int32_t o2;
+  int32_t o3;
+  FlowProd_int32_t_int32_t o4;
+  o0 = in;
+  o2 = o0.f0;
+  o3 = o0.f1;
+  o4.f0 = o2;
+  o4.f1 = o3;
+  o1 = (int32_t)((uint32_t)o4.f0 + (uint32_t)o4.f1);
+  return o1;
+}
+static __host__ __device__ int32_t fn2(FlowProd_int32_t_int32_t in) {
+  FlowProd_int32_t_int32_t o0;
+  int32_t o1;
+  int32_t o2;
+  int32_t o3;
+  FlowProd_int32_t_int32_t o4;
+  o0 = in;
+  o2 = o0.f0;
+  o3 = o0.f1;
+  o4.f0 = o2;
+  o4.f1 = o3;
+  o1 = (int32_t)((uint32_t)o4.f0 + (uint32_t)o4.f1);
+  return o1;
+}
+
+__global__ void k0_0(int32_t* out, long long n) {
+  long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) out[i] = (int32_t)i;
+}
+__global__ void k0_2(int32_t* out, long long n, int32_t x) {
+  long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) out[i] = x;
+}
+__global__ void k0_3(FlowProd_int32_t_int32_t* out, int32_t* a, int32_t* b) {
+  unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < 4ULL) {
+    out[i].f0 = a[i];
+    out[i].f1 = b[i];
+  }
+}
+__global__ void k0_4(int32_t* out, FlowProd_int32_t_int32_t* in) {
+  unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < 4ULL) {
+    out[i] = fn1(in[i]);
+  }
+}
+__global__ void k0_6(int32_t* out, FlowProd_int32_t_int32_t* in) {
+  unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < 4ULL) {
+    out[i] = fn2(in[i]);
+  }
+}
+__global__ void k0_7(int32_t* result, int32_t* arr, int64_t idx) {
+  *result = arr[(unsigned long long)idx];
+}
+
+static void flow_main();
+
+static void flow_main() {
+  int32_t* o2 = nullptr;
+  int32_t* o3 = nullptr;
+  FlowProd_int32_t_int32_t o4;
+  int32_t* o5 = nullptr;
+  FlowProd_int32_tp_int32_tp o6;
+  int32_t* o7 = nullptr;
+  int32_t* o8 = nullptr;
+  FlowProd_int32_tp_int32_tp o9;
+  FlowProd_int32_t_int32_t* o10 = nullptr;
+  int32_t* o11 = nullptr;
+  FlowProd_int32_tp_int32_tp o12;
+  int32_t* o13 = nullptr;
+  int32_t* o14 = nullptr;
+  FlowProd_int32_tp_int32_tp o15;
+  FlowProd_int32_t_int32_t* o16 = nullptr;
+  int32_t* o17 = nullptr;
+  FlowProd_int32_tp_int32_t o18;
+  int32_t o19;
+  int32_t o20;
+  char* arena0 = nullptr;
+  int32_t* t0 = nullptr;
+  cu_check(cudaMalloc((void**)&arena0, 2048ULL), "cudaMalloc(arena0)");
+  o2 = (int32_t*)(arena0 + 0ULL);
+  k0_0<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o2, 4);
+  o3 = (int32_t*)(arena0 + 256ULL);
+  k0_0<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o3, 4);
+  o4.f0 = 7;
+  o4.f1 = 4;
+  o18.f1 = 3;
+  o6.f0 = o2;
+  o6.f1 = o3;
+  o5 = (int32_t*)(arena0 + 512ULL);
+  k0_2<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o5, 4, 7);
+  o7 = o6.f0;
+  o8 = o6.f1;
+  o12.f1 = o5;
+  o9.f0 = o7;
+  o9.f1 = o8;
+  o10 = (FlowProd_int32_t_int32_t*)(arena0 + 768ULL);
+  k0_3<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o10, o7, o8);
+  o11 = (int32_t*)(arena0 + 1024ULL);
+  k0_4<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o11, o10);
+  o12.f0 = o11;
+  o13 = o12.f0;
+  o14 = o12.f1;
+  o15.f0 = o13;
+  o15.f1 = o14;
+  o16 = (FlowProd_int32_t_int32_t*)(arena0 + 1280ULL);
+  k0_3<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o16, o13, o14);
+  o17 = (int32_t*)(arena0 + 1536ULL);
+  k0_6<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o17, o16);
+  o18.f0 = o17;
+  t0 = (int32_t*)(arena0 + 1792ULL);
+  k0_7<<<1, 1>>>(t0, o17, (int64_t)3);
+  cu_check(cudaMemcpy(&o19, t0, sizeof(int32_t), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
+  o20 = o19;
+  flow_print_i32(o20, true);
+  cu_check(cudaFree(arena0), "cudaFree(arena0)");
+  return;
+}
+
+int main() {
+  trap_init();
+  flow_main();
+  cu_check(cudaFree(d_trap), "cudaFree(d_trap)");
+  return 0;
+}

@@ -49,10 +49,14 @@ pub struct TypeInfo {
 /// The synthesized signature of a map/fold operator block (LD11).
 #[derive(Clone, Debug)]
 pub struct BlockSig {
-    /// `T` for map, `(Acc, T)` for fold — the body fn's declared input.
+    /// `T` for map, `(Acc, T)` for fold — the body fn's declared input,
+    /// prepended with `captures` when non-empty (ADR-0027).
     pub body_in: Ty,
     /// The body fn's declared output (the body's tail value ty).
     pub body_out: Ty,
+    /// ADR-0027: read captures `(name, ty)` in first-use order — the leading
+    /// hidden components of `body_in` (`captures.len()` of them).
+    pub captures: Vec<(String, Ty)>,
     /// `{owner}::{map|fold}@{i}` synthesized name.
     pub name: String,
 }
@@ -433,6 +437,9 @@ impl Walk<'_> {
                     } else if text == "enumerate" {
                         // enumerate: cur is `[A;n]`; result `[(i32, A);n]`.
                         self.enumerate_result(&cur)
+                    } else if let Some(target) = crate::widen_target(text) {
+                        // emit owns L1614; typing only synthesizes the target.
+                        WTy::Known(target)
                     } else {
                         // bind cur to a fresh name.
                         scope.bind(text, cur.clone());
@@ -588,7 +595,7 @@ impl Walk<'_> {
         body: &Block,
         stage_span: syn::SourceLoc,
         cur: &WTy,
-        _scope: &mut ScopeStack<WTy>,
+        scope: &mut ScopeStack<WTy>,
     ) -> WTy {
         // Determine element / acc tys from cur.
         let cur_ty = self.wty_to_ty(cur);
@@ -639,20 +646,41 @@ impl Walk<'_> {
                 "effectful operation inside a map/fold body".to_string(),
             ));
         }
-        // L1108: the body may not reference an enclosing local (blocks are not
-        // closures). A name resolving to neither a block param nor a global fn is
-        // a capture.
+        // ADR-0027: bodies may READ enclosing bindings (pure read captures —
+        // broadcast edges, hidden leading body-input components). The one
+        // remaining L1108 case is a WRITE to an enclosing name (an indexed
+        // bind targeting it, ADR-0021's "rebind, never a fresh shadow").
         let param_names: std::collections::BTreeSet<&str> =
             params.iter().map(|p| name_text(self.source, *p)).collect();
-        if let Some((cap, sp)) = body_capture(self.source, body, &param_names, self.fn_sigs) {
+        let caps = body_captures(self.source, body, &param_names, self.fn_sigs);
+        if let Some((cap, sp)) = &caps.write {
             self.diags.push(diag(
                 LCode::CaptureInBody,
-                sp,
-                format!("map/fold body references the enclosing local `{cap}`"),
+                *sp,
+                format!(
+                    "map/fold body writes to the enclosing `{cap}` — a capture is read-only \
+                     (body instances run per-element, in parallel, in an order you don't control; \
+                     write your own local and pass the result out instead)"
+                ),
             ));
         }
+        // Resolve each read capture's ty from the enclosing scope (unknown
+        // names error later in the body walk as L1101 — not duplicated here).
+        let mut cap_tys: Vec<(String, Ty)> = Vec::new();
+        for (cap, _sp) in &caps.reads {
+            if let Some((w, _)) = scope.resolve(cap)
+                && let Some(t) = self.wty_to_ty(w)
+            {
+                cap_tys.push((cap.clone(), t));
+            }
+        }
+        // Seed the body scope with the captures (leading components), so the
+        // body walk types them and nested bodies can capture transitively.
 
         let mut body_scope: ScopeStack<WTy> = ScopeStack::new();
+        for (cap, t) in &cap_tys {
+            body_scope.bind(cap, WTy::Known(t.clone()));
+        }
         // The fold seed and element WTys are extracted from `cur` *without*
         // resolving (so the seed's var threads into the body and unifies).
         let (seed_w, elem_w): (WTy, WTy) = match cur {
@@ -703,19 +731,32 @@ impl Walk<'_> {
             CollOp::Map => array_elem(&cur_ty.clone().unwrap_or(Ty::i32())).unwrap_or(Ty::i32()),
             CollOp::Fold => self.wty_to_ty(&seed_w).unwrap_or(Ty::f32()),
         });
+        let cap_only: Vec<Ty> = cap_tys.iter().map(|(_, t)| t.clone()).collect();
         let body_in = match op {
             CollOp::Fold => {
                 let acc = self.wty_to_ty(&seed_w).unwrap_or(Ty::f32());
                 let t = self.wty_to_ty(&elem_w).unwrap_or(Ty::f32());
-                Ty::Tuple(vec![acc, t])
+                let mut comps = cap_only.clone();
+                comps.push(acc);
+                comps.push(t);
+                Ty::Tuple(comps)
             }
-            CollOp::Map => body_in,
+            CollOp::Map => {
+                if cap_only.is_empty() {
+                    body_in
+                } else {
+                    let mut comps = cap_only.clone();
+                    comps.push(body_in);
+                    Ty::Tuple(comps)
+                }
+            }
         };
         self.info.blocks.insert(
             (stage_span.start, stage_span.end),
             BlockSig {
                 body_in: body_in.clone(),
                 body_out: body_out.clone(),
+                captures: cap_tys,
                 name,
             },
         );
@@ -910,6 +951,35 @@ impl Walk<'_> {
                     WTy::Known(sty)
                 } else {
                     WTy::Unknown
+                }
+            }
+            // ADR-0029: `iota(n)` / `fill(x, n)` builtin call stages. Best-effort
+            // synthesis — emit.rs owns the L1612/L1613 misuse diagnostics. The
+            // count is a positive literal ≤ i32::MAX (the static-n rule); the
+            // element WTy stays nested so a downstream annotation resolves the
+            // literal width (the literal-array mechanism).
+            ExprKind::Call { callee, args } => {
+                let name = match &callee.kind {
+                    ExprKind::Var(n) => name_text(self.source, *n),
+                    _ => "",
+                };
+                let lit = |e: &Expr| match &e.kind {
+                    ExprKind::Int(n) if *n > 0 && *n <= i32::MAX as u64 => Some(*n),
+                    _ => None,
+                };
+                match (name, &args[..]) {
+                    ("iota", [n]) => match lit(n) {
+                        Some(n) => WTy::Array(Box::new(WTy::Known(Ty::i32())), n),
+                        None => WTy::Unknown,
+                    },
+                    ("fill", [x, n]) => match lit(n) {
+                        Some(n) => {
+                            let w = self.expr(x, scope);
+                            WTy::Array(Box::new(w), n)
+                        }
+                        None => WTy::Unknown,
+                    },
+                    _ => WTy::Unknown,
                 }
             }
             _ => WTy::Unknown,
@@ -1233,18 +1303,56 @@ fn body_effect_span(
     found
 }
 
-/// The first enclosing-local reference inside a map/fold body (L1108). A name
-/// resolving to neither a block param, a body-local binding, nor a global fn /
-/// builtin is a capture. Returns `(name, span)`.
-fn body_capture(
+/// The free variables of a map/fold body (ADR-0027): **read captures** —
+/// names resolving to neither a block param, a body-local binding, nor a
+/// global fn/builtin — collected in first-use order. A **write** to an
+/// enclosing name (an indexed bind `c[i] <- v` targeting it — ADR-0021's
+/// "indexed bind is a rebind, never a fresh shadow") is a mutation capture,
+/// rejected by the caller with L1108.
+#[derive(Default)]
+struct BodyCaptures {
+    /// Read captures in first-use order (deduped).
+    reads: Vec<(String, syn::SourceLoc)>,
+    seen: std::collections::BTreeSet<String>,
+    /// The first write-to-enclosing-name found (name, span), if any.
+    write: Option<(String, syn::SourceLoc)>,
+    /// True while descending into a NESTED map/fold body: reads still collect
+    /// (transitive captures, ADR-0027 Q3) but writes are NOT recorded here —
+    /// the inner body's own `body_captures` (run by its own typing pass)
+    /// owns the L1108, and recording it twice would duplicate the diagnostic.
+    nested: bool,
+}
+
+impl BodyCaptures {
+    fn read(&mut self, name: &str, span: syn::SourceLoc) {
+        if self.seen.insert(name.to_string()) {
+            self.reads.push((name.to_string(), span));
+        }
+    }
+
+    /// Record a write-to-enclosing-name (kept: the first one) — unless walking
+    /// a nested body (see `nested`).
+    fn record_write(&mut self, name: &str, span: syn::SourceLoc) {
+        if !self.nested && self.write.is_none() {
+            self.write = Some((name.to_string(), span));
+        }
+    }
+}
+
+/// Collect the body's free variables (ADR-0027). L1108's old role — "the
+/// body may not reference an enclosing local (blocks are not closures)" — is
+/// replaced: reads become captures; writes remain rejected.
+fn body_captures(
     source: &str,
     block: &Block,
     params: &std::collections::BTreeSet<&str>,
     fn_sigs: &BTreeMap<String, FnSig>,
-) -> Option<(String, syn::SourceLoc)> {
+) -> BodyCaptures {
     let mut local: std::collections::BTreeSet<String> =
         params.iter().map(|s| s.to_string()).collect();
-    capture_block(source, block, &mut local, fn_sigs)
+    let mut acc = BodyCaptures::default();
+    capture_block(source, block, &mut local, fn_sigs, &mut acc);
+    acc
 }
 
 fn capture_block(
@@ -1252,18 +1360,16 @@ fn capture_block(
     block: &Block,
     local: &mut std::collections::BTreeSet<String>,
     fn_sigs: &BTreeMap<String, FnSig>,
-) -> Option<(String, syn::SourceLoc)> {
+    acc: &mut BodyCaptures,
+) {
     for item in &block.items {
-        if let BlockItem::Stmt(s) = item
-            && let Some(c) = capture_stmt(source, s, local, fn_sigs)
-        {
-            return Some(c);
+        if let BlockItem::Stmt(s) = item {
+            capture_stmt(source, s, local, fn_sigs, acc);
         }
     }
     if let Some(t) = &block.tail {
-        return capture_chain(source, t, local, fn_sigs);
+        capture_chain(source, t, local, fn_sigs, acc);
     }
-    None
 }
 
 fn capture_stmt(
@@ -1271,38 +1377,103 @@ fn capture_stmt(
     stmt: &Stmt,
     local: &mut std::collections::BTreeSet<String>,
     fn_sigs: &BTreeMap<String, FnSig>,
-) -> Option<(String, syn::SourceLoc)> {
+    acc: &mut BodyCaptures,
+) {
     match &stmt.kind {
-        StmtKind::Chain(c) => capture_chain(source, c, local, fn_sigs),
+        StmtKind::Chain(c) => capture_chain(source, c, local, fn_sigs, acc),
         // An *indexed* bind `c[i] <- v` (ADR-0021) is a rebind, not a fresh
-        // shadow: the target `c` references an existing binding, so capture-check
-        // it (and the index expr + value) as a read, and do NOT register it as a
-        // body-local — else a target/index capturing an enclosing local evades
-        // L1108 and later surfaces as a misleading L1101 (parallel to the
-        // emit.rs wiring points b/c).
+        // shadow: targeting an enclosing name is a WRITE to a captured
+        // variable — the one remaining L1108 case (reads are legal captures;
+        // writes are not). The index expr + value are ordinary reads.
         StmtKind::Bind(b) if b.index.is_some() => {
             let name = name_text(source, b.name);
             if !local.contains(name) && fn_sigs.get(name).is_none() {
-                return Some((name.to_string(), b.name.span));
+                acc.record_write(name, b.name.span);
             }
-            if let Some(c) = capture_expr(source, b.index.as_ref().unwrap(), local, fn_sigs) {
-                return Some(c);
+            if let Some(idx) = &b.index {
+                capture_expr(source, idx, local, fn_sigs, acc);
             }
-            capture_expr(source, &b.value, local, fn_sigs)
+            capture_expr(source, &b.value, local, fn_sigs, acc);
         }
         StmtKind::Bind(b) => {
-            let cap = capture_expr(source, &b.value, local, fn_sigs);
+            capture_expr(source, &b.value, local, fn_sigs, acc);
             local.insert(name_text(source, b.name).to_string());
-            cap
         }
         // Loops inside map/fold bodies are Core-legal (bodies are ordinary
-        // token-free fns; ATK-14). Descend into the loop body, registering its
-        // body-local binds AND exit-arm Bind names as body-locals via
-        // `capture_block` — otherwise a body-local loop binding read after the
-        // loop is a false L1108 capture.
-        StmtKind::Loop(l) => capture_block(source, &l.body, local, fn_sigs),
-        StmtKind::Error => None,
+        // token-free fns; ATK-14). Descend into the loop body with the set
+        // saved/restored — the emitter pushes a scope per loop
+        // (emit.rs:2509/2549), so a loop-local binding must not leak outward
+        // (a later read of the enclosing name is a capture, never the
+        // shadow). The exit arm's Bind names DO register afterward (§8.5: the
+        // exit value binds in the loop's enclosing scope, so a read after the
+        // loop resolves to it — never a capture).
+        StmtKind::Loop(l) => {
+            let saved = local.clone();
+            capture_block(source, &l.body, local, fn_sigs, acc);
+            *local = saved;
+            for name in loop_exit_bind_names(source, &l.body) {
+                local.insert(name);
+            }
+        }
+        StmtKind::Error => {}
     }
+}
+
+/// The names a loop's routing-guard exit arm binds into the loop's ENCLOSING
+/// scope (§8.5's `bind_new_enclosing`): the terminal `-> name` of the exit
+/// arm's final chain. Everything else bound inside the loop body lives in the
+/// popped loop-body frame, so the capture walk registers only these.
+fn loop_exit_bind_names(source: &str, body: &Block) -> Vec<String> {
+    // The routing guard is the body's tail, else its last chain statement.
+    let final_chain: Option<&Chain> = body.tail.as_ref().or_else(|| {
+        body.items.iter().rev().find_map(|it| match it {
+            BlockItem::Stmt(s) => match &s.kind {
+                StmtKind::Chain(c) => Some(c),
+                _ => None,
+            },
+            _ => None,
+        })
+    });
+    let Some(chain) = final_chain else {
+        return Vec::new();
+    };
+    let Some(Stage {
+        kind: StageKind::Guard(arms),
+        ..
+    }) = chain.stages.last()
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for arm in arms {
+        if arm_is_routing(&arm.payload) {
+            continue; // the jump arm carries no exit binding
+        }
+        // The arm's final chain (tail wins over the last chain statement,
+        // mirroring `arm_is_routing`).
+        let c: &Chain = match &arm.payload {
+            ArmPayload::Chain(c) => c,
+            ArmPayload::Block(b) => {
+                let last_chain = b.items.iter().rev().find_map(|it| match it {
+                    BlockItem::Stmt(s) => match &s.kind {
+                        StmtKind::Chain(c) => Some(c),
+                        _ => None,
+                    },
+                    _ => None,
+                });
+                match b.tail.as_ref().or(last_chain) {
+                    Some(c) => c,
+                    None => continue,
+                }
+            }
+        };
+        if let Some(stage) = c.stages.last()
+            && let StageKind::Bind { name, .. } = &stage.kind
+        {
+            out.push(name_text(source, *name).to_string());
+        }
+    }
+    out
 }
 
 fn capture_chain(
@@ -1310,45 +1481,53 @@ fn capture_chain(
     chain: &Chain,
     local: &mut std::collections::BTreeSet<String>,
     fn_sigs: &BTreeMap<String, FnSig>,
-) -> Option<(String, syn::SourceLoc)> {
-    if let Some(h) = &chain.head
-        && let Some(c) = capture_expr(source, h, local, fn_sigs)
-    {
-        return Some(c);
+    acc: &mut BodyCaptures,
+) {
+    if let Some(h) = &chain.head {
+        capture_expr(source, h, local, fn_sigs, acc);
     }
     for stage in &chain.stages {
         match &stage.kind {
             StageKind::Expr(e) => {
-                // a bare-name stage that binds a fresh local registers it.
+                // a bare-name stage that binds a fresh local registers it —
+                // but targeting an already-captured (read) name is a rebind of
+                // a read-only capture (D2b: a captured name is never a rebind
+                // target): record the WRITE so the caller reports the teaching
+                // L1108 (naming the variable) instead of falling through to
+                // emit's generic L1104.
                 if let ExprKind::Var(n) = &e.kind {
                     let text = name_text(source, *n);
                     if !local.contains(text)
                         && fn_sigs.get(text).is_none()
                         && !crate::is_print_builtin(text)
                     {
-                        local.insert(text.to_string());
+                        if acc.seen.contains(text) {
+                            acc.record_write(text, e.span);
+                        } else {
+                            local.insert(text.to_string());
+                        }
                     }
-                } else if let Some(c) = capture_expr(source, e, local, fn_sigs) {
-                    return Some(c);
+                } else {
+                    capture_expr(source, e, local, fn_sigs, acc);
                 }
             }
             StageKind::OpShorthand { expr } => {
-                if let Some(c) = capture_expr(source, expr, local, fn_sigs) {
-                    return Some(c);
-                }
+                capture_expr(source, expr, local, fn_sigs, acc);
             }
             StageKind::Bind { name, .. } => {
                 local.insert(name_text(source, *name).to_string());
             }
             StageKind::Guard(arms) => {
+                // Each arm lowers in its own child scope (emit.rs:2045-2047),
+                // so a bind/shadow inside one arm must not leak into a sibling
+                // arm or the enclosing body — save/restore per arm.
                 for arm in arms {
-                    let cap = match &arm.payload {
-                        ArmPayload::Chain(c) => capture_chain(source, c, local, fn_sigs),
-                        ArmPayload::Block(b) => capture_block(source, b, local, fn_sigs),
-                    };
-                    if cap.is_some() {
-                        return cap;
+                    let saved = local.clone();
+                    match &arm.payload {
+                        ArmPayload::Chain(c) => capture_chain(source, c, local, fn_sigs, acc),
+                        ArmPayload::Block(b) => capture_block(source, b, local, fn_sigs, acc),
                     }
+                    *local = saved;
                 }
             }
             // Fanout branches and seq bodies lower in the enclosing scope (pin b /
@@ -1358,20 +1537,34 @@ fn capture_chain(
             // otherwise a real capture surfaces later as a misleading L1101.
             StageKind::Fanout { branches, .. } => {
                 for b in branches {
-                    if let Some(c) = capture_chain(source, b, local, fn_sigs) {
-                        return Some(c);
-                    }
+                    capture_chain(source, b, local, fn_sigs, acc);
                 }
             }
             StageKind::SeqBlock(body) => {
-                if let Some(c) = capture_block(source, body, local, fn_sigs) {
-                    return Some(c);
+                capture_block(source, body, local, fn_sigs, acc);
+            }
+            // A nested map/fold body (ADR-0027 Q3 — transitive captures): its
+            // params and locals are scoped to IT, not to the enclosing body —
+            // descend with the set saved/restored, collecting free names that
+            // only the enclosing scope can provide (they become THIS body's
+            // captures too, resolved from the enclosing scope's bindings).
+            // WRITE recording is suppressed during the descent: the inner
+            // body's own typing pass owns the L1108 (recording here too would
+            // report the same write twice).
+            StageKind::MapFold { params, body, .. } => {
+                let saved = local.clone();
+                for p in params {
+                    local.insert(name_text(source, *p).to_string());
                 }
+                let nested = acc.nested;
+                acc.nested = true;
+                capture_block(source, body, local, fn_sigs, acc);
+                acc.nested = nested;
+                *local = saved;
             }
             _ => {}
         }
     }
-    None
 }
 
 fn capture_expr(
@@ -1379,45 +1572,58 @@ fn capture_expr(
     expr: &Expr,
     local: &std::collections::BTreeSet<String>,
     fn_sigs: &BTreeMap<String, FnSig>,
-) -> Option<(String, syn::SourceLoc)> {
-    let mut stack: Vec<&Expr> = vec![expr];
-    while let Some(e) = stack.pop() {
+    acc: &mut BodyCaptures,
+) {
+    // LIFO stack with children pushed in REVERSE source order, so leaves pop
+    // (and record) in source order of first use (ADR-0027 §Determinism).
+    enum Work<'a> {
+        E(&'a Expr),
+        /// A struct-pun field (`{ r }` reads `r`): the name + its span.
+        Pun(&'a str, syn::SourceLoc),
+    }
+    let mut stack: Vec<Work> = vec![Work::E(expr)];
+    while let Some(w) = stack.pop() {
+        let e = match w {
+            Work::E(e) => e,
+            Work::Pun(fname, span) => {
+                if !local.contains(fname) && fn_sigs.get(fname).is_none() {
+                    acc.read(fname, span);
+                }
+                continue;
+            }
+        };
         match &e.kind {
             ExprKind::Var(n) => {
                 let text = name_text(source, *n);
                 if !local.contains(text) && fn_sigs.get(text).is_none() {
-                    return Some((text.to_string(), e.span));
+                    acc.read(text, e.span);
                 }
             }
-            ExprKind::Unary { operand, .. } => stack.push(operand),
+            ExprKind::Unary { operand, .. } => stack.push(Work::E(operand)),
             ExprKind::Binary { lhs, rhs, .. } => {
-                stack.push(lhs);
-                stack.push(rhs);
+                stack.push(Work::E(rhs));
+                stack.push(Work::E(lhs));
             }
-            ExprKind::Member { base, .. } => stack.push(base),
+            ExprKind::Member { base, .. } => stack.push(Work::E(base)),
             ExprKind::Index { base, index } => {
-                stack.push(base);
-                stack.push(index);
+                stack.push(Work::E(index));
+                stack.push(Work::E(base));
             }
-            ExprKind::Tuple(es) | ExprKind::Array(es) => stack.extend(es.iter()),
+            ExprKind::Tuple(es) | ExprKind::Array(es) => {
+                stack.extend(es.iter().rev().map(Work::E));
+            }
             ExprKind::Struct { fields, .. } => {
-                for fi in fields {
-                    if let Some(v) = &fi.value {
-                        stack.push(v);
-                    }
-                    // pun shorthand `{ r }` reads `r` — also a capture if not local.
-                    if fi.value.is_none() {
-                        let fname = name_text(source, fi.name);
-                        if !local.contains(fname) && fn_sigs.get(fname).is_none() {
-                            return Some((fname.to_string(), fi.span));
-                        }
+                for fi in fields.iter().rev() {
+                    match &fi.value {
+                        // pun shorthand `{ r }` reads `r` — a capture if not local.
+                        Some(v) => stack.push(Work::E(v)),
+                        None => stack.push(Work::Pun(name_text(source, fi.name), fi.span)),
                     }
                 }
             }
             _ => {}
         }
     }
-    None
 }
 
 /// Walk every stage in a block (statements, tails, nested guards/fanouts),

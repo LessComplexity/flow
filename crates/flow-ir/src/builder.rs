@@ -75,6 +75,11 @@ pub enum IrError {
     /// ADR-0018: `enumerate` on an array whose size exceeds `i32::MAX`, so the
     /// index component (`i32`) cannot represent every index (F4/SND-3 precedent).
     EnumerateIndexOverflow,
+    /// ADR-0029: an `iota`/`fill` count that is not a `Constant` integer > 0
+    /// (a runtime size is ADR-0023 dynamic-array territory, out of Core).
+    NonStaticCount,
+    /// ADR-0029: source and target are not an allowed numeric widening pair.
+    InvalidWiden,
     /// `pack`/`pack_array` of zero components.
     EmptyProduct,
     /// `pack` of exactly one component (no 1-tuples).
@@ -91,6 +96,12 @@ pub enum IrError {
     TokenInPhi,
     /// I4: a token inside a Map/Fold body (bodies must be token-free).
     TokenInBody,
+    /// ADR-0027: a capture whose ty has no runtime representation (`Unit`, an
+    /// erased-element array, or an all-erased product) — the body-input
+    /// component would have no slot on the backends (LLVM panicked; the
+    /// erased rule is L4). `IoToken` captures stay `TokenInBody`; `Str`
+    /// captures stay `StrOutsidePrint` (via `pack`).
+    ErasedCapture,
     /// §8: a loop whose carried `U` contains a token but a `LoopExit` payload
     /// does not (the token would die in the loop).
     TokenNotEscaping,
@@ -637,8 +648,8 @@ fn check_reference_acyclic(ir: &CategoryIr) -> Result<(), IrError> {
                 if let Some(morph) = ir.morphism(m) {
                     match morph.op {
                         Operation::Call(g)
-                        | Operation::Map { body: g }
-                        | Operation::Fold { body: g } => out.push(g),
+                        | Operation::Map { body: g, .. }
+                        | Operation::Fold { body: g, .. } => out.push(g),
                         _ => {}
                     }
                 }
@@ -1625,6 +1636,159 @@ impl FnBuilder<'_> {
         Ok(self.emit_to_dest(plan, arr, Operation::Enumerate, loc))
     }
 
+    /// `Widen` (ADR-0029): one of `i32→i64`, `i32→f32`, `i32→f64`, or
+    /// `f32→f64`. Direct unary edge; pure and trap-free.
+    pub fn widen(
+        &mut self,
+        src: ObjectId,
+        target: Ty,
+        dest: Dest,
+        loc: SourceLoc,
+    ) -> Result<ObjectId, IrError> {
+        self.check_obj(src)?;
+        let source = self.ty_of(src);
+        if !matches!(
+            (&source, &target),
+            (
+                Ty::Int {
+                    bits: 32,
+                    signed: true
+                },
+                Ty::Int {
+                    bits: 64,
+                    signed: true
+                } | Ty::Float { bits: 32 | 64 }
+            ) | (Ty::Float { bits: 32 }, Ty::Float { bits: 64 })
+        ) {
+            return Err(IrError::InvalidWiden);
+        }
+        self.b.intake_ty(&target)?;
+        let plan = self.dest_target(&dest, &target, loc)?;
+        Ok(self.emit_to_dest(plan, src, Operation::Widen, loc))
+    }
+
+    /// `Iota` (ADR-0029): `[i32; n]` of `0..n-1`. The count rides as a
+    /// `Constant` integer source object so the static-n rule is a graph
+    /// property (validate's `IotaCountMismatch`). Rejects a non-`Constant` or
+    /// non-integer count (`NonStaticCount` — a runtime size is ADR-0023
+    /// territory, out of Core) and `n == 0` / `n > i32::MAX` (the element type
+    /// is pinned `i32` in v1; `Ty::Array` requires size ≥ 1).
+    pub fn iota(
+        &mut self,
+        count: ObjectId,
+        dest: Dest,
+        loc: SourceLoc,
+    ) -> Result<ObjectId, IrError> {
+        let n = self.static_count(count)?;
+        if n > i32::MAX as u64 {
+            return Err(IrError::EnumerateIndexOverflow);
+        }
+        let out_ty = Ty::Array {
+            elem: Box::new(Ty::i32()),
+            size: n,
+        };
+        self.b.intake_ty(&out_ty)?;
+        let plan = self.dest_target(&dest, &out_ty, loc)?;
+        Ok(self.emit_to_dest(plan, count, Operation::Iota, loc))
+    }
+
+    /// `Fill` (ADR-0029): `[T; n]` with every element the source value. Builds
+    /// the internal 2-tuple `(x, count)` (Pair-then-primitive, as `update`'s
+    /// 3-tuple); the count must be a `Constant` integer (`NonStaticCount`).
+    /// Rejects `n == 0` and a `Str`-carrying value (I9s).
+    pub fn fill(
+        &mut self,
+        x: ObjectId,
+        count: ObjectId,
+        dest: Dest,
+        loc: SourceLoc,
+    ) -> Result<ObjectId, IrError> {
+        let n = self.static_count(count)?;
+        self.check_obj(x)?;
+        let xty = self.ty_of(x);
+        if ty::ty_contains_str(&xty) {
+            return Err(IrError::StrOutsidePrint);
+        }
+        // Internal (x, count) 2-tuple, then Fill (the `zip`/`update` pattern).
+        let pair_ty = Ty::Tuple(vec![xty.clone(), self.ty_of(count)]);
+        self.b.intake_ty(&pair_ty)?;
+        let pair = self
+            .b
+            .mint_object(self.f, pair_ty, None, ObjectKind::Temporary, None, loc);
+        self.b
+            .add_edge(self.f, x, pair, Operation::Pair { slot: 0, arity: 2 }, loc);
+        self.b.add_edge(
+            self.f,
+            count,
+            pair,
+            Operation::Pair { slot: 1, arity: 2 },
+            loc,
+        );
+        let out_ty = Ty::Array {
+            elem: Box::new(xty),
+            size: n,
+        };
+        self.b.intake_ty(&out_ty)?;
+        let plan = self.dest_target(&dest, &out_ty, loc)?;
+        Ok(self.emit_to_dest(plan, pair, Operation::Fill, loc))
+    }
+
+    /// `Fill` from an EXISTING internal `(x, count)` 2-tuple — the replay
+    /// entry (S21). Emits only the `Fill` edge, minting nothing, so rewrite
+    /// replay is structure-faithful: a CSE'd duplicate tuple stays dead
+    /// instead of being reborn by `fill`'s sugar mint every round (the S21
+    /// fixpoint fix). Same static-n rule as `fill` (slot-1 feeder must be a
+    /// `Constant` integer ≥ 1); validate's `IotaCountMismatch` twin re-checks
+    /// independently.
+    pub fn fill_from(
+        &mut self,
+        pair: ObjectId,
+        dest: Dest,
+        loc: SourceLoc,
+    ) -> Result<ObjectId, IrError> {
+        self.check_obj(pair)?;
+        let (xty, count) = match self.ty_of(pair) {
+            Ty::Tuple(ts) if ts.len() == 2 => {
+                let count = self
+                    .b
+                    .in_edges
+                    .get(pair)
+                    .and_then(|ms| {
+                        ms.iter().find_map(|&m| {
+                            let mo = &self.b.morphisms[m];
+                            matches!(mo.op, Operation::Pair { slot: 1, .. }).then_some(mo.source)
+                        })
+                    })
+                    .ok_or(IrError::NonStaticCount)?;
+                (ts[0].clone(), count)
+            }
+            _ => return Err(IrError::NonStaticCount),
+        };
+        let n = self.static_count(count)?;
+        if ty::ty_contains_str(&xty) {
+            return Err(IrError::StrOutsidePrint);
+        }
+        let out_ty = Ty::Array {
+            elem: Box::new(xty),
+            size: n,
+        };
+        self.b.intake_ty(&out_ty)?;
+        let plan = self.dest_target(&dest, &out_ty, loc)?;
+        Ok(self.emit_to_dest(plan, pair, Operation::Fill, loc))
+    }
+
+    /// The `iota`/`fill` static-count rule (ADR-0029): a `Constant` integer
+    /// object with value `1..` (0 is not a legal `Ty::Array` size).
+    fn static_count(&self, count: ObjectId) -> Result<u64, IrError> {
+        let obj = self.b.objects.get(count).ok_or(IrError::UnknownObject)?;
+        match (obj.kind, &obj.value) {
+            (ObjectKind::Constant, Some(Value::I32(v))) if *v > 0 => Ok(*v as u64),
+            (ObjectKind::Constant, Some(Value::I64(v))) if *v > 0 => Ok(*v as u64),
+            (ObjectKind::Constant, Some(Value::U8(v))) if *v > 0 => Ok(*v as u64),
+            _ => Err(IrError::NonStaticCount),
+        }
+    }
+
     /// `Update` (DESIGN §5.1; ADR-0021): `(Array{T,n}, I, T) → Array{T,n}`. Builds
     /// the internal 3-tuple `(arr, idx, val)` (Pair-then-primitive, as `phi`), then
     /// applies `Update`. `I` is a Core integer scalar (exactly `index`); `val` must
@@ -1757,7 +1921,7 @@ impl FnBuilder<'_> {
         };
         self.b.intake_ty(&out_ty)?;
         let plan = self.dest_target(&dest, &out_ty, loc)?;
-        Ok(self.emit_to_dest(plan, arr, Operation::Map { body }, loc))
+        Ok(self.emit_to_dest(plan, arr, Operation::Map { body, captures: 0 }, loc))
     }
 
     /// `Fold{body}` (DESIGN §5.1): `(Acc, Array{T,n}) → Acc`; body
@@ -1836,7 +2000,195 @@ impl FnBuilder<'_> {
         }
         self.b.intake_ty(&body_out)?;
         let plan = self.dest_target(&dest, &body_out, loc)?;
-        Ok(self.emit_to_dest(plan, seed_and_arr, Operation::Fold { body }, loc))
+        Ok(self.emit_to_dest(
+            plan,
+            seed_and_arr,
+            Operation::Fold { body, captures: 0 },
+            loc,
+        ))
+    }
+
+    /// `Map{body, captures}` (ADR-0027): `(c₁…cₖ, Array{T,n}) → Array{U,n}`;
+    /// body `(c₁…cₖ, T) → U`. The `caps` objects are packed with the array
+    /// into the source product (the broadcast edges); the capture count is
+    /// recorded on the op. `caps` empty ⇒ [`Self::map`].
+    pub fn map_captured(
+        &mut self,
+        body: FuncId,
+        caps: &[ObjectId],
+        arr: ObjectId,
+        dest: Dest,
+        loc: SourceLoc,
+    ) -> Result<ObjectId, IrError> {
+        if caps.is_empty() {
+            return self.map(body, arr, dest, loc);
+        }
+        let bf = self.b.funcs.get(body).ok_or(IrError::UnknownFunction)?;
+        if bf.def.kind != FuncKind::MapBody {
+            return Err(IrError::BodyKindMismatch);
+        }
+        let body_in = self.b.objects[bf.def.input].ty.clone();
+        let body_out = self.b.objects[bf.def.output].ty.clone();
+        if ty::ty_contains_token(&body_in) || ty::ty_contains_token(&body_out) {
+            return Err(IrError::TokenInBody);
+        }
+        // Body input must be the (caps…, elem) product with matching types.
+        let comps = match &body_in {
+            Ty::Tuple(ts) if ts.len() == caps.len() + 1 => ts.clone(),
+            _ => {
+                return Err(IrError::TypeMismatch {
+                    expected: body_in.clone(),
+                    found: self.ty_of(arr),
+                    loc,
+                });
+            }
+        };
+        for (i, &c) in caps.iter().enumerate() {
+            self.check_obj(c)?;
+            let cty = self.ty_of(c);
+            if cty != comps[i] {
+                return Err(IrError::TypeMismatch {
+                    expected: comps[i].clone(),
+                    found: cty,
+                    loc,
+                });
+            }
+            // ADR-0027: a capture with no runtime representation would have no
+            // body-input slot on the backends (LLVM panicked). `IoToken` is
+            // already `TokenInBody` above; `Str` stays `StrOutsidePrint` (the
+            // pack below), so neither is re-diagnosed here.
+            if ty::ty_residual_empty(&cty) && !ty::ty_contains_str(&cty) {
+                return Err(IrError::ErasedCapture);
+            }
+        }
+        self.check_obj(arr)?;
+        let (elem, size) = match &self.ty_of(arr) {
+            Ty::Array { elem, size } => ((**elem).clone(), *size),
+            _ => return Err(IrError::NotAProduct),
+        };
+        if elem != comps[caps.len()] {
+            return Err(IrError::TypeMismatch {
+                expected: comps[caps.len()].clone(),
+                found: elem,
+                loc,
+            });
+        }
+        let mut all: Vec<ObjectId> = caps.to_vec();
+        all.push(arr);
+        let src = self.pack(&all, Dest::Fresh(None), loc)?;
+        let out_ty = Ty::Array {
+            elem: Box::new(body_out),
+            size,
+        };
+        self.b.intake_ty(&out_ty)?;
+        let plan = self.dest_target(&dest, &out_ty, loc)?;
+        Ok(self.emit_to_dest(
+            plan,
+            src,
+            Operation::Map {
+                body,
+                captures: caps.len() as u32,
+            },
+            loc,
+        ))
+    }
+
+    /// `Fold{body, captures}` (ADR-0027): `(c₁…cₖ, Acc, Array{T,n}) → Acc`;
+    /// body `(c₁…cₖ, Acc, T) → Acc`. `caps` empty ⇒ [`Self::fold`].
+    pub fn fold_captured(
+        &mut self,
+        body: FuncId,
+        caps: &[ObjectId],
+        seed: ObjectId,
+        arr: ObjectId,
+        dest: Dest,
+        loc: SourceLoc,
+    ) -> Result<ObjectId, IrError> {
+        if caps.is_empty() {
+            let seed_and_arr = self.pack(&[seed, arr], Dest::Fresh(None), loc)?;
+            return self.fold(body, seed_and_arr, dest, loc);
+        }
+        let bf = self.b.funcs.get(body).ok_or(IrError::UnknownFunction)?;
+        if bf.def.kind != FuncKind::FoldBody {
+            return Err(IrError::BodyKindMismatch);
+        }
+        let body_in = self.b.objects[bf.def.input].ty.clone();
+        let body_out = self.b.objects[bf.def.output].ty.clone();
+        if ty::ty_contains_token(&body_in) || ty::ty_contains_token(&body_out) {
+            return Err(IrError::TokenInBody);
+        }
+        // Body input must be (caps…, Acc, T); Acc = body_out.
+        let comps = match &body_in {
+            Ty::Tuple(ts) if ts.len() == caps.len() + 2 => ts.clone(),
+            _ => {
+                return Err(IrError::TypeMismatch {
+                    expected: body_in.clone(),
+                    found: self.ty_of(seed),
+                    loc,
+                });
+            }
+        };
+        for (i, &c) in caps.iter().enumerate() {
+            self.check_obj(c)?;
+            let cty = self.ty_of(c);
+            if cty != comps[i] {
+                return Err(IrError::TypeMismatch {
+                    expected: comps[i].clone(),
+                    found: cty,
+                    loc,
+                });
+            }
+            // ADR-0027: a capture with no runtime representation would have no
+            // body-input slot on the backends (LLVM panicked). `IoToken` is
+            // already `TokenInBody` above; `Str` stays `StrOutsidePrint` (the
+            // pack below), so neither is re-diagnosed here.
+            if ty::ty_residual_empty(&cty) && !ty::ty_contains_str(&cty) {
+                return Err(IrError::ErasedCapture);
+            }
+        }
+        let acc_ty = comps[caps.len()].clone();
+        let elem = comps[caps.len() + 1].clone();
+        if body_out != acc_ty {
+            return Err(IrError::TypeMismatch {
+                expected: acc_ty,
+                found: body_out,
+                loc,
+            });
+        }
+        self.check_obj(seed)?;
+        if self.ty_of(seed) != acc_ty {
+            return Err(IrError::TypeMismatch {
+                expected: acc_ty,
+                found: self.ty_of(seed),
+                loc,
+            });
+        }
+        self.check_obj(arr)?;
+        match &self.ty_of(arr) {
+            Ty::Array { elem: ae, .. } if **ae == elem => {}
+            _ => {
+                return Err(IrError::TypeMismatch {
+                    expected: comps[caps.len() + 1].clone(),
+                    found: self.ty_of(arr),
+                    loc,
+                });
+            }
+        }
+        let mut all: Vec<ObjectId> = caps.to_vec();
+        all.push(seed);
+        all.push(arr);
+        let src = self.pack(&all, Dest::Fresh(None), loc)?;
+        self.b.intake_ty(&acc_ty)?;
+        let plan = self.dest_target(&dest, &acc_ty, loc)?;
+        Ok(self.emit_to_dest(
+            plan,
+            src,
+            Operation::Fold {
+                body,
+                captures: caps.len() as u32,
+            },
+            loc,
+        ))
     }
 
     /// `print` — raw, no trailing newline (ADR-0015): emits `Print { newline: false }`.

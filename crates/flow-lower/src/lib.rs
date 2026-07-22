@@ -153,20 +153,25 @@ pub(crate) fn is_print_builtin(name: &str) -> bool {
     matches!(name, "print" | "println")
 }
 
-/// The pure collection builtins (ADR-0018): `zip` and `enumerate`. Resolved by
-/// name at call-shaped stages exactly like `print`/`println` (LD25), but pure —
-/// no token, legal in parallel fanout. One predicate so every routing / naming
-/// site that must skip these (emit dispatch, bare-name binding lookahead) cannot
-/// drift, mirroring `is_print_builtin`.
-pub(crate) fn is_collection_builtin(name: &str) -> bool {
-    matches!(name, "zip" | "enumerate")
+/// Pure bare-stage builtins (ADR-0018/ADR-0029). Resolved by name like
+/// `print`/`println`, but token-free and legal in parallel fanout.
+pub(crate) fn is_pure_builtin(name: &str) -> bool {
+    matches!(name, "zip" | "enumerate") || widen_target(name).is_some()
 }
 
-/// Whether a name is reserved (L1009): `print`/`println`, the collection builtins
-/// `zip`/`enumerate` (ADR-0018), or a builtin scalar type name.
+/// Target type selected by an ADR-0029 widening builtin name.
+pub(crate) fn widen_target(name: &str) -> Option<flow_ir::Ty> {
+    match name {
+        "widen_i64" => Some(flow_ir::Ty::i64()),
+        "widen_f32" => Some(flow_ir::Ty::f32()),
+        "widen_f64" => Some(flow_ir::Ty::f64()),
+        _ => None,
+    }
+}
+
+/// Whether a name is reserved (L1009): stage builtins or a scalar type name.
 fn is_reserved(name: &str) -> bool {
-    matches!(
-        name,
-        "print" | "println" | "zip" | "enumerate" | "i32" | "i64" | "u8" | "f32" | "f64" | "bool"
-    )
+    is_print_builtin(name)
+        || is_pure_builtin(name)
+        || matches!(name, "i32" | "i64" | "u8" | "f32" | "f64" | "bool")
 }

@@ -25,7 +25,7 @@
 use slotmap::SecondaryMap;
 
 use crate::graph::{CategoryIr, FuncId, MorphismId, ObjectId, ObjectKind, Operation};
-use crate::ty::{self, Ty};
+use crate::ty::{self, Ty, Value};
 
 /// A well-formedness violation found by [`validate`] (DESIGN §11). Mirrors
 /// `IrError` but carries ids instead of build context — no `Display` (C3).
@@ -75,6 +75,18 @@ pub enum IrViolation {
     /// index component `i32` cannot name every element). Twin of
     /// [`crate::IrError::EnumerateIndexOverflow`].
     EnumerateIndexOverflow(MorphismId),
+    /// ADR-0029: an `Iota` edge whose source is not a `Constant` integer equal
+    /// to the target array's static size (the static-n rule; builder-minted,
+    /// this is defense-in-depth). Twin of the builder's static-n rejection.
+    IotaCountMismatch(MorphismId),
+    /// ADR-0029: a `Widen` edge outside the allowed numeric lattice. Twin of
+    /// [`crate::IrError::InvalidWiden`].
+    InvalidWiden(MorphismId),
+    /// ADR-0027: a `Map`/`Fold` capture component with no runtime
+    /// representation (`Unit`, an erased-element array, or an all-erased
+    /// product) — no body-input slot on the backends. Twin of
+    /// [`crate::IrError::ErasedCapture`].
+    ErasedCapture(MorphismId),
 }
 
 /// Re-derive every graph-shape invariant on a sealed graph (DESIGN §11). An
@@ -156,7 +168,11 @@ fn check_edges(ir: &CategoryIr, v: &mut Vec<IrViolation>) {
             }
         };
         if !edge_type_ok(ir, m, sty, tty) {
-            v.push(IrViolation::BadEdgeType(mid));
+            if m.op == Operation::Widen {
+                v.push(IrViolation::InvalidWiden(mid));
+            } else {
+                v.push(IrViolation::BadEdgeType(mid));
+            }
         }
         // I8 graph-shape clause: Output ⇒ target is Return ∧ source ty == target ty.
         if m.op == Operation::Output {
@@ -172,6 +188,60 @@ fn check_edges(ir: &CategoryIr, v: &mut Vec<IrViolation>) {
             && *size > i32::MAX as u64
         {
             v.push(IrViolation::EnumerateIndexOverflow(mid));
+        }
+        // ADR-0029 extra condition (independent of the typing shape above):
+        // an `Iota` source — resp. a `Fill` internal pair's slot-1 feeder —
+        // must be a `Constant` integer whose value equals the target array's
+        // static size (the static-n rule).
+        if matches!(m.op, Operation::Iota | Operation::Fill) {
+            let count_obj = match m.op {
+                Operation::Iota => ir.object(m.source),
+                Operation::Fill => ir.in_edges(m.source).iter().find_map(|&pm| {
+                    let pmorph = ir.morphism(pm).expect("morphism resolves");
+                    if matches!(pmorph.op, Operation::Pair { slot: 1, .. }) {
+                        ir.object(pmorph.source)
+                    } else {
+                        None
+                    }
+                }),
+                _ => None,
+            };
+            let ok = count_obj
+                .map(|src| {
+                    src.kind == ObjectKind::Constant
+                        && match (&src.value, ir.object(m.target).map(|t| &t.ty)) {
+                            (Some(Value::I32(x)), Some(Ty::Array { size, .. })) => {
+                                *x >= 0 && *x as u64 == *size
+                            }
+                            (Some(Value::I64(x)), Some(Ty::Array { size, .. })) => {
+                                *x >= 0 && *x as u64 == *size
+                            }
+                            (Some(Value::U8(x)), Some(Ty::Array { size, .. })) => {
+                                *x as u64 == *size
+                            }
+                            _ => false,
+                        }
+                })
+                .unwrap_or(false);
+            if !ok {
+                v.push(IrViolation::IotaCountMismatch(mid));
+            }
+        }
+        // ADR-0027 extra condition (defense in depth; the builder rejects
+        // these as `ErasedCapture`): a capture component of a capturing
+        // Map/Fold must have a runtime representation. `Str` components are
+        // covered by `StrOutsidePrint`, so they are not re-diagnosed here.
+        if let Operation::Map { captures, .. } | Operation::Fold { captures, .. } = m.op {
+            let k = captures as usize;
+            if k > 0
+                && let Ty::Tuple(ts) = sty
+                && ts.len() >= k
+                && ts[..k]
+                    .iter()
+                    .any(|c| ty::ty_residual_empty(c) && !ty::ty_contains_str(c))
+            {
+                v.push(IrViolation::ErasedCapture(mid));
+            }
         }
     }
 }
@@ -210,6 +280,19 @@ fn edge_type_ok(ir: &CategoryIr, m: &crate::graph::Morphism, sty: &Ty, tty: &Ty)
             .map(|(a, b)| *a == Ty::Bool && *b == Ty::Bool && *tty == Ty::Bool)
             .unwrap_or(false),
         Operation::Not => *sty == Ty::Bool && *tty == Ty::Bool,
+        Operation::Widen => matches!(
+            (sty, tty),
+            (
+                Ty::Int {
+                    bits: 32,
+                    signed: true
+                },
+                Ty::Int {
+                    bits: 64,
+                    signed: true
+                } | Ty::Float { bits: 32 | 64 }
+            ) | (Ty::Float { bits: 32 }, Ty::Float { bits: 64 })
+        ),
         Operation::Phi => match sty {
             Ty::Tuple(ts) if ts.len() == 3 => {
                 ts[0] == ts[1]
@@ -226,27 +309,84 @@ fn edge_type_ok(ir: &CategoryIr, m: &crate::graph::Morphism, sty: &Ty, tty: &Ty)
             }
             None => false,
         },
-        Operation::Map { body } => match (sty, tty, ir.func(body)) {
-            (Ty::Array { elem: se, size: sn }, Ty::Array { elem: te, size: tn }, Some(def)) => {
-                sn == tn
-                    && ir.object(def.input).map(|o| &o.ty) == Some(&**se)
-                    && ir.object(def.output).map(|o| &o.ty) == Some(&**te)
-            }
-            _ => false,
-        },
-        Operation::Fold { body } => match (sty, ir.func(body)) {
-            (Ty::Tuple(ts), Some(def)) if ts.len() == 2 => {
-                if let Ty::Array { elem, .. } = &ts[1] {
-                    let body_in = ir.object(def.input).map(|o| o.ty.clone());
-                    let body_out = ir.object(def.output).map(|o| o.ty.clone());
-                    let want_in = Ty::Tuple(vec![ts[0].clone(), (**elem).clone()]);
-                    body_in == Some(want_in) && body_out.as_ref() == Some(&ts[0]) && tty == &ts[0]
-                } else {
-                    false
+        Operation::Map { body, captures } => {
+            let k = captures as usize;
+            if k == 0 {
+                // ADR-0009/LC-2 shape: bare array source, body input = element.
+                match (sty, tty, ir.func(body)) {
+                    (
+                        Ty::Array { elem: se, size: sn },
+                        Ty::Array { elem: te, size: tn },
+                        Some(def),
+                    ) => {
+                        sn == tn
+                            && ir.object(def.input).map(|o| &o.ty) == Some(&**se)
+                            && ir.object(def.output).map(|o| &o.ty) == Some(&**te)
+                    }
+                    _ => false,
+                }
+            } else {
+                // ADR-0027: source (c₁…cₖ, [T; n]) → [U; n]; body input (c₁…cₖ, T).
+                match (sty, tty, ir.func(body)) {
+                    (Ty::Tuple(src), Ty::Array { elem: te, size: tn }, Some(def))
+                        if src.len() == k + 1 =>
+                    {
+                        if let Ty::Array { elem: se, size: sn } = &src[k] {
+                            if sn != tn {
+                                return false;
+                            }
+                            let mut want: Vec<Ty> = src[..k].to_vec();
+                            want.push(se.as_ref().clone());
+                            ir.object(def.input).map(|o| &o.ty) == Some(&Ty::Tuple(want))
+                                && ir.object(def.output).map(|o| &o.ty) == Some(te.as_ref())
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
                 }
             }
-            _ => false,
-        },
+        }
+        Operation::Fold { body, captures } => {
+            let k = captures as usize;
+            if k == 0 {
+                match (sty, ir.func(body)) {
+                    (Ty::Tuple(ts), Some(def)) if ts.len() == 2 => {
+                        if let Ty::Array { elem, .. } = &ts[1] {
+                            let body_in = ir.object(def.input).map(|o| o.ty.clone());
+                            let body_out = ir.object(def.output).map(|o| o.ty.clone());
+                            let want_in = Ty::Tuple(vec![ts[0].clone(), (**elem).clone()]);
+                            body_in == Some(want_in)
+                                && body_out.as_ref() == Some(&ts[0])
+                                && tty == &ts[0]
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                }
+            } else {
+                // ADR-0027: source (c₁…cₖ, Acc, [T; n]) → Acc; body input (c₁…cₖ, Acc, T).
+                match (sty, ir.func(body)) {
+                    (Ty::Tuple(ts), Some(def)) if ts.len() == k + 2 => {
+                        if let Ty::Array { elem, .. } = &ts[k + 1] {
+                            let acc_ty = &ts[k];
+                            let mut want: Vec<Ty> = ts[..k].to_vec();
+                            want.push(acc_ty.clone());
+                            want.push(elem.as_ref().clone());
+                            let body_in = ir.object(def.input).map(|o| o.ty.clone());
+                            let body_out = ir.object(def.output).map(|o| o.ty.clone());
+                            body_in == Some(Ty::Tuple(want))
+                                && body_out.as_ref() == Some(acc_ty)
+                                && tty == acc_ty
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                }
+            }
+        }
         Operation::Index => match sty {
             Ty::Tuple(ts) if ts.len() == 2 => match &ts[0] {
                 Ty::Array { elem, .. } => ts[1].is_integer() && &**elem == tty,
@@ -281,6 +421,19 @@ fn edge_type_ok(ir: &CategoryIr, m: &crate::graph::Morphism, sty: &Ty, tty: &Ty)
                         }
                         _ => false,
                     }
+            }
+            _ => false,
+        },
+        // ADR-0029. Pure typing shapes only; the `Iota` count-constant value
+        // tie is the extra condition in `check_edges` (the Enumerate split).
+        Operation::Iota => match tty {
+            Ty::Array { elem, .. } => sty.is_integer() && **elem == Ty::i32(),
+            _ => false,
+        },
+        // `(T × I) → [T; n]` — the internal 2-tuple (value, count), as Zip.
+        Operation::Fill => match (sty, tty) {
+            (Ty::Tuple(ts), Ty::Array { elem, .. }) if ts.len() == 2 => {
+                ts[1].is_integer() && **elem == ts[0]
             }
             _ => false,
         },
@@ -744,8 +897,8 @@ fn check_references(ir: &CategoryIr, v: &mut Vec<IrViolation>) {
                 if let Some(mm) = ir.morphism(m) {
                     match mm.op {
                         Operation::Call(g)
-                        | Operation::Map { body: g }
-                        | Operation::Fold { body: g } => out.push(g),
+                        | Operation::Map { body: g, .. }
+                        | Operation::Fold { body: g, .. } => out.push(g),
                         _ => {}
                     }
                 }
@@ -978,11 +1131,13 @@ mod typing_table_golden {
 
     struct Fx {
         ir: CategoryIr,
-        merge: ObjectId, // a LoopMerge-kind object (valid loop-edge target)
-        plain: ObjectId, // a Temporary object (non-merge target; source is unused)
-        call_f: FuncId,  // Named:    i32 -> f32
-        map_f: FuncId,   // MapBody:  i32 -> f32
-        fold_f: FuncId,  // FoldBody: (f32, i32) -> f32
+        merge: ObjectId,     // a LoopMerge-kind object (valid loop-edge target)
+        plain: ObjectId,     // a Temporary object (non-merge target; source is unused)
+        call_f: FuncId,      // Named:    i32 -> f32
+        map_f: FuncId,       // MapBody:  i32 -> f32
+        fold_f: FuncId,      // FoldBody: (f32, i32) -> f32
+        map_caps_f: FuncId,  // MapBody (ADR-0027): (i32, i32) -> f32 (1 capture)
+        fold_caps_f: FuncId, // FoldBody (ADR-0027): (i32, f32, i32) -> f32 (1 capture)
         mid: MorphismId,
     }
 
@@ -998,6 +1153,20 @@ mod typing_table_golden {
             &mut funcs,
             FuncKind::FoldBody,
             tup(&[f32t(), int(32)]),
+            f32t(),
+        );
+        let map_caps_f = mk_func(
+            &mut objects,
+            &mut funcs,
+            FuncKind::MapBody,
+            tup(&[int(32), int(32)]),
+            f32t(),
+        );
+        let fold_caps_f = mk_func(
+            &mut objects,
+            &mut funcs,
+            FuncKind::FoldBody,
+            tup(&[int(32), f32t(), int(32)]),
             f32t(),
         );
         // Minted from a throwaway map: `edge_type_ok` never reads `m.id` (or
@@ -1020,6 +1189,8 @@ mod typing_table_golden {
             call_f,
             map_f,
             fold_f,
+            map_caps_f,
+            fold_caps_f,
             mid,
         }
     }
@@ -1323,6 +1494,42 @@ mod typing_table_golden {
             ("Not ok", Not, Ty::Bool, Ty::Bool, p, true),
             ("Not sty mismatch", Not, i32t.clone(), Ty::Bool, p, false),
             ("Not tty mismatch", Not, Ty::Bool, i32t.clone(), p, false),
+            // Widen (ADR-0029): the four explicit numeric lattice edges only.
+            (
+                "Widen i32 to i64",
+                Widen,
+                i32t.clone(),
+                i64t.clone(),
+                p,
+                true,
+            ),
+            ("Widen i32 to f32", Widen, i32t.clone(), f32t(), p, true),
+            ("Widen i32 to f64", Widen, i32t.clone(), Ty::f64(), p, true),
+            ("Widen f32 to f64", Widen, f32t(), Ty::f64(), p, true),
+            (
+                "Widen i64 to f64 rejected",
+                Widen,
+                i64t.clone(),
+                Ty::f64(),
+                p,
+                false,
+            ),
+            (
+                "Widen identity rejected",
+                Widen,
+                i32t.clone(),
+                i32t.clone(),
+                p,
+                false,
+            ),
+            (
+                "Widen array rejected",
+                Widen,
+                arr(i32t.clone(), 2),
+                arr(i64t.clone(), 2),
+                p,
+                false,
+            ),
             // Phi: (T,T,Bool) -> T, T token-free.
             (
                 "Phi ok",
@@ -1393,7 +1600,10 @@ mod typing_table_golden {
             // Map{body}: Array{T,n} -> Array{U,n}, body: T -> U (map_f: i32 -> f32).
             (
                 "Map ok",
-                Map { body: fx.map_f },
+                Map {
+                    body: fx.map_f,
+                    captures: 0,
+                },
                 arr(i32t.clone(), 3),
                 arr(f32t(), 3),
                 p,
@@ -1401,7 +1611,10 @@ mod typing_table_golden {
             ),
             (
                 "Map size mismatch",
-                Map { body: fx.map_f },
+                Map {
+                    body: fx.map_f,
+                    captures: 0,
+                },
                 arr(i32t.clone(), 3),
                 arr(f32t(), 4),
                 p,
@@ -1409,7 +1622,10 @@ mod typing_table_golden {
             ),
             (
                 "Map elem vs body in",
-                Map { body: fx.map_f },
+                Map {
+                    body: fx.map_f,
+                    captures: 0,
+                },
                 arr(f32t(), 3),
                 arr(f32t(), 3),
                 p,
@@ -1417,7 +1633,10 @@ mod typing_table_golden {
             ),
             (
                 "Map out vs body out",
-                Map { body: fx.map_f },
+                Map {
+                    body: fx.map_f,
+                    captures: 0,
+                },
                 arr(i32t.clone(), 3),
                 arr(i32t.clone(), 3),
                 p,
@@ -1425,7 +1644,10 @@ mod typing_table_golden {
             ),
             (
                 "Map not array",
-                Map { body: fx.map_f },
+                Map {
+                    body: fx.map_f,
+                    captures: 0,
+                },
                 i32t.clone(),
                 f32t(),
                 p,
@@ -1434,15 +1656,99 @@ mod typing_table_golden {
             // Fold{body}: (Acc, Array{T,n}) -> Acc, body: (Acc,T) -> Acc (fold_f: (f32,i32) -> f32).
             (
                 "Fold ok",
-                Fold { body: fx.fold_f },
+                Fold {
+                    body: fx.fold_f,
+                    captures: 0,
+                },
                 tup(&[f32t(), arr(i32t.clone(), 3)]),
                 f32t(),
                 p,
                 true,
             ),
+            // ADR-0027 captured shapes.
+            (
+                "Map+caps ok",
+                Map {
+                    body: fx.map_caps_f,
+                    captures: 1,
+                },
+                tup(&[i32t.clone(), arr(i32t.clone(), 3)]),
+                arr(f32t(), 3),
+                p,
+                true,
+            ),
+            (
+                "Map+caps arity mismatch",
+                Map {
+                    body: fx.map_caps_f,
+                    captures: 1,
+                },
+                tup(&[i32t.clone(), i32t.clone(), arr(i32t.clone(), 3)]),
+                arr(f32t(), 3),
+                p,
+                false,
+            ),
+            (
+                "Map+caps cap type mismatch",
+                Map {
+                    body: fx.map_caps_f,
+                    captures: 1,
+                },
+                tup(&[f32t(), arr(i32t.clone(), 3)]),
+                arr(f32t(), 3),
+                p,
+                false,
+            ),
+            (
+                "Map+caps source not tuple",
+                Map {
+                    body: fx.map_caps_f,
+                    captures: 1,
+                },
+                arr(i32t.clone(), 3),
+                arr(f32t(), 3),
+                p,
+                false,
+            ),
+            (
+                "Fold+caps ok",
+                Fold {
+                    body: fx.fold_caps_f,
+                    captures: 1,
+                },
+                tup(&[i32t.clone(), f32t(), arr(i32t.clone(), 3)]),
+                f32t(),
+                p,
+                true,
+            ),
+            (
+                "Fold+caps acc mismatch",
+                Fold {
+                    body: fx.fold_caps_f,
+                    captures: 1,
+                },
+                tup(&[i32t.clone(), i32t.clone(), arr(i32t.clone(), 3)]),
+                f32t(),
+                p,
+                false,
+            ),
+            (
+                "Fold+caps arity mismatch",
+                Fold {
+                    body: fx.fold_caps_f,
+                    captures: 1,
+                },
+                tup(&[f32t(), arr(i32t.clone(), 3)]),
+                f32t(),
+                p,
+                false,
+            ),
             (
                 "Fold tty not acc",
-                Fold { body: fx.fold_f },
+                Fold {
+                    body: fx.fold_f,
+                    captures: 0,
+                },
                 tup(&[f32t(), arr(i32t.clone(), 3)]),
                 i32t.clone(),
                 p,
@@ -1450,7 +1756,10 @@ mod typing_table_golden {
             ),
             (
                 "Fold elem vs body",
-                Fold { body: fx.fold_f },
+                Fold {
+                    body: fx.fold_f,
+                    captures: 0,
+                },
                 tup(&[f32t(), arr(f32t(), 3)]),
                 f32t(),
                 p,
@@ -1458,7 +1767,10 @@ mod typing_table_golden {
             ),
             (
                 "Fold not tuple",
-                Fold { body: fx.fold_f },
+                Fold {
+                    body: fx.fold_f,
+                    captures: 0,
+                },
                 arr(i32t.clone(), 3),
                 f32t(),
                 p,
@@ -1880,6 +2192,230 @@ mod enumerate_bound_twin {
             v.iter()
                 .any(|x| matches!(x, IrViolation::EnumerateIndexOverflow(_))),
             "expected EnumerateIndexOverflow twin, got {v:?}"
+        );
+    }
+}
+
+/// The ADR-0029 static-count twin: `validate` independently re-derives the
+/// count-value tie the builder owns (`NonStaticCount` + the mint). The builder
+/// can never *produce* a mismatched graph, so this corrupts a sealed one (the
+/// in-crate privilege noted in `graph.rs`): the count constant's value drifts
+/// from the array's static size, leaving every edge consistently typed so ONLY
+/// the static-n twin fires.
+#[cfg(test)]
+mod iota_count_twin {
+    use super::{IrViolation, validate};
+    use crate::builder::{Dest, IrBuilder};
+    use crate::graph::FuncKind;
+    use crate::loc::SourceLoc;
+    use crate::ty::{Ty, Value};
+
+    const L: SourceLoc = SourceLoc { start: 0, end: 0 };
+
+    fn drift(ir: &mut crate::graph::CategoryIr, from: Value, to: Value) {
+        for (_, obj) in ir.objects.iter_mut() {
+            if let Some(v) = &mut obj.value
+                && *v == from
+            {
+                *v = to.clone();
+            }
+        }
+    }
+
+    #[test]
+    fn drifted_iota_count_flagged() {
+        let out = Ty::Array {
+            elem: Box::new(Ty::i32()),
+            size: 5,
+        };
+        let mut b = IrBuilder::new();
+        let f = b
+            .declare(FuncKind::Named, "main", Ty::Unit, out, L)
+            .unwrap();
+        {
+            let mut fb = b.build_fn(f).unwrap();
+            let n = fb.constant(Value::I32(5), L).unwrap();
+            fb.iota(n, Dest::Ret { slot: None }, L).unwrap();
+            fb.finish().unwrap();
+        }
+        let mut ir = b.seal(f).unwrap();
+        assert!(validate(&ir).is_empty());
+        // Corrupt: the count constant says 4, the array says 5.
+        drift(&mut ir, Value::I32(5), Value::I32(4));
+        let v = validate(&ir);
+        assert!(
+            v.iter()
+                .any(|x| matches!(x, IrViolation::IotaCountMismatch(_))),
+            "expected IotaCountMismatch twin, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn drifted_fill_count_flagged() {
+        let out = Ty::Array {
+            elem: Box::new(Ty::f64()),
+            size: 3,
+        };
+        let mut b = IrBuilder::new();
+        let f = b
+            .declare(FuncKind::Named, "main", Ty::Unit, out, L)
+            .unwrap();
+        {
+            let mut fb = b.build_fn(f).unwrap();
+            let x = fb.constant(Value::F64(1.5), L).unwrap();
+            let n = fb.constant(Value::I32(3), L).unwrap();
+            fb.fill(x, n, Dest::Ret { slot: None }, L).unwrap();
+            fb.finish().unwrap();
+        }
+        let mut ir = b.seal(f).unwrap();
+        assert!(validate(&ir).is_empty());
+        // Corrupt: the count constant says 4, the array says 3.
+        drift(&mut ir, Value::I32(3), Value::I32(4));
+        let v = validate(&ir);
+        assert!(
+            v.iter()
+                .any(|x| matches!(x, IrViolation::IotaCountMismatch(_))),
+            "expected IotaCountMismatch twin, got {v:?}"
+        );
+    }
+}
+
+/// The ADR-0029 widening-lattice twin: corrupt a legal edge's source type so
+/// validate independently rejects the now-illegal pair.
+#[cfg(test)]
+mod widen_twin {
+    use super::{IrViolation, validate};
+    use crate::builder::{Dest, IrBuilder};
+    use crate::graph::FuncKind;
+    use crate::loc::SourceLoc;
+    use crate::ty::Ty;
+
+    const L: SourceLoc = SourceLoc { start: 0, end: 0 };
+
+    #[test]
+    fn invalid_widen_edge_flagged() {
+        let mut b = IrBuilder::new();
+        let f = b
+            .declare(FuncKind::Named, "main", Ty::i32(), Ty::f64(), L)
+            .unwrap();
+        let input;
+        {
+            let mut fb = b.build_fn(f).unwrap();
+            input = fb.input();
+            let widened = fb.widen(input, Ty::f64(), Dest::Fresh(None), L).unwrap();
+            fb.output(widened, None, L).unwrap();
+            fb.finish().unwrap();
+        }
+        let mut ir = b.seal(f).unwrap();
+        ir.objects[input].ty = Ty::i64();
+        let v = validate(&ir);
+        assert!(
+            v.iter().any(|x| matches!(x, IrViolation::InvalidWiden(_))),
+            "expected InvalidWiden twin, got {v:?}"
+        );
+    }
+}
+
+/// The ADR-0027 erased-capture twin: `validate` independently re-derives the
+/// empty-residual-capture rejection the builder owns (`ErasedCapture`). The
+/// builder can never *produce* such a graph, so this corrupts a sealed one
+/// (the in-crate privilege noted in `graph.rs`): the capture tuple
+/// `(Unit, i32)` becomes `(Unit, Unit)`, leaving every edge consistently
+/// typed so ONLY the erased-capture twin fires.
+#[cfg(test)]
+mod erased_capture_twin {
+    use super::{IrViolation, validate};
+    use crate::builder::{Dest, IrBuilder};
+    use crate::graph::FuncKind;
+    use crate::loc::SourceLoc;
+    use crate::ty::Ty;
+
+    const L: SourceLoc = SourceLoc { start: 0, end: 0 };
+
+    /// Replace the `(Unit, i32)` capture tuple with `(Unit, Unit)` anywhere it
+    /// nests in `ty`.
+    fn erase_capture_component(ty: &mut Ty) {
+        if *ty == Ty::Tuple(vec![Ty::Unit, Ty::i32()]) {
+            *ty = Ty::Tuple(vec![Ty::Unit, Ty::Unit]);
+            return;
+        }
+        match ty {
+            Ty::Array { elem, .. } => erase_capture_component(elem),
+            Ty::Tuple(ts) => ts.iter_mut().for_each(erase_capture_component),
+            Ty::Struct { fields, .. } => fields
+                .iter_mut()
+                .for_each(|(_, t)| erase_capture_component(t)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn erased_capture_component_flagged() {
+        let cap_ty = Ty::Tuple(vec![Ty::Unit, Ty::i32()]);
+        let arr = Ty::Array {
+            elem: Box::new(Ty::i32()),
+            size: 3,
+        };
+        let mut b = IrBuilder::new();
+        // A MapBody ((Unit, i32), i32) -> i32 that IGNORES its capture, so the
+        // corruption keeps every body edge consistently typed.
+        let body = b
+            .declare(
+                FuncKind::MapBody,
+                "mb",
+                Ty::Tuple(vec![cap_ty.clone(), Ty::i32()]),
+                Ty::i32(),
+                L,
+            )
+            .unwrap();
+        {
+            let mut fb = b.build_fn(body).unwrap();
+            let pin = fb.input();
+            let x = fb.proj(pin, 1, Dest::Fresh(None), L).unwrap();
+            fb.binop(
+                crate::graph::Operation::Add,
+                x,
+                x,
+                Dest::Ret { slot: None },
+                L,
+            )
+            .unwrap();
+            fb.finish().unwrap();
+        }
+        let f = b
+            .declare(
+                FuncKind::Named,
+                "main",
+                Ty::Tuple(vec![cap_ty, arr.clone()]),
+                arr,
+                L,
+            )
+            .unwrap();
+        {
+            let mut fb = b.build_fn(f).unwrap();
+            let p = fb.input();
+            let cap = fb.proj(p, 0, Dest::Fresh(None), L).unwrap();
+            let a = fb.proj(p, 1, Dest::Fresh(None), L).unwrap();
+            fb.map_captured(body, &[cap], a, Dest::Ret { slot: None }, L)
+                .unwrap();
+            fb.finish().unwrap();
+        }
+        let mut ir = b.seal(f).unwrap();
+        assert!(validate(&ir).is_empty());
+        for (_, obj) in ir.objects.iter_mut() {
+            erase_capture_component(&mut obj.ty);
+        }
+        let v = validate(&ir);
+        assert!(
+            v.iter().any(|x| matches!(x, IrViolation::ErasedCapture(_))),
+            "expected the ErasedCapture twin, got {v:?}"
+        );
+        assert_eq!(
+            v.iter()
+                .filter(|x| !matches!(x, IrViolation::ErasedCapture(_)))
+                .count(),
+            0,
+            "only the erased-capture twin fires, got {v:?}"
         );
     }
 }

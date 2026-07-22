@@ -31,7 +31,7 @@ backend exists.
 | `CategoryIr` | sealed dataflow graph (objects/morphisms, edge-only dataflow, ADR-0013) | `flow-ir` |
 | `RValue` env | interp value domain over `ObjectId` | `flow-interp` |
 | `Diagnostic` / `IrError` / `IrViolation` | renderer-free structured errors (three by design — §7.2 of the [audit](architecture/categorical-model.md)) | per crate |
-| `TargetText` | emitted `.ll` / `.cu` / `.v` source | `flow-backend-llvm` (built, S13); cuda/verilog planned |
+| `TargetText` | emitted `.ll` / `.cu` / `.v` source | `flow-backend-llvm` (built, S13); `flow-backend-cuda` (built, S15); verilog planned |
 
 **Trn** — the passes (`⊸` = effectful):
 
@@ -44,21 +44,24 @@ backend exists.
 | `eval`/`run` | `(CategoryIr × Input × Fuel) ⇀ Output ⊸` (fueled, E1) | interp | built |
 | `check` | `Src × Program × CategoryIr → Diag*` (ε = accept) | check | built |
 | rewrite passes | `CategoryIr → CategoryIr` (plan+replay; layers 3–4 + map fusion) | rewrite | built (S12) |
-| backend emit | `CategoryIr → TargetText` (ADR-0020 `emit(&CategoryIr) -> Result<String, EmitError>`) | backends | built (llvm, S13); cuda/verilog planned |
+| backend emit | `CategoryIr → TargetText` (ADR-0020 `emit(&CategoryIr) -> Result<String, EmitError>`) | backends | built (llvm S13, cuda S15); verilog planned |
 | `render` | `Diag* → 𝕊 ⊸` (the lone renderer) | cli | planned |
 
 **Loc** — **collapsed** for the compiler pipeline: one OS process end-to-end (§7.1
 degenerate case — the model reduces to `Dat` + `Alg`). The physical pair de-collapses at
-the backend/runtime seam, and **backend-llvm makes it real for the first time (S13)**:
-around the emitted artifact the external `clang` toolchain and the running native process
-are genuine `Loc`s (backend-llvm DESIGN "Physical pair"). GPU device and FPGA fabric remain
-planned `Loc`s (cuda/verilog).
+the backend/runtime seam: backend-llvm made it real first (S13 — the external `clang`
+toolchain + the native process), and **backend-cuda gives the project its first genuine
+two-site execution (S15)**: the host process and the GPU device, with kernels, device
+buffers, and the trap flag resident on the device. FPGA fabric remains a planned `Loc`
+(verilog).
 
 **Trm** — **none inside the pipeline** (every pass handoff is a same-`Loc` `Trn`). Real at
-the backend-llvm harness boundary (S13): the differential harness's `stdout`/exit-code
-capture is the `Trm` carrying the observable back (L1 oracle parity). The heavier `Trm`s
-land later: `cudaMemcpy` H↔D (carries buffers), FPGA streaming, the E1
-`valid/busy/done/result` handshake — Laws 1–2 start doing real work there.
+the backend harness boundaries: the llvm differential's `stdout`/exit-code capture (S13),
+and **the first `Trm`s whose cost is real, priced, and latency-visible (S15)**: backend-cuda's
+`cudaMemcpy` H↔D crossings — literal uploads, launch args, the per-launch trap-flag readback,
+`Index`/`Fold` scalar readbacks — each enumerated and counted in backend-cuda DESIGN §2
+(the transfer inventory; zero whole-array D→H by construction). Still ahead: FPGA streaming,
+the E1 `valid/busy/done/result` handshake.
 
 ## 3. Components
 
@@ -71,7 +74,7 @@ land later: `cudaMemcpy` H↔D (carries buffers), FPGA streaming, the E1
 | interp | `eval`/`run` — **the oracle** | built (P3/M1) | [DESIGN](components/interp/DESIGN.md) | [IMPL](components/interp/IMPLEMENTATION.md) |
 | rewrite | plan+replay rewriter: const fold/CSE/DCE + map fusion, R1 property harness + testgen | tested (S12) | [DESIGN](components/rewrite/DESIGN.md) | [IMPL](components/rewrite/IMPLEMENTATION.md) |
 | backend-llvm | `F_LLVM` emit (+ `flow-rt` runtime seam, ADR-0020) | built (P5/M2, S13) | [DESIGN](components/backend-llvm/DESIGN.md) | [IMPL](components/backend-llvm/IMPLEMENTATION.md) |
-| backend-cuda | `F_CUDA` emit | planned (P6/M3) | [DESIGN](components/backend-cuda/DESIGN.md) | [IMPL](components/backend-cuda/IMPLEMENTATION.md) |
+| backend-cuda | `F_CUDA` emit (host/device split; kernels + H↔D `Trm`s) | built (P6/M3, S15) | [DESIGN](components/backend-cuda/DESIGN.md) | [IMPL](components/backend-cuda/IMPLEMENTATION.md) |
 | backend-verilog | `F_Verilog` emit + done-protocol | planned (P7/M4) | [DESIGN](components/backend-verilog/DESIGN.md) | [IMPL](components/backend-verilog/IMPLEMENTATION.md) |
 | cli | `flow build\|run\|dump-ir\|test`, `render` | planned (M5) | [DESIGN](components/cli/DESIGN.md) | [IMPL](components/cli/IMPLEMENTATION.md) |
 
@@ -87,7 +90,9 @@ Status detail: [`docs/STATUS.md`](STATUS.md) (global roll-up, HANDOFF §7.1.1).
 
 ## 5. Coherence checklist (§4.5 / §8) against the implementation
 
-All six PASS as of S13 (backend-llvm added — the first component with a real physical pair).
+All six PASS as of S15 (backend-cuda added — the first component with a genuine two-site
+execution pair: host process + GPU device, with the H↔D `cudaMemcpy` crossings enumerated
+and counted in its DESIGN §2; every one materialised at both ends per Law 2).
 
 - [x] 1. Placement honesty — single process for the pipeline; every pass consumes exactly
       the value the previous returns; interp reads only its `SecondaryMap` env keyed by

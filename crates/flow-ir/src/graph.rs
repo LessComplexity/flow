@@ -92,13 +92,22 @@ pub enum Operation {
     // calls & collections
     /// Named functions only.
     Call(FuncId),
-    /// `[T; n] → [U; n]`; `body: T → U` (ADR-0009/LC-2).
+    /// `[T; n] → [U; n]`; `body: T → U` (ADR-0009/LC-2). With `captures > 0`
+    /// (ADR-0027), the source is the product `(c₁…cₖ, [T; n])` — the first
+    /// `captures` components are enclosing values broadcast to every element —
+    /// and the body input is `(c₁…cₖ, T)`.
     Map {
         body: FuncId,
+        /// Leading capture components of the source product (ADR-0027). `0`
+        /// for every pre-ADR-0027 program: source is the bare array.
+        captures: u32,
     },
-    /// `(Acc × [T; n]) → Acc`; `body: (Acc × T) → Acc`.
+    /// `(Acc × [T; n]) → Acc`; `body: (Acc × T) → Acc`. With `captures > 0`
+    /// (ADR-0027): source `(c₁…cₖ, Acc, [T; n])`, body input `(c₁…cₖ, Acc, T)`.
     Fold {
         body: FuncId,
+        /// Leading capture components of the source product (ADR-0027).
+        captures: u32,
     },
     /// `([T; n] × I) → T`; OOB = trap in Core (ADR-0013).
     Index,
@@ -109,6 +118,15 @@ pub enum Operation {
     /// `[A; n] → [(i32, A); n]` (ADR-0018): pairs each element with its index,
     /// index pinned `i32` with the extra bound `n ≤ i32::MAX`. Pure — no token.
     Enumerate,
+    /// `n → [i32; n]` of `0..n-1` (ADR-0029): the source is a `Constant`
+    /// integer count (builder-minted; validate ties its value to the target's
+    /// static size — the static-n rule). Element type pinned `i32` (v1), so
+    /// `n ≤ i32::MAX` (the Enumerate bound). Pure — no token; trap-free.
+    Iota,
+    /// `T → [T; n]` with every element the source value (ADR-0029): the count
+    /// is **type-carried** by the target `[T; n]` (deduced, not stored — no
+    /// count operand). Pure — no token; trap-free.
+    Fill,
     /// `(Array{T,n} × I × T) → Array{T,n}` (ADR-0021): a fresh array with slot
     /// `i` replaced. Source is the internal 3-tuple product. `I` is exactly
     /// `Index`'s integer-scalar set; OOB (`i < 0 ∨ i ≥ n`) = trap (`IndexOob`,
@@ -129,6 +147,9 @@ pub enum Operation {
     LoopExit,
     /// The only identity-shaped morphism (D6): bare `x -> ret` / `x -> ret.k`.
     Output,
+    /// Explicit numeric widening (ADR-0029): one of `i32→i64`, `i32→f32`,
+    /// `i32→f64`, or `f32→f64`. Pure — no token; trap-free.
+    Widen,
 }
 
 /// A directed dataflow edge (DESIGN §5). Exactly one source, one target (I1).

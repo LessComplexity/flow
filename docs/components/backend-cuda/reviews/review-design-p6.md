@@ -1,0 +1,60 @@
+# Review — backend-cuda DESIGN (P6, design-for-review)
+
+Date: 2026-07-18 · Session 14, plan.md Phase 2 Stage 2 · Subject: `docs/components/backend-cuda/DESIGN.md` (design-for-review; Session 14, worker CudaDESIGN_Author) · Method: 4-lens adversarial review → orchestrator adjudication → fixer pass (this file records both stages) · Adjudication: **all 22 findings CONFIRMED; all fixed in the current DESIGN revision** (its Review ledger carries the same table with §-pointers).
+
+## The four lenses and what they attacked
+
+- **Oracle fidelity (OF)** — attacked the byte-parity claim: the fn-level walk's driver-ownership rule vs the llvm exit-only-payload miscompile class, the freeing rule vs handle aliasing, bounds-guard width semantics (the S13 u8 class), the fold's operand assembly, array-typed accumulators in device local memory.
+- **CUDA/hardware realism (HW)** — attacked everything that must actually compile and run on sm_89 under nvcc: qualifier legality (CDP/rdc), the absence of CUDA error checking, thread-index width vs `Ty::Array { size: u64 }`, host-vs-device float contraction, the trap-flag storage mechanism, the Linux link tail, and the §6 recipe's operability.
+- **Contract coherence (CC)** — attacked the DESIGN against its own authority stack: the ADR-0022 D1 authority order, the D2 keep-test (the §2 transfer inventory's completeness — the test the doc itself proposed), the "sanctioned exception" framing, trap-visibility attribution, the erasure summary.
+- **Harness practicality (H)** — attacked the §6 vast.ai recipe as an operator runbook: image class, access/transfer shape, preflight, wall-time budget and parallelism, timeouts, reproducibility mechanism, cleanup and billing accounting.
+
+## Findings and dispositions
+
+Severities: 2 blockers · 8 majors · 12 minors (22 items; two convergences — **HW-2 ≡ CC-1b**: the missing error-checking protocol and the missing error-return crossing are one defect seen from two lenses; **H1 ≡ HW-6**: the same recipe gap).
+
+| id | lens | severity | claim | disposition |
+|---|---|---|---|---|
+| OF-1 | OF | blocker | the fn-level walk's driver-ownership skip rule (`loop_plan` decide∪advance membership ∪ SCC incidence) was never stated — the llvm exit-only-payload-once miscompile class would port silently | fixed — §1 walk-rule paragraph (llvm `func.rs:252–290`, skip at :280–285) + `exit_only_payload_emitted_once` added to the §6.8 ported pins |
+| OF-2 | OF | blocker | "every live handle is `cudaFree`d at fn exit" double-frees / use-after-frees under handle aliasing (fn parameters, returned/escaped arrays, back-edge swaps, `Output` identity) | fixed — §2 rewritten as allocation-based ownership (per-fn allocation registry; parameters borrowed; returns escape via caller-frees; no-double-free and no-use-after-free stated as invariants) |
+| OF-3 | OF | major | `Index`/`Update` bounds-guard C++ width rule missing (the S13 u8 class) | fixed — §1 op table rows + §3 (extend per `Ty` to `int64_t`, zext/sext; signed two-sided compare; never against `size_t` — llvm `func.rs:589–619`) |
+| OF-4 | OF | minor | fold operand assembly cited but not pinned | fixed — §1 fold paragraph now pins eval.rs:218–231 verbatim: `(Acc, Array)` operand, acc in slot 0, `(acc, e)` per step, in-order |
+| OF-5 | OF | minor | array-typed `Fold` acc in device local memory with no stated bound or fallback | fixed — §5: footprint is a compile-time constant; over-budget ⇒ documented `Unsupported` |
+| HW-1 | HW | major | BC8's two-case qualifier rule can emit illegal CUDA — a token-free, non-body-reachable fn containing launch-form ops would get `__host__ __device__` and need CDP/rdc (out at M3) | fixed — §1 BC8 three-case rule; §9 row rewritten to match |
+| HW-2 | HW | major | no CUDA error checking anywhere; error returns are also an unenumerated D→H crossing | fixed — §3 protocol: assert every `cudaMalloc`/`cudaMemcpy`, `cudaGetLastError()` after every launch, distinct **exit 102** ("harness-visible infra failure", never an R1 data point); §2 item 7 — ≡ CC-1b |
+| HW-3 | HW | major | thread-index type unstated against `Ty::Array { size: u64 }` | fixed — §1: emitted index arithmetic is 64-bit (`unsigned long long i`, 64-bit grid); the `n ≤ 2³¹−1` guard alternative recorded as rejected |
+| HW-4 | HW | minor | `-fmad=false` governs device code only; host contraction behavior unpinned | fixed — §4: host parity relies on the ISO default (`-std=c++17`, x86-64 baseline lacks FMA); host `-march=native`/`-mfma` forbidden |
+| HW-5 | HW | minor | trap flag as a `__device__` symbol contradicts the stated plain-memcpy mechanism | fixed — Dat table + §3: one `cudaMalloc`'d `unsigned int`, `cudaMemset` zeroing, plain `cudaMemcpy` both ways |
+| HW-6 | HW | major | §6 recipe not operator-complete | fixed — §6 steps 1–4: `nvidia/cuda:12.x-devel` image class (devel carries nvcc; sm_89 ⇒ toolkit ≥ 11.8), `vastai ssh-url` + `rsync -e 'ssh -p <port>'` shape, preflight (`nvidia-smi` + one-program smoke test) before the sweep, fresh-rental fallback if 45170851 is gone, ≥ 25 GB disk, first-`cargo test` dev-dep download — ≡ H1 |
+| HW-7 | HW | minor | Linux link tail left as an open question | fixed — §6.6 default pinned (`-lpthread -ldl -lm` after objects; no `-lc++abi`; PIC staticlib; glibc ≥ 2.34 absorbs, Ubuntu 20.04 needs explicit); §10 closed; as-built verification kept |
+| CC-1a | CC | major | transfer inventory incomplete: trap-flag initial zeroing (H→D, once per process) missing | fixed — §2 item 3 |
+| CC-1b | CC | major | transfer inventory incomplete: CUDA error returns (D→H) missing | fixed — §2 item 7 + §3 protocol — ≡ HW-2 |
+| CC-1c | CC | major | transfer inventory incomplete: device-side body-local array literal construction — the host-static+memcpy mechanism cannot execute mid-kernel | fixed — §2 item 8 + allocation bullet (per-thread local-memory initializer, mirroring inline form; host-static upload is launch-form-only) |
+| CC-2 | CC | major | the spec-authority line ranked the oracle sixth — contradicts ADR-0022 D1 | fixed — header line rewritten to the D1 order (oracle > ADR-0020 > newer ADRs > interp/DESIGN > rewrite R1 > corpus informative > array-scale-plan informative) |
+| CC-3 | CC | minor | "the sanctioned D2 exception" overclaims — ADR-0022 is pending Sapir ratification | fixed — header line: ADR-0020 is the paid contract-level modeling; this section is per-backend residue under the exception, re-opening nothing |
+| CC-4 | CC | minor | trap-visibility claim over-attributed to the two-site structure | fixed — §3: class parity + first-trap-wins bind any deferred-trap design; the two-site structure specifically forces the flag + readback mechanism |
+| CC-5 | CC | minor | erasure summary named token/Unit only | fixed — L4: the erased set is `Unit` \| `IoToken` \| `Str`; §8 module note updated |
+| H1 | H | major | §6 recipe not operator-complete | fixed — §6 steps 1–4 — ≡ HW-6 |
+| H2 | H | major | no wall-time budget or parallelism statement | fixed — §6 wall-time budget: llvm fan-out inherited (`available_parallelism`), ≈ 20–60+ min serial → ≈ 5–15 min fanned, nvcc ≈ 2–6 s/TU, abort-and-record past the envelope |
+| H3 | H | minor | timeouts unspecified | fixed — §6.7: llvm's 15 s run timeout inherited; 120 s nvcc compile timeout added |
+| H4 | H | minor | "same seeds, same 320 programs" cited numbers, not the mechanism | fixed — §6.8: `TestRunner::deterministic()` + synced pinned `Cargo.lock`; 320 draws (256 + 64), ≥ 256 closed non-diverged |
+| H5 | H | minor | cleanup and billing accounting under-specified | fixed — §6.9: leftovers enumerated (rsynced tree, `target/`, `~/.cargo`, rustup); post-cleanup `vastai show instances` check; cost = $/hr × measured wall, cross-checked with the console invoice |
+| H6 | H | minor | nvcc discovery order unstated | fixed — §6.5: `$NVCC` → `$CUDA_HOME/bin/nvcc` → `which nvcc`, mirroring `clang()`'s `$CC`-first behavior |
+
+## Refuted highlights (attacks that did not land)
+
+- **Op-table completeness vs the full Core op set** — attacked as under-enumerated; refuted: §1's table gives every Core op both a launch-form and an inline-form cell, and the two-form structure *is* the coverage argument; `Print`'s empty body cell is proved, not omitted (token-free bodies, L1605).
+- **Shared `loop_plan` ceiling literal** — attacked as a hand-copied ceiling that could drift from the other backends; refuted: there is no literal to drift — the ceiling is the one library predicate `flow_ir::loop_plan` consumed by interp, rewrite, llvm, and now cuda, "lifted together or not at all" (L3; reference gate `flow-backend-llvm/src/lib.rs:41–56`).
+- **E2 airtightness** — attacked from the device side (could an effect slip into a kernel?); refuted: device effect-freedom is structural — bodies are token-free (L1605) and lower's builder synthesizes pure body fns only (`flow-lower/src/emit.rs:191,296`), so "no effects in kernels" is a corollary, not a discipline.
+- **Seed reproducibility** — the "the sweep is irreproducible folklore" attack was refuted: the mechanism is real and already in the tree (`TestRunner::deterministic()` + the synced pinned `Cargo.lock`). A doc-level residue — cite the mechanism, not the numbers — was confirmed separately and fixed as H4.
+- **Exit-101 / R1 rule ports** — attacked as a lossy port of the llvm observable; refuted: §6.7 preserves the llvm rules verbatim (oracle-before-`rewrite()`, closed-mode only, result-printing wrapper, exit 101 with stdout ignored) and the new exit-102 clause keeps infra failures outside R1 rather than bending it.
+- **sm_89 / `-fmad` facts** — attacked as manual-folklore; refuted: the hardware claims were web-verified during review (nvcc defaults to FMA contraction; sm_89 support requires CUDA toolkit ≥ 11.8; `-devel` images carry nvcc, runtime images do not). §4's stance stands unchanged: the differential is the evidence, not the manual.
+- **Default-stream memcpy sync semantics** — the attack that the readback-as-sync-point design rests on an unstated assumption was refuted: a plain D→H `cudaMemcpy` on the default stream is host-synchronizing, so the trap-flag readback legitimately doubles as the post-launch sync point. Confirmed sound; §3 now states the semantics explicitly.
+
+## The D2 keep-test outcome
+
+This DESIGN was the first live fire of ADR-0022 D2's test case, and the keep-test **failed on first use — which is the model working as intended**. The contract-coherence lens executed the doc's own pass condition ("the review failing to find a missing crossing is the pass condition") and found the §2 transfer inventory **incomplete**: three missing crossings (CC-1a trap-flag zeroing H→D; CC-1b CUDA error returns D→H; CC-1c body-local literal construction — no crossing, but the stated mechanism could not execute mid-kernel). This is the **first finding the Level-B apparatus has produced**: the model's value was not the inventory being right, but the inventory being *checkable* — the two-site structure told the review exactly where to look, and the completion (§2's nine rows) is model-driven, not ad hoc. Whether this trips D2's re-evaluation trigger ("the first real defect caught by the Level-B apparatus … re-opens this decision") is **Sapir's call** — ADR-0022 is itself pending ratification, and this record re-opens nothing on its own. Keep-test item (b) — the trap-visibility rule — survived in reframed form (CC-4).
+
+## Verdict
+
+**Ready for the implementation gate, as fixed.** All 22 confirmed findings are applied in the current DESIGN revision; no finding survived adjudication unfixed, and the refuted attacks left the spine (uniform residency, host-driven guard-first loops, sequential fold, check-after-every-launch, full-remote differential) intact. Next: Sapir's implementation gate per plan.md Phase 2 (implementation workflow → orchestrator line-by-line review). Standing caveats carried forward: ADR-0022 is pending Sapir ratification (CC-3 framing); instance 45170852 destroy-vs-keep is Sapir's call (§6.1/§10); the Linux link-tail default is pinned but still verified as-built at implementation time (§6.6).

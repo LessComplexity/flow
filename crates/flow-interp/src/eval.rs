@@ -80,6 +80,23 @@ pub(crate) fn eval_fn(
     // The in-SCC object set (incidence test for driver ownership; interp §2).
     let in_scc = build_in_scc(ir, f);
 
+    // Driver-owned morphisms: everything in a loop plan's decide/advance
+    // cones (the llvm `func.rs` walk rule, BL7-shared). Plan membership is the
+    // precise rule — a computed exit payload or an exit-arm fanout leaves the
+    // SCC but still belongs to the decide cone; SCC incidence alone would
+    // re-evaluate it after the loop (a dead recompute for values, a DOUBLE
+    // side effect for an exit-arm Print).
+    let mut owned: SecondaryMap<MorphismId, ()> = SecondaryMap::new();
+    for scc in ir.loop_structure(f) {
+        for &mg in &scc.merges {
+            if let Some(plan) = ir.loop_plan(f, mg) {
+                for &mo in plan.decide_order.iter().chain(plan.advance_order.iter()) {
+                    owned.insert(mo, ());
+                }
+            }
+        }
+    }
+
     // The flat topo walk (interp DESIGN §2).
     for m in ir.topo_order(f) {
         let morph = ir.morphism(m).expect("sealed graph: morphism resolves");
@@ -95,8 +112,9 @@ pub(crate) fn eval_fn(
             _ => {
                 let incident =
                     in_scc.contains_key(morph.source) || in_scc.contains_key(morph.target);
-                if incident {
-                    // Driver owns every non-LoopEnter morphism incident to an SCC.
+                if incident || owned.contains_key(m) {
+                    // Driver owns every morphism in a loop plan's cones or
+                    // incident to an SCC.
                     continue;
                 }
                 eval_morphism(&mut ctx, m, budget)?;
@@ -185,6 +203,17 @@ pub(crate) fn eval_morphism(
             write(ctx, target, v);
             Ok(())
         }
+        Operation::Widen => {
+            let v = match (read(ctx, source), ctx.ty_of(target)) {
+                (RValue::Scalar(Value::I32(x)), Ty::Int { bits: 64, .. }) => Value::I64(*x as i64),
+                (RValue::Scalar(Value::I32(x)), Ty::Float { bits: 32 }) => Value::F32(*x as f32),
+                (RValue::Scalar(Value::I32(x)), Ty::Float { bits: 64 }) => Value::F64(*x as f64),
+                (RValue::Scalar(Value::F32(x)), Ty::Float { bits: 64 }) => Value::F64(*x as f64),
+                _ => unreachable!("invalid Widen pair passed validation"),
+            };
+            write(ctx, target, RValue::Scalar(v));
+            Ok(())
+        }
         Operation::Phi => {
             // (T, T, Bool): src@2 ? src@0 : src@1.
             let src = read(ctx, source).clone();
@@ -202,29 +231,65 @@ pub(crate) fn eval_morphism(
             write(ctx, target, v);
             Ok(())
         }
-        Operation::Map { body } => {
-            let arr = read(ctx, source).clone();
+        Operation::Map { body, captures } => {
+            let k = captures as usize;
+            let src = read(ctx, source).clone();
+            // ADR-0027: the source is (c₁…cₖ, array); captures broadcast to
+            // every body call (read-at-position — the value as of the map site).
+            let (caps, arr) = if k == 0 {
+                (Vec::new(), src)
+            } else {
+                let caps: Vec<RValue> = (0..k as u32).map(|i| component(&src, i).clone()).collect();
+                (caps, component(&src, k as u32).clone())
+            };
             let elems = match arr {
                 RValue::Array(es) => es,
                 _ => unreachable!("Map on non-array"),
             };
             let mut out = Vec::with_capacity(elems.len());
             for e in elems {
-                out.push(eval_fn(ctx.ir, body, e, budget)?);
+                let arg = if k == 0 {
+                    e
+                } else {
+                    let mut v = caps.clone();
+                    v.push(e);
+                    RValue::Tuple(v)
+                };
+                out.push(eval_fn(ctx.ir, body, arg, budget)?);
             }
             write(ctx, target, RValue::Array(out));
             Ok(())
         }
-        Operation::Fold { body } => {
-            // (Acc, Array): left fold.
+        Operation::Fold { body, captures } => {
+            // (Acc, Array): left fold. ADR-0027: (c₁…cₖ, Acc, Array); the body
+            // gets (c₁…cₖ, acc, e) per step.
+            let k = captures as usize;
             let src = read(ctx, source).clone();
-            let mut acc = component(&src, 0).clone();
-            let elems = match component(&src, 1).clone() {
-                RValue::Array(es) => es,
-                _ => unreachable!("Fold's second component is not an array"),
+            let (caps, mut acc, elems) = if k == 0 {
+                let acc = component(&src, 0).clone();
+                let elems = match component(&src, 1).clone() {
+                    RValue::Array(es) => es,
+                    _ => unreachable!("Fold's second component is not an array"),
+                };
+                (Vec::new(), acc, elems)
+            } else {
+                let caps: Vec<RValue> = (0..k as u32).map(|i| component(&src, i).clone()).collect();
+                let acc = component(&src, k as u32).clone();
+                let elems = match component(&src, k as u32 + 1).clone() {
+                    RValue::Array(es) => es,
+                    _ => unreachable!("Fold's array component is not an array"),
+                };
+                (caps, acc, elems)
             };
             for e in elems {
-                let pair = RValue::Tuple(vec![acc, e]);
+                let pair = if k == 0 {
+                    RValue::Tuple(vec![acc, e])
+                } else {
+                    let mut v = caps.clone();
+                    v.push(acc);
+                    v.push(e);
+                    RValue::Tuple(v)
+                };
                 acc = eval_fn(ctx.ir, body, pair, budget)?;
             }
             write(ctx, target, acc);
@@ -269,6 +334,32 @@ pub(crate) fn eval_morphism(
                 .map(|(i, x)| RValue::Tuple(vec![RValue::Scalar(Value::I32(i as i32)), x]))
                 .collect();
             write(ctx, target, RValue::Array(out));
+            Ok(())
+        }
+        Operation::Iota => {
+            // (ADR-0029 denotation: [0, 1, …, n-1] as i32.) The count is the
+            // constant source (validate ties it to the target's static size).
+            let n = match read(ctx, source) {
+                RValue::Scalar(Value::I32(v)) => *v as usize,
+                _ => unreachable!("Iota on non-i32 count"),
+            };
+            let out = (0..n)
+                .map(|i| RValue::Scalar(Value::I32(i as i32)))
+                .collect();
+            write(ctx, target, RValue::Array(out));
+            Ok(())
+        }
+        Operation::Fill => {
+            // (ADR-0029 denotation: [x; n] — the internal (x, count) pair, as Zip.)
+            let src = read(ctx, source).clone();
+            let v = component(&src, 0).clone();
+            let n = match component(&src, 1) {
+                RValue::Scalar(Value::I32(c)) => *c as usize,
+                RValue::Scalar(Value::I64(c)) => *c as usize,
+                RValue::Scalar(Value::U8(c)) => *c as usize,
+                _ => unreachable!("Fill on non-integer count"),
+            };
+            write(ctx, target, RValue::Array(vec![v; n]));
             Ok(())
         }
         Operation::Print { newline } => {

@@ -1,3 +1,25 @@
+// vector.flow
+//
+// ASPIRATIONAL SKETCH — DOES NOT COMPILE TODAY.
+//
+// This file shows the post-Core generics dialect, not Flow-Core:
+//   - type parameters on functions (`zip<A, B, N>`, `vec_add<N: i32>`) — not in
+//     the grammar; the parser recovers with P0001 ("expected `(` after function
+//     name"). Generic type ARGUMENTS in type position are the parsed case and
+//     are rejected with P0103.
+//   - a range literal (`[0..N]`) — not in the grammar.
+//   - fixed arrays parameterized by a size variable (`[A; N]`) — Flow-Core
+//     requires a literal size (`[A; 16]`).
+//   - a destructuring op-block parameter (`map { (x, y) -> … }`) — rejected
+//     with P0116.
+//   - a call expression (`vec_add(a, b)` in `main`) — rejected with P0108;
+//     Flow-Core calls are tuple-input flows: `(a, b) -> vec_add`.
+//
+// The test suite therefore excludes this file from the in-Core example set
+// (flow-rewrite/tests/identity.rs: "the out-of-Core generics sketch"). For the
+// in-Core version of this program — monomorphic, via the ADR-0018 `zip`
+// builtin — see vector_add.flow.
+
 fn zip<A, B, N>(a: [A; N], b: [B; N]) -> [(A, B); N] {
     [0..N] -> map { i ->
       (a[i], b[i])

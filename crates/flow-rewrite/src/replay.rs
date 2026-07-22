@@ -33,6 +33,19 @@ pub enum ReplayError {
     NonCanonicalLoop,
 }
 
+/// Where a replayed body's Return value lands (DESIGN §1.1 + the `inline`
+/// pass). Normal fn replay writes the replayed fn's own Return ([`RetDest::Own`]);
+/// an inlined call site redirects the callee's Return writers to the call
+/// target's fresh object.
+enum RetDest {
+    /// Return writers target the enclosing fn's own Return object.
+    Own,
+    /// An inlined call whose target is a `Temporary`: the callee's Return
+    /// value defines one fresh object under this name, handed back to the
+    /// caller for the `remap` insertion.
+    Fresh(Option<String>),
+}
+
 /// Rebuild `ir` under `plan` (DESIGN §1.1). Returns a fresh sealed graph, or
 /// [`ReplayError::NonCanonicalLoop`] if any function's loop shape is outside the
 /// interp-M1 canonical quartet (R6 — the driver takes the whole-graph identity
@@ -133,7 +146,17 @@ fn replay_fn(
             continue;
         }
         reconstruct_a(
-            &mut fb, ir, plan, fmap, fused, remap, &mut done, &obj_order, o, ret_obj,
+            &mut fb,
+            ir,
+            plan,
+            fmap,
+            fused,
+            remap,
+            &mut done,
+            &obj_order,
+            o,
+            ret_obj,
+            &RetDest::Own,
         );
     }
 
@@ -159,6 +182,7 @@ fn reconstruct_a(
     obj_order: &[ObjectId],
     o: ObjectId,
     ret_obj: ObjectId,
+    ret_dest: &RetDest,
 ) {
     if o == ret_obj {
         done.insert(o, true);
@@ -178,7 +202,7 @@ fn reconstruct_a(
         }
         ObjectKind::LoopMerge => {
             reconstruct_loop(
-                fb, ir, plan, fmap, fused, remap, done, obj_order, o, ret_obj,
+                fb, ir, plan, fmap, fused, remap, done, obj_order, o, ret_obj, ret_dest,
             );
         }
         ObjectKind::Return => {
@@ -222,6 +246,7 @@ fn reconstruct_loop(
     obj_order: &[ObjectId],
     merge: ObjectId,
     ret_obj: ObjectId,
+    ret_dest: &RetDest,
 ) {
     let merge_obj = ir.object(merge).expect("merge");
 
@@ -290,7 +315,12 @@ fn reconstruct_loop(
     let ef = slot_feeders(ir, exit_route);
     let tgt_obj = ir.object(exit_tgt).expect("exit target");
     let dest = if exit_tgt == ret_obj {
-        Dest::Ret { slot: None }
+        match ret_dest {
+            RetDest::Own => Dest::Ret { slot: None },
+            // Inlined: the exit mints the call target's object instead of
+            // writing the callee's (nonexistent) Return.
+            RetDest::Fresh(name) => Dest::Fresh(name.clone()),
+        }
     } else {
         Dest::Fresh(tgt_obj.name.clone())
     };
@@ -303,7 +333,13 @@ fn reconstruct_loop(
             exit_loc,
         )
         .expect("replay: loop_exit");
-    if exit_tgt != ret_obj {
+    if exit_tgt == ret_obj {
+        // Inlined: record the exit object as the callee's Return value —
+        // `inline_return` picks it up.
+        if matches!(ret_dest, RetDest::Fresh(_)) {
+            remap.insert(ret_obj, exit_new);
+        }
+    } else {
         remap.insert(exit_tgt, exit_new);
         done.insert(exit_tgt, true);
     }
@@ -357,9 +393,28 @@ fn reconstruct_temp(
         return;
     }
 
+    // An inlined `Call` edge (region-emission plan Move 1): substitute the
+    // callee's body; its Return value defines this object.
+    if plan.inline.contains_key(ins[0]) {
+        let new = inline_call(
+            fb,
+            ir,
+            plan,
+            fmap,
+            fused,
+            remap,
+            ins[0],
+            RetDest::Fresh(obj.name.clone()),
+        );
+        remap.insert(o, new);
+        return;
+    }
+
     // A single op edge defines this object.
     let m = ir.morphism(ins[0]).expect("op edge");
-    let new = emit_op(fb, ir, plan, fmap, remap, m.op, m.source, dest, m.loc);
+    let new = emit_op(
+        fb, ir, plan, fmap, remap, m.op, m.source, m.target, dest, m.loc,
+    );
     remap.insert(o, new);
 }
 
@@ -374,6 +429,7 @@ fn emit_op(
     remap: &SecondaryMap<ObjectId, ObjectId>,
     op: Operation,
     src: ObjectId,
+    target: ObjectId,
     dest: Dest,
     loc: flow_ir::SourceLoc,
 ) -> ObjectId {
@@ -393,6 +449,11 @@ fn emit_op(
         Neg | Not => fb
             .unop(op, feed(plan, remap, src), dest, loc)
             .expect("replay: unop"),
+        Widen => {
+            let out_ty = ir.object(target).expect("replay: Widen target").ty.clone();
+            fb.widen(feed(plan, remap, src), out_ty, dest, loc)
+                .expect("replay: widen")
+        }
         Proj { index } => fb
             .proj(feed(plan, remap, src), index, dest, loc)
             .expect("replay: proj"),
@@ -420,6 +481,15 @@ fn emit_op(
         Enumerate => fb
             .enumerate(feed(plan, remap, src), dest, loc)
             .expect("replay: enumerate"),
+        Iota => fb
+            .iota(feed(plan, remap, src), dest, loc)
+            .expect("replay: iota"),
+        Fill => fb
+            // The EXISTING (already-replayed) internal tuple, never the sugar
+            // `fill(x, n)` — the sugar mints a fresh tuple, which resurrects
+            // every CSE'd duplicate and breaks the fixpoint (S21).
+            .fill_from(feed(plan, remap, src), dest, loc)
+            .expect("replay: fill"),
         Update => {
             let f = slot_feeders(ir, src);
             fb.update(
@@ -434,12 +504,37 @@ fn emit_op(
         Call(g) => fb
             .call(fmap[g], feed(plan, remap, src), dest, loc)
             .expect("replay: call"),
-        Map { body } => fb
+        Map { body, captures: 0 } => fb
             .map(fmap[body], feed(plan, remap, src), dest, loc)
             .expect("replay: map"),
-        Fold { body } => fb
+        Map { body, captures } => {
+            // ADR-0027: the source is the product (c₁…cₖ, arr) — re-thread the
+            // leading capture components, never silently rebuild as k=0.
+            let f = slot_feeders(ir, src);
+            let (caps, data) = split_capture_source(&f, captures as usize, 1, "Map");
+            let caps: Vec<ObjectId> = caps.iter().map(|&c| feed(plan, remap, c)).collect();
+            fb.map_captured(fmap[body], &caps, feed(plan, remap, data[0]), dest, loc)
+                .expect("replay: map_captured")
+        }
+        Fold { body, captures: 0 } => fb
             .fold(fmap[body], feed(plan, remap, src), dest, loc)
             .expect("replay: fold"),
+        Fold { body, captures } => {
+            // ADR-0027: the source is (c₁…cₖ, acc, arr) — captures first, then
+            // the historical (acc, arr) tail.
+            let f = slot_feeders(ir, src);
+            let (caps, data) = split_capture_source(&f, captures as usize, 2, "Fold");
+            let caps: Vec<ObjectId> = caps.iter().map(|&c| feed(plan, remap, c)).collect();
+            fb.fold_captured(
+                fmap[body],
+                &caps,
+                feed(plan, remap, data[0]),
+                feed(plan, remap, data[1]),
+                dest,
+                loc,
+            )
+            .expect("replay: fold_captured")
+        }
         Print { newline } => {
             // `print`/`println` take (token, value) and always mint a fresh
             // IoToken result (no Dest); `dest` is unused here (Print never
@@ -500,6 +595,12 @@ fn reconstruct_return_writer(
         Operation::LoopExit => {}
         // A value-producing primitive targeting Return directly (Dest::Ret{None}).
         op => {
+            // An inlined `Call` writing Return directly (region-emission plan
+            // Move 1): the callee's Return writers replay as this fn's own.
+            if plan.inline.contains_key(m) {
+                inline_call(fb, ir, plan, fmap, fused, remap, m, RetDest::Own);
+                return;
+            }
             emit_op(
                 fb,
                 ir,
@@ -508,9 +609,152 @@ fn reconstruct_return_writer(
                 remap,
                 op,
                 morph.source,
+                morph.target,
                 Dest::Ret { slot: None },
                 morph.loc,
             );
+        }
+    }
+}
+
+// --- call inlining (region-emission plan Move 1) ----------------------------
+
+/// Inline one planned `Call` edge: replay the callee's body verbatim into the
+/// caller's builder with the callee's Parameter mapped to the call's (already
+/// replayed) source object and the callee's Return writers redirected per
+/// `ret_dest`. The callee's objects get fresh ids in builder emission order
+/// (L2: same graph → same inlined graph); the callee's own planned Calls
+/// recurse through [`reconstruct_temp`]. Returns the object holding the
+/// callee's Return value (meaningful only for [`RetDest::Fresh`]).
+#[allow(clippy::too_many_arguments)]
+fn inline_call(
+    fb: &mut flow_ir::FnBuilder<'_>,
+    ir: &CategoryIr,
+    plan: &RewritePlan,
+    fmap: &SecondaryMap<FuncId, FuncId>,
+    fused: &SecondaryMap<MorphismId, FuncId>,
+    remap: &SecondaryMap<ObjectId, ObjectId>,
+    m: MorphismId,
+    ret_dest: RetDest,
+) -> ObjectId {
+    let morph = ir.morphism(m).expect("inline call edge");
+    let Operation::Call(g) = morph.op else {
+        unreachable!("inline: plan channel keys a non-Call edge")
+    };
+    let def = ir.func(g).expect("inline callee");
+    let ret_obj = def.output;
+    let obj_order = object_topo_order(ir, g);
+
+    // A callee-local id map (the caller's map is read only for the call
+    // source): object ids are unique graph-wide and each inlined copy is fully
+    // wired before returning, so one local map per site is unambiguous — a
+    // diamond-shared callee simply gets one fresh copy per site (the
+    // documented duplication policy).
+    let mut local: SecondaryMap<ObjectId, ObjectId> = SecondaryMap::new();
+    let arg = feed(plan, remap, morph.source);
+    local.insert(def.input, arg);
+    let mut done: SecondaryMap<ObjectId, bool> = SecondaryMap::new();
+
+    // Phase A — body objects, exactly as `replay_fn` (loop quartets included).
+    for &o in &obj_order {
+        if done.get(o).copied().unwrap_or(false) {
+            continue;
+        }
+        reconstruct_a(
+            fb, ir, plan, fmap, fused, &mut local, &mut done, &obj_order, o, ret_obj, &ret_dest,
+        );
+    }
+
+    // Phase B — the callee's Return writers, redirected.
+    inline_return(fb, ir, plan, fmap, &local, m, ret_obj, ret_dest, arg)
+}
+
+/// Phase B of an inlined call: wire the callee's Return writers per `ret_dest`
+/// ([`RetDest::Own`]: they replay as the enclosing fn's own Return writes;
+/// [`RetDest::Fresh`]: the Return value is captured in one fresh object).
+/// Returns the object holding the Return value (`Fresh`), or `arg` as a dummy
+/// (`Own` — the writes already landed on the enclosing fn's Return).
+#[allow(clippy::too_many_arguments)]
+fn inline_return(
+    fb: &mut flow_ir::FnBuilder<'_>,
+    ir: &CategoryIr,
+    plan: &RewritePlan,
+    fmap: &SecondaryMap<FuncId, FuncId>,
+    local: &SecondaryMap<ObjectId, ObjectId>,
+    call: MorphismId,
+    ret_obj: ObjectId,
+    ret_dest: RetDest,
+    arg: ObjectId,
+) -> ObjectId {
+    let writers = ir.in_edges(ret_obj);
+    let call_loc = ir.morphism(call).expect("call").loc;
+
+    // A slot-wise return (a product written by `Pair` slot writes).
+    if !writers.is_empty()
+        && writers
+            .iter()
+            .all(|&w| matches!(ir.morphism(w).unwrap().op, Operation::Pair { .. }))
+    {
+        let comps: Vec<ObjectId> = slot_feeders(ir, ret_obj)
+            .into_iter()
+            .map(|s| feed(plan, local, s))
+            .collect();
+        return match ret_dest {
+            RetDest::Fresh(name) => {
+                let ty = &ir.object(ret_obj).expect("ret").ty;
+                match ty {
+                    flow_ir::Ty::Tuple(_) => fb.pack(&comps, Dest::Fresh(name), call_loc),
+                    flow_ir::Ty::Struct { .. } => {
+                        fb.pack_struct(ty.clone(), &comps, Dest::Fresh(name), call_loc)
+                    }
+                    flow_ir::Ty::Array { .. } => fb.pack_array(&comps, Dest::Fresh(name), call_loc),
+                    _ => unreachable!("inline: slot-written Return with non-product ty"),
+                }
+                .expect("inline: pack")
+            }
+            RetDest::Own => {
+                for &w in writers {
+                    let mo = ir.morphism(w).expect("ret writer");
+                    let Operation::Pair { slot, .. } = mo.op else {
+                        unreachable!("inline: mixed Return writers")
+                    };
+                    fb.output(feed(plan, local, mo.source), Some(slot), mo.loc)
+                        .expect("inline: output slot");
+                }
+                arg
+            }
+        };
+    }
+
+    // The canonical single full-value writer (Output / primitive / LoopExit).
+    assert!(
+        writers.len() == 1,
+        "inline: callee Return has a non-canonical writer set"
+    );
+    let mo = ir.morphism(writers[0]).expect("ret writer");
+    match mo.op {
+        // Emitted by the loop quartet with the redirect dest; the Fresh case
+        // recorded the exit object as the Return value (`reconstruct_loop`).
+        Operation::LoopExit => match ret_dest {
+            RetDest::Fresh(_) => local[ret_obj],
+            RetDest::Own => arg,
+        },
+        Operation::Output => match ret_dest {
+            RetDest::Fresh(_) => feed(plan, local, mo.source),
+            RetDest::Own => {
+                fb.output(feed(plan, local, mo.source), None, mo.loc)
+                    .expect("inline: output");
+                arg
+            }
+        },
+        op => {
+            let dest = match ret_dest {
+                RetDest::Fresh(name) => Dest::Fresh(name),
+                RetDest::Own => Dest::Ret { slot: None },
+            };
+            emit_op(
+                fb, ir, plan, fmap, local, op, mo.source, mo.target, dest, mo.loc,
+            )
         }
     }
 }
@@ -519,30 +763,38 @@ fn reconstruct_return_writer(
 
 /// Whether `op` reads its source as an **internally-packed** tuple (the builder
 /// mints that product atomically). These sources are never materialized.
+///
+/// ADR-0027: a `Map`/`Fold` with `captures > 0` qualifies — `map_captured` /
+/// `fold_captured` mint the `(c₁…cₖ, …)` source product atomically. The k=0
+/// forms keep the historical shapes (Map's bare array; Fold's materialized
+/// `(acc, arr)` product). Keep in sync with `graph_rewrites`' copy — CSE
+/// representatives must never be packs replay treats as internal.
 fn reads_packed_source(op: Operation) -> bool {
     use Operation::*;
-    matches!(
-        op,
-        Add | Sub
-            | Mul
-            | Div
-            | Mod
-            | Eq
-            | Neq
-            | Lt
-            | Gt
-            | Le
-            | Ge
-            | And
-            | Or
-            | Phi
-            | Index
-            | Zip
-            | Update
-            | Print { .. }
-            | LoopBack
-            | LoopExit
-    )
+    match op {
+        Add
+        | Sub
+        | Mul
+        | Div
+        | Mod
+        | Eq
+        | Neq
+        | Lt
+        | Gt
+        | Le
+        | Ge
+        | And
+        | Or
+        | Phi
+        | Index
+        | Zip
+        | Update
+        | Print { .. }
+        | LoopBack
+        | LoopExit => true,
+        Map { captures, .. } | Fold { captures, .. } => captures > 0,
+        _ => false,
+    }
 }
 
 /// Whether `o` is an internal pack (a product consumed **only** as one
@@ -578,6 +830,29 @@ fn slot_feeders(ir: &CategoryIr, product: ObjectId) -> Vec<ObjectId> {
         .collect();
     v.sort_by_key(|(s, _)| *s);
     v.into_iter().map(|(_, s)| s).collect()
+}
+
+/// Split a captured `Map`/`Fold` source product's slot feeders into the
+/// leading `k` capture components and the trailing data inputs (`data` = 1
+/// for `Map`: the array; `data` = 2 for `Fold`: acc + array). The builder
+/// pins the source arity at construction (R2), so a mismatch here means a
+/// malformed graph reached replay — an internal bug, named loudly. Never a
+/// `debug_assert`: over-arity would silently truncate in release, and a
+/// non-Pair-fed source (a short feeder list, since [`slot_feeders`] filters
+/// to `Pair` edges) would panic as an unmarked index-OOB.
+fn split_capture_source<'a, T>(
+    feeders: &'a [T],
+    k: usize,
+    data: usize,
+    op: &str,
+) -> (&'a [T], &'a [T]) {
+    assert!(
+        feeders.len() == k + data,
+        "replay: {op}{{k={k}}} source product arity expected {}, found {}",
+        k + data,
+        feeders.len()
+    );
+    feeders.split_at(k)
 }
 
 /// Feeder lookup: resolve `alias` transitively, then map to the new id (DESIGN
@@ -704,7 +979,7 @@ fn push_refs(ir: &CategoryIr, plan: &RewritePlan, f: FuncId, stack: &mut Vec<Fun
         let morph = ir.morphism(m).expect("morph");
         let (target, body) = match morph.op {
             Operation::Call(g) => (morph.target, g),
-            Operation::Map { body } | Operation::Fold { body } => (morph.target, body),
+            Operation::Map { body, .. } | Operation::Fold { body, .. } => (morph.target, body),
             _ => continue,
         };
         // A dropped/aliased defining edge is not replayed ⇒ no reference.
@@ -716,6 +991,12 @@ fn push_refs(ir: &CategoryIr, plan: &RewritePlan, f: FuncId, stack: &mut Vec<Fun
             // Call/Map/Fold targets via fmap. `f`/`g` themselves are not kept.
             push_raw_refs(ir, spec.f, stack);
             push_raw_refs(ir, spec.g, stack);
+        } else if plan.inline.contains_key(m) {
+            // Inlined (Move 1): the callee is not referenced — but the inline
+            // copy's own Call/Map/Fold targets are, so walk the callee's refs
+            // plan-aware. Inline edges form a DAG (the pass's cycle guard), so
+            // the descent terminates.
+            push_refs(ir, plan, body, stack);
         } else {
             stack.push(body);
         }
@@ -728,9 +1009,9 @@ fn push_raw_refs(ir: &CategoryIr, fid: FuncId, stack: &mut Vec<FuncId>) {
     let def = ir.func(fid).expect("body fn");
     for &m in &def.morphisms {
         match ir.morphism(m).expect("morph").op {
-            Operation::Call(g) | Operation::Map { body: g } | Operation::Fold { body: g } => {
-                stack.push(g)
-            }
+            Operation::Call(g)
+            | Operation::Map { body: g, .. }
+            | Operation::Fold { body: g, .. } => stack.push(g),
             _ => {}
         }
     }
@@ -750,6 +1031,10 @@ enum Redirect {
 /// (param ↦ `r₁`, Return ↦ `h`'s Return). Returns the new body's `FuncId`.
 /// Preconditions (single full-value Return writer, loop-free) are the analysis's
 /// contract; a violation here is an internal bug and panics.
+///
+/// ADR-0027: with `captures = k > 0` both bodies take `(c₁…cₖ, x)` — `h`'s
+/// input carries the shared captures, so `g`'s parameter is re-packed as
+/// `(π₀ h.in … πₖ₋₁ h.in, r₁)` rather than bare `r₁`.
 fn synthesize_fused(
     b: &mut IrBuilder,
     ir: &CategoryIr,
@@ -772,7 +1057,21 @@ fn synthesize_fused(
     let mut hb = b.build_fn(h).expect("replay: build fused body");
     let h_in = hb.input();
     let r1 = inline_body(&mut hb, ir, fmap, spec.f, h_in, Redirect::Fresh);
-    inline_body(&mut hb, ir, fmap, spec.g, r1, Redirect::Return);
+    let g_param = if spec.captures == 0 {
+        r1
+    } else {
+        let mut comps: Vec<ObjectId> = Vec::with_capacity(spec.captures as usize + 1);
+        for i in 0..spec.captures {
+            let p = hb
+                .proj(h_in, i, Dest::Fresh(None), loc)
+                .expect("replay: fused capture proj");
+            comps.push(p);
+        }
+        comps.push(r1);
+        hb.pack(&comps, Dest::Fresh(None), loc)
+            .expect("replay: fused g-param pack")
+    };
+    inline_body(&mut hb, ir, fmap, spec.g, g_param, Redirect::Return);
     hb.finish().expect("replay: finish fused body");
     h
 }
@@ -806,7 +1105,17 @@ fn inline_body(
             continue;
         }
         reconstruct_a(
-            fb, ir, &plan, fmap, &no_fuse, &mut local, &mut done, &obj_order, o, ret_obj,
+            fb,
+            ir,
+            &plan,
+            fmap,
+            &no_fuse,
+            &mut local,
+            &mut done,
+            &obj_order,
+            o,
+            ret_obj,
+            &RetDest::Own,
         );
     }
 
@@ -825,6 +1134,7 @@ fn inline_body(
                 &local,
                 op,
                 morph.source,
+                morph.target,
                 Dest::Fresh(None),
                 morph.loc,
             ),
@@ -844,6 +1154,7 @@ fn inline_body(
                         &local,
                         op,
                         morph.source,
+                        morph.target,
                         Dest::Ret { slot: None },
                         morph.loc,
                     );
@@ -855,8 +1166,13 @@ fn inline_body(
 }
 
 /// Emit the fused `Map{h}` on the ORIGINAL array (DESIGN §4). `m_g` is the old
-/// `Map{g}` edge; its source `mid` was produced by a `Map{f}` whose source is the
-/// original array — that array (already replayed) is the new map's input.
+/// `Map{g}` edge; its mapped array `mid` was produced by a `Map{f}` — `f`'s
+/// mapped array (already replayed) is the fused map's array input.
+///
+/// ADR-0027: with `captures = k > 0` the analysis has guaranteed both maps read
+/// the identical capture objects, so the fused map re-threads `f`'s leading
+/// source components with [`flow_ir::FnBuilder::map_captured`]; the fused body's
+/// capture count is `k`.
 #[allow(clippy::too_many_arguments)]
 fn emit_fused_map(
     fb: &mut flow_ir::FnBuilder<'_>,
@@ -868,9 +1184,63 @@ fn emit_fused_map(
     dest: Dest,
     loc: flow_ir::SourceLoc,
 ) -> ObjectId {
-    let mid = ir.morphism(m_g).expect("g-edge").source;
+    let g_morph = ir.morphism(m_g).expect("g-edge");
+    let Operation::Map { captures, .. } = g_morph.op else {
+        unreachable!("emit_fused_map: fused key is not a Map edge")
+    };
+    let k = captures as usize;
+    // g's mapped array (= f's result): the bare source for k=0, else the source
+    // product's last slot.
+    let mid = if k == 0 {
+        g_morph.source
+    } else {
+        let feeders = slot_feeders(ir, g_morph.source);
+        let (_, data) = split_capture_source(&feeders, k, 1, "Map");
+        data[0]
+    };
     let m_f = ir.in_edges(mid)[0];
-    let arr = ir.morphism(m_f).expect("f-edge").source;
-    fb.map(h, feed(plan, remap, arr), dest, loc)
-        .expect("replay: fused map")
+    let f_src = ir.morphism(m_f).expect("f-edge").source;
+    if k == 0 {
+        fb.map(h, feed(plan, remap, f_src), dest, loc)
+            .expect("replay: fused map")
+    } else {
+        let f = slot_feeders(ir, f_src);
+        let (caps, data) = split_capture_source(&f, k, 1, "Map");
+        let caps: Vec<ObjectId> = caps.iter().map(|&c| feed(plan, remap, c)).collect();
+        fb.map_captured(h, &caps, feed(plan, remap, data[0]), dest, loc)
+            .expect("replay: fused map_captured")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_capture_source;
+
+    #[test]
+    fn split_capture_source_partitions_caps_and_data() {
+        let (caps, data) = split_capture_source(&[10, 20, 30], 2, 1, "Map");
+        assert_eq!(caps, &[10, 20]);
+        assert_eq!(data, &[30]);
+        let (caps, data) = split_capture_source(&[10, 20, 30, 40], 2, 2, "Fold");
+        assert_eq!(caps, &[10, 20]);
+        assert_eq!(data, &[30, 40]);
+    }
+
+    #[test]
+    #[should_panic(expected = "replay: Map{k=2} source product arity expected 3, found 4")]
+    fn split_capture_source_over_arity_is_loud() {
+        // Over-arity must NOT silently truncate in release (ADR-0027 review
+        // major #8 — the old `debug_assert` let the extra slot drop).
+        let f = [10, 20, 30, 40];
+        let _ = split_capture_source(&f, 2, 1, "Map");
+    }
+
+    #[test]
+    #[should_panic(expected = "replay: Fold{k=1} source product arity expected 3, found 2")]
+    fn split_capture_source_under_arity_is_loud() {
+        // A non-Pair-fed source yields a SHORT feeder list (`slot_feeders`
+        // filters to Pair edges) — the same check names that invariant too.
+        let f = [10, 20];
+        let _ = split_capture_source(&f, 1, 2, "Fold");
+    }
 }

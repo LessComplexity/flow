@@ -65,6 +65,9 @@ fn l1009_reserved_collection_builtins() {
     // of either name collides exactly like `print` — L1009.
     assert_rejects("fn zip() {}\nfn main() {}\n", "L1009");
     assert_rejects("fn enumerate() {}\nfn main() {}\n", "L1009");
+    assert_rejects("fn widen_i64() {}\nfn main() {}\n", "L1009");
+    assert_rejects("fn widen_f32() {}\nfn main() {}\n", "L1009");
+    assert_rejects("fn widen_f64() {}\nfn main() {}\n", "L1009");
 }
 
 #[test]
@@ -133,13 +136,55 @@ fn main() {}
 }
 
 #[test]
-fn l1108_capture_in_body() {
+fn l1107_capture_of_loop_carried_name_after_loop() {
+    // ADR-0027 review blocker #2: a poisoned (loop-carried) name read as a
+    // map-body capture after its loop must report L1107 like the direct read
+    // — the capture resolution must not discard the poison bit (before the
+    // fix it lowered, and the interp panicked).
     let src = r#"fn main() {
-    mut k: i32 <- 5;
-    [1, 2, 3] -> map { x -> x + k } -> ys: [i32; 3];
+    mut acc: i32 <- 0;
+    mut i: i32 <- 0;
+    loop {
+        (i < 3) -> {
+            -true-> { acc + i -> acc; i + 1 -> i; -> loop; }
+            -false-> acc -> done;
+        }
+    }
+    [1, 2] -> map { x -> x + acc } -> ys: [i32; 2];
 }
 "#;
-    assert_rejects(src, "L1108");
+    assert_rejects(src, "L1107");
+}
+
+// (The pre-ADR-0027 `l1108_capture_in_body` row moved to tests/captures.rs as
+// the positive pin `capture_map_lowers_with_capture_input_product`: reads of
+// enclosing bindings are legal captures now — D1.)
+
+#[test]
+fn l1108_rebind_of_read_capture_names_the_variable() {
+    // ADR-0027 review major #4 (D2b/D3): a chain rebind `-> k` of a name the
+    // body has already captured (read) must report the TEACHING L1108 naming
+    // `k` — not fall through to emit's generic L1104 ("not `mut`").
+    let src = r#"fn main() {
+    5 -> k;
+    [1, 2] -> map { e -> e + k -> d; e + 1 -> k; d + k } -> ys: [i32; 2];
+}
+"#;
+    let po = flow_syntax::parse(src);
+    assert!(po.diagnostics.is_empty(), "{:?}", po.diagnostics);
+    let ds = match flow_lower::lower(src, &po.program) {
+        Ok(_) => panic!("must reject the rebind of a read capture"),
+        Err(ds) => ds,
+    };
+    let d = ds
+        .iter()
+        .find(|d| d.code.0 == "L1108")
+        .unwrap_or_else(|| panic!("expected L1108, got {ds:?}"));
+    assert!(d.message.contains("`k`"), "names the variable: {d:?}");
+    assert!(
+        !ds.iter().any(|d| d.code.0 == "L1104"),
+        "not the generic L1104: {ds:?}"
+    );
 }
 
 // --- L1201–L1209: types / literals ------------------------------------------
@@ -708,21 +753,15 @@ fn l1404_effectful_fanout_in_phi_arm() {
     );
 }
 
-#[test]
-fn l1108_capture_in_seq_in_map_body() {
-    // WP2 fixer regression (finding F4): a capture of an enclosing local inside a
-    // `seq` inside a map body must draw L1108 (map/fold body references enclosing
-    // local `k`), not the misleading L1101 "unresolved name" — the capture check
-    // descends into the seq body (ADR-0019 §8.10).
-    assert_rejects(
-        "fn main() { 5 -> k; [1,2,3] -> map { e -> e -> seq { e + k -> a; a } } -> r; r[0] -> println; }\n",
-        "L1108",
-    );
-}
+// (The pre-ADR-0027 `l1108_capture_in_seq_in_map_body` row moved to
+// tests/captures.rs as the positive pin `capture_in_seq_in_map_body_lowers`:
+// the seq-descent read of enclosing `k` is a legal capture now — D1.)
 
 #[test]
 fn l1108_indexed_bind_captures_enclosing_local_in_map_body() {
-    // Sibling of `l1108_capture_in_seq_in_map_body` for the ADR-0021 sugar: an
+    // Sibling of the (now positive) seq-in-body case — see
+    // `capture_in_seq_in_map_body_lowers` in tests/captures.rs — for the
+    // ADR-0021 sugar: an
     // indexed bind `c[i] <- v` whose target `c` is an enclosing local (not a
     // body-local) captures it — must draw L1108, not the misleading L1101
     // "unresolved name". The map/fold-body capture check (typing.rs
@@ -731,8 +770,10 @@ fn l1108_indexed_bind_captures_enclosing_local_in_map_body() {
         "fn main() { mut c: [i32; 3] <- [0,0,0]; [1,2,3] -> map { e -> e -> seq { c[0] <- e; e } } -> r; r[0] -> println; }\n",
         "L1108",
     );
-    // The index expression is capture-checked too: `k` here is an enclosing
-    // local read inside the map body's indexed bind → L1108.
+    // The index expression is capture-checked too — but a READ of enclosing
+    // `k` in the index is a legal capture now (ADR-0027 D1): the L1108 here
+    // comes from the WRITE `c[k] <- e` targeting enclosing `c` (an indexed
+    // bind is a rebind, never a fresh shadow — ADR-0021).
     assert_rejects(
         "fn main() { 2 -> k; mut c: [i32; 3] <- [0,0,0]; [1,2,3] -> map { e -> e -> seq { c[k] <- e; e } } -> r; r[0] -> println; }\n",
         "L1108",
@@ -1301,4 +1342,61 @@ fn lone_indexed_update_loop_not_l1502() {
     );
     // In fact it lowers clean.
     let _ = lower_ok(src);
+}
+
+// --- L1612–L1613: iota / fill (ADR-0029) -------------------------------------
+
+#[test]
+fn l1612_iota_arity_rejects() {
+    assert_rejects("fn main() { iota(4, 5) -> t; }\n", "L1612");
+}
+
+#[test]
+fn l1612_iota_non_literal_count_rejects() {
+    assert_rejects(
+        "fn main() { iota(4) -> t; t -> k; iota(k) -> u; }\n",
+        "L1612",
+    );
+}
+
+#[test]
+fn l1612_iota_zero_and_oversize_reject() {
+    assert_rejects("fn main() { iota(0) -> t; }\n", "L1612");
+    assert_rejects("fn main() { iota(2147483648) -> t; }\n", "L1612");
+}
+
+#[test]
+fn l1613_fill_arity_rejects() {
+    assert_rejects("fn main() { fill(1.0) -> s; }\n", "L1613");
+    assert_rejects("fn main() { fill(1.0, 2, 3) -> s; }\n", "L1613");
+}
+
+#[test]
+fn l1613_fill_zero_and_oversize_reject() {
+    assert_rejects("fn main() { fill(1.0, 0) -> s; }\n", "L1613");
+    assert_rejects("fn main() { fill(1.0, 2147483648) -> s; }\n", "L1613");
+}
+
+// --- L1614: explicit numeric widening (ADR-0029) ----------------------------
+
+#[test]
+fn l1614_invalid_widen_sources_reject() {
+    assert_rejects("fn main() { 5 -> x: i64; x -> widen_f64 -> y; }\n", "L1614");
+    assert_rejects("fn main() { [1, 2] -> widen_i64 -> y; }\n", "L1614");
+    assert_rejects("fn main() { 1.0 -> widen_f32 -> y; }\n", "L1614");
+}
+
+#[test]
+fn l1614_message_names_the_legal_lattice() {
+    let src = "fn main() { 5 -> x: i64; x -> widen_f64 -> y; }\n";
+    let po = flow_syntax::parse(src);
+    assert!(po.diagnostics.is_empty(), "{:?}", po.diagnostics);
+    let ds = flow_lower::lower(src, &po.program).unwrap_err();
+    let d = ds
+        .iter()
+        .find(|d| d.code.0 == "L1614")
+        .unwrap_or_else(|| panic!("expected L1614, got {ds:?}"));
+    for edge in ["i32→i64", "i32→f32", "i32→f64", "f32→f64"] {
+        assert!(d.message.contains(edge), "message omits {edge}: {d:?}");
+    }
 }

@@ -232,6 +232,38 @@ pub fn ty_contains_token(ty: &Ty) -> bool {
     false
 }
 
+/// Whether `ty` has **no runtime representation** (the backends' erased rule:
+/// `Unit`/`Str`/`IoToken`, an array of an erased element, or a product whose
+/// components are all erased — the LLVM `lower_ty → None` rule, lifted to the
+/// IR so the builder and validate can share it). A ty has a representation iff
+/// some `Int`/`Float`/`Bool` leaf survives in its tree (an array materializes
+/// iff its element does; a product iff any component does). Iterative +
+/// depth-guarded, same shape as [`ty_contains_token`].
+pub fn ty_residual_empty(ty: &Ty) -> bool {
+    let mut stack: Vec<(&Ty, usize)> = vec![(ty, 1)];
+    while let Some((t, depth)) = stack.pop() {
+        if depth > MAX_TY_DEPTH {
+            return false;
+        }
+        match t {
+            Ty::Int { .. } | Ty::Float { .. } | Ty::Bool => return false,
+            Ty::Unit | Ty::Str | Ty::IoToken => {}
+            Ty::Array { elem, .. } => stack.push((elem, depth + 1)),
+            Ty::Tuple(ts) => {
+                for inner in ts {
+                    stack.push((inner, depth + 1));
+                }
+            }
+            Ty::Struct { fields, .. } => {
+                for (_, inner) in fields {
+                    stack.push((inner, depth + 1));
+                }
+            }
+        }
+    }
+    true
+}
+
 /// Whether `ty` contains a [`Ty::Str`] anywhere (I9s helper).
 ///
 /// Iterative + depth-guarded, same shape as [`ty_contains_token`]. Used to keep

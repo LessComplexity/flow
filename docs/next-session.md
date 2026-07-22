@@ -1,56 +1,52 @@
-# Next Session
+# Next Session (S22)
 
-Written: 2026-07-18 · end of Session 13 · by: Claude (Fable 5 orchestrator; Opus workflow agents; category-architect skill)
+Written: 2026-07-22 · close of Session 21 · by: Claude Fable (orchestrator; category-architect skill; coding delegated to codex gpt-5.6-sol per Sapir's S21 split)
 
 ## Where things stand (≤5 lines)
 
-**P5 COMPLETE — M2 REACHED (S13).** `flow-backend-llvm` + `flow-rt` shipped: full textual-LLVM emitter, differential-tested against the oracle on real clang (10 examples + 320-case testgen sweep, raw **and** rewritten IR; native loop-driven matmul `8\n136\n`; traps = exit 101; ~80× native over interp at sepia N=4096). **ADR-0021** landed the same session: `c[i] <- x` array update, pipeline-wide. Sapir ratified ADR-0013 (+IN6 float-÷0 amendment), 0016, 0020, RW2. `flow_ir::loop_plan` is now the single loop-attribution predicate (BL7). Full detail: `sessions/2026-07-18-s13-array-update-p5-llvm.md`.
+**S21 closed: ADR-0029 stage 2 fully shipped** — cuda iota/fill kernels (5th `Unsupported` cell discharged), `Operation::Widen` + `widen_i64/f32/f64` across the whole pipeline, procedural v2 bench sources (3.8 MB → 72 KB), llvm WP3b (no first-class aggregate array moves — matmul256 clang -O2: OOM-kill → 0.08 s/57 MB). **All three P0s discharged on one box**: remote cuda differential 15/15 on a 4090 (its rewritten iota/fill leg exposed a rewrite-fixpoint P0 — replay's `Fill` re-minted its internal tuple, resurrecting CSE'd duplicates; fixed via the `fill_from` replay entry + testgen Iota/Fill draws), FLOW_PERF re-measure, full sweep N=4→512 all legs. Headlines: **flow-llvm cap f64 beats single-thread C++ at N=256/512**; **flow-cuda kernel f32 812 GFLOP/s @512** (4× from naive CUDA). Perf table: `docs/performance/matmul.md` (S20 archived in-doc). Tree uncommitted (S14–S21; Sapir owns commits).
 
-## ⚠ Live infrastructure (found at S13 close — needs Sapir's eyes)
+## Test state
 
-**Two vast.ai RTX 4090 instances are RUNNING and billing** (found by the end-of-session check at 2026-07-18; S12/S13 logs said "no instances", so these appeared outside the recorded sessions — presumably rented by Sapir for P6, possibly forgotten):
+`cargo test --workspace`: **841 green** (200 syntax · 144 ir · 154 lower · 29 check · 62 interp · 63 rewrite · 27 llvm+1 ignored perf · 1 flow-rt · 161 cuda; flow-cli = 2 bins, no tests) at close; fmt clean. Hardware: cuda differential 15/15 (640+ runs) on the S21 emitter; llvm 1,280-run differential green at -O0/-O2 post-WP3b.
 
-| # | ID | Model | Util at check |
-|---|---|---|---|
-| 1 | 45170851 | RTX 4090 | 0% |
-| 2 | 45170852 | RTX 4090 | 12% |
+## THE S22 MANDATE (Sapir, verbatim intent, S21 close)
 
-Inspect: `vastai show instances` · stop: `vastai destroy instance <ID>` (Sapir's call — not stopped by the orchestrator). If intentional for P6: S14 can use one directly and should destroy the other (P6 needs a single box).
+**"Do all the optimizations to completion, until generated code is optimal and equivalent or better than naive CUDA too."** Cross-backend — the minimal-emission principle is a Cat-IR-level trait, not a cuda patch:
 
-## Test state: ALL GREEN
+- **One name per value, ever.** A value gets a name only where its chain genuinely splits (>1 consumer) — and even then ONE name that consumers REFERENCE; never a per-consumer re-wrap (the `o6=(t,512)`/`o8=(t,512)` duplicate-wrapper offense in matmul512_cap.cu `d_fn4`), never a name-copy.
+- **Chains emit as chains.** Straight-line graph paths compose into expressions (`Add → Mul → pair …`), no hanger local per edge. The execution graph doesn't carry named points; the text should read as the operations directly.
+- Judged against the artifact: `benches/matmul/matmul512_cap.cu` `d_fn3`/`d_fn4` are the before-exhibits.
 
-`cargo test --workspace`: **558 passed, 0 failed** (199 syntax · 106 ir · 139 lower · 29 check · 44 interp · 27 rewrite · 13 backend-llvm · 1 flow-rt). fmt + clippy clean.
+## The S22 agenda (ordered)
 
-## Do next (ordered, smallest-first)
-
-1. **P6 backend-cuda (M3)** — nothing written yet (STATUS stub only). Flow: DESIGN model-first (ADR-0020 contract; map-kernels via nvcc; host-side prints — E2 keeps effects out of kernels; the H↔D `Trm` makes the physical pair real for the first time) → adversarial design review (the S12/S13 pattern kills blockers pre-code) → implementation workflow → orchestrator line-by-line review. **GPU leg:** nvcc absent locally — rent the vast.ai RTX 4090 box (memory `vast-ai-gpu-access`; `vastai show instances` currently empty). The backend-llvm differential harness + testgen port directly (closed-mode, raw+rewritten, exit-101).
-2. (Small, mechanical) migrate rewrite's `is_canonical`/`exit_of` onto `flow_ir::loop_plan` (open item P3 — S12 pins prove equivalence; one predicate, three consumers).
-3. (Optional headroom, any session) backend-llvm suggestions (in-place Update via last-use; array-fill/heap lowering → restores perf N=262144; `-O2` differential row; `frem` parity pin) · rewrite suggestions (#5 `reoperand` → laws L-b/L-c; #7 precise DCE).
-4. P7 Verilog (verilator installed) after P6; M5 CLI last.
+0. **Folder move (P0, accepted — ADR-0030 §Folder move):** AFTER Sapir commits the S14–S21 tree — `crates/flow-backend-{b}` → `crates/backends/{b}`, names unchanged, one atomic commit.
+1. **Rewrite-before-emit for benches** (`--rewrite` on the emit examples; bench legs measure the FULL pipeline): existing CSE already merges duplicate wrapper products — near-zero code, immediate.
+2. **The minimal-emission functor (the mandate's core; cuda seq llvm):** materialize iff fanout > 1 ∨ consumed-whole (call arg / capture struct / escape / effect boundary); single-consumer values inline into consumer expressions; consumers reference the one name, no re-packing (suggestions #15 done as the split rule, not text cleanup) + **#16** loop-invariant hoisting. Differential-gated at every step (raw+rewritten, both opt levels, box leg).
+3. **Region emission v2 (S17 directive):** fold/map bodies fuse into their loops — kills the per-iteration struct+call ceremony (`d_fn3(pair)` 512×/thread). The multi-merge-SCC oracle boundary must be solved here (blocks matmul region acceptance).
+4. **The last measured gaps to ≥ naive CUDA:** `-fmad` decision (Sapir — oracle-pinned today; labeled non-oracle row?), launch geometry, module-load constant out of the kernel-time sum; arena v1.1 (18a) + tree-fold (ADR-0028) ride along where the numbers direct.
+5. **P2 standing:** 17b dedup key; llvm heap lowering (8 MB stack face); `time` builtin (Sapir); procedural sepia; chapel-gpu; P7 Verilog; ADR-0030 protocol behind the CLI crate.
 
 ## Open questions for Sapir
 
-- **Lower §16 OQ1–OQ8** — still open: these are *questions*, the S13 blanket ratification covered decisions only. Answer individually when convenient.
-- Nothing else pending — the S12 ratification stack is fully closed (ADR-0013+IN6, 0016, 0020, RW2, ADR-0021).
+- Commit the S14–S21 tree (the folder move waits on it).
+- `time` builtin: language feature or harness-only? (standing since S19)
+- `-fmad=false` is oracle-pinned; a `-fmad=true` non-oracle perf leg would close much of the 4× kernel gap — allow as a labeled extra row?
+- ADR-0023/0024/0025/0026 in-file questions (standing). Lower §16 OQ1–OQ8 (standing).
 
-## Gotchas / warnings (things that will waste the next session's time)
+## Gotchas / warnings
 
-- **All S08–S12 gotchas stand** (guard-first driver; `Name` carries no string; CK/LD/RW ledgers no-relitigate; Fanout+SeqBlock walker rule; per-merge attribution; testgen via `#[path]`, not a library export).
-- **New S13:** loop attribution lives in **`flow_ir::loop_plan`** — use it, never re-derive (backend-llvm `loops.rs` + interp consume it; rewrite still has its own copy, open item P3). The emitter's `walk()` skips driver-owned morphisms by **plan membership ∪ SCC incidence** — SCC incidence alone double-emits exit-only chains (a duplicated exit-arm `Print` breaks R1; pinned by `exit_only_payload_emitted_once`).
-- **LLVM text ABI:** parameter attrs go **after** the type in call args (`i8 zeroext %v`); `zeroext` on every i8/i1 flow-rt param at declare AND call sites. This was invalid-LLVM in the first draft and only the u8 differential caught it — keep that test.
-- **Alloca-slot stack ceiling (BL1):** whole arrays live in frames; huge-N shapes need `ulimit -s hard` (see `perf_baseline.rs:run_big_stack`). Perf N capped at 4096 — the array literal (no array-fill in Core) makes clang -O2 time explode at large N.
-- **Differential harness rules:** oracle runs BEFORE `rewrite()` (IR taken by value); closed-mode testgen only (open `i32 → i32` has no native observable); `Unit → i32` entries get the result-printing wrapper; Diverged programs skip.
-- **CUDA design seeds (from S13 decisions):** flow-rt links into the host side unchanged (prints/traps host-side); wrapping ints no-`nsw` transfers; the capability matrix `array update` row is `planned` for cuda — naive per-thread copy is correct, in-place is headroom.
+- **All S08–S21 gotchas stand.** New in S21: **box `clang` must be ≥ 15** (Ubuntu 22.04 apt default is 14 — predates opaque-`ptr`; every llvm leg then skips SILENTLY; `s21_box.sh` now guards this); the S20 raw results.csv was overwritten by the runner before archiving (S21 numbers are `results.csv`, S20's survive only in the matmul.md archive + session logs — **back up results.csv before any sweep**); codex CLI can stall silently on long tasks (1 h, zero edits — kill + re-dispatch or implement inline; check file mtimes not just process liveness); a killed local session does NOT kill box-side nohup work (recover, don't re-run); `vastai` fresh instances can sit in `loading` 15+ min — recycle (S15 precedent).
+- **vast.ai hands-off instance:** `45510479` (Sapir's pytorch box) was still running at S21 close — do not use or destroy. S21's own boxes (45516002 flaky, 45516809 work) both destroyed.
+- **Replay-faithfulness invariant (new, load-bearing):** replay must emit structure from EXISTING remapped objects, never via sugar builders that mint (the S21 fixpoint class). Any new op with internal minting needs a `*_from` replay entry + a testgen draw in the same change.
 
-## Commands (build/test/bench invocations that currently work)
+## Commands (currently working)
 
 ```sh
-cargo test --workspace                                        # 558 green
-cargo test -p flow-backend-llvm --test differential           # the M2 line (needs clang; ~4 min)
-cargo test -p flow-backend-llvm --test golden_ll              # 13 .ll snapshots, fast
-cargo test -p flow-backend-llvm --test perf_baseline -- --ignored --nocapture   # sepia numbers
-cargo test -p flow-interp --test update_pipeline              # loop-driven matmul oracle pin
-cargo test -p flow-rewrite --test property                    # R1 battery (PROPTEST_CASES=2000 deep)
-vastai show instances                                         # ⚠ 2 RTX 4090s RUNNING at S13 close — see warning above
-git log --oneline -3                                          # S13 commit(s)
+cargo test --workspace                                        # 841 green (~6 min; llvm sweep ~330 s)
+cargo test -p flow-syntax -p flow-ir -p flow-lower -p flow-check -p flow-interp -p flow-rewrite   # fast six
+cargo run -p flow-interp --example run -- benches/matmul/matmul4_cap.flow    # -275\n3748
+cargo run -p flow-backend-cuda --example emit -- benches/matmul/matmul64_cap.flow -- --perf  # FLOW_PERF variant
+# box driver: benches/matmul/s21_box.sh (rsync repo → /root/flow, run) — clang≥15 + numpy guards included
+# perf: docs/performance/matmul.md · raw: benches/matmul/results.csv (86 rows, S21)
 ```

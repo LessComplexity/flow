@@ -7,6 +7,11 @@
 //! `map id = id` (category-ir §6.1.1). Preconditions (§1.2 P1/P2/P3): keys are
 //! non-SCC `Temporary` objects; both fused bodies are transitively loop-free
 //! (divergence guard, RW10) and lower-canonical (single full-value Return writer).
+//!
+//! ADR-0027 scoping: fusion fires only when both maps read the **identical**
+//! capture objects (same ObjectIds, same order — the common chained-map case);
+//! `map(id)` forwards only a capture-free map. Differing capture sets are
+//! recorded headroom (the union re-threading is sound, not implemented).
 
 use slotmap::SecondaryMap;
 
@@ -18,9 +23,11 @@ use crate::plan::{FusionSpec, RewritePlan};
 ///
 /// - `map g ∘ map f → map (g ∘ f)`: a `Map{f}` edge whose result array's **only**
 ///   consumer is a `Map{g}` edge. Emits `fuse[g_edge] = {f, g}` + `drop[mid]`.
-/// - `map(id) → id`: a `Map` whose body is the identity (single `Output`
-///   param→ret). Emits `alias[map_target] = arr` (P1: only a `Temporary` target,
-///   never a Return writer).
+///   ADR-0027: only when both maps read the identical capture objects (same
+///   ids, same order); the fused map keeps the shared set.
+/// - `map(id) → id`: a capture-free `Map` whose body is the identity (single
+///   `Output` param→ret). Emits `alias[map_target] = arr` (P1: only a
+///   `Temporary` target, never a Return writer).
 pub fn analyze_map_fusion(ir: &CategoryIr) -> RewritePlan {
     let mut plan = RewritePlan::new();
     let scc = scc_membership(ir);
@@ -32,7 +39,12 @@ pub fn analyze_map_fusion(ir: &CategoryIr) -> RewritePlan {
 
     for (m_g, morph) in ir.morphisms() {
         // --- map(id) → id ------------------------------------------------
-        if let Operation::Map { body } = morph.op
+        // ADR-0027: only a capture-free identity map forwards its result — a
+        // captured "identity" body returns (c₁…cₖ, elem), which is not the
+        // identity on the array (and the alias target would mistype).
+        if let Operation::Map {
+            body, captures: 0, ..
+        } = morph.op
             && is_identity_body(ir, body)
         {
             let map_target = morph.target;
@@ -53,11 +65,20 @@ pub fn analyze_map_fusion(ir: &CategoryIr) -> RewritePlan {
         }
 
         // --- map g ∘ map f → map (g ∘ f) ---------------------------------
-        let g_body = match morph.op {
-            Operation::Map { body } => body,
+        let (g_body, g_caps) = match morph.op {
+            Operation::Map { body, captures } => (body, captures),
             _ => continue,
         };
-        let mid = morph.source;
+        // ADR-0027: g's mapped array plus its capture objects — for k>0 the
+        // source is the product (c₁…cₖ, arr). A malformed arity never fuses.
+        let Some((g_cap_objs, mid)) = map_source_parts(ir, morph.source, g_caps) else {
+            continue;
+        };
+        // k>0: g's source product must be consumed ONLY by this edge — fusion
+        // drops `mid`, which a shared product would still read.
+        if g_caps > 0 && ir.out_edges(morph.source).len() != 1 {
+            continue;
+        }
 
         // The intermediate array must be a non-SCC `Temporary` (P2 drop key),
         // produced by exactly one `Map{f}`, and consumed ONLY by this `Map{g}`.
@@ -72,10 +93,21 @@ pub fn analyze_map_fusion(ir: &CategoryIr) -> RewritePlan {
         if mid_ins.len() != 1 {
             continue;
         }
-        let f_body = match ir.morphism(mid_ins[0]).expect("mid in-edge").op {
-            Operation::Map { body } => body,
+        let f_morph = ir.morphism(mid_ins[0]).expect("mid in-edge");
+        let (f_body, f_caps) = match f_morph.op {
+            Operation::Map { body, captures } => (body, captures),
             _ => continue, // mid not produced by a Map — nothing to fuse.
         };
+        // ADR-0027: fuse only when both maps read the *identical* capture
+        // objects (same ids, same order) — the common chained-map case. The
+        // union re-threading of differing capture sets is provably sound but
+        // recorded headroom, not implemented.
+        let Some((f_cap_objs, _)) = map_source_parts(ir, f_morph.source, f_caps) else {
+            continue;
+        };
+        if f_cap_objs != g_cap_objs {
+            continue;
+        }
 
         // P3: both bodies transitively loop-free (a per-element reorder must not
         // flip Diverged ↔ Trapped). v1: each body single full-value Return writer.
@@ -100,6 +132,7 @@ pub fn analyze_map_fusion(ir: &CategoryIr) -> RewritePlan {
             FusionSpec {
                 f: f_body,
                 g: g_body,
+                captures: g_caps,
             },
         );
         plan.drop.insert(mid, ());
@@ -156,9 +189,9 @@ fn is_loop_free_fn(ir: &CategoryIr, root: FuncId) -> bool {
         }
         for &m in &ir.func(f).expect("fn").morphisms {
             match ir.morphism(m).expect("morph").op {
-                Operation::Call(g) | Operation::Map { body: g } | Operation::Fold { body: g } => {
-                    stack.push(g)
-                }
+                Operation::Call(g)
+                | Operation::Map { body: g, .. }
+                | Operation::Fold { body: g, .. } => stack.push(g),
                 _ => {}
             }
         }
@@ -178,4 +211,44 @@ fn scc_membership(ir: &CategoryIr) -> SecondaryMap<ObjectId, ()> {
         }
     }
     set
+}
+
+// --- ADR-0027 source-shape readers ------------------------------------------
+
+/// A `Map` edge's operands (ADR-0027): its capture objects in slot order plus
+/// the mapped array. `src` is the edge's source — the bare array for k=0, the
+/// `(c₁…cₖ, arr)` product for k>0. `None` on a malformed product arity (the
+/// graph would already fail validate; the analysis stays conservative).
+fn map_source_parts(
+    ir: &CategoryIr,
+    src: ObjectId,
+    captures: u32,
+) -> Option<(Vec<ObjectId>, ObjectId)> {
+    if captures == 0 {
+        return Some((Vec::new(), src));
+    }
+    let f = slot_feeders(ir, src);
+    let k = captures as usize;
+    if f.len() != k + 1 {
+        return None;
+    }
+    Some((f[..k].to_vec(), f[k]))
+}
+
+/// Slot feeders of a product, in slot order (declaration = slot order).
+fn slot_feeders(ir: &CategoryIr, product: ObjectId) -> Vec<ObjectId> {
+    let mut v: Vec<(u32, ObjectId)> = ir
+        .in_edges(product)
+        .iter()
+        .filter_map(|&m| {
+            let mo = ir.morphism(m).expect("in-edge");
+            if let Operation::Pair { slot, .. } = mo.op {
+                Some((slot, mo.source))
+            } else {
+                None
+            }
+        })
+        .collect();
+    v.sort_by_key(|(s, _)| *s);
+    v.into_iter().map(|(_, s)| s).collect()
 }

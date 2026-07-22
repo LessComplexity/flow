@@ -1,0 +1,13 @@
+fn main() {
+    iota(262144) -> ta;
+    ta -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    ta -> map { t -> (t * 7 + 57) % 101 - 50 -> widen_f32 } -> b;
+    iota(512) -> krange;
+    ta -> map { t ->
+        t / 512 -> i;
+        t % 512 -> j;
+        (0.0, krange) -> fold { acc, k -> acc + a[i * 512 + k] * b[k * 512 + j] }
+    } -> c;
+    c[0] -> println;
+    c[262143] -> println;
+}

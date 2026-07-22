@@ -201,11 +201,14 @@ fn cse_key(
 
 /// A stable op tag: `Call`/`Map`/`Fold` encode the callee/body by `funcs()`
 /// position; every other op by its `Debug` (payloads are plain scalars).
+/// ADR-0027: the capture count is part of a Map/Fold's identity (`^k`); the
+/// capture *objects* are keyed via `value_feeders` (the source product's slot
+/// feeders), so maps differing only in their captures never share a key.
 fn op_tag(op: Operation, fseq: &SecondaryMap<FuncId, u32>) -> String {
     match op {
         Operation::Call(g) => format!("Call{}", fseq[g]),
-        Operation::Map { body } => format!("Map{}", fseq[body]),
-        Operation::Fold { body } => format!("Fold{}", fseq[body]),
+        Operation::Map { body, captures } => format!("Map{}^{}", fseq[body], captures),
+        Operation::Fold { body, captures } => format!("Fold{}^{}", fseq[body], captures),
         other => format!("{other:?}"),
     }
 }
@@ -294,30 +297,37 @@ fn is_internal_pack(ir: &CategoryIr, o: ObjectId) -> bool {
 
 /// Whether `op` reads its source as an internally-packed product (the builder
 /// mints it atomically).
+///
+/// ADR-0027: a `Map`/`Fold` with `captures > 0` qualifies (the `(c₁…cₖ, …)`
+/// source is minted by `map_captured`/`fold_captured`); k=0 keeps the
+/// historical shapes. Keep in sync with `replay`'s copy — a pack replay treats
+/// as internal must never become a CSE representative.
 fn reads_packed_source(op: Operation) -> bool {
     use Operation::*;
-    matches!(
-        op,
-        Add | Sub
-            | Mul
-            | Div
-            | Mod
-            | Eq
-            | Neq
-            | Lt
-            | Gt
-            | Le
-            | Ge
-            | And
-            | Or
-            | Phi
-            | Index
-            | Zip
-            | Update
-            | Print { .. }
-            | LoopBack
-            | LoopExit
-    )
+    match op {
+        Add
+        | Sub
+        | Mul
+        | Div
+        | Mod
+        | Eq
+        | Neq
+        | Lt
+        | Gt
+        | Le
+        | Ge
+        | And
+        | Or
+        | Phi
+        | Index
+        | Zip
+        | Update
+        | Print { .. }
+        | LoopBack
+        | LoopExit => true,
+        Map { captures, .. } | Fold { captures, .. } => captures > 0,
+        _ => false,
+    }
 }
 
 /// Slot feeders of a product, in slot order.

@@ -1,8 +1,8 @@
 # Flow — Spec Errata
 
-This file records the accepted corrections to the v0.2 specification corpus. **The Flow specification is frozen at v0.2 plus this file.** No further design change touches the v0.2 documents directly; all change flows through ADRs and is recorded here when it corrects spec text.
+This file records the accepted corrections to the v0.2 specification corpus. **"Frozen" is retired (ADR-0022 D1, ratified 2026-07-18):** the v0.2 documents are fixed text; all change flows through ADRs and is recorded here when it corrects spec text.
 
-**Authority order (highest wins; per HANDOFF §2.2):**
+**Authority order (per HANDOFF §2.2, amended by ADR-0022 D1):** above all text, **oracle (interpreter) behavior is the final arbiter** (HANDOFF §5.4). Within text, highest wins:
 
 1. Accepted ADRs in `docs/decisions/` (including the bootstrap ADRs encoding errata E1–E5)
 2. `category-ir.md` v0.2 (formal semantics)

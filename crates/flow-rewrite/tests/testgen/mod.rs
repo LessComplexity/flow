@@ -13,6 +13,14 @@
 //!
 //! Modes: `default` (traps permitted — `Div`/`Mod`/`Index` on arbitrary feeders)
 //! and `trap_free` (divisors const-nonzero, indices const-in-bounds).
+//!
+//! ADR-0027 captures: dedicated main-level steps emit `map_captured` /
+//! `fold_captured` over body pools whose inputs are the `(c₁…cₖ, …)` products
+//! — a scalar capture, an array capture (body indexes it at constant in-bounds
+//! indices), a fold capture, a fold nested in a map body capturing across two
+//! levels (the matmul miniature), and a loop-carried scalar captured by a map
+//! body (the read-at-position case). All are trap-safe by construction in
+//! `trap_free` mode and loop-free inside bodies (fusion P3 stays reachable).
 #![allow(dead_code)]
 
 use flow_interp::RValue;
@@ -24,29 +32,136 @@ const L: SourceLoc = SourceLoc { start: 0, end: 0 };
 /// `map`/`fold`/`enumerate` typing trivial and always valid.
 const ARR: usize = 3;
 
-/// One value-producing step over the typed pools (i32 / bool / [i32;3]). Indices
-/// are reduced modulo the live pool length, so a step that finds no operand of
-/// the right type is skipped — the build is total.
+/// One value-producing step over the typed pools. Indices are reduced modulo
+/// the live pool length, so a step with no operand of the right type is skipped.
 #[derive(Clone, Debug)]
 pub enum Step {
     ConstI32(i32),
     ConstBool(bool),
-    Bin { op: u8, a: u8, b: u8 },
-    Neg { a: u8 },
-    Cmp { op: u8, a: u8, b: u8 },
-    Not { a: u8 },
-    Logic { or: bool, a: u8, b: u8 },
-    Phi { t: u8, e: u8, c: u8 },
-    PackProj { a: u8, b: u8, snd: bool },
-    MakeArray { a: u8, b: u8, c: u8 },
-    Index { arr: u8, idx: u8 },
-    Update { arr: u8, idx: u8, val: u8 },
-    MapArr { arr: u8, body: u8 },
-    FoldArr { arr: u8, seed: u8, body: u8 },
-    Zip { a: u8, b: u8 },
-    Enumerate { arr: u8 },
-    Call { a: u8, helper: u8 },
-    Loop { k: u8 },
+    Bin {
+        op: u8,
+        a: u8,
+        b: u8,
+    },
+    Neg {
+        a: u8,
+    },
+    /// ADR-0029: one of the four legal widening-lattice edges.
+    Widen {
+        edge: u8,
+        a: u8,
+    },
+    /// ADR-0029 array construction (S21): `iota(3)` joins the `[i32; 3]` pool.
+    Iota,
+    /// ADR-0029 (S21): `fill(x, 3)` from an i32-pool value joins the arr pool.
+    Fill {
+        a: u8,
+    },
+    Cmp {
+        op: u8,
+        a: u8,
+        b: u8,
+    },
+    Not {
+        a: u8,
+    },
+    Logic {
+        or: bool,
+        a: u8,
+        b: u8,
+    },
+    Phi {
+        t: u8,
+        e: u8,
+        c: u8,
+    },
+    PackProj {
+        a: u8,
+        b: u8,
+        snd: bool,
+    },
+    MakeArray {
+        a: u8,
+        b: u8,
+        c: u8,
+    },
+    Index {
+        arr: u8,
+        idx: u8,
+    },
+    Update {
+        arr: u8,
+        idx: u8,
+        val: u8,
+    },
+    MapArr {
+        arr: u8,
+        body: u8,
+    },
+    FoldArr {
+        arr: u8,
+        seed: u8,
+        body: u8,
+    },
+    Zip {
+        a: u8,
+        b: u8,
+    },
+    Enumerate {
+        arr: u8,
+    },
+    Call {
+        a: u8,
+        helper: u8,
+    },
+    Loop {
+        k: u8,
+    },
+    /// ADR-0027: map with an i32 capture from the scalar pool; body
+    /// `(cap, elem) -> i32` (the `x * scale` shape).
+    MapCapScalar {
+        arr: u8,
+        cap: u8,
+        body: u8,
+    },
+    /// ADR-0027: map with an `[i32; ARR]` capture from the array pool; body
+    /// `([i32; ARR], elem) -> i32` indexing the capture in-bounds.
+    MapCapArray {
+        arr: u8,
+        cap: u8,
+        body: u8,
+    },
+    /// ADR-0027: fold with an i32 capture; body `(cap, acc, elem) -> i32`.
+    FoldCapScalar {
+        arr: u8,
+        seed: u8,
+        cap: u8,
+        body: u8,
+    },
+    /// ADR-0027: map whose body folds the map's own array capture, capturing
+    /// the outer element inside the fold — capture across two levels (the
+    /// matmul shape in miniature). Body `([i32; ARR], elem) -> i32`.
+    MapNestFold {
+        arr: u8,
+        cap: u8,
+        body: u8,
+    },
+    /// ADR-0027: a canonical bounded loop, then a map capturing the loop's
+    /// exit value — the loop-carried read-at-position case.
+    LoopCapMap {
+        k: u8,
+        arr: u8,
+        body: u8,
+    },
+}
+
+/// A generated fold-in-map body (ADR-0027 two-level capture): the inner fold
+/// body script `(cap, acc, elem) -> i32`, then the outer map body's own scalar
+/// steps (run after the fold, over `[elem, fold_result, …]`).
+#[derive(Clone, Debug)]
+pub struct NestBody {
+    pub inner: Vec<Step>,
+    pub outer: Vec<Step>,
 }
 
 /// A full generated program script (Clone, for proptest shrinking).
@@ -59,6 +174,13 @@ pub struct Prog {
     pub helpers: Vec<Vec<Step>>,     // Named   i32 -> i32
     pub map_bodies: Vec<Vec<Step>>,  // MapBody  i32 -> i32
     pub fold_bodies: Vec<Vec<Step>>, // FoldBody (i32,i32) -> i32
+    /// ADR-0027 body pools: scalar-capture map bodies `(i32,i32) -> i32`,
+    /// array-capture map bodies `([i32;ARR],i32) -> i32`, scalar-capture fold
+    /// bodies `(i32,i32,i32) -> i32`, and fold-in-map nest bodies.
+    pub map_cap_bodies: Vec<Vec<Step>>,
+    pub map_acap_bodies: Vec<Vec<Step>>,
+    pub fold_cap_bodies: Vec<Vec<Step>>,
+    pub nest_bodies: Vec<NestBody>,
     pub main: Vec<Step>,
     pub prints: Vec<u8>,
     pub ret: u8,
@@ -91,6 +213,9 @@ fn scalar_step() -> impl Strategy<Value = Step> {
         any::<bool>().prop_map(Step::ConstBool),
         (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(op, a, b)| Step::Bin { op, a, b }),
         any::<u8>().prop_map(|a| Step::Neg { a }),
+        (any::<u8>(), any::<u8>()).prop_map(|(edge, a)| Step::Widen { edge, a }),
+        Just(Step::Iota),
+        any::<u8>().prop_map(|a| Step::Fill { a }),
         (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(op, a, b)| Step::Cmp { op, a, b }),
         any::<u8>().prop_map(|a| Step::Not { a }),
         (any::<bool>(), any::<u8>(), any::<u8>()).prop_map(|(or, a, b)| Step::Logic { or, a, b }),
@@ -103,7 +228,7 @@ fn scalar_step() -> impl Strategy<Value = Step> {
     ]
 }
 
-/// A full step (adds collections + loops) — for `main` only.
+/// A full step (adds collections + loops + ADR-0027 captures) — for `main` only.
 fn main_step() -> impl Strategy<Value = Step> {
     prop_oneof![
         6 => scalar_step(),
@@ -116,11 +241,21 @@ fn main_step() -> impl Strategy<Value = Step> {
         1 => any::<u8>().prop_map(|arr| Step::Enumerate { arr }),
         1 => (any::<u8>(), any::<u8>()).prop_map(|(a, helper)| Step::Call { a, helper }),
         1 => any::<u8>().prop_map(|k| Step::Loop { k }),
+        1 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(arr, cap, body)| Step::MapCapScalar { arr, cap, body }),
+        1 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(arr, cap, body)| Step::MapCapArray { arr, cap, body }),
+        1 => (any::<u8>(), any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(arr, seed, cap, body)| Step::FoldCapScalar { arr, seed, cap, body }),
+        1 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(arr, cap, body)| Step::MapNestFold { arr, cap, body }),
+        1 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(k, arr, body)| Step::LoopCapMap { k, arr, body }),
     ]
 }
 
 fn body_strategy() -> impl Strategy<Value = Vec<Step>> {
     prop::collection::vec(scalar_step(), 0..5)
+}
+
+/// A nest-body script: the inner fold body + the outer map body's own steps.
+fn nest_body_strategy() -> impl Strategy<Value = NestBody> {
+    (body_strategy(), body_strategy()).prop_map(|(inner, outer)| NestBody { inner, outer })
 }
 
 /// The full program strategy for a given mode/openness (DESIGN §6).
@@ -134,19 +269,33 @@ pub fn prog_strategy(trap_free: bool, open: bool) -> impl Strategy<Value = Prog>
         any::<bool>(),                                // effectful
         any::<u8>(),                                  // ret pick
         prop::collection::vec(const_i32(), 1..4),     // open args
+        // ADR-0027 capture body pools.
+        (
+            prop::collection::vec(body_strategy(), 0..2), // map_cap_bodies
+            prop::collection::vec(body_strategy(), 0..2), // map_acap_bodies
+            prop::collection::vec(body_strategy(), 0..2), // fold_cap_bodies
+            prop::collection::vec(nest_body_strategy(), 0..2), // nest_bodies
+        ),
     )
         .prop_map(
-            move |(helpers, map_bodies, fold_bodies, main, prints, effectful, ret, args)| Prog {
-                trap_free,
-                open,
-                effectful: !open && effectful,
-                helpers,
-                map_bodies,
-                fold_bodies,
-                main,
-                prints,
-                ret,
-                args,
+            move |(helpers, map_bodies, fold_bodies, main, prints, effectful, ret, args, caps)| {
+                let (map_cap_bodies, map_acap_bodies, fold_cap_bodies, nest_bodies) = caps;
+                Prog {
+                    trap_free,
+                    open,
+                    effectful: !open && effectful,
+                    helpers,
+                    map_bodies,
+                    fold_bodies,
+                    map_cap_bodies,
+                    map_acap_bodies,
+                    fold_cap_bodies,
+                    nest_bodies,
+                    main,
+                    prints,
+                    ret,
+                    args,
+                }
             },
         )
 }
@@ -158,14 +307,40 @@ struct Ctx {
     helpers: Vec<FuncId>,    // i32 -> i32
     map_bodies: Vec<FuncId>, // i32 -> i32
     fold_bodies: Vec<FuncId>,
-    pair_sum: FuncId, // (i32,i32) -> i32 utility, for zip/enumerate results
+    map_cap_bodies: Vec<FuncId>,  // (i32, i32) -> i32        (ADR-0027)
+    map_acap_bodies: Vec<FuncId>, // ([i32;ARR], i32) -> i32  (ADR-0027)
+    fold_cap_bodies: Vec<FuncId>, // (i32, i32, i32) -> i32   (ADR-0027)
+    nest_bodies: Vec<FuncId>,     // ([i32;ARR], i32) -> i32, fold inside (ADR-0027)
+    pair_sum: FuncId,             // (i32,i32) -> i32 utility, for zip/enumerate results
     trap_free: bool,
+}
+
+impl Ctx {
+    /// The in-body context: bodies reference no other fns (loop-free,
+    /// collection-free — fusion P3 stays reachable). `pair_sum` is a dummy
+    /// (scalar bodies never emit zip/enumerate).
+    fn bodies(pair_sum: FuncId, trap_free: bool) -> Ctx {
+        Ctx {
+            helpers: vec![],
+            map_bodies: vec![],
+            fold_bodies: vec![],
+            map_cap_bodies: vec![],
+            map_acap_bodies: vec![],
+            fold_cap_bodies: vec![],
+            nest_bodies: vec![],
+            pair_sum,
+            trap_free,
+        }
+    }
 }
 
 /// Typed value pools threaded through step emission.
 #[derive(Default)]
 struct Pool {
     i32s: Vec<flow_ir::ObjectId>,
+    i64s: Vec<flow_ir::ObjectId>,
+    f32s: Vec<flow_ir::ObjectId>,
+    f64s: Vec<flow_ir::ObjectId>,
     bools: Vec<flow_ir::ObjectId>,
     arrs: Vec<flow_ir::ObjectId>, // [i32; ARR]
     /// Count of loops emitted so far. The interp scopes loop layout per-merge
@@ -226,13 +401,7 @@ pub fn build(prog: &Prog) -> Built {
             let p = fb.input();
             let acc = fb.proj(p, 0, Dest::Fresh(None), L).unwrap();
             let elem = fb.proj(p, 1, Dest::Fresh(None), L).unwrap();
-            let ctx = Ctx {
-                helpers: vec![],
-                map_bodies: vec![],
-                fold_bodies: vec![],
-                pair_sum,
-                trap_free: prog.trap_free,
-            };
+            let ctx = Ctx::bodies(pair_sum, prog.trap_free);
             let mut pool = Pool {
                 i32s: vec![acc, elem],
                 ..Default::default()
@@ -245,10 +414,23 @@ pub fn build(prog: &Prog) -> Built {
         fold_bodies.push(f);
     }
 
+    // ADR-0027 capture body pools.
+    let map_cap_bodies =
+        declare_map_cap_bodies(&mut b, "mapc", &prog.map_cap_bodies, prog.trap_free);
+    let map_acap_bodies =
+        declare_map_acap_bodies(&mut b, "mapa", &prog.map_acap_bodies, prog.trap_free);
+    let fold_cap_bodies =
+        declare_fold_cap_bodies(&mut b, "foldc", &prog.fold_cap_bodies, prog.trap_free);
+    let nest_bodies = declare_nest_bodies(&mut b, &prog.nest_bodies, prog.trap_free);
+
     let ctx = Ctx {
         helpers,
         map_bodies,
         fold_bodies,
+        map_cap_bodies,
+        map_acap_bodies,
+        fold_cap_bodies,
+        nest_bodies,
         pair_sum,
         trap_free: prog.trap_free,
     };
@@ -276,19 +458,199 @@ fn declare_scalar_bodies(
         {
             let mut fb = b.build_fn(f).unwrap();
             let x = fb.input();
-            let ctx = Ctx {
-                helpers: vec![],
-                map_bodies: vec![],
-                fold_bodies: vec![],
-                pair_sum: f, // unused (scalar bodies never emit zip/enumerate)
-                trap_free: false,
-            };
+            // Historical: scalar bodies keep default-mode traps even under
+            // `trap_free` (pre-ADR-0027 behavior; the harnesses expect 101s).
+            let ctx = Ctx::bodies(f, false);
             let mut pool = Pool {
                 i32s: vec![x],
                 ..Default::default()
             };
             emit_steps(&mut fb, &ctx, &mut pool, steps, false);
             let ret = pool.i32s.last().copied().unwrap_or(x);
+            fb.output(ret, None, L).unwrap();
+            fb.finish().unwrap();
+        }
+        out.push(f);
+    }
+    out
+}
+
+/// Declare + emit scalar-capture map bodies `(cap, elem) -> i32` (ADR-0027):
+/// the pool seeds with both input projections, the generated scalar steps
+/// combine them — the enclosing-scalar-read shape.
+fn declare_map_cap_bodies(
+    b: &mut IrBuilder,
+    prefix: &str,
+    scripts: &[Vec<Step>],
+    trap_free: bool,
+) -> Vec<FuncId> {
+    let mut out = Vec::new();
+    for (i, steps) in scripts.iter().enumerate() {
+        let f = b
+            .declare(
+                FuncKind::MapBody,
+                &format!("{prefix}{i}"),
+                pair_ty(),
+                Ty::i32(),
+                L,
+            )
+            .unwrap();
+        {
+            let mut fb = b.build_fn(f).unwrap();
+            let p = fb.input();
+            let cap = fb.proj(p, 0, Dest::Fresh(None), L).unwrap();
+            let elem = fb.proj(p, 1, Dest::Fresh(None), L).unwrap();
+            let ctx = Ctx::bodies(f, trap_free);
+            let mut pool = Pool {
+                i32s: vec![cap, elem],
+                ..Default::default()
+            };
+            emit_steps(&mut fb, &ctx, &mut pool, steps, false);
+            let ret = pool.i32s.last().copied().unwrap_or(elem);
+            fb.output(ret, None, L).unwrap();
+            fb.finish().unwrap();
+        }
+        out.push(f);
+    }
+    out
+}
+
+/// Declare + emit array-capture map bodies `(cap_arr, elem) -> i32` (ADR-0027):
+/// the pool seeds with `elem` plus every cell of the captured array, read at
+/// **constant in-bounds** indices — the capture-indexing shape, trap-free by
+/// construction in both modes.
+fn declare_map_acap_bodies(
+    b: &mut IrBuilder,
+    prefix: &str,
+    scripts: &[Vec<Step>],
+    trap_free: bool,
+) -> Vec<FuncId> {
+    let arr_ty = Ty::Array {
+        elem: Box::new(Ty::i32()),
+        size: ARR as u64,
+    };
+    let mut out = Vec::new();
+    for (i, steps) in scripts.iter().enumerate() {
+        let f = b
+            .declare(
+                FuncKind::MapBody,
+                &format!("{prefix}{i}"),
+                Ty::Tuple(vec![arr_ty.clone(), Ty::i32()]),
+                Ty::i32(),
+                L,
+            )
+            .unwrap();
+        {
+            let mut fb = b.build_fn(f).unwrap();
+            let p = fb.input();
+            let cap_arr = fb.proj(p, 0, Dest::Fresh(None), L).unwrap();
+            let elem = fb.proj(p, 1, Dest::Fresh(None), L).unwrap();
+            let ctx = Ctx::bodies(f, trap_free);
+            let mut pool = Pool {
+                i32s: vec![elem],
+                ..Default::default()
+            };
+            for j in 0..ARR {
+                let idx = fb.constant(Value::I32(j as i32), L).unwrap();
+                let cell = fb.index(cap_arr, idx, Dest::Fresh(None), L).unwrap();
+                pool.i32s.push(cell);
+            }
+            emit_steps(&mut fb, &ctx, &mut pool, steps, false);
+            let ret = pool.i32s.last().copied().unwrap_or(elem);
+            fb.output(ret, None, L).unwrap();
+            fb.finish().unwrap();
+        }
+        out.push(f);
+    }
+    out
+}
+
+/// Declare + emit scalar-capture fold bodies `(cap, acc, elem) -> i32`
+/// (ADR-0027): the pool seeds with all three input projections.
+fn declare_fold_cap_bodies(
+    b: &mut IrBuilder,
+    prefix: &str,
+    scripts: &[Vec<Step>],
+    trap_free: bool,
+) -> Vec<FuncId> {
+    let in_ty = Ty::Tuple(vec![Ty::i32(), Ty::i32(), Ty::i32()]);
+    let mut out = Vec::new();
+    for (i, steps) in scripts.iter().enumerate() {
+        let f = b
+            .declare(
+                FuncKind::FoldBody,
+                &format!("{prefix}{i}"),
+                in_ty.clone(),
+                Ty::i32(),
+                L,
+            )
+            .unwrap();
+        {
+            let mut fb = b.build_fn(f).unwrap();
+            let p = fb.input();
+            let cap = fb.proj(p, 0, Dest::Fresh(None), L).unwrap();
+            let acc = fb.proj(p, 1, Dest::Fresh(None), L).unwrap();
+            let elem = fb.proj(p, 2, Dest::Fresh(None), L).unwrap();
+            let ctx = Ctx::bodies(f, trap_free);
+            let mut pool = Pool {
+                i32s: vec![cap, acc, elem],
+                ..Default::default()
+            };
+            emit_steps(&mut fb, &ctx, &mut pool, steps, false);
+            let ret = pool.i32s.last().copied().unwrap_or(acc);
+            fb.output(ret, None, L).unwrap();
+            fb.finish().unwrap();
+        }
+        out.push(f);
+    }
+    out
+}
+
+/// Declare + emit the two-level nest bodies (ADR-0027, matmul miniature): an
+/// outer map body `(cap_arr, elem) -> i32` whose first action is a
+/// `fold_captured` over its own array capture with `elem` as the fold's
+/// capture and seed — the inner fold body `nestf{i}` is generated alongside
+/// from its own script. The outer pool then holds `[elem, fold_result]` for
+/// the generated scalar steps.
+fn declare_nest_bodies(b: &mut IrBuilder, scripts: &[NestBody], trap_free: bool) -> Vec<FuncId> {
+    let arr_ty = Ty::Array {
+        elem: Box::new(Ty::i32()),
+        size: ARR as u64,
+    };
+    let mut out = Vec::new();
+    for (i, script) in scripts.iter().enumerate() {
+        let inner = declare_fold_cap_bodies(
+            b,
+            &format!("nestf{i}_"),
+            std::slice::from_ref(&script.inner),
+            trap_free,
+        )[0];
+        let f = b
+            .declare(
+                FuncKind::MapBody,
+                &format!("nestm{i}"),
+                Ty::Tuple(vec![arr_ty.clone(), Ty::i32()]),
+                Ty::i32(),
+                L,
+            )
+            .unwrap();
+        {
+            let mut fb = b.build_fn(f).unwrap();
+            let p = fb.input();
+            let cap_arr = fb.proj(p, 0, Dest::Fresh(None), L).unwrap();
+            let elem = fb.proj(p, 1, Dest::Fresh(None), L).unwrap();
+            // Fold the captured array, capturing the outer element (a capture
+            // across two levels once the outer map itself captures `cap_arr`).
+            let folded = fb
+                .fold_captured(inner, &[elem], elem, cap_arr, Dest::Fresh(None), L)
+                .unwrap();
+            let ctx = Ctx::bodies(f, trap_free);
+            let mut pool = Pool {
+                i32s: vec![elem, folded],
+                ..Default::default()
+            };
+            emit_steps(&mut fb, &ctx, &mut pool, &script.outer, false);
+            let ret = pool.i32s.last().copied().unwrap_or(folded);
             fb.output(ret, None, L).unwrap();
             fb.finish().unwrap();
         }
@@ -345,8 +707,16 @@ fn build_closed_main(b: &mut IrBuilder, ctx: &Ctx, prog: &Prog) -> Built {
             // Thread the token through prints of selected intermediates.
             let mut tok = tok0;
             let mut printed = false;
+            let scalars: Vec<_> = pool
+                .i32s
+                .iter()
+                .chain(&pool.i64s)
+                .chain(&pool.f32s)
+                .chain(&pool.f64s)
+                .copied()
+                .collect();
             for &sel in &prog.prints {
-                if let Some(v) = pick(&pool.i32s, sel) {
+                if let Some(v) = pick(&scalars, sel) {
                     tok = fb.println(tok, v, L).unwrap();
                     printed = true;
                 }
@@ -447,6 +817,52 @@ fn emit_step(
                 pool.i32s
                     .push(fb.unop(Neg, x, Dest::Fresh(None), L).unwrap());
             }
+        }
+        Step::Widen { edge, a } => match edge % 4 {
+            0 => {
+                if let Some(x) = pick(&pool.i32s, a) {
+                    pool.i64s
+                        .push(fb.widen(x, Ty::i64(), Dest::Fresh(None), L).unwrap());
+                }
+            }
+            1 => {
+                if let Some(x) = pick(&pool.i32s, a) {
+                    pool.f32s
+                        .push(fb.widen(x, Ty::f32(), Dest::Fresh(None), L).unwrap());
+                }
+            }
+            2 => {
+                if let Some(x) = pick(&pool.i32s, a) {
+                    pool.f64s
+                        .push(fb.widen(x, Ty::f64(), Dest::Fresh(None), L).unwrap());
+                }
+            }
+            _ => {
+                let x = match pick(&pool.f32s, a) {
+                    Some(x) => x,
+                    None => {
+                        let Some(i) = pick(&pool.i32s, a) else {
+                            return;
+                        };
+                        let x = fb.widen(i, Ty::f32(), Dest::Fresh(None), L).unwrap();
+                        pool.f32s.push(x);
+                        x
+                    }
+                };
+                pool.f64s
+                    .push(fb.widen(x, Ty::f64(), Dest::Fresh(None), L).unwrap());
+            }
+        },
+        Step::Iota => {
+            let c = fb.constant(Value::I32(ARR as i32), L).unwrap();
+            pool.arrs.push(fb.iota(c, Dest::Fresh(None), L).unwrap());
+        }
+        Step::Fill { a } => {
+            let Some(x) = pick(&pool.i32s, a) else {
+                return;
+            };
+            let c = fb.constant(Value::I32(ARR as i32), L).unwrap();
+            pool.arrs.push(fb.fill(x, c, Dest::Fresh(None), L).unwrap());
         }
         Step::Cmp { op, a, b } => {
             let (Some(x), Some(y)) = (pick(&pool.i32s, a), pick(&pool.i32s, b)) else {
@@ -577,6 +993,72 @@ fn emit_step(
         Step::Loop { k } if collections && pool.loops_used < MAX_LOOPS => {
             pool.loops_used += 1;
             pool.i32s.push(build_loop(fb, (k % 65) as i32));
+        }
+        Step::MapCapScalar { arr, cap, body } if collections => {
+            let (Some(a), Some(c), Some(bd)) = (
+                pick(&pool.arrs, arr),
+                pick(&pool.i32s, cap),
+                pick(&ctx.map_cap_bodies, body),
+            ) else {
+                return;
+            };
+            pool.arrs
+                .push(fb.map_captured(bd, &[c], a, Dest::Fresh(None), L).unwrap());
+        }
+        Step::MapCapArray { arr, cap, body } if collections => {
+            let (Some(a), Some(c), Some(bd)) = (
+                pick(&pool.arrs, arr),
+                pick(&pool.arrs, cap),
+                pick(&ctx.map_acap_bodies, body),
+            ) else {
+                return;
+            };
+            pool.arrs
+                .push(fb.map_captured(bd, &[c], a, Dest::Fresh(None), L).unwrap());
+        }
+        Step::FoldCapScalar {
+            arr,
+            seed,
+            cap,
+            body,
+        } if collections => {
+            let (Some(a), Some(s), Some(c), Some(bd)) = (
+                pick(&pool.arrs, arr),
+                pick(&pool.i32s, seed),
+                pick(&pool.i32s, cap),
+                pick(&ctx.fold_cap_bodies, body),
+            ) else {
+                return;
+            };
+            pool.i32s.push(
+                fb.fold_captured(bd, &[c], s, a, Dest::Fresh(None), L)
+                    .unwrap(),
+            );
+        }
+        Step::MapNestFold { arr, cap, body } if collections => {
+            let (Some(a), Some(c), Some(bd)) = (
+                pick(&pool.arrs, arr),
+                pick(&pool.arrs, cap),
+                pick(&ctx.nest_bodies, body),
+            ) else {
+                return;
+            };
+            pool.arrs
+                .push(fb.map_captured(bd, &[c], a, Dest::Fresh(None), L).unwrap());
+        }
+        Step::LoopCapMap { k, arr, body } if collections && pool.loops_used < MAX_LOOPS => {
+            pool.loops_used += 1;
+            let exit = build_loop(fb, (k % 65) as i32);
+            pool.i32s.push(exit);
+            // The loop's exit value is the map's capture — read-at-position.
+            let (Some(a), Some(bd)) = (pick(&pool.arrs, arr), pick(&ctx.map_cap_bodies, body))
+            else {
+                return;
+            };
+            pool.arrs.push(
+                fb.map_captured(bd, &[exit], a, Dest::Fresh(None), L)
+                    .unwrap(),
+            );
         }
         // Collection/loop steps in a scalar body: skipped.
         _ => {}

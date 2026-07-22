@@ -1,0 +1,41 @@
+fn cell(a: [f32; 16384], b: [f32; 16384], i: i32, j: i32) -> f32 {
+    mut k: i32   <- 0;
+    mut acc: f32 <- 0.0;
+    loop {
+        (k < 128) -> {
+            -true-> {
+                acc + a[i * 128 + k] * b[k * 128 + j] -> acc;
+                k + 1 -> k;
+                -> loop;
+            }
+            -false-> acc -> ret;
+        }
+    }
+}
+
+fn matmul(a: [f32; 16384], b: [f32; 16384]) -> [f32; 16384] {
+    mut c: [f32; 16384] <- b;
+    mut t: i32       <- 0;
+    loop {
+        (t < 16384) -> {
+            -true-> {
+                t / 128 -> i;
+                t % 128 -> j;
+                (a, b, i, j) -> cell -> v;
+                c[t] <- v;
+                t + 1 -> t;
+                -> loop;
+            }
+            -false-> c -> ret;
+        }
+    }
+}
+
+fn main() {
+    iota(16384) -> ta;
+    ta -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    ta -> map { t -> (t * 7 + 57) % 101 - 50 -> widen_f32 } -> b;
+    (a, b) -> matmul -> c;
+    c[0] -> println;
+    c[16383] -> println;
+}

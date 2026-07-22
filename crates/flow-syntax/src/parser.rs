@@ -2522,12 +2522,21 @@ impl<'a> Parser<'a> {
                         end = end.max(a.span.end);
                     }
                     let span = self.span(base.span.start, end);
-                    self.diag(
-                        "P0108",
-                        span,
-                        "call expressions are out of Flow-Core (HANDOFF §4); \
-                         use a tuple-input flow: `(args) -> f`",
+                    // ADR-0029: `iota(n)` / `fill(x, n)` are Core builtins — the
+                    // only legal call expressions (lower owns the L1612/L1613
+                    // misuse diagnostics).
+                    let is_array_builtin = matches!(
+                        &base.kind,
+                        ExprKind::Var(n) if matches!(self.text(n.span), "iota" | "fill")
                     );
+                    if !is_array_builtin {
+                        self.diag(
+                            "P0108",
+                            span,
+                            "call expressions are out of Flow-Core (HANDOFF §4); \
+                             use a tuple-input flow: `(args) -> f`",
+                        );
+                    }
                     base = Expr {
                         kind: ExprKind::Call {
                             callee: Box::new(base),

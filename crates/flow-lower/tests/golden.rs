@@ -153,6 +153,23 @@ fn fanout_pure_collection_ops_lower_clean() {
     let _ = lower_ok(FANOUT_PURE_OPS);
 }
 
+/// All four ADR-0029 widening edges lower as pure, direct `Widen` morphisms.
+const WIDEN_BUILTINS: &str = r#"fn main() {
+    7 -> widen_i64 -> a;
+    16777217 -> widen_f32 -> b;
+    9 -> widen_f64 -> c;
+    b -> widen_f64 -> d;
+    a -> println;
+    d -> println;
+    c -> println;
+}
+"#;
+
+#[test]
+fn golden_widen_builtins() {
+    snap("widen_builtins", WIDEN_BUILTINS);
+}
+
 // --- seq statement block (ADR-0019 / WP2) -----------------------------------
 
 /// Statement-form `seq` (ADR-0019 pin d): two ordered `println`s. `seq` has NO

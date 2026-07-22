@@ -512,3 +512,138 @@ fn token_double_consumption_is_unconstructible() {
     }
     assert_eq!(b.seal(f).unwrap_err(), IrError::TokenNotLinear);
 }
+
+// --- ADR-0029 static-count rejections ---------------------------------------
+
+#[test]
+fn iota_non_constant_count_rejects() {
+    let mut b = IrBuilder::new();
+    let f = b
+        .declare(
+            FuncKind::Named,
+            "m",
+            Ty::i32(),
+            Ty::Array {
+                elem: Box::new(Ty::i32()),
+                size: 4,
+            },
+            L,
+        )
+        .unwrap();
+    let mut fb = b.build_fn(f).unwrap();
+    let x = fb.input(); // a Parameter — never a Constant
+    assert_eq!(
+        fb.iota(x, Dest::Fresh(None), L),
+        Err(IrError::NonStaticCount)
+    );
+}
+
+#[test]
+fn iota_zero_count_rejects() {
+    let mut b = IrBuilder::new();
+    let f = b
+        .declare(
+            FuncKind::Named,
+            "m",
+            Ty::Unit,
+            Ty::Array {
+                elem: Box::new(Ty::i32()),
+                size: 4,
+            },
+            L,
+        )
+        .unwrap();
+    let mut fb = b.build_fn(f).unwrap();
+    let zero = fb.constant(Value::I32(0), L).unwrap();
+    assert_eq!(
+        fb.iota(zero, Dest::Fresh(None), L),
+        Err(IrError::NonStaticCount)
+    );
+}
+
+#[test]
+fn iota_oversize_count_rejects() {
+    // The i32 element pin: `n > i32::MAX` is the Enumerate bound (F4/SND-3).
+    let mut b = IrBuilder::new();
+    let f = b
+        .declare(
+            FuncKind::Named,
+            "m",
+            Ty::Unit,
+            Ty::Array {
+                elem: Box::new(Ty::i32()),
+                size: 4,
+            },
+            L,
+        )
+        .unwrap();
+    let mut fb = b.build_fn(f).unwrap();
+    let big = fb.constant(Value::I64(i32::MAX as i64 + 1), L).unwrap();
+    assert_eq!(
+        fb.iota(big, Dest::Fresh(None), L),
+        Err(IrError::EnumerateIndexOverflow)
+    );
+}
+
+#[test]
+fn fill_of_str_rejects() {
+    // `Str` never lives in an array (I9s).
+    let mut b = IrBuilder::new();
+    let f = b
+        .declare(
+            FuncKind::Named,
+            "m",
+            Ty::Unit,
+            Ty::Array {
+                elem: Box::new(Ty::Str),
+                size: 2,
+            },
+            L,
+        )
+        .unwrap();
+    let mut fb = b.build_fn(f).unwrap();
+    let s = fb.constant(Value::Str("x".into()), L).unwrap();
+    let n = fb.constant(Value::I32(2), L).unwrap();
+    assert_eq!(
+        fb.fill(s, n, Dest::Fresh(None), L),
+        Err(IrError::StrOutsidePrint)
+    );
+}
+
+#[test]
+fn fill_zero_count_rejects() {
+    let mut b = IrBuilder::new();
+    let f = b
+        .declare(
+            FuncKind::Named,
+            "m",
+            Ty::Unit,
+            Ty::Array {
+                elem: Box::new(Ty::f64()),
+                size: 2,
+            },
+            L,
+        )
+        .unwrap();
+    let mut fb = b.build_fn(f).unwrap();
+    let x = fb.constant(Value::F64(1.0), L).unwrap();
+    let zero = fb.constant(Value::I32(0), L).unwrap();
+    assert_eq!(
+        fb.fill(x, zero, Dest::Fresh(None), L),
+        Err(IrError::NonStaticCount)
+    );
+}
+
+#[test]
+fn invalid_widen_rejects() {
+    let mut b = IrBuilder::new();
+    let f = b
+        .declare(FuncKind::Named, "m", Ty::i64(), Ty::f64(), L)
+        .unwrap();
+    let mut fb = b.build_fn(f).unwrap();
+    let src = fb.input();
+    assert_eq!(
+        fb.widen(src, Ty::f64(), Dest::Fresh(None), L),
+        Err(IrError::InvalidWiden)
+    );
+}

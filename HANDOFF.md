@@ -20,7 +20,7 @@ Flow is a general-purpose dataflow language whose surface syntax directly denote
 
 **The thesis artifact (Milestone M5):** one source file (`examples/sepia.flow`), demonstrably the same program, running correctly on CPU, GPU, and FPGA simulation — with the compiler's correctness argument being functoriality, and the dataflow graph rendered alongside. Everything in this handoff serves that demo. Scope beyond it is deferred by default.
 
-**Strategic frame (decided previously, restated here):** validate in one domain — real-time image/signal processing — before generalizing. A 2-year checkpoint evaluates viability. The single biggest project risk is another year of specification without an implementation; the spec is frozen at v0.2 + errata, and all further design happens as ADRs driven by implementation feedback.
+**Strategic frame (decided previously, restated here):** validate in one domain — real-time image/signal processing — before generalizing. A 2-year checkpoint evaluates viability. The single biggest project risk is another year of specification without an implementation; the spec's authority is the ADR-0022 D1 order — v0.2 + errata E1–E5 + living corrections LC-1–5 + ADRs, newest wins, oracle behavior final arbiter ("frozen" retired 2026-07-18) — and all further design happens as ADRs driven by implementation feedback.
 
 ---
 
@@ -38,13 +38,15 @@ All spec files live in `docs/spec/` (copied there during bootstrap, §10).
 | `docs/spec/getting-started.md`        | v0.2      | 10-minute intro. Useful as the "what a new user sees" test surface.                                                                                                                                                                                          |
 | `docs/spec/CHANGES.md`                | v0.1→v0.2 | Decision log for the v0.2 revision. **Read §1 (structural fixes) before touching the IR** — it explains _why_ the invariants exist (single-source morphisms, first-class Phi, loops as trace, honest coproducts for effects).                                |
 | `docs/spec/flow-language-design.docx` | v0.1-era  | Original design document (philosophy, goals, rationale). Historical authority only; superseded where it conflicts with v0.2 files.                                                                                                                           |
-| `FRAMEWORK.md`                        | current   | Categorical modeling method for compiler-internal (Level B) design; coherence checklist (§8); session reconcile gate (ADR-0014). Methodology only — does not touch the frozen Level A spec.                                                                   |
+| `FRAMEWORK.md`                        | current   | Categorical modeling method for compiler-internal (Level B) design; coherence checklist (§8); session reconcile gate (ADR-0014). Methodology only — does not touch the Level A spec (authority per ADR-0022 D1; upkeep frozen per ADR-0022 D2).                                                                   |
 | `HANDOFF.md`                          | 1.0       | This file.                                                                                                                                                                                                                                                   |
 
 ### 2.2 Authority order (highest wins)
 
+> **Amended 2026-07-18 (ADR-0022 D1).** The operative index of the language *as implemented* is `docs/spec/flow-as-implemented.md`. Read the order below as: the v0.2 corpus patched by errata E1–E5, patched by living corrections LC-1–5, patched by ADRs — newest wins — with oracle (interpreter) behavior the final arbiter (§5.4). "Frozen" is retired as a description of spec authority.
+
 1. Accepted ADRs in `docs/decisions/` (including the bootstrap ADRs encoding errata E1–E5, §3)
-   - `FRAMEWORK.md` — for all compiler-internal (Level B) modeling and doc-reconcile gate questions; defers to accepted ADRs on any spec-touching question.
+   - `FRAMEWORK.md` — for all compiler-internal (Level B) modeling and doc-reconcile gate questions; defers to accepted ADRs on any spec-touching question. Upkeep frozen per ADR-0022 D2 — existing models still bind where present.
 2. `category-ir.md` v0.2 (formal semantics)
 3. `user-guide.md` v0.2 and `architecture.md` v0.2 (tie: user-guide for language behavior, architecture for compiler structure)
 4. `getting-started.md` v0.2
@@ -96,7 +98,7 @@ These were found in a formal review of the v0.2 corpus. They are **pre-made deci
 
 ## 4. Implementation scope: Flow-Core (v0.3 subset)
 
-Flow-Core is the frozen subset the compiler implements through M5. Anything outside it is **rejected with a clear diagnostic**, not silently accepted. Scope changes require an ADR.
+Flow-Core is the fixed subset the compiler implements through M5 ("frozen" retired by ADR-0022 D1; the scope itself is unchanged). Anything outside it is **rejected with a clear diagnostic**, not silently accepted. Scope changes require an ADR.
 
 ### 4.1 In scope
 
@@ -291,7 +293,7 @@ Written: YYYY-MM-DD · end of Session NN · by: <agent/human>
 
 #### 7.1.5 `DESIGN.md`
 
-Living design document per component, written/updated **before** code in every session that touches the component: data structures, public API, algorithms, error behavior, how invariants are enforced, what the tests will assert. Spec deviations discovered while designing go to an ADR first. Every component `DESIGN.md` **MUST** lead with a `## Categorical model (Dat + Trn)` section (FRAMEWORK §2; ADR-0014) — objects and morphisms before tables and API — and is listed in the model index `docs/architecture/INDEX.md`.
+Living design document per component, written/updated **before** code in every session that touches the component: data structures, public API, algorithms, error behavior, how invariants are enforced, what the tests will assert. Spec deviations discovered while designing go to an ADR first. Every component `DESIGN.md` **MUST** lead with a `## Categorical model (Dat + Trn)` section (FRAMEWORK §2; ADR-0014) — objects and morphisms before tables and API — and is listed in the model index `docs/architecture/INDEX.md`. **(Suspended 2026-07-18 by ADR-0022 D2: new components need no Dat/Trn section unless a backend-seam decision explicitly invokes FRAMEWORK; existing sections stay.)**
 
 ### 7.2 The session protocol — mandatory, in order
 
@@ -302,7 +304,7 @@ Living design document per component, written/updated **before** code in every s
 5. **Fix.** Iterate to green. If green is not reachable this session, stop coding early enough to document the red state precisely (step 8) — a documented red beats an undocumented "almost".
 6. **Perf / profile.** Once the component is functional: run `criterion` benches (and profiler when investigating); record numbers + date in the component STATUS. Optimize only with profile evidence; never trade away an invariant for speed without an ADR.
 7. **Reconcile docs.** Diff actual behavior against spec sections. Update: component `STATUS.md` (always), global `STATUS.md` (component table, capability matrix, session log), `ERRATA.md`/ADRs (if the implementation found a spec bug — this is expected and good; v0.2 itself came from five such finds). The implementation never silently diverges from the spec.
-   - Verify the change against the FRAMEWORK §8 coherence/reduction checklist, and update the component's `## Categorical model (Dat + Trn)` section + morphism table (and `docs/architecture/INDEX.md`) in the same change (FRAMEWORK §6; ADR-0014).
+   - Verify the change against the FRAMEWORK §8 coherence/reduction checklist, and update the component's `## Categorical model (Dat + Trn)` section + morphism table (and `docs/architecture/INDEX.md`) in the same change (FRAMEWORK §6; ADR-0014). **(Upkeep frozen per ADR-0022 D2 — run only when a backend-seam decision explicitly invokes FRAMEWORK.)**
    - Update the touched component's `IMPLEMENTATION.md` rows (new morphism = new row, State column truthful) in the same change (FRAMEWORK §6.3; ADR-0017).
 8. **Hand off.** Overwrite `docs/next-session.md` (template §7.1.4) **and** append an immutable session log `docs/sessions/YYYY-MM-DD-<slug>.md` (decisions, open items, live state, exact resume commands — never edited afterwards; ADR-0017). Commit everything. **Every session ends with these files — especially failed sessions.**
 
@@ -355,4 +357,4 @@ Layered, cheapest-first: **(1) builder-enforced IR invariants** (ill-formed grap
 
 ---
 
-_This handoff supersedes nothing and freezes everything: the v0.2 corpus + ERRATA is the spec; ADRs are the only mechanism of change; the demo is the goal; the docs/ loop is the method. Build the interpreter — it will find the next five bugs faster than another reading pass._
+_This handoff supersedes nothing: the v0.2 corpus + ERRATA + ADRs are the spec, in the ADR-0022 authority order (newest wins; oracle behavior final arbiter); ADRs are the only mechanism of change; the demo is the goal; the docs/ loop is the method. Build the interpreter — it will find the next five bugs faster than another reading pass._

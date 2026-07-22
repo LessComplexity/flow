@@ -1,7 +1,7 @@
 # Component: lower
 
 Status: tested
-Last updated: 2026-07-18 · Session 13 (ADR-0021 element-update `c[i] <- x`)
+Last updated: 2026-07-22 · S21 ADR-0029 amendment: the `widen_i64`/`widen_f32`/`widen_f64` builtin family as bare pipeline stages (`is_collection_builtin` generalized to `is_pure_builtin` + `widen_target` — one predicate across all four routing sites; typing synthesizes the target; `emit_widen` owns **L1614** with the teaching lattice message; L1009 reserves the three names). S20: iota/fill surface (L1612/L1613). S13: ADR-0021 element-update `c[i] <- x`
 Spec references: category-ir.md §4 (lowering rules, as corrected by ERRATA LC-4) + §11.1; ERRATA LC-2 (map/fold law); ADR-0013 (realization: edges-only, inline-cycle loops, IO token laws); ADR-0015 (print/println builtins); ADR-0018 (zip/enumerate pure collection builtins); ADR-0019 (`seq` statement block — no IR footprint); ADR-0021 (array element update — `c[i] <- x` desugars to `Update`-then-rebind); user-guide §3/§5; lower/DESIGN.md §0.1 pins 1–5 (binding).
 Depends on: syntax, ir Depended on by: check, interp, rewrite, backend-llvm, backend-cuda, backend-verilog, cli
 
@@ -15,11 +15,16 @@ abs folds `-1` with no `Neg`; sepia's `0.0` fold seed resolves f32 via literal-w
 unification; countdown reproduces ir golden h; effectful calls thread the token with
 the degenerate `tok := r` when B is absent). Five passes per DESIGN §2 (type table →
 effects/call-graph → declare → per-fn typing walk + body emission + outer emission →
-seal). 52 L-codes (L1000–L1901) with ≥1 rejection test each (except L1901, internal by
+seal). 54 L-codes (L1000–L1901) with ≥1 rejection test each (except L1901, internal by
 construction). The pure collection builtins `zip`/`enumerate` (ADR-0018) route at
 call-shaped stages like `print` (`is_collection_builtin`) but carry no token — legal in
 parallel fanout and map/fold bodies; emit owns L1606–L1610, the flow-ir builder re-derives
-the shapes/bound defensively (LD12/LD26). `seq { … }` (ADR-0019) lowers as an ordered
+the shapes/bound defensively (LD12/LD26). **The array-construction builtins `iota(n)` /
+`fill(x, n)` (ADR-0029)** route at `ExprKind::Call` stages (the P0108 carve makes them the
+only legal call expressions — `emit.rs:Emitter::{emit_iota, emit_fill, static_count_arg}`,
+typing synthesizes `WTy::Array` so annotations resolve the literal width); the count is a
+positive literal ≤ i32::MAX (the static-n rule — L1612/L1613 own arity/count misuse; a
+runtime size is out of Core, ADR-0023 territory). `seq { … }` (ADR-0019) lowers as an ordered
 statement block (`emit_seq_block`) with **no IR footprint** — its ordering guarantee is
 the token thread source-order lowering already produces (pin d); statements land in the
 enclosing scope (bindings escape), the tail is the value, and a seq that continues with
@@ -64,7 +69,7 @@ L1108, not a misleading L1101. Golden: `array_update_straightline` + loop-carrie
 
 ## Test coverage (golden / property / differential / skipped+why)
 
-139 tests: 18 golden Mermaid snaps (8 examples incl. zip_demo + vector_add,
+154 tests (the inventory below is the S13 base; S20 added the iota/fill surface rows, S21 added `golden_widen_builtins` — the four lattice edges as named, direct `Widen` morphisms, incl. the 2^24+1 f32-rounding value — plus `l1614_invalid_widen_sources_reject` (i64 source / array source / f64→f32 narrowing) and `l1614_message_names_the_legal_lattice`, and the L1009 rows for the three widen names): 18 golden Mermaid snaps (8 examples incl. zip_demo + vector_add,
 ADR-0018 zip form; + countdown + effectful-call + zip_builtin + enumerate_builtin +
 4 seq: two-printlns/mid-chain/return-tail/explicit-ret, ADR-0019 — the two-printlns snap shows the
 token thread alone ordering the prints with no seq node; explicit-ret pins that a seq

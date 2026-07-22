@@ -87,6 +87,13 @@ fn try_fold_object(
                 forward(ir, scc, plan, o, x);
             }
         }
+        Widen => {
+            if let Some(a) = const_val(ir, src)
+                && let Some(v) = fold_widen(a, &ir.object(o).expect("Widen target").ty)
+            {
+                plan.constify.insert(o, v);
+            }
+        }
         Proj { index } => {
             // proj∘pack: source is a pack-built product ⇒ forward its slot feeder.
             if is_pack(ir, src)
@@ -314,6 +321,17 @@ fn fold_unop(op: Operation, a: &Value) -> Option<Value> {
         (Operation::Neg, Value::F32(x)) => Some(Value::F32(-x)),
         (Operation::Neg, Value::F64(x)) => Some(Value::F64(-x)),
         (Operation::Not, Value::Bool(b)) => Some(Value::Bool(!b)),
+        _ => None,
+    }
+}
+
+/// `Widen(Constant)` at the same Rust conversion semantics as the interpreter.
+fn fold_widen(a: &Value, target: &flow_ir::Ty) -> Option<Value> {
+    match (a, target) {
+        (Value::I32(x), t) if *t == flow_ir::Ty::i64() => Some(Value::I64(*x as i64)),
+        (Value::I32(x), t) if *t == flow_ir::Ty::f32() => Some(Value::F32(*x as f32)),
+        (Value::I32(x), t) if *t == flow_ir::Ty::f64() => Some(Value::F64(*x as f64)),
+        (Value::F32(x), t) if *t == flow_ir::Ty::f64() => Some(Value::F64(*x as f64)),
         _ => None,
     }
 }
