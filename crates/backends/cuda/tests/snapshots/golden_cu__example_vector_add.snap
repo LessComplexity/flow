@@ -119,8 +119,8 @@ __global__ void k0_2(int32_t* result, int32_t* arr, int64_t idx) {
 }
 __global__ void k0_4(int32_t* result, int32_t acc0, int32_t* arr) {
   int32_t acc = acc0;
+  FlowProd_int32_t_int32_t pair;
   for (unsigned long long i = 0; i < 16ULL; i++) {
-    FlowProd_int32_t_int32_t pair;
     pair.f0 = acc;
     pair.f1 = arr[i];
     acc = fn2(pair);

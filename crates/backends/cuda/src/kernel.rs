@@ -948,20 +948,36 @@ pub(crate) fn literal_pair_counts(ir: &CategoryIr, f: FuncId) -> SecondaryMap<Ob
 /// has no field to store). Returns the declaration/store lines (the caller
 /// emits them at its indent) plus the argument expression: the assembled
 /// struct for residual ≥ 2, the bare surviving component for residual-1,
-/// `None` for residual-0.
-fn assemble_body_arg(pair_ty: &Ty, parts: &[Option<String>]) -> (Vec<String>, Option<String>) {
+/// `None` for residual-0. Assembly is split into pre-loop invariant lines
+/// and per-iteration varying lines.
+fn assemble_body_arg(
+    pair_ty: &Ty,
+    parts: &[Option<String>],
+    varying: &[bool],
+) -> (Vec<String>, Vec<String>, Option<String>) {
+    assert_eq!(parts.len(), varying.len(), "body argument variance");
     if residual_arity(pair_ty) >= 2 {
         let pct = lower_ty(pair_ty).expect("body input lowers");
-        let mut lines = vec![format!("{pct} pair;")];
-        for (slot, part) in parts.iter().enumerate() {
+        let mut pre = vec![format!("{pct} pair;")];
+        let mut inloop = Vec::new();
+        for (slot, (part, &is_varying)) in parts.iter().zip(varying).enumerate() {
             if let (Some(eidx), Some(expr)) = (erased_index(pair_ty, slot as u32), part) {
-                lines.push(format!("pair.f{eidx} = {expr};"));
+                let line = format!("pair.f{eidx} = {expr};");
+                if is_varying {
+                    inloop.push(line);
+                } else {
+                    pre.push(line);
+                }
             }
         }
-        (lines, Some("pair".to_string()))
+        (pre, inloop, Some("pair".to_string()))
     } else {
         // Residual ≤ 1: the bare survivor (if any) is the whole argument.
-        (Vec::new(), parts.iter().flatten().next().cloned())
+        (
+            Vec::new(),
+            Vec::new(),
+            parts.iter().flatten().next().cloned(),
+        )
     }
 }
 
@@ -1204,8 +1220,12 @@ impl<'a> Kernel<'a> {
             let pair_ty = self.obj_ty(self.ir.func(body).expect("body resolves").input);
             let mut parts = cap_args.clone();
             parts.push(elem_arg);
-            let (decl, arg) = assemble_body_arg(&pair_ty, &parts);
-            for l in decl {
+            let varying = vec![false; parts.len()];
+            let (pre, inloop, arg) = assemble_body_arg(&pair_ty, &parts, &varying);
+            for l in pre {
+                self.line(2, l);
+            }
+            for l in inloop {
                 self.line(2, l);
             }
             arg
@@ -1543,10 +1563,6 @@ impl<'a> Kernel<'a> {
         } else if let Some(ct) = &acc_ct {
             self.line(1, format!("{ct} acc = acc0;"));
         }
-        self.line(
-            1,
-            format!("for (unsigned long long i = 0; i < {n}ULL; i++) {{"),
-        );
         // The per-step argument: the captures (leading fields), then the
         // local scalar / per-thread local array acc (decays to the pointer
         // field for an array acc), then the element — the body input's
@@ -1564,8 +1580,17 @@ impl<'a> Kernel<'a> {
         let mut parts = cap_args.clone();
         parts.push(acc_expr);
         parts.push(elem_arg);
-        let (decl, arg) = assemble_body_arg(&pair_ty, &parts);
-        for l in decl {
+        let mut varying = vec![false; captures as usize];
+        varying.extend([!array_acc, true]);
+        let (pre, inloop, arg) = assemble_body_arg(&pair_ty, &parts, &varying);
+        for l in pre {
+            self.line(1, l);
+        }
+        self.line(
+            1,
+            format!("for (unsigned long long i = 0; i < {n}ULL; i++) {{"),
+        );
+        for l in inloop {
             self.line(2, l);
         }
         let dest = if array_acc {
@@ -2413,11 +2438,6 @@ impl<'a> DevEmit<'a> {
         let tgt_ty = self.obj_ty(target);
         let (uelem, _) = array_parts(&tgt_ty);
         let iv = self.tmp();
-
-        self.line(
-            1,
-            format!("for (unsigned long long {iv} = 0; {iv} < {n}ULL; {iv}++) {{"),
-        );
         // An erased source array (Array{Unit}) has no slot: the body
         // argument is omitted, and the per-thread loop still runs — the
         // launch form omits the kernel parameter the same way (F6). (The
@@ -2435,8 +2455,8 @@ impl<'a> DevEmit<'a> {
         };
         // ADR-0027: the capture components of the source product, then the
         // element — the `(c₁…cₖ, elem)` body-input shape.
-        let arg = if captures == 0 {
-            elem_arg
+        let (pre, inloop, arg) = if captures == 0 {
+            (Vec::new(), Vec::new(), elem_arg)
         } else {
             let pair_ty = self.obj_ty(self.ir.func(body).expect("body resolves").input);
             let mut parts: Vec<Option<String>> = Vec::new();
@@ -2449,12 +2469,20 @@ impl<'a> DevEmit<'a> {
                 parts.push(self.component_expr(source, j).map(|(_, v)| v));
             }
             parts.push(elem_arg);
-            let (decl, arg) = assemble_body_arg(&pair_ty, &parts);
-            for l in decl {
-                self.line(2, l);
-            }
-            arg
+            let mut varying = vec![false; captures as usize];
+            varying.push(true);
+            assemble_body_arg(&pair_ty, &parts, &varying)
         };
+        for l in pre {
+            self.line(1, l);
+        }
+        self.line(
+            1,
+            format!("for (unsigned long long {iv} = 0; {iv} < {n}ULL; {iv}++) {{"),
+        );
+        for l in inloop {
+            self.line(2, l);
+        }
         let name = self.quals.device_name(self.fnames, body);
         let mut args: Vec<String> = Vec::new();
         if let Some(a) = arg {
@@ -2764,10 +2792,6 @@ impl<'a> DevEmit<'a> {
         };
 
         let iv = self.tmp();
-        self.line(
-            1,
-            format!("for (unsigned long long {iv} = 0; {iv} < {n}ULL; {iv}++) {{"),
-        );
         // The (c₁…cₖ, acc, e) assembly under the residual remap — the
         // captures are the leading fields of the body-input product.
         let acc_expr = if lower_ty(&acc_ty).is_some() {
@@ -2792,8 +2816,17 @@ impl<'a> DevEmit<'a> {
         }
         parts.push(acc_expr);
         parts.push(earg);
-        let (decl, arg) = assemble_body_arg(&pair_ty, &parts);
-        for l in decl {
+        let mut varying = vec![false; captures as usize];
+        varying.extend([!array_acc, true]);
+        let (pre, inloop, arg) = assemble_body_arg(&pair_ty, &parts, &varying);
+        for l in pre {
+            self.line(1, l);
+        }
+        self.line(
+            1,
+            format!("for (unsigned long long {iv} = 0; {iv} < {n}ULL; {iv}++) {{"),
+        );
+        for l in inloop {
             self.line(2, l);
         }
         let name = self.quals.device_name(self.fnames, body);
@@ -4490,8 +4523,8 @@ fn main() {
         );
         // WP-B (R-NODUP): the through-captured scalar is read through the
         // Named fold-operand product's field — one reference, no extraction
-        // local, no re-computation (the per-iteration re-read collapses at
-        // WP-D hoisting).
+        // local, no re-computation; WP-D hoists the reference before the
+        // loop.
         assert!(twin.contains("pair.f0 = o7.f0;"), "{twin}");
         assert!(twin.contains("pair.f1 = t0;"), "{twin}");
         assert!(twin.contains("pair.f2 = o6[t1];"), "{twin}");

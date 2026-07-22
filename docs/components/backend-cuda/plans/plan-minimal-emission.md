@@ -190,6 +190,32 @@ classification machinery, one extra rule: `Invariant(subtree) ∧ inside-loop �
 hoist boundary`. Shipped as the LAST WP (it changes where, not whether, text
 appears — smallest semantic surface).
 
+### As-built (WP-D, S23 — codex, orchestrator-reviewed)
+
+**Deviation from the paragraph above: no query change.** The only per-iteration
+re-emitted text is the body-argument assembly, and its invariance is
+**structural to the node semantics**, not a graph analysis: fold/map captures
+are immutable (ADR-0027) and read through the preloop Named source product /
+`cap{j}` kernel params; an array-typed fold acc is a fixed local handle; a
+scalar fold acc is reassigned per step; the element indexes the iterator.
+So `emission_plan` is untouched — `kernel.rs::assemble_body_arg` split into
+`(pre, inloop, arg)` on a per-part `varying: &[bool]`, and the three LOOPING
+call sites hoist `pre` (decl + invariant assigns) above the `for` header:
+the sequential fold `__global__` kernel, `DevEmit::emit_map` (twin local
+loop), `DevEmit::emit_fold` (twin fold loop — the d_fn4 exhibit). The
+non-loop map-kernel site passes all-invariant and stays byte-identical.
+Invariance is by runtime VALUE, not expression string (a scalar acc's
+assignment text is constant yet must re-execute).
+
+Corpus effect: 21 bench artifacts, +105/−105 — every changed line a hoist
+move (diff-census-verified); d_fn4's loop body = `pair.f4 = t0; pair.f5 =
+o2[t1]; call` (was 6 assigns × 512/thread). Example snapshots: only the two
+capture-free fold kernels (sepia/vector_add) — decl-only hoist, both assigns
+correctly stay. Pin: `golden_cu.rs::captured_twin_fold_hoists_invariant_fields`
+(f0..f3 preloop, f4..f5 in-loop). A general in-loop invariant-EXPRESSION
+hoist (quartet cone chains) remains unbuilt — no corpus shape demands it;
+recorded headroom, not debt.
+
 ## 5. Gates (every WP; the mandate demands differential at every step)
 
 1. `cargo test --workspace` green; fmt clean.

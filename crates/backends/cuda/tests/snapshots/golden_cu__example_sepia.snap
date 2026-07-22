@@ -150,8 +150,8 @@ __global__ void k1_0(FlowProd_float_float_float* out, FlowProd_float_float_float
 }
 __global__ void k1_1(float* result, float acc0, FlowProd_float_float_float* arr) {
   float acc = acc0;
+  FlowProd_float_FlowProd_float_float_float pair;
   for (unsigned long long i = 0; i < 16ULL; i++) {
-    FlowProd_float_FlowProd_float_float_float pair;
     pair.f0 = acc;
     pair.f1 = arr[i];
     acc = fn3(pair);

@@ -840,6 +840,28 @@ fn golden_one_kernel_matmul() {
     }
 }
 
+#[test]
+fn captured_twin_fold_hoists_invariant_fields() {
+    let cu = emit(&lower_src(ONE_KERNEL_MATMUL_SRC)).unwrap();
+    let start = cu
+        .find(
+            "static __device__ double d_fn2(FlowProd_int32_tp_doublep_doublep_FlowProd_int32_t_double in) {",
+        )
+        .expect("d_fn2 def");
+    let end = cu[start..].find("\n}\n").unwrap() + start;
+    let twin = &cu[start..end];
+    let loop_pos = twin
+        .find("for (unsigned long long t1 = 0; t1 < 4ULL; t1++) {")
+        .unwrap();
+
+    for field in 0..4 {
+        assert!(twin.find(&format!("pair.f{field} =")).unwrap() < loop_pos);
+    }
+    for field in 4..6 {
+        assert!(twin.find(&format!("pair.f{field} =")).unwrap() > loop_pos);
+    }
+}
+
 // --- plan-smart-arenas §7: the structural perf gates (#18) -------------------
 
 /// Whole-module `cudaMalloc` count EXCLUDING the prelude's `d_trap` pair

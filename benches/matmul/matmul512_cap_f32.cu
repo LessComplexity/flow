@@ -152,12 +152,12 @@ static __device__ float d_fn4(FlowProd_int32_tp_floatp_floatp_int32_t in) {
   o10.f1 = (o5 / 512);
   o10.f3 = (o5 % 512);
   float t0 = o10.f4;
+  FlowProd_floatp_int32_t_floatp_int32_t_float_int32_t pair;
+  pair.f0 = o10.f0;
+  pair.f1 = o10.f1;
+  pair.f2 = o10.f2;
+  pair.f3 = o10.f3;
   for (unsigned long long t1 = 0; t1 < 512ULL; t1++) {
-    FlowProd_floatp_int32_t_floatp_int32_t_float_int32_t pair;
-    pair.f0 = o10.f0;
-    pair.f1 = o10.f1;
-    pair.f2 = o10.f2;
-    pair.f3 = o10.f3;
     pair.f4 = t0;
     pair.f5 = o2[t1];
     t0 = d_fn3(pair);
