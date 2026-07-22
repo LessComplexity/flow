@@ -12,8 +12,9 @@ Written: 2026-07-22 · close of Session 23 · by: Claude Fable (orchestrator; ca
 
 ## The numbers (what S24's work rides on — full table in `docs/performance/matmul.md`)
 
-- **GEMM kernel alone (k0_4): 1.60× from naive-CUDA** at N=512 f32 (0.125 vs 0.078 ms); 6.7× f64. The 0.318 ms kernel SUM carries ~0.155 ms one-time CUDA module load.
-- Remaining kernel gap is exactly: `-fmad=false` (oracle-pinned — Sapir's open call below) + untuned launch geometry (256/block).
+- **GEMM kernel at naive-CUDA PARITY from N=1024 f32** (0.788 vs 0.785 ms @1024 = 1.00×; 1.06× @2048) — the S21 mandate's "equivalent or better than naive CUDA" is MET at saturation sizes. The 1.6× @512 is small-N overhead (`-fmad` + geometry show only there).
+- The remaining GPU distance is cuBLAS's algorithm class (24.6× @4096 f32) — tiling/shared-memory/tensor cores, not codegen.
+- Scale legs exist to 4096 (cuda) / 1024 (llvm, stack-bound — heap lowering unlocks 2048+).
 - cap wall flat ~270 ms at every N (context startup); loop form Θ(N³) launches unchanged (region v2's target).
 - flow-llvm cap f32 = single-thread C++ parity; f64 0.86× (S21's 1.30× reversed — znver3 box variance, recorded; compare within one box only).
 

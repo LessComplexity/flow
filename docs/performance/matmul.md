@@ -4,7 +4,7 @@ One file per measured session, newest first. Compute tables are the comparison; 
 
 | Session | Box | What changed | File |
 |---|---|---|---|
-| **S23** (2026-07-22) | 4090, znver3 host | minimal emission (S22) + WP-D hoisting, hardware-verified; **kernel-alone 1.6× from naive-CUDA @512 f32**; first chapel f32+f64 legs | [matmul/s23.md](matmul/s23.md) |
+| **S23** (2026-07-22) | 4090, znver3 host | minimal emission (S22) + WP-D hoisting, hardware-verified; **GEMM kernel at naive-CUDA parity from N=1024 f32**; scale legs to 4096; first chapel legs | [matmul/s23.md](matmul/s23.md) |
 | S21 (2026-07-22) | 4090 | ADR-0029 procedural sources + WP3b; first llvm cap legs at N≥128; first N=512 flow legs | [matmul/s21.md](matmul/s21.md) |
 | S20 (2026-07-22) | 4090 | pre-trap-free baseline; raw CSV lost (backup rule born here) | [matmul/s20.md](matmul/s20.md) |
 | S16–S19 | various | first numbers, walls named (`docs/notes/bench-matmul.md`); raw: `results-pre-s20.csv` | — |
