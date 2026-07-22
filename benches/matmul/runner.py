@@ -126,7 +126,7 @@ for leg, fmt in (
 
 # --- self-timing legs ---
 SCHED = {
-    "naive-cuda": [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5)],
+    "naive-cuda": [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
     "cublas":     [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
     "numpy":      [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
     "rust-naive": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
@@ -134,17 +134,20 @@ SCHED = {
     "cpp-naive-f64": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
     "chapel-f32": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
     "chapel-f64": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
+    "chapel-gpu-f32": [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
+    "chapel-gpu-f64": [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
 }
 BINS = {"naive-cuda": "./naive_cuda", "cublas": "./cublas_gemm",
         "numpy": None, "rust-naive": "./rust_naive",
         "cpp-naive-f32": "./cpp_naive", "cpp-naive-f64": "./cpp_naive",
-        "chapel-f32": "./chapel_matmul", "chapel-f64": "./chapel_matmul"}
+        "chapel-f32": "./chapel_matmul", "chapel-f64": "./chapel_matmul",
+        "chapel-gpu-f32": "./chapel_matmul_gpu", "chapel-gpu-f64": "./chapel_matmul_gpu"}
 WIDTH = {"cpp-naive-f32": "f32", "cpp-naive-f64": "f64"}
 for leg, sizes in SCHED.items():
     for n, iters in sizes:
         if leg.startswith("chapel-"):
             # Chapel config consts take --name=value (no positional args).
-            cmd = [BINS[leg], f"--n={n}", f"--iters={iters}", f"--width={leg[7:]}"]
+            cmd = [BINS[leg], f"--n={n}", f"--iters={iters}", f"--width={leg.split(chr(45))[-1]}"]
         else:
             args = [str(n), str(iters)] + ([WIDTH[leg]] if leg in WIDTH else [])
             cmd = [BINS[leg], *args] if BINS[leg] else ["python3", "numpy_bench.py", *args]
