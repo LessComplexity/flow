@@ -1,7 +1,7 @@
 # Component: backend-cuda
 
 Status: tested
-Last updated: 2026-07-22 · S21 ADR-0029 stage 2 (iota/fill kernel realization — the 5th `Unsupported` cell discharged — + the `Widen` scalar arms; plan-iota-fill-stage2 shipped)
+Last updated: 2026-07-22 · **S22 minimal-emission WP-B (plan-minimal-emission §3b)**: `DevEmit` is plan-driven — `flow_ir::emission_plan` + an expression memo; Dissolved products never materialize (consumers read field sources through `component_expr`), Inline values nest as parenthesized expressions, the input param slots as literal `in` (the `o0 = in;` prelude class deleted), captures read through the Named operand product's field (the R-NODUP duplication catch), Call targets + product-typed Inline force-Named (emitter-side, recorded). d_fn3-class twin: 23 locals/15 assembles → 4 names + 2 index temps + one return expression. Host/`__host__ __device__` lane (func.rs) = WP-C. 161 ✅. S21 ADR-0029 stage 2 (iota/fill kernel realization — the 5th `Unsupported` cell discharged — + the `Widen` scalar arms; plan-iota-fill-stage2 shipped)
 Spec references: **DESIGN.md (this folder — implemented; S14 review-hardened + S15 as-built deltas)** · `reviews/review-design-p6.md` (S14 design review, 22 findings) · `plans/plan-smart-arenas.md` (shipped v1.0) · ADR-0020 (emission contract) · ADR-0013 (token, +S13 float-÷0 amendment) · ADR-0016 (guard-first) · ADR-0021 (`Update`) · `flow-as-implemented.md`.
 Depends on: ir, lower, check, interp, rewrite (+ flow-rt, unchanged) · Depended on by: cli
 

@@ -137,6 +137,32 @@ consumed by two primitives correctly leaves shared field chains Named.
   RE-KEYED text (shapes that merged before still merge — text is a function of
   the same inputs).
 
+## 3b. As-built (WP-B Phase 1, S22 — orchestrator inline; codex network-dead twice)
+
+Shipped as an increment INSIDE the existing walk (op text-forms untouched —
+R-TEXT free): `DevEmit` gains the plan + an expression memo; `store_obj` routes
+Inline values to memoized `(expr)` strings; `component_expr` resolves THROUGH
+dissolved products; the decl loop skips expr-only objects; the input param slots
+as the literal `in` (the `o0 = in;` prelude class is deleted).
+
+Deviations/decisions, all emitter-side (the query is untouched):
+1. **Call targets force-Named** — the §3 post-call `if (*trap)` must keep its
+   statement position; the backend-agnostic query cannot know the trap protocol.
+2. **Product-typed Inline force-Named** (the plan's sanctioned fallback) — the
+   braced-aggregate-literal form is deferred; exhibits unaffected (their
+   wrappers are Dissolved).
+3. **Captures read through the Named operand product's field** (`o10.f1`),
+   never via the feeder object — the feeder may be Inline and reading it
+   directly would re-emit its expression (the d_fn4 `(o5/512)` duplication the
+   orchestrator review caught). The per-iteration `pair.fK = o10.fK` re-reads
+   are WP-D's hoisting target.
+4. **Array handles stay blanket-Named** (query rule) — pointer-alias copies
+   (`o6 = o3;`) survive; a handle-inlining refinement is recorded headroom.
+5. Exhibit state: d_fn3 = 4 names + 2 index temps + one return expression
+   (was 23 locals / 15 assembles); d_fn4's duplicate-wrapper and wrap/unwrap
+   classes gone. `-fn1`-class `__host__ __device__` bodies are func.rs's lane —
+   WP-C.
+
 ## 4. #16 (loop-invariant hoisting) rides the same query
 
 A per-thread-loop body subterm whose leaves are all loop-invariant (no dependence

@@ -755,8 +755,10 @@ fn golden_one_kernel_matmul() {
     assert!(!d_fn2.contains("trap"), "{d_fn2}");
     // #13: the `t / 4` / `t % 4` guards are elided (constant non-zero
     // divisor) — plain divisions, no `*trap = 1u` anywhere in the twin.
-    assert!(d_fn2.contains("o8 = o7.f0 / o7.f1;"), "{d_fn2}");
-    assert!(d_fn2.contains("o10 = o9.f0 % o9.f1;"), "{d_fn2}");
+    // WP-B: the divisions inline into the body-arg fields directly — the
+    // `(t,4)` wrapper products dissolved, the constants read as themselves.
+    assert!(d_fn2.contains(".f1 = (o6 / 4);"), "{d_fn2}");
+    assert!(d_fn2.contains(".f3 = (o6 % 4);"), "{d_fn2}");
     assert!(!d_fn2.contains("*trap = 1u"), "{d_fn2}");
     // The whole module is exactly THREE kernels: the enumerate, the outer
     // map, and ONE deduplicated Index kernel (#17 — main's two Index sites
@@ -828,9 +830,11 @@ fn golden_one_kernel_matmul() {
     let d_fn1_end = cu[d_fn1_start..].find("\n}\n").unwrap() + d_fn1_start;
     let d_fn1 = &cu[d_fn1_start..d_fn1_end];
     assert!(!d_fn1.contains("trap"), "{d_fn1}");
+    // WP-B: the proven loads inline into the return chain — still plain
+    // guardless global reads through the width-rule i64 temps.
     for needle in [
-        "o13 = o2[(unsigned long long)t0];", // a[i * 4 + k]
-        "o19 = o4[(unsigned long long)t1];", // b[k * 4 + j]
+        "o2[(unsigned long long)t0]", // a[i * 4 + k]
+        "o4[(unsigned long long)t1]", // b[k * 4 + j]
     ] {
         assert!(d_fn1.contains(needle), "missing `{needle}` in:\n{d_fn1}");
     }

@@ -62,8 +62,8 @@
 //! Top-level `Index` and `Fold` launch `<<<1, 1>>>` (BC4's single thread).
 
 use flow_ir::{
-    BoundsProof, CategoryIr, FuncId, FuncKind, Morphism, MorphismId, ObjectId, ObjectKind,
-    Operation, SourceLoc, Ty, Value,
+    BoundsProof, CategoryIr, EmissionClass, EmissionPlan, FuncId, FuncKind, Morphism, MorphismId,
+    ObjectId, ObjectKind, Operation, SourceLoc, Ty, Value,
 };
 use slotmap::SecondaryMap;
 use std::collections::HashMap;
@@ -847,6 +847,34 @@ pub(crate) fn buffer_bytes_of(ty: &Ty) -> Option<u64> {
 }
 
 /// The source object of the `Pair{slot==k}` edge feeding aggregate `agg`.
+/// Whether `e` needs no parentheses when nested into a larger expression:
+/// an identifier / literal / member path (`in.f3`, `o7`), or one already
+/// wrapped by a single balanced outer `(...)` pair (WP-B inlining).
+fn is_atomic_expr(e: &str) -> bool {
+    if !e.is_empty()
+        && e.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    {
+        return true;
+    }
+    if e.starts_with('(') && e.ends_with(')') {
+        let mut depth = 0i32;
+        for (i, c) in e.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return i == e.len() - 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
 pub(crate) fn pair_source(ir: &CategoryIr, agg: ObjectId, k: u32) -> Option<ObjectId> {
     for &m in ir.in_edges(agg) {
         let morph = ir.morphism(m).expect("morphism resolves");
@@ -1683,6 +1711,21 @@ pub(crate) struct DevEmit<'a> {
     /// §3 bounds guard, so [`DevEmit::emit_index`] drops the dead guard text
     /// and emits the plain per-thread read (the extension temp stays).
     proof: BoundsProof,
+    /// The minimal-emission classification (plan-minimal-emission WP-B):
+    /// Named objects keep hoisted `o{ord}` locals + statement assignment;
+    /// Inline objects live as memoized expression strings (`exprs`);
+    /// Dissolved products never materialize — consumers read their field
+    /// sources through `component_expr`.
+    plan: EmissionPlan,
+    /// Backend-forced Named overrides on top of the plan: a `Call` target
+    /// must stay a statement so the §3 post-call `if (*trap)` check keeps
+    /// its position (the query is backend-agnostic and cannot know the trap
+    /// protocol; recorded in the plan doc as a WP-B as-built note).
+    force_named: SecondaryMap<ObjectId, ()>,
+    /// Memoized expressions for Inline/Dissolved-consumed values — one
+    /// string per object, referenced exactly once (R-NODUP holds because
+    /// `Inline ⇔ effective count = 1` in the query).
+    exprs: SecondaryMap<ObjectId, String>,
     decls: String,
     body: String,
     next: u32,
@@ -1768,6 +1811,27 @@ impl<'a> DevEmit<'a> {
             _ => "return;".to_string(),
         };
 
+        let plan = ir.emission_plan(f);
+        let mut force_named: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+        for &m in &fd.morphisms {
+            let morph = ir.morphism(m).expect("morphism resolves");
+            if matches!(morph.op, Operation::Call(_)) {
+                force_named.insert(morph.target, ());
+            }
+        }
+        // Product-typed Inline (plan §2 as-built note 2): Phase 1 takes the
+        // plan's sanctioned fallback — one local name — instead of a braced
+        // aggregate literal (the Pair arm assigns its fields normally). The
+        // exhibits are unaffected: their wrapper products are Dissolved.
+        for (id, obj) in ir.objects() {
+            if ir.try_owner(id) == Some(f)
+                && obj.ty.product_arity().is_some()
+                && plan.class(id).is_some_and(|c| c.is_inline())
+            {
+                force_named.insert(id, ());
+            }
+        }
+
         DevEmit {
             ir,
             f,
@@ -1780,12 +1844,34 @@ impl<'a> DevEmit<'a> {
             lit_total: literal_pair_counts(ir, f),
             lit_seen: SecondaryMap::new(),
             proof: ir.bounds_proof(f),
+            plan,
+            force_named,
+            exprs: SecondaryMap::new(),
             decls: String::new(),
             body: String::new(),
             next: 0,
             ret_default,
             base: 0,
         }
+    }
+
+    /// The effective class: the deduced plan, overridden Named where the
+    /// backend's statement protocol demands it (Call targets).
+    fn cls(&self, o: ObjectId) -> EmissionClass {
+        if self.force_named.contains_key(o) {
+            return EmissionClass::Named;
+        }
+        self.plan.class(o).unwrap_or(EmissionClass::Named)
+    }
+
+    fn dissolved(&self, o: ObjectId) -> bool {
+        self.cls(o).is_dissolved()
+    }
+
+    /// Inline OR Dissolved: no local, no declaration — the value lives as an
+    /// expression (or, for a dissolved product, as its fields' expressions).
+    fn expr_only(&self, o: ObjectId) -> bool {
+        !self.cls(o).is_named()
     }
 
     fn fresh(&mut self) -> u32 {
@@ -1816,8 +1902,9 @@ impl<'a> DevEmit<'a> {
 
     // --- operand materialization (host-table rules, func.rs) --------------
 
-    /// The whole value of `o` as a C++ expression (constant literal or slot
-    /// name; an array slot name decays to a pointer where needed).
+    /// The whole value of `o` as a C++ expression: constant literal,
+    /// memoized Inline expression, or slot name (an array slot name decays
+    /// to a pointer where needed).
     fn load_whole(&mut self, o: ObjectId) -> Option<(String, String)> {
         let obj = self.ir.object(o).expect("object resolves");
         if obj.kind == ObjectKind::Constant {
@@ -1827,18 +1914,28 @@ impl<'a> DevEmit<'a> {
             };
         }
         let ct = lower_ty(&obj.ty)?;
+        if let Some(e) = self.exprs.get(o) {
+            return Some((ct, e.clone()));
+        }
         let slot = self.slot(o)?;
         Some((ct, slot))
     }
 
     /// Component `k` of aggregate `agg` under the residual-erasure remap
-    /// (identical to the host rule).
+    /// (identical to the host rule). A DISSOLVED aggregate never
+    /// materializes: the component resolves through the Pair edge to the
+    /// field source's own expression (WP-B — the wrapper text disappears).
     fn component_expr(&mut self, agg: ObjectId, k: u32) -> Option<(String, String)> {
         let agg_ty = self.obj_ty(agg);
         match &agg_ty {
             Ty::Tuple(_) | Ty::Struct { .. } => {
-                let comp_ty = agg_ty.component_ty(k)?;
-                let cct = lower_ty(comp_ty)?;
+                let comp_ty = agg_ty.component_ty(k)?.clone();
+                let cct = lower_ty(&comp_ty)?;
+                if self.dissolved(agg) {
+                    let src = pair_source(self.ir, agg, k)?;
+                    let (_, val) = self.load_whole(src)?;
+                    return Some((cct, val));
+                }
                 let agg_slot = self.slot(agg)?;
                 if residual_arity(&agg_ty) == 1 {
                     Some((cct, agg_slot))
@@ -1851,7 +1948,19 @@ impl<'a> DevEmit<'a> {
         }
     }
 
+    /// Route a produced value: a Named object takes its one statement
+    /// assignment; an Inline object memoizes the (parenthesized) expression
+    /// and emits nothing (WP-B).
     fn store_obj(&mut self, o: ObjectId, expr: &str) {
+        if self.expr_only(o) {
+            let wrapped = if is_atomic_expr(expr) {
+                expr.to_string()
+            } else {
+                format!("({expr})")
+            };
+            self.exprs.insert(o, wrapped);
+            return;
+        }
         if let Some(slot) = self.slot(o) {
             self.line(1, format!("{slot} = {expr};"));
         }
@@ -1879,6 +1988,19 @@ impl<'a> DevEmit<'a> {
                 continue;
             }
             if lower_ty(ty).is_none() {
+                ord += 1;
+                continue;
+            }
+            // R-ONENAME: the parameter IS a variable — the input object's
+            // slot is the literal `in` (no `o0 = in;` copy, no declaration).
+            if *id == fd.input {
+                self.slots.insert(*id, "in".to_string());
+                ord += 1;
+                continue;
+            }
+            // WP-B: Inline/Dissolved values own no local (never arrays —
+            // the query keeps arrays Named; the guard is belt-and-braces).
+            if !matches!(ty, Ty::Array { .. }) && self.expr_only(*id) {
                 ord += 1;
                 continue;
             }
@@ -1913,13 +2035,8 @@ impl<'a> DevEmit<'a> {
             ord += 1;
         }
 
-        // Prologue: the parameter moves into the input object's slot (a
-        // pointer copy for array inputs — handle semantics).
-        if lower_ty(&in_ty).is_some()
-            && let Some(ps) = self.slot(fd.input)
-        {
-            self.line(1, format!("{ps} = in;"));
-        }
+        // No prologue copy: the input object's slot IS `in` (R-ONENAME).
+        let _ = in_ty;
 
         // Driver-owned morphisms: everything in a loop plan's decide/advance
         // cones, plus anything incident to an SCC object — DESIGN §1's
@@ -2070,6 +2187,10 @@ impl<'a> DevEmit<'a> {
                     if seen == self.lit_total.get(target).copied().unwrap_or(0) {
                         self.emit_literal(target);
                     }
+                } else if self.dissolved(target) {
+                    // WP-B: a dissolved product never materializes — its
+                    // consumers read the field sources through
+                    // `component_expr`; the assembly text disappears.
                 } else if let Some((_, sval)) = self.load_whole(source)
                     && let Some((_, lvalue)) = self.component_expr(target, slot)
                 {
@@ -2187,7 +2308,6 @@ impl<'a> DevEmit<'a> {
                 self.store_obj(target, &format!("({ct})(({uct}){a} {sym} ({uct}){b})"));
             }
             Operation::Div | Operation::Mod => {
-                let slot = self.slot(target).expect("div/mod result slot");
                 // #13: a literal non-zero constant divisor makes the zero
                 // guard dead by construction (the oracle's behavior is
                 // identical — the guard can never fire); a constant ≠ −1
@@ -2201,6 +2321,9 @@ impl<'a> DevEmit<'a> {
                     self.line(1, format!("if ({b} == 0) {{ *trap = 1u; {ret} }}"));
                 }
                 if signed && !matches!(const_div, Some(v) if v != -1) {
+                    // Guarded form: the target is Named by the query (a
+                    // guarded producer), so the slot exists.
+                    let slot = self.slot(target).expect("div/mod result slot");
                     let min = int_min(&ct);
                     let sym = if op == Operation::Div { "/" } else { "%" };
                     let ovval = if op == Operation::Div { min } else { "0" };
@@ -2318,8 +2441,12 @@ impl<'a> DevEmit<'a> {
             let pair_ty = self.obj_ty(self.ir.func(body).expect("body resolves").input);
             let mut parts: Vec<Option<String>> = Vec::new();
             for j in 0..captures {
-                let cap_obj = pair_component(self.ir, source, j);
-                parts.push(self.load_whole(cap_obj).map(|(_, v)| v));
+                // WP-B (R-NODUP): read the capture THROUGH the source
+                // product's field — a Named product gives `oN.fK` (one
+                // reference), never a second copy of an Inline feeder's
+                // expression; a dissolved product resolves to the field
+                // source's expression, which then counts as its one use.
+                parts.push(self.component_expr(source, j).map(|(_, v)| v));
             }
             parts.push(elem_arg);
             let (decl, arg) = assemble_body_arg(&pair_ty, &parts);
@@ -2508,9 +2635,10 @@ impl<'a> DevEmit<'a> {
         let arr = self
             .slot(pair_component(self.ir, source, 0))
             .expect("index array slot");
-        let tgt = self.slot(target).expect("index target");
         if matches!(elem, Ty::Array { .. }) {
-            // Array element: fresh per-thread local sub-copy.
+            // Array element: fresh per-thread local sub-copy (array targets
+            // are always Named — the query keeps arrays out of Inline).
+            let tgt = self.slot(target).expect("index target");
             let m = flat_count(&elem);
             let jv = self.tmp();
             self.line(
@@ -2523,7 +2651,10 @@ impl<'a> DevEmit<'a> {
             );
             self.line(1, "}");
         } else {
-            self.line(1, format!("{tgt} = {arr}[(unsigned long long){i64v}];"));
+            // A proven Index is guard-free, so its scalar result may be
+            // Inline — route through store_obj (WP-B); an unproven one is
+            // Named by the query (guarded producer) and stays a statement.
+            self.store_obj(target, &format!("{arr}[(unsigned long long){i64v}]"));
         }
     }
 
@@ -2655,8 +2786,9 @@ impl<'a> DevEmit<'a> {
         };
         let mut parts: Vec<Option<String>> = Vec::new();
         for j in 0..captures {
-            let cap_obj = pair_component(self.ir, source, j);
-            parts.push(self.load_whole(cap_obj).map(|(_, v)| v));
+            // WP-B (R-NODUP): through the source product's field — see
+            // emit_map's capture loop.
+            parts.push(self.component_expr(source, j).map(|(_, v)| v));
         }
         parts.push(acc_expr);
         parts.push(earg);
@@ -3654,8 +3786,11 @@ fn main() {
                    rs[0] -> println;\n}\n";
         let cu = emit_src(src);
         let twin = twin_slice(&cu);
-        assert!(!twin.contains("= --"), "{twin}");
-        assert!(twin.contains("= -(-1.5e0);"), "{twin}");
+        // WP-B: the Neg may inline into its consumer — the pin is the
+        // parenthesized form itself, wherever it lands, and the absence of
+        // the ill-formed `--` ANYWHERE in the twin.
+        assert!(!twin.contains("--"), "{twin}");
+        assert!(twin.contains("-(-1.5e0)"), "{twin}");
     }
 
     #[test]
@@ -4350,7 +4485,11 @@ fn main() {
             twin.contains("for (unsigned long long t1 = 0; t1 < 2ULL; t1++) {"),
             "{twin}"
         );
-        assert!(twin.contains("pair.f0 = o2;"), "{twin}");
+        // WP-B (R-NODUP): the through-captured scalar is read through the
+        // Named fold-operand product's field — one reference, no extraction
+        // local, no re-computation (the per-iteration re-read collapses at
+        // WP-D hoisting).
+        assert!(twin.contains("pair.f0 = o7.f0;"), "{twin}");
         assert!(twin.contains("pair.f1 = t0;"), "{twin}");
         assert!(twin.contains("pair.f2 = o6[t1];"), "{twin}");
         assert!(twin.contains("t0 = fn1(pair);"), "{twin}");

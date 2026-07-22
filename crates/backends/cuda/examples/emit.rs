@@ -1,25 +1,30 @@
 //! Emit textual CUDA C++ for a `.flow` file (ADR-0020; dev tool — the future
-//! `flow build` embryo). Usage: `cargo run -p flow-backend-cuda --example emit -- <file.flow> [-] [--perf]`
-//! (writes `<file>.cu` next to the source, or stdout with `-`; `--perf`
-//! instruments every kernel launch with CUDA-event timing — suggestions.md
-//! #19a, the `FLOW_PERF launch=` / `FLOW_PERF total ms=` lines).
+//! `flow build` embryo). Usage: `cargo run -p flow-backend-cuda --example emit -- <file.flow> [-] [--perf] [--rewrite]`
+//! (writes `<file>.cu` next to the source, or stdout with `-`; `--rewrite`
+//! rewrites the lowered IR before emission; `--perf` instruments every kernel
+//! launch with CUDA-event timing — suggestions.md #19a, the `FLOW_PERF launch=`
+//! / `FLOW_PERF total ms=` lines).
 
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let Some(path) = args.next() else {
-        eprintln!("usage: emit <file.flow> [-] [--perf]");
+        eprintln!("usage: emit <file.flow> [-] [--perf] [--rewrite]");
         return ExitCode::from(2);
     };
     let mut to_stdout = false;
+    let mut rewrite = false;
     let mut opts = flow_backend_cuda::EmitOpts::default();
     for a in args {
         match a.as_str() {
             "-" => to_stdout = true,
             "--perf" => opts.perf_timing = true,
+            "--rewrite" => rewrite = true,
             other => {
-                eprintln!("unknown flag: {other} (usage: emit <file.flow> [-] [--perf])");
+                eprintln!(
+                    "unknown flag: {other} (usage: emit <file.flow> [-] [--perf] [--rewrite])"
+                );
                 return ExitCode::from(2);
             }
         }
@@ -42,6 +47,12 @@ fn main() -> ExitCode {
             eprintln!("lower: {d:?}");
             return ExitCode::from(1);
         }
+    };
+    let ir = if rewrite {
+        let r = flow_rewrite::rewrite(ir);
+        r.ir
+    } else {
+        ir
     };
     match flow_backend_cuda::emit_with_opts(&ir, &opts) {
         Ok(cu) => {
