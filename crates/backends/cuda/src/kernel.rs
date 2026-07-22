@@ -849,8 +849,8 @@ pub(crate) fn buffer_bytes_of(ty: &Ty) -> Option<u64> {
 /// The source object of the `Pair{slot==k}` edge feeding aggregate `agg`.
 /// Whether `e` needs no parentheses when nested into a larger expression:
 /// an identifier / literal / member path (`in.f3`, `o7`), or one already
-/// wrapped by a single balanced outer `(...)` pair (WP-B inlining).
-fn is_atomic_expr(e: &str) -> bool {
+/// wrapped by a single balanced outer `(...)` pair (WP-B/WP-C inlining).
+pub(crate) fn is_atomic_expr(e: &str) -> bool {
     if !e.is_empty()
         && e.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
@@ -3916,7 +3916,9 @@ fn main() {
         // The kernel calls the map body; the map body (itself a HostDevice
         // fn) calls sq — and so does main; nobody threads a trap pointer.
         assert!(cu.contains("out[i] = fn2(in[i]);"), "{cu}");
-        assert!(cu.contains("= fn0(o0);"), "{cu}");
+        // WP-C (R-ONENAME): the HostDevice body calls sq with the param
+        // read in place — no extraction local.
+        assert!(cu.contains("= fn0(in);"), "{cu}");
         let main_start = cu.find("static void flow_main() {").unwrap();
         let host = &cu[main_start..];
         assert!(host.contains("fn0(3)"), "{host}");
@@ -4439,7 +4441,8 @@ fn main() {
         assert!(cu.contains("pair.f1 = acc;"), "{cu}");
         assert!(cu.contains("pair.f2 = arr[i];"), "{cu}");
         assert!(cu.contains("acc = fn1(pair);"), "{cu}");
-        assert!(cu.contains("k0_0<<<1, 1>>>(t1, o4, o5, 10);"), "{cu}");
+        // WP-C: the fold seed (a constant) inlines into the launch arg.
+        assert!(cu.contains("k0_0<<<1, 1>>>(t1, 0, o5, 10);"), "{cu}");
     }
 
     #[test]

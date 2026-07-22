@@ -1,5 +1,5 @@
 ---
-source: crates/flow-backend-cuda/tests/golden_cu.rs
+source: crates/backends/cuda/tests/golden_cu.rs
 expression: cu
 ---
 // flow-backend-cuda emitted translation unit
@@ -111,7 +111,6 @@ static float fn0(FlowProd_floatp_floatp in);
 static void flow_main();
 
 static float fn0(FlowProd_floatp_floatp in) {
-  FlowProd_floatp_floatp o0;
   float o1;
   float* o2 = nullptr;
   float* o3 = nullptr;
@@ -138,9 +137,8 @@ static float fn0(FlowProd_floatp_floatp in) {
   FlowProd_float_bool o24;
   float* t0 = nullptr;
   float* t1 = nullptr;
-  o0 = in;
-  o2 = o0.f0;
-  o3 = o0.f1;
+  o2 = in.f0;
+  o3 = in.f1;
   o4.f0 = 0;
   o4.f1 = 0e0f;
   o5 = o4;

@@ -132,6 +132,16 @@ pub(crate) struct FnEmit<'a> {
     /// / `fev{i}_stop`), in `collect_sites` order (deterministic). Populated
     /// at [`FnEmit::emit`] start when `perf` is set; lookup-only (L2).
     pub ev_ord: HashMap<MorphismId, usize>,
+    /// Minimal-emission classification (plan-minimal-emission WP-C — the
+    /// host/`__host__ __device__` lane of the same mechanism as `DevEmit`).
+    pub plan: flow_ir::EmissionPlan,
+    /// Backend-forced Named on top of the plan: `Call` targets (host callees
+    /// trap via `flow_trap` inside — call position is semantic), every
+    /// bulk-op target (launch/readback machinery needs an lvalue local),
+    /// and product-typed Inline (local-name fallback).
+    pub force_named: SecondaryMap<ObjectId, ()>,
+    /// Memoized expressions for Inline/Dissolved values (see `DevEmit`).
+    pub exprs: SecondaryMap<ObjectId, String>,
 }
 
 impl<'a> FnEmit<'a> {
@@ -145,6 +155,34 @@ impl<'a> FnEmit<'a> {
         kernels: &'a kernel::KernelSet,
     ) -> Self {
         let sites = kernels.names.get(f).cloned().unwrap_or_default();
+        let plan = ir.emission_plan(f);
+        let mut force_named: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+        let fd = ir.func(f).expect("func resolves");
+        for &m in &fd.morphisms {
+            let morph = ir.morphism(m).expect("morphism resolves");
+            match morph.op {
+                Operation::Call(_)
+                | Operation::Map { .. }
+                | Operation::Zip
+                | Operation::Enumerate
+                | Operation::Iota
+                | Operation::Fill
+                | Operation::Fold { .. }
+                | Operation::Index
+                | Operation::Update => {
+                    force_named.insert(morph.target, ());
+                }
+                _ => {}
+            }
+        }
+        for (id, obj) in ir.objects() {
+            if ir.try_owner(id) == Some(f)
+                && obj.ty.product_arity().is_some()
+                && plan.class(id).is_some_and(|c| c.is_inline())
+            {
+                force_named.insert(id, ());
+            }
+        }
         FnEmit {
             ir,
             f,
@@ -166,7 +204,27 @@ impl<'a> FnEmit<'a> {
             last_use: ir.last_use_plan(f),
             perf: false,
             ev_ord: HashMap::new(),
+            plan,
+            force_named,
+            exprs: SecondaryMap::new(),
         }
+    }
+
+    /// The effective class (WP-C): deduced plan, overridden Named where the
+    /// host statement protocol demands it.
+    fn cls(&self, o: ObjectId) -> flow_ir::EmissionClass {
+        if self.force_named.contains_key(o) {
+            return flow_ir::EmissionClass::Named;
+        }
+        self.plan.class(o).unwrap_or(flow_ir::EmissionClass::Named)
+    }
+
+    fn dissolved(&self, o: ObjectId) -> bool {
+        self.cls(o).is_dissolved()
+    }
+
+    fn expr_only(&self, o: ObjectId) -> bool {
+        !self.cls(o).is_named()
     }
 
     fn fresh(&mut self) -> u32 {
@@ -220,6 +278,9 @@ impl<'a> FnEmit<'a> {
             };
         }
         let ct = lower_ty(&obj.ty)?;
+        if let Some(e) = self.exprs.get(o) {
+            return Some((ct, e.clone()));
+        }
         let slot = self.slot(o)?;
         Some((ct, slot))
     }
@@ -233,8 +294,15 @@ impl<'a> FnEmit<'a> {
         let agg_ty = self.obj_ty(agg);
         match &agg_ty {
             Ty::Tuple(_) | Ty::Struct { .. } => {
-                let comp_ty = agg_ty.component_ty(k)?;
-                let cct = lower_ty(comp_ty)?; // erased component ⇒ None
+                let comp_ty = agg_ty.component_ty(k)?.clone();
+                let cct = lower_ty(&comp_ty)?; // erased component ⇒ None
+                // WP-C: a dissolved product resolves through its Pair edge
+                // to the field source's own expression.
+                if self.dissolved(agg) {
+                    let src = kernel::pair_source(self.ir, agg, k)?;
+                    let (_, val) = self.load_whole(src)?;
+                    return Some((cct, val));
+                }
                 let agg_slot = self.slot(agg)?;
                 if residual_arity(&agg_ty) == 1 {
                     Some((cct, agg_slot)) // bare: the local IS the component
@@ -247,8 +315,18 @@ impl<'a> FnEmit<'a> {
         }
     }
 
-    /// Assign `expr` into object `o`'s local, if it has one.
+    /// Route a produced value (WP-C): Named takes its one statement
+    /// assignment; Inline memoizes the (parenthesized) expression.
     fn store_obj(&mut self, o: ObjectId, expr: &str) {
+        if self.expr_only(o) {
+            let wrapped = if kernel::is_atomic_expr(expr) {
+                expr.to_string()
+            } else {
+                format!("({expr})")
+            };
+            self.exprs.insert(o, wrapped);
+            return;
+        }
         if let Some(slot) = self.slot(o) {
             self.line(format!("{slot} = {expr};"));
         }
@@ -505,6 +583,18 @@ impl<'a> FnEmit<'a> {
             if *kind == ObjectKind::Constant {
                 continue;
             }
+            // R-ONENAME (WP-C): the parameter IS a variable — alias `in`,
+            // no declaration, no prologue copy.
+            if *id == fd.input && lower_ty(ty).is_some() {
+                self.slots.insert(*id, "in".to_string());
+                ord += 1;
+                continue;
+            }
+            // Inline/Dissolved values own no local (arrays stay Named).
+            if !matches!(ty, Ty::Array { .. }) && lower_ty(ty).is_some() && self.expr_only(*id) {
+                ord += 1;
+                continue;
+            }
             if let Some(ct) = lower_ty(ty) {
                 let name = format!("o{ord}");
                 self.slots.insert(*id, name.clone());
@@ -562,11 +652,8 @@ impl<'a> FnEmit<'a> {
                 "cu_check(cudaEventCreate(&fev{i}_stop), \"cudaEventCreate\");"
             ));
         }
-        if lower_ty(&in_ty).is_some()
-            && let Some(ps) = self.slot(fd.input)
-        {
-            self.line(format!("{ps} = in;"));
-        }
+        // No `{o0} = in;` prologue copy — the input aliases `in` (WP-C).
+        let _ = &in_ty;
 
         // The topo walk (DESIGN §1: one host statement per morphism; the
         // driver-ownership skip routes loop bodies to loops.rs's quartet).
@@ -665,6 +752,9 @@ impl<'a> FnEmit<'a> {
                     if seen == self.lit_total.get(target).copied().unwrap_or(0) {
                         self.emit_literal(target);
                     }
+                } else if self.dissolved(target) {
+                    // WP-C: dissolved wrapper — no materialization; consumers
+                    // read the field sources through `component_expr`.
                 } else if let Some((_, sval)) = self.load_whole(source)
                     && let Some((_, lvalue)) = self.component_expr(target, slot)
                 {
@@ -802,7 +892,6 @@ impl<'a> FnEmit<'a> {
                 self.store_obj(target, &format!("({ct})(({uct}){a} {sym} ({uct}){b})"));
             }
             Operation::Div | Operation::Mod => {
-                let slot = self.slot(target).expect("div/mod result slot");
                 // #13 (kernel.rs's const_int_operand): a literal non-zero
                 // constant divisor makes the zero guard dead by construction
                 // (oracle behavior identical — it can never fire); a
@@ -832,7 +921,9 @@ impl<'a> FnEmit<'a> {
                 if signed && !matches!(const_div, Some(v) if v != -1) {
                     // MIN/-1 → defined result (wrapping_div/rem parity):
                     // Div ⇒ MIN, Mod ⇒ 0 — a value guard, NOT a trap. The
-                    // unguarded C++ `INT_MIN / -1` would be UB.
+                    // unguarded C++ `INT_MIN / -1` would be UB. Guarded ⇒
+                    // the target is Named by the query — the slot exists.
+                    let slot = self.slot(target).expect("div/mod result slot");
                     let min = int_min(&ct);
                     let sym = if op == Operation::Div { "/" } else { "%" };
                     let ovval = if op == Operation::Div { min } else { "0" };
@@ -1874,15 +1965,16 @@ mod tests {
             "fn main() {\n    3 + 4 -> a;\n    10 - 3 -> s;\n    2 * 6 -> m;\n    \
              a + s + m -> t;\n    t -> println;\n}\n",
         );
-        // BC2: every int op is `({cty})(({ucty})a {sym} ({ucty})b)` — the
-        // operands here are pair-field reads (`o2.f0`), the shape is the pin.
+        // BC2: every int op is `({cty})(({ucty})a {sym} ({ucty})b)`. WP-C:
+        // the operand wrappers dissolved — constants inline as literals
+        // inside the casts (the shape pin is unchanged).
         assert!(cu.contains("(int32_t)((uint32_t)"), "{cu}");
         assert!(cu.contains(" + (uint32_t)"), "{cu}");
         assert!(cu.contains(" - (uint32_t)"), "{cu}");
         assert!(cu.contains(" * (uint32_t)"), "{cu}");
-        // Constants materialize as decimal literals at the Pair stores.
-        assert!(cu.contains("= 3;"), "{cu}");
-        assert!(cu.contains("= 10;"), "{cu}");
+        // Constants render as decimal literals, inline in the expressions.
+        assert!(cu.contains("(uint32_t)3"), "{cu}");
+        assert!(cu.contains("(uint32_t)10"), "{cu}");
     }
 
     #[test]
@@ -1997,16 +2089,14 @@ mod tests {
     #[test]
     fn float_arith_is_plain_and_mod_is_fmod() {
         let cu = emit_src("fn main() {\n    7.5 % 2.0 -> m;\n    m -> println;\n}\n");
-        // f64 Mod → fmod (operands arrive as pair-field reads).
-        assert!(cu.contains("= fmod("), "{cu}");
-        // Constants render as round-trip scientific literals.
-        assert!(cu.contains("= 7.5e0;"), "{cu}");
-        assert!(cu.contains("= 2e0;"), "{cu}");
+        // f64 Mod → fmod; WP-C: operands and result inline (the wrapper
+        // product dissolved, the single-consumer chain nests into print).
+        assert!(cu.contains("fmod(7.5e0, 2e0)"), "{cu}");
         assert!(cu.contains("flow_print_f64("), "{cu}");
         let src = "fn main() {\n    7.5 -> x: f32;\n    2.0 -> y: f32;\n    \
                    x % y -> m;\n    m -> println;\n}\n";
         let cu = emit_src(src);
-        assert!(cu.contains("= fmodf("), "{cu}");
+        assert!(cu.contains("fmodf("), "{cu}");
         assert!(cu.contains("flow_print_f32("), "{cu}");
     }
 
@@ -2016,8 +2106,12 @@ mod tests {
         // emit `-({val})` — `--1.5e0` is ill-formed C++ (the decrement
         // operator).
         let cu = emit_src("fn main() {\n    -1.5 -> x;\n    -x -> y;\n    y -> println;\n}\n");
+        // WP-C: the Neg may inline — pin the parenthesized form wherever
+        // it lands; `--` never appears in an expression position (comment
+        // banners legitimately contain `---`).
         assert!(!cu.contains("= --"), "{cu}");
-        assert!(cu.contains("= -(-1.5e0);"), "{cu}");
+        assert!(!cu.contains("(--"), "{cu}");
+        assert!(cu.contains("-(-1.5e0)"), "{cu}");
     }
 
     #[test]

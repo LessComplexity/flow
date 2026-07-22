@@ -163,6 +163,24 @@ Deviations/decisions, all emitter-side (the query is untouched):
    classes gone. `-fn1`-class `__host__ __device__` bodies are func.rs's lane —
    WP-C.
 
+## 3c. As-built (WP-C, S22 — orchestrator inline, same session)
+
+`FnEmit` (host + `__host__ __device__` lane) gains the identical mechanism:
+plan + expression memo + dissolved-`component_expr` + decl skip + input alias
+`in`. Host force-Named set: Call targets (host callees trap via `flow_trap`
+inside — position is semantic) AND every bulk-op target (launch/readback
+machinery needs an lvalue: `cudaMemcpy(&oN, …)`), plus product-typed Inline.
+Scalar launch args inline (a fold seed constant rides the launch call:
+`k0_0<<<…>>>(t1, 0, o5, 10)`). Same Div/Mod slot-fetch reorder as WP-B. Phi
+strict-select discipline unchanged (arms as temps — an inlined Phi RESULT is
+fine; arms never re-form). Print's residual-erased token-product keeps one
+local (`oN = (expr); flow_print(oN)`) — the plan excludes token-carrying
+objects by design; recorded headroom with the array-handle aliases.
+Exhibits: sepia channel = one line per coefficient row; fn1 (matmul v2 body)
+= one return expression (was 10 locals / 12 statements); golden corpus
+re-pinned +83/−432, every diff hand-read (prelude deletions, wrapper
+dissolutions, inline substitutions — guards/selects verbatim).
+
 ## 4. #16 (loop-invariant hoisting) rides the same query
 
 A per-thread-loop body subterm whose leaves are all loop-invariant (no dependence

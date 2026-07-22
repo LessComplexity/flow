@@ -1,5 +1,5 @@
 ---
-source: crates/flow-backend-cuda/tests/golden_cu.rs
+source: crates/backends/cuda/tests/golden_cu.rs
 expression: cu
 ---
 // flow-backend-cuda emitted translation unit
@@ -78,26 +78,10 @@ static int32_t fn0(int32_t in);
 static void flow_main();
 
 static int32_t fn0(int32_t in) {
-  int32_t o0;
   int32_t o1;
-  FlowProd_int32_t_int32_t o2;
-  bool o3;
-  FlowProd_int32_t_int32_t o4;
-  int32_t o5;
-  FlowProd_int32_t_int32_t_bool o6;
-  o0 = in;
-  o2.f0 = o0;
-  o4.f0 = o0;
-  o6.f0 = o0;
-  o2.f1 = 0;
-  o4.f1 = -1;
-  o3 = o2.f0 > o2.f1;
-  o5 = (int32_t)((uint32_t)o4.f0 * (uint32_t)o4.f1);
-  o6.f2 = o3;
-  o6.f1 = o5;
-  int32_t t0 = o6.f0;
-  int32_t t1 = o6.f1;
-  o1 = o6.f2 ? t0 : t1;
+  int32_t t0 = in;
+  int32_t t1 = ((int32_t)((uint32_t)in * (uint32_t)-1));
+  o1 = (in > 0) ? t0 : t1;
   return o1;
 }
 

@@ -1,5 +1,5 @@
 ---
-source: crates/flow-backend-cuda/tests/golden_cu.rs
+source: crates/backends/cuda/tests/golden_cu.rs
 expression: cu
 ---
 // flow-backend-cuda emitted translation unit
@@ -82,31 +82,13 @@ static __host__ __device__ int32_t fn1(FlowProd_int32_t_int32_t in);
 static __host__ __device__ int32_t fn2(FlowProd_int32_t_int32_t in);
 
 static __host__ __device__ int32_t fn1(FlowProd_int32_t_int32_t in) {
-  FlowProd_int32_t_int32_t o0;
   int32_t o1;
-  int32_t o2;
-  int32_t o3;
-  FlowProd_int32_t_int32_t o4;
-  o0 = in;
-  o2 = o0.f0;
-  o3 = o0.f1;
-  o4.f0 = o2;
-  o4.f1 = o3;
-  o1 = (int32_t)((uint32_t)o4.f0 + (uint32_t)o4.f1);
+  o1 = (int32_t)((uint32_t)in.f0 + (uint32_t)in.f1);
   return o1;
 }
 static __host__ __device__ int32_t fn2(FlowProd_int32_t_int32_t in) {
-  FlowProd_int32_t_int32_t o0;
   int32_t o1;
-  int32_t o2;
-  int32_t o3;
-  FlowProd_int32_t_int32_t o4;
-  o0 = in;
-  o2 = o0.f0;
-  o3 = o0.f1;
-  o4.f0 = o2;
-  o4.f1 = o3;
-  o1 = (int32_t)((uint32_t)o4.f0 + (uint32_t)o4.f1);
+  o1 = (int32_t)((uint32_t)in.f0 + (uint32_t)in.f1);
   return o1;
 }
 
@@ -148,19 +130,16 @@ static void flow_main() {
   int32_t* o3 = nullptr;
   FlowProd_int32_t_int32_t o4;
   int32_t* o5 = nullptr;
-  FlowProd_int32_tp_int32_tp o6;
   int32_t* o7 = nullptr;
   int32_t* o8 = nullptr;
   FlowProd_int32_tp_int32_tp o9;
   FlowProd_int32_t_int32_t* o10 = nullptr;
   int32_t* o11 = nullptr;
-  FlowProd_int32_tp_int32_tp o12;
   int32_t* o13 = nullptr;
   int32_t* o14 = nullptr;
   FlowProd_int32_tp_int32_tp o15;
   FlowProd_int32_t_int32_t* o16 = nullptr;
   int32_t* o17 = nullptr;
-  FlowProd_int32_tp_int32_t o18;
   int32_t o19;
   int32_t o20;
   char* arena0 = nullptr;
@@ -172,30 +151,24 @@ static void flow_main() {
   k0_0<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o3, 4);
   o4.f0 = 7;
   o4.f1 = 4;
-  o18.f1 = 3;
-  o6.f0 = o2;
-  o6.f1 = o3;
   o5 = (int32_t*)(arena0 + 512ULL);
   k0_2<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o5, 4, 7);
-  o7 = o6.f0;
-  o8 = o6.f1;
-  o12.f1 = o5;
+  o7 = o2;
+  o8 = o3;
   o9.f0 = o7;
   o9.f1 = o8;
   o10 = (FlowProd_int32_t_int32_t*)(arena0 + 768ULL);
   k0_3<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o10, o7, o8);
   o11 = (int32_t*)(arena0 + 1024ULL);
   k0_4<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o11, o10);
-  o12.f0 = o11;
-  o13 = o12.f0;
-  o14 = o12.f1;
+  o13 = o11;
+  o14 = o5;
   o15.f0 = o13;
   o15.f1 = o14;
   o16 = (FlowProd_int32_t_int32_t*)(arena0 + 1280ULL);
   k0_3<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o16, o13, o14);
   o17 = (int32_t*)(arena0 + 1536ULL);
   k0_6<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o17, o16);
-  o18.f0 = o17;
   t0 = (int32_t*)(arena0 + 1792ULL);
   k0_7<<<1, 1>>>(t0, o17, (int64_t)3);
   cu_check(cudaMemcpy(&o19, t0, sizeof(int32_t), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");

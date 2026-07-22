@@ -1,5 +1,5 @@
 ---
-source: crates/flow-backend-cuda/tests/golden_cu.rs
+source: crates/backends/cuda/tests/golden_cu.rs
 expression: cu
 ---
 // flow-backend-cuda emitted translation unit
@@ -72,37 +72,26 @@ static int32_t fn0(FlowProd_int32_t_int32_t in);
 static void flow_main();
 
 static int32_t fn0(FlowProd_int32_t_int32_t in) {
-  FlowProd_int32_t_int32_t o0;
   int32_t o1;
   int32_t o2;
   int32_t o3;
-  FlowProd_int32_t_int32_t o4;
   int32_t o5;
-  FlowProd_int32_t_int32_t o6;
   int32_t o7;
-  FlowProd_int32_t_int32_t o8;
-  o0 = in;
-  o2 = o0.f0;
-  o3 = o0.f1;
-  o4.f0 = o2;
-  o6.f0 = o2;
-  o4.f1 = o3;
-  o6.f1 = o3;
-  if (o4.f1 == 0) { flow_trap(0); }
-  if ((o4.f1 == -1) && (o4.f0 == INT32_MIN)) {
+  o2 = in.f0;
+  o3 = in.f1;
+  if (o3 == 0) { flow_trap(0); }
+  if ((o3 == -1) && (o2 == INT32_MIN)) {
     o5 = INT32_MIN;
   } else {
-    o5 = o4.f0 / o4.f1;
+    o5 = o2 / o3;
   }
-  if (o6.f1 == 0) { flow_trap(0); }
-  if ((o6.f1 == -1) && (o6.f0 == INT32_MIN)) {
+  if (o3 == 0) { flow_trap(0); }
+  if ((o3 == -1) && (o2 == INT32_MIN)) {
     o7 = 0;
   } else {
-    o7 = o6.f0 % o6.f1;
+    o7 = o2 % o3;
   }
-  o8.f0 = o5;
-  o8.f1 = o7;
-  o1 = (int32_t)((uint32_t)o8.f0 + (uint32_t)o8.f1);
+  o1 = (int32_t)((uint32_t)o5 + (uint32_t)o7);
   return o1;
 }
 

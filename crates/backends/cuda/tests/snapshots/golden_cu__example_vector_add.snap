@@ -1,5 +1,5 @@
 ---
-source: crates/flow-backend-cuda/tests/golden_cu.rs
+source: crates/backends/cuda/tests/golden_cu.rs
 expression: cu
 ---
 // flow-backend-cuda emitted translation unit
@@ -91,31 +91,13 @@ static __host__ __device__ int32_t fn1(FlowProd_int32_t_int32_t in);
 static __host__ __device__ int32_t fn2(FlowProd_int32_t_int32_t in);
 
 static __host__ __device__ int32_t fn1(FlowProd_int32_t_int32_t in) {
-  FlowProd_int32_t_int32_t o0;
   int32_t o1;
-  int32_t o2;
-  int32_t o3;
-  FlowProd_int32_t_int32_t o4;
-  o0 = in;
-  o2 = o0.f0;
-  o3 = o0.f1;
-  o4.f0 = o2;
-  o4.f1 = o3;
-  o1 = (int32_t)((uint32_t)o4.f0 + (uint32_t)o4.f1);
+  o1 = (int32_t)((uint32_t)in.f0 + (uint32_t)in.f1);
   return o1;
 }
 static __host__ __device__ int32_t fn2(FlowProd_int32_t_int32_t in) {
-  FlowProd_int32_t_int32_t o0;
   int32_t o1;
-  int32_t o2;
-  int32_t o3;
-  FlowProd_int32_t_int32_t o4;
-  o0 = in;
-  o2 = o0.f0;
-  o3 = o0.f1;
-  o4.f0 = o2;
-  o4.f1 = o3;
-  o1 = (int32_t)((uint32_t)o4.f0 + (uint32_t)o4.f1);
+  o1 = (int32_t)((uint32_t)in.f0 + (uint32_t)in.f1);
   return o1;
 }
 
@@ -151,16 +133,13 @@ static void flow_main();
 static void flow_main() {
   int32_t* o2 = nullptr;
   int32_t* o3 = nullptr;
-  FlowProd_int32_tp_int32_tp o4;
   int32_t* o5 = nullptr;
   int32_t* o6 = nullptr;
   FlowProd_int32_tp_int32_tp o7;
   FlowProd_int32_t_int32_t* o8 = nullptr;
   int32_t* o9 = nullptr;
-  FlowProd_int32_tp_int32_t o12;
   int32_t o13;
   int32_t o14;
-  FlowProd_int32_tp_int32_t o18;
   int32_t o19;
   int32_t o20;
   FlowProd_int32_t_int32_tp o24;
@@ -177,22 +156,16 @@ static void flow_main() {
   static const int32_t lit1[16] = { 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100 };
   o3 = (int32_t*)(arena0 + 256ULL);
   cu_check(cudaMemcpy(o3, lit1, sizeof(lit1), cudaMemcpyHostToDevice), "cudaMemcpy(literal)");
-  o12.f1 = 0;
-  o18.f1 = 15;
   o24.f0 = 0;
-  o4.f0 = o2;
-  o4.f1 = o3;
   flow_print_str((const uint8_t*)str0, 8, false);
-  o5 = o4.f0;
-  o6 = o4.f1;
+  o5 = o2;
+  o6 = o3;
   o7.f0 = o5;
   o7.f1 = o6;
   o8 = (FlowProd_int32_t_int32_t*)(arena0 + 512ULL);
   k0_0<<<(unsigned int)((16ULL + 255ULL) / 256ULL), 256>>>(o8, o5, o6);
   o9 = (int32_t*)(arena0 + 768ULL);
   k0_1<<<(unsigned int)((16ULL + 255ULL) / 256ULL), 256>>>(o9, o8);
-  o12.f0 = o9;
-  o18.f0 = o9;
   o24.f1 = o9;
   t2 = (int32_t*)(arena0 + 1024ULL);
   k0_2<<<1, 1>>>(t2, o9, (int64_t)0);

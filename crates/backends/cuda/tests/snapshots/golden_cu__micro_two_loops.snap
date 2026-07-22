@@ -1,5 +1,5 @@
 ---
-source: crates/flow-backend-cuda/tests/golden_cu.rs
+source: crates/backends/cuda/tests/golden_cu.rs
 expression: cu
 ---
 // flow-backend-cuda emitted translation unit
@@ -82,7 +82,6 @@ static int32_t fn0(int32_t in);
 static void flow_main();
 
 static int32_t fn0(int32_t in) {
-  int32_t o0;
   int32_t o1;
   FlowProd_int32_t_int32_t o2;
   FlowProd_int32_t_int32_t o3;
@@ -112,15 +111,13 @@ static int32_t fn0(int32_t in) {
   FlowProd_FlowProd_int32_t_int32_t_bool o27;
   FlowProd_int32_t_bool o28;
   int32_t o29;
-  FlowProd_int32_t_int32_t o30;
-  o0 = in;
   o2.f0 = 0;
   o2.f1 = 0;
   o16.f0 = 0;
   o16.f1 = 0;
   o3 = o2;
   while (true) {
-    o6.f1 = o0;
+    o6.f1 = in;
     o4 = o3.f0;
     o5 = o3.f1;
     o6.f0 = o4;
@@ -141,10 +138,9 @@ static int32_t fn0(int32_t in) {
     o3 = o13.f0;
   }
   o15 = o14.f0;
-  o30.f0 = o15;
   o17 = o16;
   while (true) {
-    o20.f1 = o0;
+    o20.f1 = in;
     o18 = o17.f0;
     o19 = o17.f1;
     o20.f0 = o18;
@@ -165,8 +161,7 @@ static int32_t fn0(int32_t in) {
     o17 = o27.f0;
   }
   o29 = o28.f0;
-  o30.f1 = o29;
-  o1 = (int32_t)((uint32_t)o30.f0 + (uint32_t)o30.f1);
+  o1 = (int32_t)((uint32_t)o15 + (uint32_t)o29);
   return o1;
 }
 

@@ -1,5 +1,5 @@
 ---
-source: crates/flow-backend-cuda/tests/golden_cu.rs
+source: crates/backends/cuda/tests/golden_cu.rs
 expression: cu
 ---
 // flow-backend-cuda emitted translation unit
@@ -90,101 +90,36 @@ static int32_t fn0(FlowProd_int32_t_int32_t_int32_t in);
 static void flow_main();
 
 static int32_t fn0(FlowProd_int32_t_int32_t_int32_t in) {
-  FlowProd_int32_t_int32_t_int32_t o0;
   int32_t o1;
   int32_t o2;
   int32_t o3;
   int32_t o4;
-  FlowProd_int32_t_int32_t o5;
-  bool o6;
-  FlowProd_int32_t_int32_t o7;
-  bool o8;
-  FlowProd_int32_t_int32_t o9;
-  bool o10;
-  FlowProd_int32_t_int32_t o11;
-  bool o12;
-  FlowProd_int32_t_int32_t o13;
-  int32_t o14;
-  FlowProd_int32_t_int32_t o15;
-  int32_t o16;
-  FlowProd_int32_t_int32_t o17;
-  int32_t o18;
-  FlowProd_int32_t_int32_t o19;
   int32_t o20;
-  FlowProd_int32_t_int32_t o21;
   int32_t o22;
-  FlowProd_int32_t_int32_t_bool o23;
-  int32_t o24;
-  FlowProd_int32_t_int32_t_bool o25;
-  int32_t o26;
-  FlowProd_int32_t_int32_t_bool o27;
-  int32_t o28;
-  FlowProd_int32_t_int32_t_bool o29;
-  o0 = in;
-  o2 = o0.f0;
-  o3 = o0.f1;
-  o4 = o0.f2;
-  o5.f1 = 0;
-  o7.f1 = 1;
-  o9.f1 = 2;
-  o11.f1 = 3;
-  o5.f0 = o2;
-  o7.f0 = o2;
-  o9.f0 = o2;
-  o11.f0 = o2;
-  o13.f0 = o3;
-  o15.f0 = o3;
-  o17.f0 = o3;
-  o19.f0 = o3;
-  o21.f0 = o3;
-  o13.f1 = o4;
-  o15.f1 = o4;
-  o17.f1 = o4;
-  o19.f1 = o4;
-  o21.f1 = o4;
-  o6 = o5.f0 == o5.f1;
-  o8 = o7.f0 == o7.f1;
-  o10 = o9.f0 == o9.f1;
-  o12 = o11.f0 == o11.f1;
-  o14 = (int32_t)((uint32_t)o13.f0 + (uint32_t)o13.f1);
-  o16 = (int32_t)((uint32_t)o15.f0 - (uint32_t)o15.f1);
-  o18 = (int32_t)((uint32_t)o17.f0 * (uint32_t)o17.f1);
-  if (o19.f1 == 0) { flow_trap(0); }
-  if ((o19.f1 == -1) && (o19.f0 == INT32_MIN)) {
+  o2 = in.f0;
+  o3 = in.f1;
+  o4 = in.f2;
+  if (o4 == 0) { flow_trap(0); }
+  if ((o4 == -1) && (o3 == INT32_MIN)) {
     o20 = INT32_MIN;
   } else {
-    o20 = o19.f0 / o19.f1;
+    o20 = o3 / o4;
   }
-  if (o21.f1 == 0) { flow_trap(0); }
-  if ((o21.f1 == -1) && (o21.f0 == INT32_MIN)) {
+  if (o4 == 0) { flow_trap(0); }
+  if ((o4 == -1) && (o3 == INT32_MIN)) {
     o22 = 0;
   } else {
-    o22 = o21.f0 % o21.f1;
+    o22 = o3 % o4;
   }
-  o29.f2 = o6;
-  o27.f2 = o8;
-  o25.f2 = o10;
-  o23.f2 = o12;
-  o29.f0 = o14;
-  o27.f0 = o16;
-  o25.f0 = o18;
-  o23.f0 = o20;
-  o23.f1 = o22;
-  int32_t t0 = o23.f0;
-  int32_t t1 = o23.f1;
-  o24 = o23.f2 ? t0 : t1;
-  o25.f1 = o24;
-  int32_t t2 = o25.f0;
-  int32_t t3 = o25.f1;
-  o26 = o25.f2 ? t2 : t3;
-  o27.f1 = o26;
-  int32_t t4 = o27.f0;
-  int32_t t5 = o27.f1;
-  o28 = o27.f2 ? t4 : t5;
-  o29.f1 = o28;
-  int32_t t6 = o29.f0;
-  int32_t t7 = o29.f1;
-  o1 = o29.f2 ? t6 : t7;
+  int32_t t0 = o20;
+  int32_t t1 = o22;
+  int32_t t2 = ((int32_t)((uint32_t)o3 * (uint32_t)o4));
+  int32_t t3 = ((o2 == 3) ? t0 : t1);
+  int32_t t4 = ((int32_t)((uint32_t)o3 - (uint32_t)o4));
+  int32_t t5 = ((o2 == 2) ? t2 : t3);
+  int32_t t6 = ((int32_t)((uint32_t)o3 + (uint32_t)o4));
+  int32_t t7 = ((o2 == 1) ? t4 : t5);
+  o1 = (o2 == 0) ? t6 : t7;
   return o1;
 }
 

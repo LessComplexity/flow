@@ -1,5 +1,5 @@
 ---
-source: crates/flow-backend-cuda/tests/golden_cu.rs
+source: crates/backends/cuda/tests/golden_cu.rs
 expression: cu
 ---
 // flow-backend-cuda emitted translation unit
@@ -104,7 +104,6 @@ static int32_t* fn0(int32_t in);
 static void flow_main();
 
 static int32_t* fn0(int32_t in) {
-  int32_t o0;
   int32_t* o1 = nullptr;
   int32_t* o2 = nullptr;
   FlowProd_int32_tp_int32_t o3;
@@ -124,7 +123,6 @@ static int32_t* fn0(int32_t in) {
   FlowProd_int32_tp_bool o17;
   char* arena0 = nullptr;
   cu_check(cudaMalloc((void**)&arena0, 256ULL), "cudaMalloc(arena0)");
-  o0 = in;
   static const int32_t lit0[4] = { 0, 0, 0, 0 };
   o2 = (int32_t*)(arena0 + 0ULL);
   cu_check(cudaMemcpy(o2, lit0, sizeof(lit0), cudaMemcpyHostToDevice), "cudaMemcpy(literal)");
@@ -132,7 +130,7 @@ static int32_t* fn0(int32_t in) {
   o3.f0 = o2;
   o4 = o3;
   while (true) {
-    o7.f1 = o0;
+    o7.f1 = in;
     o5 = o4.f0;
     o6 = o4.f1;
     o17.f0 = o5;
@@ -168,15 +166,12 @@ static int32_t* fn0(int32_t in) {
 
 static void flow_main() {
   int32_t* o2 = nullptr;
-  FlowProd_int32_tp_int32_t o3;
   int32_t o4;
   int32_t o5;
   char* arena0 = nullptr;
   int32_t* t0 = nullptr;
   cu_check(cudaMalloc((void**)&arena0, 256ULL), "cudaMalloc(arena0)");
   o2 = fn0(4);
-  o3.f1 = 2;
-  o3.f0 = o2;
   t0 = (int32_t*)(arena0 + 0ULL);
   k1_0<<<1, 1>>>(t0, o2, (int64_t)2);
   cu_check(cudaMemcpy(&o4, t0, sizeof(int32_t), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
