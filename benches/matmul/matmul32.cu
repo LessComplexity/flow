@@ -128,17 +128,18 @@ __global__ void k1_0(float* out, float* src, int64_t idx, float val, unsigned in
     out[i] = ((int64_t)i == idx) ? val : src[i];
   }
 }
+__global__ void k2_0(float* result, float* arr, int64_t idx) {
+  *result = arr[(unsigned long long)idx];
+}
 
 static float fn0(FlowProd_floatp_floatp_int32_t_int32_t in);
 static float* fn1(FlowProd_floatp_floatp in);
 static void flow_main();
 
 static float fn0(FlowProd_floatp_floatp_int32_t_int32_t in) {
-  FlowProd_floatp_floatp_int32_t_int32_t o0;
   float o1;
   float* o2 = nullptr;
   float* o3 = nullptr;
-  int32_t o4;
   int32_t o5;
   FlowProd_int32_t_float o6;
   FlowProd_int32_t_float o7;
@@ -146,7 +147,6 @@ static float fn0(FlowProd_floatp_floatp_int32_t_int32_t in) {
   float o9;
   FlowProd_int32_t_int32_t o10;
   bool o11;
-  FlowProd_int32_t_int32_t o12;
   int32_t o13;
   FlowProd_int32_t_int32_t o14;
   int32_t o15;
@@ -169,16 +169,12 @@ static float fn0(FlowProd_floatp_floatp_int32_t_int32_t in) {
   FlowProd_float_bool o32;
   float* t0 = nullptr;
   float* t1 = nullptr;
-  o0 = in;
-  o2 = o0.f0;
-  o3 = o0.f1;
-  o4 = o0.f2;
-  o5 = o0.f3;
+  o2 = in.f0;
+  o3 = in.f1;
+  o5 = in.f3;
   o6.f0 = 0;
   o6.f1 = 0e0f;
-  o12.f1 = 32;
-  o12.f0 = o4;
-  o13 = (int32_t)((uint32_t)o12.f0 * (uint32_t)o12.f1);
+  o13 = (int32_t)((uint32_t)in.f2 * (uint32_t)32);
   o7 = o6;
   while (true) {
     o10.f1 = 32;
@@ -232,7 +228,6 @@ static float fn0(FlowProd_floatp_floatp_int32_t_int32_t in) {
 }
 
 static float* fn1(FlowProd_floatp_floatp in) {
-  FlowProd_floatp_floatp o0;
   float* o1 = nullptr;
   float* o2 = nullptr;
   float* o3 = nullptr;
@@ -255,9 +250,8 @@ static float* fn1(FlowProd_floatp_floatp in) {
   FlowProd_floatp_int32_t o20;
   FlowProd_FlowProd_floatp_int32_t_bool o21;
   FlowProd_floatp_bool o22;
-  o0 = in;
-  o2 = o0.f0;
-  o3 = o0.f1;
+  o2 = in.f0;
+  o3 = in.f1;
   o4.f1 = 0;
   o4.f0 = o3;
   o5 = o4;
@@ -308,10 +302,8 @@ static void flow_main() {
   float* o3 = nullptr;
   FlowProd_floatp_floatp o4;
   float* o5 = nullptr;
-  FlowProd_floatp_int32_t o6;
   float o7;
   float o8;
-  FlowProd_floatp_int32_t o10;
   float o11;
   float o12;
   char* arena0 = nullptr;
@@ -324,20 +316,14 @@ static void flow_main() {
   static const float lit1[1024] = { 7e0f, 1.4e1f, 2.1e1f, 2.8e1f, 3.5e1f, 4.2e1f, 4.9e1f, -4.5e1f, -3.8e1f, -3.1e1f, -2.4e1f, -1.7e1f, -1e1f, -3e0f, 4e0f, 1.1e1f, 1.8e1f, 2.5e1f, 3.2e1f, 3.9e1f, 4.6e1f, -4.8e1f, -4.1e1f, -3.4e1f, -2.7e1f, -2e1f, -1.3e1f, -6e0f, 1e0f, 8e0f, 1.5e1f, 2.2e1f, 2.9e1f, 3.6e1f, 4.3e1f, 5e1f, -4.4e1f, -3.7e1f, -3e1f, -2.3e1f, -1.6e1f, -9e0f, -2e0f, 5e0f, 1.2e1f, 1.9e1f, 2.6e1f, 3.3e1f, 4e1f, 4.7e1f, -4.7e1f, -4e1f, -3.3e1f, -2.6e1f, -1.9e1f, -1.2e1f, -5e0f, 2e0f, 9e0f, 1.6e1f, 2.3e1f, 3e1f, 3.7e1f, 4.4e1f, -5e1f, -4.3e1f, -3.6e1f, -2.9e1f, -2.2e1f, -1.5e1f, -8e0f, -1e0f, 6e0f, 1.3e1f, 2e1f, 2.7e1f, 3.4e1f, 4.1e1f, 4.8e1f, -4.6e1f, -3.9e1f, -3.2e1f, -2.5e1f, -1.8e1f, -1.1e1f, -4e0f, 3e0f, 1e1f, 1.7e1f, 2.4e1f, 3.1e1f, 3.8e1f, 4.5e1f, -4.9e1f, -4.2e1f, -3.5e1f, -2.8e1f, -2.1e1f, -1.4e1f, -7e0f, 0e0f, 7e0f, 1.4e1f, 2.1e1f, 2.8e1f, 3.5e1f, 4.2e1f, 4.9e1f, -4.5e1f, -3.8e1f, -3.1e1f, -2.4e1f, -1.7e1f, -1e1f, -3e0f, 4e0f, 1.1e1f, 1.8e1f, 2.5e1f, 3.2e1f, 3.9e1f, 4.6e1f, -4.8e1f, -4.1e1f, -3.4e1f, -2.7e1f, -2e1f, -1.3e1f, -6e0f, 1e0f, 8e0f, 1.5e1f, 2.2e1f, 2.9e1f, 3.6e1f, 4.3e1f, 5e1f, -4.4e1f, -3.7e1f, -3e1f, -2.3e1f, -1.6e1f, -9e0f, -2e0f, 5e0f, 1.2e1f, 1.9e1f, 2.6e1f, 3.3e1f, 4e1f, 4.7e1f, -4.7e1f, -4e1f, -3.3e1f, -2.6e1f, -1.9e1f, -1.2e1f, -5e0f, 2e0f, 9e0f, 1.6e1f, 2.3e1f, 3e1f, 3.7e1f, 4.4e1f, -5e1f, -4.3e1f, -3.6e1f, -2.9e1f, -2.2e1f, -1.5e1f, -8e0f, -1e0f, 6e0f, 1.3e1f, 2e1f, 2.7e1f, 3.4e1f, 4.1e1f, 4.8e1f, -4.6e1f, -3.9e1f, -3.2e1f, -2.5e1f, -1.8e1f, -1.1e1f, -4e0f, 3e0f, 1e1f, 1.7e1f, 2.4e1f, 3.1e1f, 3.8e1f, 4.5e1f, -4.9e1f, -4.2e1f, -3.5e1f, -2.8e1f, -2.1e1f, -1.4e1f, -7e0f, 0e0f, 7e0f, 1.4e1f, 2.1e1f, 2.8e1f, 3.5e1f, 4.2e1f, 4.9e1f, -4.5e1f, -3.8e1f, -3.1e1f, -2.4e1f, -1.7e1f, -1e1f, -3e0f, 4e0f, 1.1e1f, 1.8e1f, 2.5e1f, 3.2e1f, 3.9e1f, 4.6e1f, -4.8e1f, -4.1e1f, -3.4e1f, -2.7e1f, -2e1f, -1.3e1f, -6e0f, 1e0f, 8e0f, 1.5e1f, 2.2e1f, 2.9e1f, 3.6e1f, 4.3e1f, 5e1f, -4.4e1f, -3.7e1f, -3e1f, -2.3e1f, -1.6e1f, -9e0f, -2e0f, 5e0f, 1.2e1f, 1.9e1f, 2.6e1f, 3.3e1f, 4e1f, 4.7e1f, -4.7e1f, -4e1f, -3.3e1f, -2.6e1f, -1.9e1f, -1.2e1f, -5e0f, 2e0f, 9e0f, 1.6e1f, 2.3e1f, 3e1f, 3.7e1f, 4.4e1f, -5e1f, -4.3e1f, -3.6e1f, -2.9e1f, -2.2e1f, -1.5e1f, -8e0f, -1e0f, 6e0f, 1.3e1f, 2e1f, 2.7e1f, 3.4e1f, 4.1e1f, 4.8e1f, -4.6e1f, -3.9e1f, -3.2e1f, -2.5e1f, -1.8e1f, -1.1e1f, -4e0f, 3e0f, 1e1f, 1.7e1f, 2.4e1f, 3.1e1f, 3.8e1f, 4.5e1f, -4.9e1f, -4.2e1f, -3.5e1f, -2.8e1f, -2.1e1f, -1.4e1f, -7e0f, 0e0f, 7e0f, 1.4e1f, 2.1e1f, 2.8e1f, 3.5e1f, 4.2e1f, 4.9e1f, -4.5e1f, -3.8e1f, -3.1e1f, -2.4e1f, -1.7e1f, -1e1f, -3e0f, 4e0f, 1.1e1f, 1.8e1f, 2.5e1f, 3.2e1f, 3.9e1f, 4.6e1f, -4.8e1f, -4.1e1f, -3.4e1f, -2.7e1f, -2e1f, -1.3e1f, -6e0f, 1e0f, 8e0f, 1.5e1f, 2.2e1f, 2.9e1f, 3.6e1f, 4.3e1f, 5e1f, -4.4e1f, -3.7e1f, -3e1f, -2.3e1f, -1.6e1f, -9e0f, -2e0f, 5e0f, 1.2e1f, 1.9e1f, 2.6e1f, 3.3e1f, 4e1f, 4.7e1f, -4.7e1f, -4e1f, -3.3e1f, -2.6e1f, -1.9e1f, -1.2e1f, -5e0f, 2e0f, 9e0f, 1.6e1f, 2.3e1f, 3e1f, 3.7e1f, 4.4e1f, -5e1f, -4.3e1f, -3.6e1f, -2.9e1f, -2.2e1f, -1.5e1f, -8e0f, -1e0f, 6e0f, 1.3e1f, 2e1f, 2.7e1f, 3.4e1f, 4.1e1f, 4.8e1f, -4.6e1f, -3.9e1f, -3.2e1f, -2.5e1f, -1.8e1f, -1.1e1f, -4e0f, 3e0f, 1e1f, 1.7e1f, 2.4e1f, 3.1e1f, 3.8e1f, 4.5e1f, -4.9e1f, -4.2e1f, -3.5e1f, -2.8e1f, -2.1e1f, -1.4e1f, -7e0f, 0e0f, 7e0f, 1.4e1f, 2.1e1f, 2.8e1f, 3.5e1f, 4.2e1f, 4.9e1f, -4.5e1f, -3.8e1f, -3.1e1f, -2.4e1f, -1.7e1f, -1e1f, -3e0f, 4e0f, 1.1e1f, 1.8e1f, 2.5e1f, 3.2e1f, 3.9e1f, 4.6e1f, -4.8e1f, -4.1e1f, -3.4e1f, -2.7e1f, -2e1f, -1.3e1f, -6e0f, 1e0f, 8e0f, 1.5e1f, 2.2e1f, 2.9e1f, 3.6e1f, 4.3e1f, 5e1f, -4.4e1f, -3.7e1f, -3e1f, -2.3e1f, -1.6e1f, -9e0f, -2e0f, 5e0f, 1.2e1f, 1.9e1f, 2.6e1f, 3.3e1f, 4e1f, 4.7e1f, -4.7e1f, -4e1f, -3.3e1f, -2.6e1f, -1.9e1f, -1.2e1f, -5e0f, 2e0f, 9e0f, 1.6e1f, 2.3e1f, 3e1f, 3.7e1f, 4.4e1f, -5e1f, -4.3e1f, -3.6e1f, -2.9e1f, -2.2e1f, -1.5e1f, -8e0f, -1e0f, 6e0f, 1.3e1f, 2e1f, 2.7e1f, 3.4e1f, 4.1e1f, 4.8e1f, -4.6e1f, -3.9e1f, -3.2e1f, -2.5e1f, -1.8e1f, -1.1e1f, -4e0f, 3e0f, 1e1f, 1.7e1f, 2.4e1f, 3.1e1f, 3.8e1f, 4.5e1f, -4.9e1f, -4.2e1f, -3.5e1f, -2.8e1f, -2.1e1f, -1.4e1f, -7e0f, 0e0f, 7e0f, 1.4e1f, 2.1e1f, 2.8e1f, 3.5e1f, 4.2e1f, 4.9e1f, -4.5e1f, -3.8e1f, -3.1e1f, -2.4e1f, -1.7e1f, -1e1f, -3e0f, 4e0f, 1.1e1f, 1.8e1f, 2.5e1f, 3.2e1f, 3.9e1f, 4.6e1f, -4.8e1f, -4.1e1f, -3.4e1f, -2.7e1f, -2e1f, -1.3e1f, -6e0f, 1e0f, 8e0f, 1.5e1f, 2.2e1f, 2.9e1f, 3.6e1f, 4.3e1f, 5e1f, -4.4e1f, -3.7e1f, -3e1f, -2.3e1f, -1.6e1f, -9e0f, -2e0f, 5e0f, 1.2e1f, 1.9e1f, 2.6e1f, 3.3e1f, 4e1f, 4.7e1f, -4.7e1f, -4e1f, -3.3e1f, -2.6e1f, -1.9e1f, -1.2e1f, -5e0f, 2e0f, 9e0f, 1.6e1f, 2.3e1f, 3e1f, 3.7e1f, 4.4e1f, -5e1f, -4.3e1f, -3.6e1f, -2.9e1f, -2.2e1f, -1.5e1f, -8e0f, -1e0f, 6e0f, 1.3e1f, 2e1f, 2.7e1f, 3.4e1f, 4.1e1f, 4.8e1f, -4.6e1f, -3.9e1f, -3.2e1f, -2.5e1f, -1.8e1f, -1.1e1f, -4e0f, 3e0f, 1e1f, 1.7e1f, 2.4e1f, 3.1e1f, 3.8e1f, 4.5e1f, -4.9e1f, -4.2e1f, -3.5e1f, -2.8e1f, -2.1e1f, -1.4e1f, -7e0f, 0e0f, 7e0f, 1.4e1f, 2.1e1f, 2.8e1f, 3.5e1f, 4.2e1f, 4.9e1f, -4.5e1f, -3.8e1f, -3.1e1f, -2.4e1f, -1.7e1f, -1e1f, -3e0f, 4e0f, 1.1e1f, 1.8e1f, 2.5e1f, 3.2e1f, 3.9e1f, 4.6e1f, -4.8e1f, -4.1e1f, -3.4e1f, -2.7e1f, -2e1f, -1.3e1f, -6e0f, 1e0f, 8e0f, 1.5e1f, 2.2e1f, 2.9e1f, 3.6e1f, 4.3e1f, 5e1f, -4.4e1f, -3.7e1f, -3e1f, -2.3e1f, -1.6e1f, -9e0f, -2e0f, 5e0f, 1.2e1f, 1.9e1f, 2.6e1f, 3.3e1f, 4e1f, 4.7e1f, -4.7e1f, -4e1f, -3.3e1f, -2.6e1f, -1.9e1f, -1.2e1f, -5e0f, 2e0f, 9e0f, 1.6e1f, 2.3e1f, 3e1f, 3.7e1f, 4.4e1f, -5e1f, -4.3e1f, -3.6e1f, -2.9e1f, -2.2e1f, -1.5e1f, -8e0f, -1e0f, 6e0f, 1.3e1f, 2e1f, 2.7e1f, 3.4e1f, 4.1e1f, 4.8e1f, -4.6e1f, -3.9e1f, -3.2e1f, -2.5e1f, -1.8e1f, -1.1e1f, -4e0f, 3e0f, 1e1f, 1.7e1f, 2.4e1f, 3.1e1f, 3.8e1f, 4.5e1f, -4.9e1f, -4.2e1f, -3.5e1f, -2.8e1f, -2.1e1f, -1.4e1f, -7e0f, 0e0f, 7e0f, 1.4e1f, 2.1e1f, 2.8e1f, 3.5e1f, 4.2e1f, 4.9e1f, -4.5e1f, -3.8e1f, -3.1e1f, -2.4e1f, -1.7e1f, -1e1f, -3e0f, 4e0f, 1.1e1f, 1.8e1f, 2.5e1f, 3.2e1f, 3.9e1f, 4.6e1f, -4.8e1f, -4.1e1f, -3.4e1f, -2.7e1f, -2e1f, -1.3e1f, -6e0f, 1e0f, 8e0f, 1.5e1f, 2.2e1f, 2.9e1f, 3.6e1f, 4.3e1f, 5e1f, -4.4e1f, -3.7e1f, -3e1f, -2.3e1f, -1.6e1f, -9e0f, -2e0f, 5e0f, 1.2e1f, 1.9e1f, 2.6e1f, 3.3e1f, 4e1f, 4.7e1f, -4.7e1f, -4e1f, -3.3e1f, -2.6e1f, -1.9e1f, -1.2e1f, -5e0f, 2e0f, 9e0f, 1.6e1f, 2.3e1f, 3e1f, 3.7e1f, 4.4e1f, -5e1f, -4.3e1f, -3.6e1f, -2.9e1f, -2.2e1f, -1.5e1f, -8e0f, -1e0f, 6e0f, 1.3e1f, 2e1f, 2.7e1f, 3.4e1f, 4.1e1f, 4.8e1f, -4.6e1f, -3.9e1f, -3.2e1f, -2.5e1f, -1.8e1f, -1.1e1f, -4e0f, 3e0f, 1e1f, 1.7e1f, 2.4e1f, 3.1e1f, 3.8e1f, 4.5e1f, -4.9e1f, -4.2e1f, -3.5e1f, -2.8e1f, -2.1e1f, -1.4e1f, -7e0f, 0e0f, 7e0f, 1.4e1f, 2.1e1f, 2.8e1f, 3.5e1f, 4.2e1f, 4.9e1f, -4.5e1f, -3.8e1f, -3.1e1f, -2.4e1f, -1.7e1f, -1e1f, -3e0f, 4e0f, 1.1e1f, 1.8e1f, 2.5e1f, 3.2e1f, 3.9e1f, 4.6e1f, -4.8e1f, -4.1e1f, -3.4e1f, -2.7e1f, -2e1f, -1.3e1f, -6e0f, 1e0f, 8e0f, 1.5e1f, 2.2e1f, 2.9e1f, 3.6e1f, 4.3e1f, 5e1f, -4.4e1f, -3.7e1f, -3e1f, -2.3e1f, -1.6e1f, -9e0f, -2e0f, 5e0f, 1.2e1f, 1.9e1f, 2.6e1f, 3.3e1f, 4e1f, 4.7e1f, -4.7e1f, -4e1f, -3.3e1f, -2.6e1f, -1.9e1f, -1.2e1f, -5e0f, 2e0f, 9e0f, 1.6e1f, 2.3e1f, 3e1f, 3.7e1f, 4.4e1f, -5e1f, -4.3e1f, -3.6e1f, -2.9e1f, -2.2e1f, -1.5e1f, -8e0f, -1e0f, 6e0f, 1.3e1f, 2e1f, 2.7e1f, 3.4e1f, 4.1e1f, 4.8e1f, -4.6e1f, -3.9e1f, -3.2e1f, -2.5e1f, -1.8e1f, -1.1e1f, -4e0f, 3e0f, 1e1f, 1.7e1f, 2.4e1f, 3.1e1f, 3.8e1f, 4.5e1f, -4.9e1f, -4.2e1f, -3.5e1f, -2.8e1f, -2.1e1f, -1.4e1f, -7e0f, 0e0f, 7e0f, 1.4e1f, 2.1e1f, 2.8e1f, 3.5e1f, 4.2e1f, 4.9e1f, -4.5e1f, -3.8e1f, -3.1e1f, -2.4e1f, -1.7e1f, -1e1f, -3e0f, 4e0f, 1.1e1f, 1.8e1f, 2.5e1f, 3.2e1f, 3.9e1f, 4.6e1f, -4.8e1f, -4.1e1f, -3.4e1f, -2.7e1f, -2e1f, -1.3e1f, -6e0f, 1e0f, 8e0f, 1.5e1f, 2.2e1f, 2.9e1f, 3.6e1f, 4.3e1f, 5e1f, -4.4e1f, -3.7e1f, -3e1f, -2.3e1f, -1.6e1f, -9e0f, -2e0f, 5e0f, 1.2e1f, 1.9e1f, 2.6e1f, 3.3e1f, 4e1f, 4.7e1f, -4.7e1f, -4e1f, -3.3e1f, -2.6e1f, -1.9e1f, -1.2e1f, -5e0f, 2e0f, 9e0f, 1.6e1f, 2.3e1f, 3e1f, 3.7e1f, 4.4e1f, -5e1f, -4.3e1f, -3.6e1f, -2.9e1f, -2.2e1f, -1.5e1f, -8e0f, -1e0f, 6e0f, 1.3e1f, 2e1f, 2.7e1f, 3.4e1f, 4.1e1f, 4.8e1f, -4.6e1f, -3.9e1f, -3.2e1f, -2.5e1f, -1.8e1f, -1.1e1f, -4e0f, 3e0f, 1e1f, 1.7e1f, 2.4e1f, 3.1e1f, 3.8e1f, 4.5e1f, -4.9e1f, -4.2e1f, -3.5e1f, -2.8e1f, -2.1e1f, -1.4e1f, -7e0f, 0e0f, 7e0f, 1.4e1f, 2.1e1f, 2.8e1f, 3.5e1f, 4.2e1f, 4.9e1f, -4.5e1f, -3.8e1f, -3.1e1f, -2.4e1f, -1.7e1f, -1e1f, -3e0f };
   o3 = (float*)(arena0 + 4096ULL);
   cu_check(cudaMemcpy(o3, lit1, sizeof(lit1), cudaMemcpyHostToDevice), "cudaMemcpy(literal)");
-  o6.f1 = 0;
-  o10.f1 = 1023;
   o4.f0 = o2;
   o4.f1 = o3;
   o5 = fn1(o4);
-  o6.f0 = o5;
-  o10.f0 = o5;
   t2 = (float*)(arena0 + 8192ULL);
-  k0_0<<<1, 1>>>(t2, o5, (int64_t)0, d_trap);
-  trap_check_after_launch();
+  k2_0<<<1, 1>>>(t2, o5, (int64_t)0);
   cu_check(cudaMemcpy(&o7, t2, sizeof(float), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
   t3 = (float*)(arena0 + 8448ULL);
-  k0_0<<<1, 1>>>(t3, o5, (int64_t)1023, d_trap);
-  trap_check_after_launch();
+  k2_0<<<1, 1>>>(t3, o5, (int64_t)1023);
   cu_check(cudaMemcpy(&o11, t3, sizeof(float), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
   o8 = o7;
   o12 = o11;

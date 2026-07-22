@@ -121,57 +121,13 @@ static __host__ __device__ float fn3(int32_t in);
 static __host__ __device__ float fn4(int32_t in);
 
 static __host__ __device__ float fn3(int32_t in) {
-  int32_t o0;
   float o1;
-  FlowProd_int32_t_int32_t o2;
-  int32_t o3;
-  FlowProd_int32_t_int32_t o4;
-  int32_t o5;
-  FlowProd_int32_t_int32_t o6;
-  int32_t o7;
-  FlowProd_int32_t_int32_t o8;
-  int32_t o9;
-  o0 = in;
-  o2.f0 = o0;
-  o2.f1 = 7;
-  o4.f1 = 13;
-  o6.f1 = 101;
-  o8.f1 = 50;
-  o3 = (int32_t)((uint32_t)o2.f0 * (uint32_t)o2.f1);
-  o4.f0 = o3;
-  o5 = (int32_t)((uint32_t)o4.f0 + (uint32_t)o4.f1);
-  o6.f0 = o5;
-  o7 = o6.f0 % o6.f1;
-  o8.f0 = o7;
-  o9 = (int32_t)((uint32_t)o8.f0 - (uint32_t)o8.f1);
-  o1 = (float)(o9);
+  o1 = (float)(((int32_t)((uint32_t)(((int32_t)((uint32_t)((int32_t)((uint32_t)in * (uint32_t)7)) + (uint32_t)13)) % 101) - (uint32_t)50)));
   return o1;
 }
 static __host__ __device__ float fn4(int32_t in) {
-  int32_t o0;
   float o1;
-  FlowProd_int32_t_int32_t o2;
-  int32_t o3;
-  FlowProd_int32_t_int32_t o4;
-  int32_t o5;
-  FlowProd_int32_t_int32_t o6;
-  int32_t o7;
-  FlowProd_int32_t_int32_t o8;
-  int32_t o9;
-  o0 = in;
-  o2.f0 = o0;
-  o2.f1 = 7;
-  o4.f1 = 57;
-  o6.f1 = 101;
-  o8.f1 = 50;
-  o3 = (int32_t)((uint32_t)o2.f0 * (uint32_t)o2.f1);
-  o4.f0 = o3;
-  o5 = (int32_t)((uint32_t)o4.f0 + (uint32_t)o4.f1);
-  o6.f0 = o5;
-  o7 = o6.f0 % o6.f1;
-  o8.f0 = o7;
-  o9 = (int32_t)((uint32_t)o8.f0 - (uint32_t)o8.f1);
-  o1 = (float)(o9);
+  o1 = (float)(((int32_t)((uint32_t)(((int32_t)((uint32_t)((int32_t)((uint32_t)in * (uint32_t)7)) + (uint32_t)57)) % 101) - (uint32_t)50)));
   return o1;
 }
 
@@ -211,11 +167,9 @@ static float* fn1(FlowProd_floatp_floatp in);
 static void flow_main();
 
 static float fn0(FlowProd_floatp_floatp_int32_t_int32_t in) {
-  FlowProd_floatp_floatp_int32_t_int32_t o0;
   float o1;
   float* o2 = nullptr;
   float* o3 = nullptr;
-  int32_t o4;
   int32_t o5;
   FlowProd_int32_t_float o6;
   FlowProd_int32_t_float o7;
@@ -223,7 +177,6 @@ static float fn0(FlowProd_floatp_floatp_int32_t_int32_t in) {
   float o9;
   FlowProd_int32_t_int32_t o10;
   bool o11;
-  FlowProd_int32_t_int32_t o12;
   int32_t o13;
   FlowProd_int32_t_int32_t o14;
   int32_t o15;
@@ -246,16 +199,12 @@ static float fn0(FlowProd_floatp_floatp_int32_t_int32_t in) {
   FlowProd_float_bool o32;
   float* t0 = nullptr;
   float* t1 = nullptr;
-  o0 = in;
-  o2 = o0.f0;
-  o3 = o0.f1;
-  o4 = o0.f2;
-  o5 = o0.f3;
+  o2 = in.f0;
+  o3 = in.f1;
+  o5 = in.f3;
   o6.f0 = 0;
   o6.f1 = 0e0f;
-  o12.f1 = 128;
-  o12.f0 = o4;
-  o13 = (int32_t)((uint32_t)o12.f0 * (uint32_t)o12.f1);
+  o13 = (int32_t)((uint32_t)in.f2 * (uint32_t)128);
   o7 = o6;
   while (true) {
     o10.f1 = 128;
@@ -309,7 +258,6 @@ static float fn0(FlowProd_floatp_floatp_int32_t_int32_t in) {
 }
 
 static float* fn1(FlowProd_floatp_floatp in) {
-  FlowProd_floatp_floatp o0;
   float* o1 = nullptr;
   float* o2 = nullptr;
   float* o3 = nullptr;
@@ -332,9 +280,8 @@ static float* fn1(FlowProd_floatp_floatp in) {
   FlowProd_floatp_int32_t o20;
   FlowProd_FlowProd_floatp_int32_t_bool o21;
   FlowProd_floatp_bool o22;
-  o0 = in;
-  o2 = o0.f0;
-  o3 = o0.f1;
+  o2 = in.f0;
+  o3 = in.f1;
   o4.f1 = 0;
   o4.f0 = o3;
   o5 = o4;
@@ -386,10 +333,8 @@ static void flow_main() {
   float* o4 = nullptr;
   FlowProd_floatp_floatp o5;
   float* o6 = nullptr;
-  FlowProd_floatp_int32_t o7;
   float o8;
   float o9;
-  FlowProd_floatp_int32_t o11;
   float o12;
   float o13;
   char* arena0 = nullptr;
@@ -398,8 +343,6 @@ static void flow_main() {
   cu_check(cudaMalloc((void**)&arena0, 197120ULL), "cudaMalloc(arena0)");
   o2 = (int32_t*)(arena0 + 0ULL);
   k2_0<<<(unsigned int)((16384ULL + 255ULL) / 256ULL), 256>>>(o2, 16384);
-  o7.f1 = 0;
-  o11.f1 = 16383;
   o3 = (float*)(arena0 + 65536ULL);
   k2_1<<<(unsigned int)((16384ULL + 255ULL) / 256ULL), 256>>>(o3, o2);
   o4 = (float*)(arena0 + 131072ULL);
@@ -407,8 +350,6 @@ static void flow_main() {
   o5.f0 = o3;
   o5.f1 = o4;
   o6 = fn1(o5);
-  o7.f0 = o6;
-  o11.f0 = o6;
   t0 = (float*)(arena0 + 196608ULL);
   k2_3<<<1, 1>>>(t0, o6, (int64_t)0);
   cu_check(cudaMemcpy(&o8, t0, sizeof(float), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");

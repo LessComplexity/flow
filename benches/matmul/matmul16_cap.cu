@@ -58,11 +58,6 @@ static void trap_init() {
     }
 }
 
-struct FlowProd_int32_t_int32_t {
-    int32_t f0;
-    int32_t f1;
-};
-static_assert(sizeof(FlowProd_int32_t_int32_t) == 8, "FlowProd_int32_t_int32_t: abi_sizeof drift (plan-smart-arenas)");
 struct FlowProd_doublep_int32_t_doublep_int32_t_double_int32_t {
     double* f0;
     int32_t f1;
@@ -72,16 +67,6 @@ struct FlowProd_doublep_int32_t_doublep_int32_t_double_int32_t {
     int32_t f5;
 };
 static_assert(sizeof(FlowProd_doublep_int32_t_doublep_int32_t_double_int32_t) == 48, "FlowProd_doublep_int32_t_doublep_int32_t_double_int32_t: abi_sizeof drift (plan-smart-arenas)");
-struct FlowProd_doublep_int32_t {
-    double* f0;
-    int32_t f1;
-};
-static_assert(sizeof(FlowProd_doublep_int32_t) == 16, "FlowProd_doublep_int32_t: abi_sizeof drift (plan-smart-arenas)");
-struct FlowProd_double_double {
-    double f0;
-    double f1;
-};
-static_assert(sizeof(FlowProd_double_double) == 16, "FlowProd_double_double: abi_sizeof drift (plan-smart-arenas)");
 struct FlowProd_int32_tp_doublep_doublep_int32_t {
     int32_t* f0;
     double* f1;
@@ -89,11 +74,28 @@ struct FlowProd_int32_tp_doublep_doublep_int32_t {
     int32_t f3;
 };
 static_assert(sizeof(FlowProd_int32_tp_doublep_doublep_int32_t) == 32, "FlowProd_int32_tp_doublep_doublep_int32_t: abi_sizeof drift (plan-smart-arenas)");
-struct FlowProd_double_int32_tp {
-    double f0;
-    int32_t* f1;
+struct FlowProd_int32_tp_doublep_doublep_int32_tp {
+    int32_t* f0;
+    double* f1;
+    double* f2;
+    int32_t* f3;
 };
-static_assert(sizeof(FlowProd_double_int32_tp) == 16, "FlowProd_double_int32_tp: abi_sizeof drift (plan-smart-arenas)");
+static_assert(sizeof(FlowProd_int32_tp_doublep_doublep_int32_tp) == 32, "FlowProd_int32_tp_doublep_doublep_int32_tp: abi_sizeof drift (plan-smart-arenas)");
+struct FlowProd_doublep_int32_t {
+    double* f0;
+    int32_t f1;
+};
+static_assert(sizeof(FlowProd_doublep_int32_t) == 16, "FlowProd_doublep_int32_t: abi_sizeof drift (plan-smart-arenas)");
+struct FlowProd_int32_t_int32_t {
+    int32_t f0;
+    int32_t f1;
+};
+static_assert(sizeof(FlowProd_int32_t_int32_t) == 8, "FlowProd_int32_t_int32_t: abi_sizeof drift (plan-smart-arenas)");
+struct FlowProd_double_double {
+    double f0;
+    double f1;
+};
+static_assert(sizeof(FlowProd_double_double) == 16, "FlowProd_double_double: abi_sizeof drift (plan-smart-arenas)");
 struct FlowProd_doublep_int32_t_doublep_int32_t_double_int32_tp {
     double* f0;
     int32_t f1;
@@ -103,13 +105,6 @@ struct FlowProd_doublep_int32_t_doublep_int32_t_double_int32_tp {
     int32_t* f5;
 };
 static_assert(sizeof(FlowProd_doublep_int32_t_doublep_int32_t_double_int32_tp) == 48, "FlowProd_doublep_int32_t_doublep_int32_t_double_int32_tp: abi_sizeof drift (plan-smart-arenas)");
-struct FlowProd_int32_tp_doublep_doublep_int32_tp {
-    int32_t* f0;
-    double* f1;
-    double* f2;
-    int32_t* f3;
-};
-static_assert(sizeof(FlowProd_int32_tp_doublep_doublep_int32_tp) == 32, "FlowProd_int32_tp_doublep_doublep_int32_tp: abi_sizeof drift (plan-smart-arenas)");
 
 static __host__ __device__ double fn1(int32_t in);
 static __host__ __device__ double fn2(int32_t in);
@@ -117,163 +112,54 @@ static __device__ double d_fn3(FlowProd_doublep_int32_t_doublep_int32_t_double_i
 static __device__ double d_fn4(FlowProd_int32_tp_doublep_doublep_int32_t in);
 
 static __host__ __device__ double fn1(int32_t in) {
-  int32_t o0;
   double o1;
-  FlowProd_int32_t_int32_t o2;
-  int32_t o3;
-  FlowProd_int32_t_int32_t o4;
-  int32_t o5;
-  FlowProd_int32_t_int32_t o6;
-  int32_t o7;
-  FlowProd_int32_t_int32_t o8;
-  int32_t o9;
-  o0 = in;
-  o2.f0 = o0;
-  o2.f1 = 7;
-  o4.f1 = 13;
-  o6.f1 = 101;
-  o8.f1 = 50;
-  o3 = (int32_t)((uint32_t)o2.f0 * (uint32_t)o2.f1);
-  o4.f0 = o3;
-  o5 = (int32_t)((uint32_t)o4.f0 + (uint32_t)o4.f1);
-  o6.f0 = o5;
-  o7 = o6.f0 % o6.f1;
-  o8.f0 = o7;
-  o9 = (int32_t)((uint32_t)o8.f0 - (uint32_t)o8.f1);
-  o1 = (double)(o9);
+  o1 = (double)(((int32_t)((uint32_t)(((int32_t)((uint32_t)((int32_t)((uint32_t)in * (uint32_t)7)) + (uint32_t)13)) % 101) - (uint32_t)50)));
   return o1;
 }
 static __host__ __device__ double fn2(int32_t in) {
-  int32_t o0;
   double o1;
-  FlowProd_int32_t_int32_t o2;
-  int32_t o3;
-  FlowProd_int32_t_int32_t o4;
-  int32_t o5;
-  FlowProd_int32_t_int32_t o6;
-  int32_t o7;
-  FlowProd_int32_t_int32_t o8;
-  int32_t o9;
-  o0 = in;
-  o2.f0 = o0;
-  o2.f1 = 7;
-  o4.f1 = 57;
-  o6.f1 = 101;
-  o8.f1 = 50;
-  o3 = (int32_t)((uint32_t)o2.f0 * (uint32_t)o2.f1);
-  o4.f0 = o3;
-  o5 = (int32_t)((uint32_t)o4.f0 + (uint32_t)o4.f1);
-  o6.f0 = o5;
-  o7 = o6.f0 % o6.f1;
-  o8.f0 = o7;
-  o9 = (int32_t)((uint32_t)o8.f0 - (uint32_t)o8.f1);
-  o1 = (double)(o9);
+  o1 = (double)(((int32_t)((uint32_t)(((int32_t)((uint32_t)((int32_t)((uint32_t)in * (uint32_t)7)) + (uint32_t)57)) % 101) - (uint32_t)50)));
   return o1;
 }
 static __device__ double d_fn3(FlowProd_doublep_int32_t_doublep_int32_t_double_int32_t in) {
-  FlowProd_doublep_int32_t_doublep_int32_t_double_int32_t o0;
   double o1;
   double* o2;
-  int32_t o3;
   double* o4;
-  int32_t o5;
-  double o6;
   int32_t o7;
-  FlowProd_int32_t_int32_t o8;
-  int32_t o9;
-  FlowProd_int32_t_int32_t o10;
-  int32_t o11;
-  FlowProd_doublep_int32_t o12;
-  double o13;
-  FlowProd_int32_t_int32_t o14;
-  int32_t o15;
-  FlowProd_int32_t_int32_t o16;
-  int32_t o17;
-  FlowProd_doublep_int32_t o18;
-  double o19;
-  FlowProd_double_double o20;
-  double o21;
-  FlowProd_double_double o22;
-  o0 = in;
-  o2 = o0.f0;
-  o3 = o0.f1;
-  o4 = o0.f2;
-  o5 = o0.f3;
-  o6 = o0.f4;
-  o7 = o0.f5;
-  o8.f1 = 16;
-  o14.f1 = 16;
-  o12.f0 = o2;
-  o8.f0 = o3;
-  o18.f0 = o4;
-  o16.f1 = o5;
-  o22.f0 = o6;
-  o10.f1 = o7;
-  o14.f0 = o7;
-  o9 = (int32_t)((uint32_t)o8.f0 * (uint32_t)o8.f1);
-  o15 = (int32_t)((uint32_t)o14.f0 * (uint32_t)o14.f1);
-  o10.f0 = o9;
-  o16.f0 = o15;
-  o11 = (int32_t)((uint32_t)o10.f0 + (uint32_t)o10.f1);
-  o17 = (int32_t)((uint32_t)o16.f0 + (uint32_t)o16.f1);
-  o12.f1 = o11;
-  o18.f1 = o17;
-  int64_t t0 = (int64_t)o12.f1;
-  o13 = o2[(unsigned long long)t0];
-  int64_t t1 = (int64_t)o18.f1;
-  o19 = o4[(unsigned long long)t1];
-  o20.f0 = o13;
-  o20.f1 = o19;
-  o21 = o20.f0 * o20.f1;
-  o22.f1 = o21;
-  o1 = o22.f0 + o22.f1;
+  o2 = in.f0;
+  o4 = in.f2;
+  o7 = in.f5;
+  int64_t t0 = (int64_t)((int32_t)((uint32_t)((int32_t)((uint32_t)in.f1 * (uint32_t)16)) + (uint32_t)o7));
+  int64_t t1 = (int64_t)((int32_t)((uint32_t)((int32_t)((uint32_t)o7 * (uint32_t)16)) + (uint32_t)in.f3));
+  o1 = in.f4 + ((o2[(unsigned long long)t0]) * (o4[(unsigned long long)t1]));
   return o1;
 }
 static __device__ double d_fn4(FlowProd_int32_tp_doublep_doublep_int32_t in) {
-  FlowProd_int32_tp_doublep_doublep_int32_t o0;
   double o1;
   int32_t* o2;
   double* o3;
   double* o4;
   int32_t o5;
-  FlowProd_int32_t_int32_t o6;
-  int32_t o7;
-  FlowProd_int32_t_int32_t o8;
-  int32_t o9;
-  FlowProd_double_int32_tp o10;
-  double o11;
-  int32_t* o12;
-  FlowProd_doublep_int32_t_doublep_int32_t_double_int32_tp o13;
-  o0 = in;
-  o2 = o0.f0;
-  o3 = o0.f1;
-  o4 = o0.f2;
-  o5 = o0.f3;
-  o6.f1 = 16;
-  o8.f1 = 16;
-  o10.f0 = 0e0;
-  o10.f1 = o2;
-  o13.f0 = o3;
-  o13.f2 = o4;
-  o6.f0 = o5;
-  o8.f0 = o5;
-  o11 = o10.f0;
-  o12 = o10.f1;
-  o7 = o6.f0 / o6.f1;
-  o9 = o8.f0 % o8.f1;
-  o13.f4 = o11;
-  o13.f5 = o12;
-  o13.f1 = o7;
-  o13.f3 = o9;
-  double t0 = o13.f4;
+  FlowProd_doublep_int32_t_doublep_int32_t_double_int32_tp o10;
+  o2 = in.f0;
+  o3 = in.f1;
+  o4 = in.f2;
+  o5 = in.f3;
+  o10.f4 = 0e0;
+  o10.f5 = o2;
+  o10.f0 = o3;
+  o10.f2 = o4;
+  o10.f1 = (o5 / 16);
+  o10.f3 = (o5 % 16);
+  double t0 = o10.f4;
   for (unsigned long long t1 = 0; t1 < 16ULL; t1++) {
     FlowProd_doublep_int32_t_doublep_int32_t_double_int32_t pair;
-    pair.f0 = o3;
-    pair.f1 = o7;
-    pair.f2 = o4;
-    pair.f3 = o9;
+    pair.f0 = o10.f0;
+    pair.f1 = o10.f1;
+    pair.f2 = o10.f2;
+    pair.f3 = o10.f3;
     pair.f4 = t0;
-    pair.f5 = o12[t1];
+    pair.f5 = o2[t1];
     t0 = d_fn3(pair);
   }
   o1 = t0;
@@ -315,16 +201,14 @@ static void flow_main();
 
 static void flow_main() {
   int32_t* o2 = nullptr;
-  double* o3 = nullptr;
+  int32_t* o3 = nullptr;
   double* o4 = nullptr;
-  int32_t* o5 = nullptr;
+  double* o5 = nullptr;
   FlowProd_int32_tp_doublep_doublep_int32_tp o6;
   double* o7 = nullptr;
-  FlowProd_doublep_int32_t o8;
   double o9;
-  double o10;
-  FlowProd_doublep_int32_t o12;
-  double o13;
+  double o11;
+  double o12;
   double o14;
   char* arena0 = nullptr;
   double* t0 = nullptr;
@@ -332,31 +216,27 @@ static void flow_main() {
   cu_check(cudaMalloc((void**)&arena0, 7936ULL), "cudaMalloc(arena0)");
   o2 = (int32_t*)(arena0 + 0ULL);
   k0_0<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o2, 256);
-  o5 = (int32_t*)(arena0 + 1024ULL);
-  k0_0<<<(unsigned int)((16ULL + 255ULL) / 256ULL), 256>>>(o5, 16);
-  o8.f1 = 0;
-  o12.f1 = 255;
-  o3 = (double*)(arena0 + 1280ULL);
-  k0_2<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o3, o2);
-  o4 = (double*)(arena0 + 3328ULL);
-  k0_3<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o4, o2);
+  o3 = (int32_t*)(arena0 + 1024ULL);
+  k0_0<<<(unsigned int)((16ULL + 255ULL) / 256ULL), 256>>>(o3, 16);
+  o4 = (double*)(arena0 + 1280ULL);
+  k0_2<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o4, o2);
+  o5 = (double*)(arena0 + 3328ULL);
+  k0_3<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o5, o2);
   o6.f3 = o2;
-  o6.f0 = o5;
-  o6.f1 = o3;
-  o6.f2 = o4;
+  o6.f0 = o3;
+  o6.f1 = o4;
+  o6.f2 = o5;
   o7 = (double*)(arena0 + 5376ULL);
-  k0_4<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o7, o2, o5, o3, o4);
-  o8.f0 = o7;
-  o12.f0 = o7;
+  k0_4<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o7, o2, o3, o4, o5);
   t0 = (double*)(arena0 + 7424ULL);
   k0_5<<<1, 1>>>(t0, o7, (int64_t)0);
   cu_check(cudaMemcpy(&o9, t0, sizeof(double), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
   t1 = (double*)(arena0 + 7680ULL);
   k0_5<<<1, 1>>>(t1, o7, (int64_t)255);
-  cu_check(cudaMemcpy(&o13, t1, sizeof(double), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
-  o10 = o9;
-  o14 = o13;
-  flow_print_f64(o10, true);
+  cu_check(cudaMemcpy(&o11, t1, sizeof(double), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
+  o12 = o9;
+  o14 = o11;
+  flow_print_f64(o12, true);
   flow_print_f64(o14, true);
   cu_check(cudaFree(arena0), "cudaFree(arena0)");
   return;
