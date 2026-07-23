@@ -64,6 +64,16 @@
 | compile-and-run differential (examples raw+rewritten; two sequential loops; traps exit-101; u8 ABI; ≥256-case closed testgen sweep raw+rewritten; matmul loop-driven Update; captures; computed exit payloads; by-ref call-arg escaping uses) | `tests/differential.rs` (testgen via `#[path]` include of `flow-rewrite/tests/testgen`) |
 | sepia-at-N perf baseline (`-O0`/`-O2` vs interp; ignored-by-default) | `tests/perf_baseline.rs` |
 | flow-rt render-parity table (`4080.0`, `5.375`, `-0.0`, `NaN`, `inf`, u8 255, i64 extremes) | `crates/flow-rt/src/lib.rs` (`#[cfg(test)] render_parity`) |
+| **parallel orchestrator (S24)** — plan gate + acyclic check + body-site map | `src/lib.rs:emit` (`path_plan_is_acyclic`, `parallel_body_sites`, `mark_body_closure`) |
+| parallel `flow_main` (frame layout/GEPs, task registration, checkpoint/pinned injection, finish) | `src/func.rs:FnEmit::{emit_parallel,build_frame_layout,materialize_frame_slots,slot}`; `HostEmit`/`CheckpointEmit`/`PinnedEmit`/`FrameLayout` |
+| task fns (Split range loops, Seq chains/folds/pure loops) + host/task walk filter | `src/func.rs:FnEmit::{emit_task,walk_filtered,bulk_bounds}`; `GuardFlavor` |
+| speculate-and-order guards (record + dummy-zero continue; watermarks; site topo) | `src/func.rs:FnEmit::{record_trap,emit_watermark,task_site,emit_task_div}` + task arms in `emit_index`/`emit_update`/`emit_arith` |
+| checkpoint injection (earliest task-reading host glue; pre-`LoopEnter` hoist for effectful loops — S24 review find) | `src/func.rs:checkpoint_injection`, `HostEmit::pre_loop`, `walk_filtered` LoopEnter arm |
+| packed wait-entry constants `(task<<32)\|threshold` | `src/func.rs:wait_global` |
+| scheduler runtime (pool, rank-seeded deques + stealing, help-first waits, trap flag CAS-min, watermarks, pinning, `FLOW_PAR`, `GRAIN=4096`) | `crates/flow-rt/src/lib.rs` (`flow_par_begin/task/pin/dep/launch/wait/check/trap/watermark/run_pinned/finish`, `Pool`, `Run`) |
+| the deduced task DAG itself (paths, deps, ranks, transitive trap sites, thresholds, pinning, effectful-loop exclusion) | `crates/flow-ir/src/algo.rs:CategoryIr::path_plan` (+ `fn_trap_capabilities`, `WaitEntry`) |
+| R-PAR live pins (big-N split parity; trap stdout-prefix order; env matrix 1/8/unset; run-twice) | `tests/differential.rs:differential_parallel_{bign,trap_order,env_matrix,run_twice}` |
+| parallel structural pins (frame/task/ckpt shapes; speculating fold body; watermark; pre-loop wait order) | `tests/golden_ll.rs:{golden_parallel_matmul_cap,parallel_scalar_guard_publishes_watermark,parallel_effectful_loop_waits_before_entry}` |
 
 ## Notes / divergences
 

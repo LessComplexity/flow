@@ -71,6 +71,84 @@ impl BoundsProof {
     }
 }
 
+/// A [`PathPlan`] task identifier. Task ids are indices into
+/// [`PathPlan::tasks`].
+pub type TaskId = usize;
+
+/// One schedulable unit in a function's path plan.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Task {
+    /// Whether the task is element-range splittable or sequential.
+    pub kind: TaskKind,
+    /// Tasks whose produced objects this task consumes.
+    pub deps: Vec<TaskId>,
+    /// Saturating critical-path weight to a sink.
+    pub rank: u32,
+    /// Earliest topo position of a trap-capable morphism in this task.
+    pub trap_min: Option<u32>,
+    /// Whether a trap-capable pure named call pins this task to the host spine.
+    pub pinned: bool,
+}
+
+/// The execution shape of a [`Task`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TaskKind {
+    /// One element-range-splittable bulk operation.
+    Split {
+        /// The bulk morphism.
+        site: MorphismId,
+        /// Its statically known element count.
+        n: u64,
+    },
+    /// Morphisms that execute sequentially, in topo order.
+    Seq {
+        /// The task's morphisms.
+        morphisms: Vec<MorphismId>,
+    },
+}
+
+/// One task-progress requirement at a host-spine checkpoint.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WaitEntry {
+    /// The task whose progress gates the checkpoint.
+    pub task: TaskId,
+    /// `Some(w)` accepts a decided watermark ≥ `w` or task completion;
+    /// `None` requires task completion.
+    pub threshold: Option<u32>,
+}
+
+/// A host-spine observation point.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Checkpoint {
+    /// The token operation's topo position, or `u32::MAX` for function exit.
+    pub topo: u32,
+    /// Task progress required before the host may pass this point.
+    pub wait: Vec<WaitEntry>,
+}
+
+/// The deterministic task DAG and host-spine checkpoints for one function.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PathPlan {
+    /// Schedulable pure tasks. Task ids are vector indices.
+    pub tasks: Vec<Task>,
+    /// Token-operation checkpoints in topo order, followed by function exit.
+    pub checkpoints: Vec<Checkpoint>,
+}
+
+impl PathPlan {
+    /// Whether scheduling can be skipped entirely.
+    pub fn is_single_path(&self) -> bool {
+        self.tasks.len() <= 1
+            && matches!(
+                self.checkpoints.as_slice(),
+                [Checkpoint { topo: u32::MAX, wait }]
+                    if wait.len() == self.tasks.len()
+                        && wait.iter().enumerate().all(|(task, entry)|
+                            entry.task == task && entry.threshold.is_none())
+            )
+    }
+}
+
 /// How an owned, non-constant, non-token object participates in minimal
 /// emission. Derived only from the sealed graph by
 /// [`CategoryIr::emission_plan`].
@@ -393,6 +471,339 @@ impl CategoryIr {
             Operation::Index | Operation::Update => !bounds.proven(m),
             _ => false,
         }
+    }
+
+    /// The per-function parallel path query. Tasks are emitted in first topo
+    /// occurrence order, so their vector indices are deterministic task ids.
+    /// Token-bearing morphisms and every morphism in an effectful loop region
+    /// remain on the host spine; Print morphisms still contribute checkpoints.
+    /// Trap capability follows Call/Map/Fold function closures and is attributed
+    /// to each reference site's topo position. A task containing a pure Call to
+    /// a trap-capable named function is pinned; Map/Fold sites never pin.
+    /// Checkpoint trap guards use the last earlier site as their watermark
+    /// threshold; consumed-value producers require completion.
+    pub fn path_plan(&self, f: FuncId) -> PathPlan {
+        let topo = self.topo_order(f);
+        let bounds = self.bounds_proof(f);
+        let trap_capable = self.fn_trap_capabilities();
+        let is_token = |m: MorphismId| {
+            let morph = &self.morphisms[m];
+            ty_contains_token(&self.objects[morph.source].ty)
+                || ty_contains_token(&self.objects[morph.target].ty)
+        };
+
+        // Recover each loop's complete sequential region. SCC incidence covers
+        // the cycle and loop control; loop_plan adds computed route cones that
+        // execute inside a canonical loop despite sitting outside the SCC.
+        let loops = self.loop_structure(f);
+        let mut loop_members = Vec::with_capacity(loops.len());
+        for scc in &loops {
+            let mut objects: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+            for &o in &scc.objects {
+                objects.insert(o, ());
+            }
+            let mut members: SecondaryMap<MorphismId, ()> = SecondaryMap::new();
+            for &m in &topo {
+                let morph = &self.morphisms[m];
+                if objects.contains_key(morph.source) || objects.contains_key(morph.target) {
+                    members.insert(m, ());
+                }
+            }
+            for &merge in &scc.merges {
+                if let Some(plan) = self.loop_plan(f, merge) {
+                    for &m in plan
+                        .decide_order
+                        .iter()
+                        .chain(&plan.advance_order)
+                        .chain(&plan.exits)
+                    {
+                        members.insert(m, ());
+                    }
+                }
+            }
+            loop_members.push(
+                topo.iter()
+                    .copied()
+                    .filter(|m| members.contains_key(*m))
+                    .collect::<Vec<_>>(),
+            );
+        }
+
+        let mut host_loop_member: SecondaryMap<MorphismId, ()> = SecondaryMap::new();
+        for members in &loop_members {
+            if members.iter().copied().any(&is_token) {
+                for &m in members {
+                    host_loop_member.insert(m, ());
+                }
+            }
+        }
+        let mut loop_of: SecondaryMap<MorphismId, usize> = SecondaryMap::new();
+        for (loop_id, members) in loop_members.iter().enumerate() {
+            if !members.iter().copied().any(&is_token) {
+                for &m in members {
+                    if !host_loop_member.contains_key(m) && !loop_of.contains_key(m) {
+                        loop_of.insert(m, loop_id);
+                    }
+                }
+            }
+        }
+
+        let is_host = |m: MorphismId| is_token(m) || host_loop_member.contains_key(m);
+        let is_scalar = |m: MorphismId| {
+            !is_host(m)
+                && !loop_of.contains_key(m)
+                && !matches!(
+                    self.morphisms[m].op,
+                    Operation::Map { .. }
+                        | Operation::Fold { .. }
+                        | Operation::Zip
+                        | Operation::Enumerate
+                        | Operation::Iota
+                        | Operation::Fill
+                )
+        };
+
+        let mut tasks = Vec::new();
+        let mut weights = Vec::new();
+        let mut task_of: SecondaryMap<MorphismId, TaskId> = SecondaryMap::new();
+        let mut scalar_seen: SecondaryMap<MorphismId, ()> = SecondaryMap::new();
+        let mut loop_seen = vec![false; loops.len()];
+
+        // First topo occurrence fixes task order. Scalar components are
+        // undirected components of the scalar-only object/morphism subgraph.
+        for &m in &topo {
+            if is_host(m) || task_of.contains_key(m) {
+                continue;
+            }
+
+            let (kind, weight) = if let Some(loop_id) = loop_of.get(m).copied() {
+                if loop_seen[loop_id] {
+                    continue;
+                }
+                loop_seen[loop_id] = true;
+                let morphisms: Vec<_> = topo
+                    .iter()
+                    .copied()
+                    .filter(|&candidate| loop_of.get(candidate).copied() == Some(loop_id))
+                    .collect();
+                (TaskKind::Seq { morphisms }, 1)
+            } else {
+                match self.morphisms[m].op {
+                    Operation::Map { .. }
+                    | Operation::Zip
+                    | Operation::Enumerate
+                    | Operation::Iota
+                    | Operation::Fill => {
+                        let n = self.bulk_element_count(m);
+                        (
+                            TaskKind::Split { site: m, n },
+                            n.min(u32::MAX as u64) as u32,
+                        )
+                    }
+                    Operation::Fold { .. } => {
+                        let n = self.bulk_element_count(m);
+                        (
+                            TaskKind::Seq { morphisms: vec![m] },
+                            n.min(u32::MAX as u64) as u32,
+                        )
+                    }
+                    _ => {
+                        if scalar_seen.contains_key(m) {
+                            continue;
+                        }
+                        let mut component: SecondaryMap<MorphismId, ()> = SecondaryMap::new();
+                        let mut stack = vec![m];
+                        scalar_seen.insert(m, ());
+                        while let Some(current) = stack.pop() {
+                            component.insert(current, ());
+                            let morph = &self.morphisms[current];
+                            for &o in &[morph.source, morph.target] {
+                                for &neighbor in self.in_edges(o).iter().chain(self.out_edges(o)) {
+                                    if is_scalar(neighbor) && !scalar_seen.contains_key(neighbor) {
+                                        scalar_seen.insert(neighbor, ());
+                                        stack.push(neighbor);
+                                    }
+                                }
+                            }
+                        }
+                        let morphisms = topo
+                            .iter()
+                            .copied()
+                            .filter(|candidate| component.contains_key(*candidate))
+                            .collect();
+                        (TaskKind::Seq { morphisms }, 1)
+                    }
+                }
+            };
+
+            let task_id = tasks.len();
+            let members: &[MorphismId] = match &kind {
+                TaskKind::Split { site, .. } => std::slice::from_ref(site),
+                TaskKind::Seq { morphisms } => morphisms,
+            };
+            for &member in members {
+                task_of.insert(member, task_id);
+            }
+            tasks.push(Task {
+                kind,
+                deps: Vec::new(),
+                rank: 0,
+                trap_min: None,
+                pinned: false,
+            });
+            weights.push(weight);
+        }
+
+        let mut topo_pos: SecondaryMap<MorphismId, u32> = SecondaryMap::new();
+        for (i, &m) in topo.iter().enumerate() {
+            topo_pos.insert(m, i.min(u32::MAX as usize) as u32);
+        }
+        let mut trap_sites = vec![Vec::new(); tasks.len()];
+
+        // A task produces every target written by one of its morphisms. Product
+        // slot writers are in the same scalar component, hence the same task.
+        let mut producer: SecondaryMap<ObjectId, TaskId> = SecondaryMap::new();
+        for (task_id, task) in tasks.iter().enumerate() {
+            let members: &[MorphismId] = match &task.kind {
+                TaskKind::Split { site, .. } => std::slice::from_ref(site),
+                TaskKind::Seq { morphisms } => morphisms,
+            };
+            for &member in members {
+                let target = self.morphisms[member].target;
+                let old = producer.insert(target, task_id);
+                debug_assert!(old.is_none_or(|id| id == task_id));
+            }
+        }
+
+        // Direct object dataflow is the complete dependency relation.
+        for (task_id, task) in tasks.iter_mut().enumerate() {
+            let members: &[MorphismId] = match &task.kind {
+                TaskKind::Split { site, .. } => std::slice::from_ref(site),
+                TaskKind::Seq { morphisms } => morphisms,
+            };
+            for &member in members {
+                let morph = &self.morphisms[member];
+                if let Some(dep) = producer.get(morph.source).copied()
+                    && dep != task_id
+                    && !task.deps.contains(&dep)
+                {
+                    task.deps.push(dep);
+                }
+                if self.path_trap_capable(member, &bounds, &trap_capable) {
+                    let pos = topo_pos[member];
+                    task.trap_min = Some(task.trap_min.map_or(pos, |old| old.min(pos)));
+                    trap_sites[task_id].push(pos);
+                }
+                if let Operation::Call(g) = morph.op
+                    && !is_token(member)
+                    && trap_capable.get(g).copied().unwrap_or(true)
+                {
+                    task.pinned = true;
+                }
+            }
+            task.deps.sort_unstable();
+        }
+
+        // Critical-path weight to a sink. A scalar component may first appear
+        // before all of its product slots are produced, so derive a task-level
+        // topo order rather than assuming task ids are already topological.
+        let mut dependents = vec![Vec::new(); tasks.len()];
+        let mut remaining: Vec<usize> = tasks.iter().map(|task| task.deps.len()).collect();
+        for (task_id, task) in tasks.iter().enumerate() {
+            for &dep in &task.deps {
+                dependents[dep].push(task_id);
+            }
+        }
+        let mut task_topo: Vec<TaskId> = remaining
+            .iter()
+            .enumerate()
+            .filter_map(|(id, &deps)| (deps == 0).then_some(id))
+            .collect();
+        let mut cursor = 0;
+        while cursor < task_topo.len() {
+            let task_id = task_topo[cursor];
+            cursor += 1;
+            for &dependent in &dependents[task_id] {
+                remaining[dependent] -= 1;
+                if remaining[dependent] == 0 {
+                    task_topo.push(dependent);
+                }
+            }
+        }
+        debug_assert_eq!(task_topo.len(), tasks.len());
+        for &task_id in task_topo.iter().rev() {
+            let tail = dependents[task_id]
+                .iter()
+                .map(|&dependent| tasks[dependent].rank)
+                .max()
+                .unwrap_or(0);
+            tasks[task_id].rank = weights[task_id].saturating_add(tail);
+        }
+
+        let mut checkpoints = Vec::new();
+        for (i, &m) in topo.iter().enumerate() {
+            let morph = &self.morphisms[m];
+            let checkpoint = matches!(morph.op, Operation::Print { .. })
+                || matches!(morph.op, Operation::Call(_)) && is_token(m);
+            if !checkpoint {
+                continue;
+            }
+            let point = i.min(u32::MAX as usize) as u32;
+            let mut wait: Vec<WaitEntry> = trap_sites
+                .iter()
+                .enumerate()
+                .filter_map(|(task, sites)| {
+                    sites
+                        .iter()
+                        .copied()
+                        .filter(|&site| site < point)
+                        .max()
+                        .map(|threshold| WaitEntry {
+                            task,
+                            threshold: Some(threshold),
+                        })
+                })
+                .collect();
+
+            // Token products are host-built, so walk through their unassigned
+            // structural edges until reaching each consumed value's producer
+            // task. That producer's own deps have already completed.
+            let mut seen: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+            let mut stack = vec![morph.source];
+            while let Some(o) = stack.pop() {
+                if seen.contains_key(o) {
+                    continue;
+                }
+                seen.insert(o, ());
+                if let Some(task_id) = producer.get(o).copied() {
+                    if let Some(entry) = wait.iter_mut().find(|entry| entry.task == task_id) {
+                        entry.threshold = None;
+                    } else {
+                        wait.push(WaitEntry {
+                            task: task_id,
+                            threshold: None,
+                        });
+                    }
+                    continue;
+                }
+                for &incoming in self.in_edges(o) {
+                    stack.push(self.morphisms[incoming].source);
+                }
+            }
+            wait.sort_unstable_by_key(|entry| entry.task);
+            checkpoints.push(Checkpoint { topo: point, wait });
+        }
+        checkpoints.push(Checkpoint {
+            topo: u32::MAX,
+            wait: (0..tasks.len())
+                .map(|task| WaitEntry {
+                    task,
+                    threshold: None,
+                })
+                .collect(),
+        });
+
+        PathPlan { tasks, checkpoints }
     }
 
     /// Strongly-connected components of function `f`'s object subgraph, via
@@ -1404,6 +1815,120 @@ impl CategoryIr {
                 None
             }
         })
+    }
+
+    /// Static element count for a Map/Zip/Enumerate/Iota/Fill/Fold site.
+    fn bulk_element_count(&self, m: MorphismId) -> u64 {
+        let morph = &self.morphisms[m];
+        let array = match morph.op {
+            Operation::Fold { captures, .. } => self.pair_slot_source(morph.source, captures + 1),
+            _ => Some(morph.target),
+        }
+        .expect("sealed bulk operation has its array operand");
+        match self.objects[array].ty {
+            Ty::Array { size, .. } => size,
+            _ => unreachable!("sealed bulk operation has an array extent"),
+        }
+    }
+
+    /// Direct trap capability within one function. Bounds proofs exempt Index
+    /// only; Update remains trap-capable, as do integer Div/Mod.
+    fn path_local_trap_capable(&self, m: MorphismId, bounds: &BoundsProof) -> bool {
+        let morph = &self.morphisms[m];
+        match morph.op {
+            Operation::Div | Operation::Mod => {
+                matches!(self.objects[morph.target].ty, Ty::Int { .. })
+            }
+            Operation::Index => !bounds.proven(m),
+            Operation::Update => true,
+            _ => false,
+        }
+    }
+
+    /// Per-function trap-capability fixpoint. Trap-free leaves flow backward
+    /// through Call/Map/Fold references; unresolved cycles remain capable.
+    fn fn_trap_capabilities(&self) -> SecondaryMap<FuncId, bool> {
+        let mut capable = SecondaryMap::new();
+        let mut remaining = SecondaryMap::new();
+        let mut dependents: SecondaryMap<FuncId, Vec<FuncId>> = SecondaryMap::new();
+        for (f, _) in self.funcs() {
+            capable.insert(f, true);
+            dependents.insert(f, Vec::new());
+        }
+
+        for (f, def) in self.funcs() {
+            let bounds = self.bounds_proof(f);
+            let local = def
+                .morphisms
+                .iter()
+                .copied()
+                .any(|m| self.path_local_trap_capable(m, &bounds));
+            let mut refs = Vec::new();
+            for &m in &def.morphisms {
+                match self.morphisms[m].op {
+                    Operation::Call(g)
+                    | Operation::Map { body: g, .. }
+                    | Operation::Fold { body: g, .. } => refs.push(g),
+                    _ => {}
+                }
+            }
+            for &g in &refs {
+                if let Some(callers) = dependents.get_mut(g) {
+                    callers.push(f);
+                }
+            }
+            if !local {
+                remaining.insert(f, refs.len());
+            }
+        }
+
+        let mut worklist = Vec::new();
+        for (f, _) in self.funcs() {
+            if remaining.get(f) == Some(&0) {
+                capable.insert(f, false);
+                worklist.push(f);
+            }
+        }
+        let mut cursor = 0;
+        while cursor < worklist.len() {
+            let trap_free = worklist[cursor];
+            cursor += 1;
+            for &caller in dependents
+                .get(trap_free)
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+            {
+                let ready = if let Some(left) = remaining.get_mut(caller) {
+                    *left -= 1;
+                    *left == 0
+                } else {
+                    false
+                };
+                if ready {
+                    capable.insert(caller, false);
+                    worklist.push(caller);
+                }
+            }
+        }
+        capable
+    }
+
+    /// Trap capability at a path-plan site, including referenced closures.
+    fn path_trap_capable(
+        &self,
+        m: MorphismId,
+        bounds: &BoundsProof,
+        capable: &SecondaryMap<FuncId, bool>,
+    ) -> bool {
+        if self.path_local_trap_capable(m, bounds) {
+            return true;
+        }
+        match self.morphisms[m].op {
+            Operation::Call(g)
+            | Operation::Map { body: g, .. }
+            | Operation::Fold { body: g, .. } => capable.get(g).copied().unwrap_or(true),
+            _ => false,
+        }
     }
 
     /// Whether `o` has an edge to itself (the only way a 1-object SCC is a loop).

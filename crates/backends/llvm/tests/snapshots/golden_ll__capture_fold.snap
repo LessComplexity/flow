@@ -1,5 +1,5 @@
 ---
-source: crates/flow-backend-llvm/tests/golden_ll.rs
+source: crates/backends/llvm/tests/golden_ll.rs
 expression: ll
 ---
 ; flow-backend-llvm emitted module
@@ -12,19 +12,29 @@ declare void @flow_print_f64(double, i1 zeroext)
 declare void @flow_print_str(ptr, i64, i1 zeroext)
 declare void @flow_trap(i32) noreturn
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
+declare ptr @flow_par_begin(i32)
+declare void @flow_par_task(ptr, i32, i32, ptr, i64, i32)
+declare void @flow_par_pin(ptr, i32)
+declare void @flow_par_dep(ptr, i32, i32)
+declare void @flow_par_launch(ptr, ptr)
+declare void @flow_par_wait(ptr, ptr, i32)
+declare void @flow_par_check(ptr, i64)
+declare void @flow_par_trap(i64, i32)
+declare void @flow_par_watermark(i64)
+declare void @flow_par_run_pinned(ptr, i32)
+declare void @flow_par_finish(ptr)
 
-define internal void @flow_main() {
+%Frame = type { [3 x i32], { i32, [3 x i32] }, i32, [3 x i32], { i32, i32, ptr }, i32, i32 }
+
+@ckpt0_entries = private unnamed_addr constant [1 x i64] [i64 8589934591]
+
+define internal void @task0(i64 %lo, i64 %hi, ptr %frame) {
 entry:
-  %o2 = alloca [3 x i32]
-  %o3 = alloca { i32, [3 x i32] }
-  %o4 = alloca i32
-  %o5 = alloca [3 x i32]
-  %o6 = alloca { i32, i32, ptr }
-  %o7 = alloca i32
-  %o8 = alloca i32
-  %s13 = alloca i32
-  %s14 = alloca i64
-  %s23 = alloca { i32, i32, i32 }
+  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 4
+  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
+  %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
+  %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
   %t0 = getelementptr { i32, i32, ptr }, ptr %o6, i32 0, i32 0
   store i32 3, ptr %t0
   %t1 = getelementptr [3 x i32], ptr %o2, i64 0, i64 0
@@ -46,40 +56,72 @@ entry:
   store i32 %t8, ptr %t9
   %t10 = getelementptr { i32, i32, ptr }, ptr %o6, i32 0, i32 2
   store ptr %o5, ptr %t10
-  %t11 = getelementptr { i32, i32, ptr }, ptr %o6, i32 0, i32 1
-  %t12 = load i32, ptr %t11
-  store i32 %t12, ptr %s13
-  store i64 0, ptr %s14
-  br label %bb15
-bb15:
-  %t18 = load i64, ptr %s14
-  %t19 = icmp uge i64 %t18, 3
-  br i1 %t19, label %bb17, label %bb16
-bb16:
-  %t20 = getelementptr [3 x i32], ptr %o5, i64 0, i64 %t18
-  %t21 = load i32, ptr %t20
-  %t22 = load i32, ptr %s13
-  %t24 = getelementptr { i32, i32, ptr }, ptr %o6, i32 0, i32 0
-  %t25 = load i32, ptr %t24
-  %t26 = getelementptr { i32, i32, i32 }, ptr %s23, i32 0, i32 0
-  store i32 %t25, ptr %t26
-  %t27 = getelementptr { i32, i32, i32 }, ptr %s23, i32 0, i32 1
-  store i32 %t22, ptr %t27
-  %t28 = getelementptr { i32, i32, i32 }, ptr %s23, i32 0, i32 2
-  store i32 %t21, ptr %t28
-  %t29 = load { i32, i32, i32 }, ptr %s23
-  %t30 = call i32 @fn1({ i32, i32, i32 } %t29)
-  store i32 %t30, ptr %s13
-  %t31 = add i64 %t18, 1
-  store i64 %t31, ptr %s14
-  br label %bb15
-bb17:
-  %t32 = load i32, ptr %s13
-  store i32 %t32, ptr %o7
-  %t33 = load i32, ptr %o7
-  store i32 %t33, ptr %o8
-  %t34 = load i32, ptr %o8
-  call void @flow_print_i32(i32 %t34, i1 zeroext true)
+  ret void
+}
+
+define internal void @task1(i64 %lo, i64 %hi, ptr %frame) {
+entry:
+  %s2 = alloca i32
+  %s3 = alloca i64
+  %s12 = alloca { i32, i32, i32 }
+  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 4
+  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
+  %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
+  %t0 = getelementptr { i32, i32, ptr }, ptr %o6, i32 0, i32 1
+  %t1 = load i32, ptr %t0
+  store i32 %t1, ptr %s2
+  store i64 0, ptr %s3
+  br label %bb4
+bb4:
+  %t7 = load i64, ptr %s3
+  %t8 = icmp uge i64 %t7, 3
+  br i1 %t8, label %bb6, label %bb5
+bb5:
+  %t9 = getelementptr [3 x i32], ptr %o5, i64 0, i64 %t7
+  %t10 = load i32, ptr %t9
+  %t11 = load i32, ptr %s2
+  %t13 = getelementptr { i32, i32, ptr }, ptr %o6, i32 0, i32 0
+  %t14 = load i32, ptr %t13
+  %t15 = getelementptr { i32, i32, i32 }, ptr %s12, i32 0, i32 0
+  store i32 %t14, ptr %t15
+  %t16 = getelementptr { i32, i32, i32 }, ptr %s12, i32 0, i32 1
+  store i32 %t11, ptr %t16
+  %t17 = getelementptr { i32, i32, i32 }, ptr %s12, i32 0, i32 2
+  store i32 %t10, ptr %t17
+  %t18 = load { i32, i32, i32 }, ptr %s12
+  %t19 = call i32 @fn1({ i32, i32, i32 } %t18)
+  store i32 %t19, ptr %s2
+  %t20 = add i64 %t7, 1
+  store i64 %t20, ptr %s3
+  br label %bb4
+bb6:
+  %t21 = load i32, ptr %s2
+  store i32 %t21, ptr %o7
+  ret void
+}
+
+define internal void @flow_main() {
+entry:
+  %frame = alloca %Frame
+  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
+  %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
+  %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
+  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 4
+  %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
+  %o8 = getelementptr %Frame, ptr %frame, i32 0, i32 6
+  %h = call ptr @flow_par_begin(i32 2)
+  call void @flow_par_task(ptr %h, i32 0, i32 0, ptr @task0, i64 10, i32 4)
+  call void @flow_par_task(ptr %h, i32 1, i32 0, ptr @task1, i64 1, i32 3)
+  call void @flow_par_dep(ptr %h, i32 0, i32 1)
+  call void @flow_par_launch(ptr %h, ptr %frame)
+  call void @flow_par_wait(ptr %h, ptr @ckpt0_entries, i32 1)
+  call void @flow_par_check(ptr %h, i64 13)
+  %t0 = load i32, ptr %o7
+  store i32 %t0, ptr %o8
+  %t1 = load i32, ptr %o8
+  call void @flow_print_i32(i32 %t1, i1 zeroext true)
+  call void @flow_par_finish(ptr %h)
   ret void
 }
 

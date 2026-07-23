@@ -5,7 +5,7 @@
 
 use flow_ir::{
     BoundsProof, CategoryIr, FuncId, FuncKind, LastUsePlan, MorphismId, ObjectId, ObjectKind,
-    Operation, Ty, Value,
+    Operation, PathPlan, TaskKind, Ty, Value, WaitEntry,
 };
 use slotmap::SecondaryMap;
 
@@ -173,6 +173,64 @@ fn ty_has_token(ty: &Ty) -> bool {
     }
 }
 
+#[derive(Clone, Copy)]
+enum GuardFlavor {
+    Host,
+    Task,
+    TaskBody(u32),
+}
+
+#[derive(Clone)]
+struct FrameField {
+    owner: ObjectId,
+    index: u32,
+    ordinal: u32,
+    llt: String,
+}
+
+#[derive(Clone)]
+struct FrameLayout {
+    fields: SecondaryMap<ObjectId, FrameField>,
+    order: Vec<ObjectId>,
+}
+
+impl FrameLayout {
+    fn definition(&self) -> String {
+        let fields = self
+            .order
+            .iter()
+            .map(|o| self.fields[*o].llt.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("%Frame = type {{ {fields} }}\n")
+    }
+}
+
+#[derive(Clone)]
+struct CheckpointEmit {
+    ordinal: usize,
+    topo: u32,
+    len: usize,
+}
+
+#[derive(Clone)]
+struct PinnedEmit {
+    task: usize,
+    topo: u32,
+    len: usize,
+}
+
+struct HostEmit {
+    checkpoints: SecondaryMap<MorphismId, CheckpointEmit>,
+    pinned: SecondaryMap<MorphismId, PinnedEmit>,
+    /// Checkpoints living INSIDE an effectful loop, keyed by that loop's first
+    /// `LoopEnter` in topo order: the loop's seed/entry glue reads
+    /// task-produced frame slots, so the wait+check must also fire once BEFORE
+    /// the loop is entered — the per-iteration hook inside the cone comes too
+    /// late for the first read (S24 review find).
+    pre_loop: SecondaryMap<MorphismId, Vec<CheckpointEmit>>,
+}
+
 /// Per-function emission state (DESIGN Dat `FnCtx`). `slots` is partial — erased
 /// (token/unit/str) objects have no slot.
 pub(crate) struct FnEmit<'a> {
@@ -211,6 +269,25 @@ pub(crate) struct FnEmit<'a> {
     /// write): they share the dead source array's slot, so the entry-block
     /// pass mints no alloca for them; `emit_update` inserts the shared slot.
     elided_updates: SecondaryMap<ObjectId, ()>,
+    /// Elided Update target → source slot, retained explicitly for frame users
+    /// in other task functions.
+    update_aliases: SecondaryMap<ObjectId, ObjectId>,
+    /// Parallel entry storage. Task emitters resolve fields lazily into
+    /// `frame_geps`; the host resolves every field once in its prologue.
+    frame: Option<FrameLayout>,
+    frame_geps: String,
+    /// Host guards call `flow_trap`; task/body guards record into the run.
+    guard_flavor: GuardFlavor,
+    /// Split-task collection loops use `%lo..%hi`; every other loop keeps
+    /// today's `0..n`.
+    split_range: bool,
+    /// Scalar-chain tasks publish progress after each trap-capable site.
+    watermark: bool,
+    /// Parallel host checkpoint/pinned injections.
+    host: Option<HostEmit>,
+    /// A task-flavor body only loses readonly attributes if it actually emits a
+    /// runtime-state write.
+    runtime_write: bool,
 }
 
 impl<'a> FnEmit<'a> {
@@ -236,7 +313,19 @@ impl<'a> FnEmit<'a> {
             lup: ir.last_use_plan(f),
             bp: ir.bounds_proof(f),
             elided_updates: SecondaryMap::new(),
+            update_aliases: SecondaryMap::new(),
+            frame: None,
+            frame_geps: String::new(),
+            guard_flavor: GuardFlavor::Host,
+            split_range: false,
+            watermark: false,
+            host: None,
+            runtime_write: false,
         }
+    }
+
+    pub(crate) fn set_task_body_site(&mut self, topo: u32) {
+        self.guard_flavor = GuardFlavor::TaskBody(topo);
     }
 
     fn fresh(&mut self) -> u32 {
@@ -267,8 +356,24 @@ impl<'a> FnEmit<'a> {
         self.body.push_str(":\n");
     }
 
-    fn slot(&self, o: ObjectId) -> Option<String> {
-        self.slots.get(o).cloned()
+    fn slot(&mut self, o: ObjectId) -> Option<String> {
+        if let Some(slot) = self.slots.get(o) {
+            return Some(slot.clone());
+        }
+        let field = self.frame.as_ref()?.fields.get(o)?.clone();
+        if let Some(slot) = self.slots.get(field.owner) {
+            let slot = slot.clone();
+            self.slots.insert(o, slot.clone());
+            return Some(slot);
+        }
+        let slot = format!("%o{}", field.ordinal);
+        self.frame_geps.push_str(&format!(
+            "  {slot} = getelementptr %Frame, ptr %frame, i32 0, i32 {}\n",
+            field.index
+        ));
+        self.slots.insert(field.owner, slot.clone());
+        self.slots.insert(o, slot.clone());
+        Some(slot)
     }
 
     fn obj_ty(&self, o: ObjectId) -> Ty {
@@ -556,25 +661,58 @@ impl<'a> FnEmit<'a> {
         self.label_line(&cont);
     }
 
+    fn task_site(&self, m: MorphismId) -> u32 {
+        match self.guard_flavor {
+            GuardFlavor::Host => unreachable!("host guard has no task site"),
+            GuardFlavor::TaskBody(topo) => topo,
+            GuardFlavor::Task => self
+                .ir
+                .topo_order(self.f)
+                .iter()
+                .position(|&candidate| candidate == m)
+                .expect("task morphism is in entry topo") as u32,
+        }
+    }
+
+    fn record_trap(&mut self, m: MorphismId, kind: u32) {
+        let topo = self.task_site(m);
+        self.line(format!("call void @flow_par_trap(i64 {topo}, i32 {kind})"));
+        self.runtime_write = true;
+    }
+
+    fn local_trap_site(&self, m: MorphismId) -> bool {
+        let morph = self.ir.morphism(m).expect("morphism resolves");
+        match morph.op {
+            Operation::Div | Operation::Mod => {
+                matches!(self.obj_ty(morph.target), Ty::Int { .. })
+            }
+            Operation::Index => !self.bp.proven(m),
+            Operation::Update => true,
+            _ => false,
+        }
+    }
+
+    fn emit_watermark(&mut self, m: MorphismId) {
+        let topo = self.task_site(m);
+        self.line(format!("call void @flow_par_watermark(i64 {topo})"));
+        self.runtime_write = true;
+    }
+
+    fn bulk_bounds(&self, n: u64) -> (String, String) {
+        if self.split_range {
+            ("%lo".into(), "%hi".into())
+        } else {
+            ("0".into(), n.to_string())
+        }
+    }
+
     // --- the walk ---------------------------------------------------------
 
-    /// Emit the function body: prologue store, the topo walk, epilogue return.
-    pub fn emit(mut self) -> String {
+    /// Configure by-ref inputs and Update slot aliases. Returns the lowered
+    /// incoming argument type.
+    fn prepare_storage(&mut self) -> Option<String> {
         let fd = self.ir.func(self.f).expect("func resolves");
         let in_ty = self.obj_ty(fd.input);
-        let ret_ty = self.obj_ty(fd.output);
-        let fname = self.fnames[self.f].clone();
-
-        // By-ref array input lowering. ADR-0027 by-reference array captures
-        // (suggestions #6): a Map/Fold body fn's first-k Array input components
-        // arrive as `ptr`; `k` comes from the unique Map/Fold site with body ==
-        // self.f (lower mints one fresh body fn per lambda site). By-reference
-        // array call arguments (BL5 amendment, suggestions #8): a Named fn's
-        // EVERY top-level Array input component arrives as `ptr` (`k =
-        // u32::MAX` — no leading-captures convention). Both rest on the same
-        // read-only argument: capture semantics / Flow value semantics
-        // (functional `Update` copies to a fresh alloca) make the pointer
-        // observably identical to the inline array.
         let (bk, btext) = match fd.kind {
             FuncKind::MapBody | FuncKind::FoldBody => {
                 let k = self.body_captures();
@@ -584,9 +722,6 @@ impl<'a> FnEmit<'a> {
         };
         if let Some(text) = btext {
             self.byref = Some((fd.input, bk, text));
-            // A bare-Array Named input arrives as `ptr` itself: the input
-            // object's slot is the `alloca ptr` holding the argument pointer
-            // (the whole object is ptr-resident, not just its Projs).
             if bk == u32::MAX && matches!(&in_ty, Ty::Array { .. }) {
                 self.ptr_resident.insert(fd.input, ());
             }
@@ -614,56 +749,109 @@ impl<'a> FnEmit<'a> {
             None => lower_ty(&in_ty),
         };
 
-        // Last-use Update elision (suggestions #2; plan-last-use §2 rule 4):
-        // the target of an in-place-able Update shares its dead source array's
-        // slot — mint no alloca for it below (`emit_update` re-derives the
-        // same verdict through `update_in_place_source` and inserts the shared
-        // slot when it fires).
-        let mut elided = Vec::new();
         for &m in &fd.morphisms {
-            if self.update_in_place_source(m).is_some() {
-                elided.push(self.ir.morphism(m).expect("morphism resolves").target);
+            if let Some(source) = self.update_in_place_source(m) {
+                let target = self.ir.morphism(m).expect("morphism resolves").target;
+                self.elided_updates.insert(target, ());
+                self.update_aliases.insert(target, source);
             }
         }
-        for t in elided {
-            self.elided_updates.insert(t, ());
-        }
+        in_llt
+    }
 
-        // Entry-block allocas: one per materialized (non-constant, non-erased)
-        // object. Constants are literals; erased objects have no slot. A
-        // ptr-resident object's slot is the `alloca ptr` holding its forwarded
-        // capture pointer; the by-ref body input's slot is the by-ref struct.
-        let mut ord = 0u32;
-        let owned: Vec<(ObjectId, ObjectKind, Ty)> = self
-            .ir
+    fn owned_objects(&self) -> Vec<(ObjectId, ObjectKind, Ty)> {
+        self.ir
             .objects()
             .filter(|(id, _)| self.ir.try_owner(*id) == Some(self.f))
             .map(|(id, obj)| (id, obj.kind, obj.ty.clone()))
-            .collect();
-        for (id, kind, ty) in &owned {
-            if *kind == ObjectKind::Constant {
+            .collect()
+    }
+
+    fn slot_type(&self, id: ObjectId, ty: &Ty, in_llt: &Option<String>) -> Option<String> {
+        if self.ptr_resident.contains_key(id) {
+            Some("ptr".into())
+        } else if Some(id) == self.byref.as_ref().map(|(input, _, _)| *input) {
+            in_llt.clone()
+        } else {
+            self.lower_slot_ty(id, ty)
+        }
+    }
+
+    fn allocate_local_slots(&mut self, in_llt: &Option<String>) {
+        let mut ord = 0u32;
+        for (id, kind, ty) in self.owned_objects() {
+            if kind == ObjectKind::Constant {
                 continue;
             }
-            // An elided Update target has no slot of its own; like an erased
-            // object it still consumes its ordinal (name stability, L2).
-            if self.elided_updates.contains_key(*id) {
+            if self.elided_updates.contains_key(id) {
                 ord += 1;
                 continue;
             }
-            let llt = if self.ptr_resident.contains_key(*id) {
-                Some("ptr".into())
-            } else if Some(*id) == self.byref.as_ref().map(|(input, _, _)| *input) {
-                in_llt.clone()
-            } else {
-                self.lower_slot_ty(*id, ty)
-            };
-            if let Some(llt) = llt {
+            if let Some(llt) = self.slot_type(id, &ty, in_llt) {
                 let name = format!("%o{ord}");
-                self.slots.insert(*id, name.clone());
+                self.slots.insert(id, name.clone());
                 self.allocas.push_str(&format!("  {name} = alloca {llt}\n"));
             }
             ord += 1;
         }
+    }
+
+    fn build_frame_layout(&self, in_llt: &Option<String>) -> FrameLayout {
+        let mut fields = SecondaryMap::new();
+        let mut order = Vec::new();
+        let mut ord = 0u32;
+        for (id, kind, ty) in self.owned_objects() {
+            if kind == ObjectKind::Constant {
+                continue;
+            }
+            if self.elided_updates.contains_key(id) {
+                ord += 1;
+                continue;
+            }
+            if let Some(llt) = self.slot_type(id, &ty, in_llt) {
+                let index = order.len() as u32;
+                fields.insert(
+                    id,
+                    FrameField {
+                        owner: id,
+                        index,
+                        ordinal: ord,
+                        llt,
+                    },
+                );
+                order.push(id);
+            }
+            ord += 1;
+        }
+        for (target, _) in self.update_aliases.iter() {
+            let mut source = self.update_aliases[target];
+            while let Some(&next) = self.update_aliases.get(source) {
+                source = next;
+            }
+            let field = fields
+                .get(source)
+                .expect("elided Update source has a frame field")
+                .clone();
+            fields.insert(target, field);
+        }
+        FrameLayout { fields, order }
+    }
+
+    fn materialize_frame_slots(&mut self) {
+        let order = self.frame.as_ref().expect("frame layout").order.clone();
+        for o in order {
+            self.slot(o).expect("frame field resolves");
+        }
+    }
+
+    /// Emit the function body: prologue store, the topo walk, epilogue return.
+    pub fn emit(mut self) -> String {
+        let fd = self.ir.func(self.f).expect("func resolves");
+        let ret_ty = self.obj_ty(fd.output);
+        let fname = self.fnames[self.f].clone();
+
+        let in_llt = self.prepare_storage();
+        self.allocate_local_slots(&in_llt);
 
         // Prologue: store the incoming parameter into its slot.
         if let Some(t) = &in_llt
@@ -696,7 +884,7 @@ impl<'a> FnEmit<'a> {
         // carries `noalias nocapture readonly` (the callee never writes through
         // it, never lets it escape, and — the single pointer argument — it
         // aliases nothing else the fn accesses). Unclean fns stay bare.
-        let clean = self.attrs.clean(self.f);
+        let clean = self.attrs.clean(self.f) && !self.runtime_write;
         let param = match &in_llt {
             Some(t) if clean && t == "ptr" && self.byref.is_some() => {
                 format!("{t} noalias nocapture readonly %arg")
@@ -716,6 +904,278 @@ impl<'a> FnEmit<'a> {
         format!(
             "define internal {sig_ret} @{fname}({param}){fn_attrs} {{\nentry:\n{}{}}}\n",
             self.allocas, self.body
+        )
+    }
+
+    pub(crate) fn emit_parallel(
+        ir: &'a CategoryIr,
+        f: FuncId,
+        fnames: &'a SecondaryMap<FuncId, String>,
+        strings: &'a SecondaryMap<ObjectId, StrGlobal>,
+        attrs: &'a FnAttrs,
+        plan: &PathPlan,
+    ) -> String {
+        let mut host = FnEmit::new(ir, f, fnames, strings, attrs);
+        let fd = ir.func(f).expect("func resolves");
+        let in_llt = host.prepare_storage();
+        let frame = host.build_frame_layout(&in_llt);
+        host.frame = Some(frame.clone());
+        host.allocas.push_str("  %frame = alloca %Frame\n");
+        host.materialize_frame_slots();
+
+        let topo = ir.topo_order(f);
+        let mut assigned = SecondaryMap::new();
+        let mut pinned = SecondaryMap::new();
+        for (task_id, task) in plan.tasks.iter().enumerate() {
+            let members: &[MorphismId] = match &task.kind {
+                TaskKind::Split { site, .. } => std::slice::from_ref(site),
+                TaskKind::Seq { morphisms } => morphisms,
+            };
+            for &m in members {
+                assigned.insert(m, ());
+            }
+            if task.pinned {
+                let first = *members.first().expect("task has a member");
+                let first_topo = topo
+                    .iter()
+                    .position(|&candidate| candidate == first)
+                    .expect("task member is in topo") as u32;
+                pinned.insert(
+                    first,
+                    PinnedEmit {
+                        task: task_id,
+                        topo: first_topo,
+                        len: task.deps.len(),
+                    },
+                );
+            }
+        }
+        let mut checkpoints = SecondaryMap::new();
+        for (ordinal, checkpoint) in plan
+            .checkpoints
+            .iter()
+            .filter(|checkpoint| checkpoint.topo != u32::MAX)
+            .enumerate()
+        {
+            let site = topo[checkpoint.topo as usize];
+            let injection = checkpoint_injection(ir, site, &assigned, &topo);
+            checkpoints.insert(
+                injection,
+                CheckpointEmit {
+                    ordinal,
+                    topo: checkpoint.topo,
+                    len: checkpoint.wait.len(),
+                },
+            );
+        }
+        let mut pre_loop: SecondaryMap<MorphismId, Vec<CheckpointEmit>> = SecondaryMap::new();
+        for scc in ir.loop_structure(f) {
+            let mut objects: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+            for &o in &scc.objects {
+                objects.insert(o, ());
+            }
+            let mut members: SecondaryMap<MorphismId, ()> = SecondaryMap::new();
+            for &m in &topo {
+                let morph = ir.morphism(m).expect("morphism resolves");
+                if objects.contains_key(morph.source) || objects.contains_key(morph.target) {
+                    members.insert(m, ());
+                }
+            }
+            for &merge in &scc.merges {
+                if let Some(plan) = ir.loop_plan(f, merge) {
+                    for &m in plan
+                        .decide_order
+                        .iter()
+                        .chain(&plan.advance_order)
+                        .chain(&plan.exits)
+                    {
+                        members.insert(m, ());
+                    }
+                }
+            }
+            // A checkpoint site inside this loop ⟹ the loop is effectful (a
+            // print is token-bearing), hence host-emitted; hoist its wait+check
+            // to the loop's first LoopEnter.
+            let first_enter = topo.iter().copied().find(|&m| {
+                members.contains_key(m)
+                    && matches!(
+                        ir.morphism(m).expect("morphism resolves").op,
+                        Operation::LoopEnter
+                    )
+            });
+            let Some(first_enter) = first_enter else {
+                continue;
+            };
+            for (ordinal, checkpoint) in plan
+                .checkpoints
+                .iter()
+                .filter(|checkpoint| checkpoint.topo != u32::MAX)
+                .enumerate()
+            {
+                if members.contains_key(topo[checkpoint.topo as usize]) {
+                    let emit = CheckpointEmit {
+                        ordinal,
+                        topo: checkpoint.topo,
+                        len: checkpoint.wait.len(),
+                    };
+                    if let Some(list) = pre_loop.get_mut(first_enter) {
+                        list.push(emit);
+                    } else {
+                        pre_loop.insert(first_enter, vec![emit]);
+                    }
+                }
+            }
+        }
+        host.host = Some(HostEmit {
+            checkpoints,
+            pinned,
+            pre_loop,
+        });
+
+        if let Some(t) = &in_llt
+            && let Some(slot) = host.slot(fd.input)
+        {
+            host.line(format!("store {t} %arg, ptr {slot}"));
+        }
+        host.line(format!(
+            "%h = call ptr @flow_par_begin(i32 {})",
+            plan.tasks.len()
+        ));
+        for (task_id, task) in plan.tasks.iter().enumerate() {
+            let (kind, n) = match &task.kind {
+                TaskKind::Split { n, .. } => (1, *n),
+                TaskKind::Seq { morphisms } => (0, morphisms.len().max(1) as u64),
+            };
+            host.line(format!(
+                "call void @flow_par_task(ptr %h, i32 {task_id}, i32 {kind}, ptr @task{task_id}, i64 {n}, i32 {})",
+                task.rank
+            ));
+        }
+        for (task_id, task) in plan.tasks.iter().enumerate() {
+            if task.pinned {
+                host.line(format!("call void @flow_par_pin(ptr %h, i32 {task_id})"));
+            }
+        }
+        for (after, task) in plan.tasks.iter().enumerate() {
+            for &before in &task.deps {
+                host.line(format!(
+                    "call void @flow_par_dep(ptr %h, i32 {before}, i32 {after})"
+                ));
+            }
+        }
+        host.line("call void @flow_par_launch(ptr %h, ptr %frame)");
+        host.walk_filtered(&assigned, false);
+        host.line("call void @flow_par_finish(ptr %h)");
+
+        let ret_ty = host.obj_ty(fd.output);
+        let sig_ret = match lower_ty(&ret_ty) {
+            Some(t) => {
+                let slot = host.slot(fd.output).expect("non-void return has a slot");
+                let value = host.tmp();
+                host.line(format!("{value} = load {t}, ptr {slot}"));
+                host.line(format!("ret {t} {value}"));
+                t
+            }
+            None => {
+                host.line("ret void");
+                "void".into()
+            }
+        };
+        let param = in_llt
+            .as_ref()
+            .map(|t| format!("{t} %arg"))
+            .unwrap_or_default();
+
+        let mut out = frame.definition();
+        out.push('\n');
+        for (ordinal, checkpoint) in plan
+            .checkpoints
+            .iter()
+            .filter(|checkpoint| checkpoint.topo != u32::MAX)
+            .enumerate()
+        {
+            out.push_str(&wait_global(
+                &format!("ckpt{ordinal}_entries"),
+                &checkpoint.wait,
+            ));
+        }
+        for (task_id, task) in plan.tasks.iter().enumerate() {
+            if task.pinned {
+                let wait = task
+                    .deps
+                    .iter()
+                    .map(|&task| WaitEntry {
+                        task,
+                        threshold: None,
+                    })
+                    .collect::<Vec<_>>();
+                out.push_str(&wait_global(&format!("pin{task_id}_entries"), &wait));
+            }
+        }
+        if plan
+            .checkpoints
+            .iter()
+            .any(|checkpoint| checkpoint.topo != u32::MAX)
+            || plan.tasks.iter().any(|task| task.pinned)
+        {
+            out.push('\n');
+        }
+
+        for (task_id, task) in plan.tasks.iter().enumerate() {
+            out.push_str(&Self::emit_task(
+                ir, f, fnames, strings, attrs, &frame, task_id, task,
+            ));
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "define internal {sig_ret} @{}({param}) {{\nentry:\n{}{}{}{}\n",
+            fnames[f], host.allocas, host.frame_geps, host.body, "}"
+        ));
+        out
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_task(
+        ir: &'a CategoryIr,
+        f: FuncId,
+        fnames: &'a SecondaryMap<FuncId, String>,
+        strings: &'a SecondaryMap<ObjectId, StrGlobal>,
+        attrs: &'a FnAttrs,
+        frame: &FrameLayout,
+        task_id: usize,
+        task: &flow_ir::Task,
+    ) -> String {
+        let mut emit = FnEmit::new(ir, f, fnames, strings, attrs);
+        emit.guard_flavor = GuardFlavor::Task;
+        emit.split_range = matches!(task.kind, TaskKind::Split { .. });
+        emit.watermark = match &task.kind {
+            TaskKind::Split { .. } => false,
+            TaskKind::Seq { morphisms } => !morphisms.iter().any(|&m| {
+                matches!(
+                    ir.morphism(m).expect("morphism resolves").op,
+                    Operation::Fold { .. } | Operation::LoopEnter
+                )
+            }),
+        };
+        emit.prepare_storage();
+        emit.frame = Some(frame.clone());
+
+        let mut members = SecondaryMap::new();
+        match &task.kind {
+            TaskKind::Split { site, .. } => {
+                members.insert(*site, ());
+            }
+            TaskKind::Seq { morphisms } => {
+                for &m in morphisms {
+                    members.insert(m, ());
+                }
+            }
+        }
+        emit.walk_filtered(&members, true);
+        emit.line("ret void");
+        format!(
+            "define internal void @task{task_id}(i64 %lo, i64 %hi, ptr %frame) {{\nentry:\n{}{}{}}}\n",
+            emit.allocas, emit.frame_geps, emit.body
         )
     }
 
@@ -776,9 +1236,102 @@ impl<'a> FnEmit<'a> {
         }
     }
 
+    fn walk_filtered(&mut self, members: &SecondaryMap<MorphismId, ()>, include_members: bool) {
+        let mut in_scc: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+        let mut owned: SecondaryMap<MorphismId, ()> = SecondaryMap::new();
+        for scc in self.ir.loop_structure(self.f) {
+            for &merge in &scc.merges {
+                if let Some(plan) = self.ir.loop_plan(self.f, merge) {
+                    for &m in plan.decide_order.iter().chain(plan.advance_order.iter()) {
+                        owned.insert(m, ());
+                    }
+                }
+            }
+            for o in scc.objects {
+                in_scc.insert(o, ());
+            }
+        }
+
+        for m in self.ir.topo_order(self.f) {
+            if let Some(pin) = self
+                .host
+                .as_ref()
+                .and_then(|host| host.pinned.get(m))
+                .cloned()
+            {
+                self.line(format!(
+                    "call void @flow_par_wait(ptr %h, ptr @pin{}_entries, i32 {})",
+                    pin.task, pin.len
+                ));
+                self.line(format!(
+                    "call void @flow_par_check(ptr %h, i64 {})",
+                    pin.topo
+                ));
+                self.line(format!(
+                    "call void @flow_par_run_pinned(ptr %h, i32 {})",
+                    pin.task
+                ));
+            }
+
+            if members.contains_key(m) != include_members {
+                continue;
+            }
+            let morph = self.ir.morphism(m).expect("morphism resolves");
+            match morph.op {
+                Operation::LoopEnter => {
+                    if let Some(list) = self
+                        .host
+                        .as_ref()
+                        .and_then(|host| host.pre_loop.get(m))
+                        .cloned()
+                    {
+                        for c in &list {
+                            self.line(format!(
+                                "call void @flow_par_wait(ptr %h, ptr @ckpt{}_entries, i32 {})",
+                                c.ordinal, c.len
+                            ));
+                            self.line(format!("call void @flow_par_check(ptr %h, i64 {})", c.topo));
+                        }
+                    }
+                    crate::loops::emit_loop(self, morph.target)
+                }
+                Operation::LoopBack | Operation::LoopExit => {}
+                _ => {
+                    if owned.contains_key(m)
+                        || in_scc.contains_key(morph.source)
+                        || in_scc.contains_key(morph.target)
+                    {
+                        continue;
+                    }
+                    self.emit_morphism(m);
+                }
+            }
+        }
+    }
+
+    fn emit_checkpoint(&mut self, m: MorphismId) {
+        let Some(checkpoint) = self
+            .host
+            .as_ref()
+            .and_then(|host| host.checkpoints.get(m))
+            .cloned()
+        else {
+            return;
+        };
+        self.line(format!(
+            "call void @flow_par_wait(ptr %h, ptr @ckpt{}_entries, i32 {})",
+            checkpoint.ordinal, checkpoint.len
+        ));
+        self.line(format!(
+            "call void @flow_par_check(ptr %h, i64 {})",
+            checkpoint.topo
+        ));
+    }
+
     /// Emit one morphism (DESIGN §2 op table). Called by the straight-line walk
     /// and by the loop driver for decide/advance cones.
     pub(crate) fn emit_morphism(&mut self, m: MorphismId) {
+        self.emit_checkpoint(m);
         let morph = self.ir.morphism(m).expect("morphism resolves");
         let op = morph.op;
         let source = morph.source;
@@ -825,7 +1378,7 @@ impl<'a> FnEmit<'a> {
                 }
             }
             Operation::Add | Operation::Sub | Operation::Mul | Operation::Div | Operation::Mod => {
-                self.emit_arith(source, target, op);
+                self.emit_arith(m, source, target, op);
             }
             Operation::Neg => {
                 let (llt, val) = self.load_whole(source).expect("neg operand");
@@ -921,9 +1474,12 @@ impl<'a> FnEmit<'a> {
                 unreachable!("loop ops are driver-owned")
             }
         }
+        if self.watermark && self.local_trap_site(m) {
+            self.emit_watermark(m);
+        }
     }
 
-    fn emit_arith(&mut self, source: ObjectId, target: ObjectId, op: Operation) {
+    fn emit_arith(&mut self, m: MorphismId, source: ObjectId, target: ObjectId, op: Operation) {
         let opty = self
             .obj_ty(source)
             .component_ty(0)
@@ -968,6 +1524,10 @@ impl<'a> FnEmit<'a> {
                 let dconst = const_int_operand(self.ir, source, 1);
                 let zero_dead = matches!(dconst, Some(v) if v != 0);
                 let min_dead = matches!(dconst, Some(v) if v != -1);
+                if !zero_dead && !matches!(self.guard_flavor, GuardFlavor::Host) {
+                    self.emit_task_div(m, target, op, &llt, &a, &b, signed, min_dead);
+                    return;
+                }
                 if !zero_dead {
                     // Zero guard → flow_trap(div_zero).
                     let z = self.tmp();
@@ -1014,6 +1574,76 @@ impl<'a> FnEmit<'a> {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_task_div(
+        &mut self,
+        m: MorphismId,
+        target: ObjectId,
+        op: Operation,
+        llt: &str,
+        a: &str,
+        b: &str,
+        signed: bool,
+        min_dead: bool,
+    ) {
+        let zero = self.tmp();
+        self.line(format!("{zero} = icmp eq {llt} {b}, 0"));
+        let bad = self.label();
+        let good = self.label();
+        let done = self.label();
+        self.line(format!("br i1 {zero}, label %{bad}, label %{good}"));
+        self.label_line(&bad);
+        self.record_trap(m, 0);
+        self.line(format!("br label %{done}"));
+        self.label_line(&good);
+
+        let (good_value, good_block) = if signed && !min_dead {
+            let min = int_min(llt);
+            let minus_one = self.tmp();
+            self.line(format!("{minus_one} = icmp eq {llt} {b}, -1"));
+            let is_min = self.tmp();
+            self.line(format!("{is_min} = icmp eq {llt} {a}, {min}"));
+            let overflow = self.tmp();
+            self.line(format!("{overflow} = and i1 {minus_one}, {is_min}"));
+            let wrap = self.label();
+            let normal = self.label();
+            let wrapped = self.label();
+            self.line(format!("br i1 {overflow}, label %{wrap}, label %{normal}"));
+            self.label_line(&wrap);
+            self.line(format!("br label %{wrapped}"));
+            self.label_line(&normal);
+            let real = self.tmp();
+            let instruction = if op == Operation::Div { "sdiv" } else { "srem" };
+            self.line(format!("{real} = {instruction} {llt} {a}, {b}"));
+            self.line(format!("br label %{wrapped}"));
+            self.label_line(&wrapped);
+            let value = self.tmp();
+            let wrap_value = if op == Operation::Div { min } else { "0" };
+            self.line(format!(
+                "{value} = phi {llt} [{wrap_value}, %{wrap}], [{real}, %{normal}]"
+            ));
+            (value, wrapped)
+        } else {
+            let instruction = match (signed, op) {
+                (true, Operation::Div) => "sdiv",
+                (true, Operation::Mod) => "srem",
+                (false, Operation::Div) => "udiv",
+                (false, Operation::Mod) => "urem",
+                _ => unreachable!(),
+            };
+            let value = self.tmp();
+            self.line(format!("{value} = {instruction} {llt} {a}, {b}"));
+            (value, good)
+        };
+        self.line(format!("br label %{done}"));
+        self.label_line(&done);
+        let value = self.tmp();
+        self.line(format!(
+            "{value} = phi {llt} [0, %{bad}], [{good_value}, %{good_block}]"
+        ));
+        self.store_obj(target, llt, &value);
     }
 
     fn emit_compare(&mut self, source: ObjectId, target: ObjectId, op: Operation) {
@@ -1184,6 +1814,31 @@ impl<'a> FnEmit<'a> {
         // dead, so a proven `Index` emits just the GEP+load. Everything
         // unproven keeps the two-sided guard byte-identical.
         if !self.bp.proven(m) {
+            if !matches!(self.guard_flavor, GuardFlavor::Host) {
+                let oob = self.index_oob(&i64idx, size);
+                let bad = self.label();
+                let good = self.label();
+                let done = self.label();
+                self.line(format!("br i1 {oob}, label %{bad}, label %{good}"));
+                self.label_line(&bad);
+                self.record_trap(m, 1);
+                self.line(format!("br label %{done}"));
+                self.label_line(&good);
+                let ep = self.tmp();
+                self.line(format!(
+                    "{ep} = getelementptr {arr_llt}, ptr {arr_ptr}, i64 0, i64 {i64idx}"
+                ));
+                let loaded = self.tmp();
+                self.line(format!("{loaded} = load {elem_llt}, ptr {ep}"));
+                self.line(format!("br label %{done}"));
+                self.label_line(&done);
+                let value = self.tmp();
+                self.line(format!(
+                    "{value} = phi {elem_llt} [zeroinitializer, %{bad}], [{loaded}, %{good}]"
+                ));
+                self.store_obj(target, &elem_llt, &value);
+                return;
+            }
             self.guard_index(&i64idx, size);
         }
         let ep = self.tmp();
@@ -1220,6 +1875,31 @@ impl<'a> FnEmit<'a> {
             ),
         };
         let i64idx = self.load_index(source, 1, &idx_ty);
+        if !matches!(self.guard_flavor, GuardFlavor::Host) {
+            if let Some(src_arr_ptr) = copy_from {
+                self.line(format!(
+                    "call void @llvm.memcpy.p0.p0.i64(ptr {tgt_slot}, ptr {src_arr_ptr}, i64 ptrtoint (ptr getelementptr ({arr_llt}, ptr null, i64 1) to i64), i1 false)"
+                ));
+            }
+            let oob = self.index_oob(&i64idx, size);
+            let bad = self.label();
+            let good = self.label();
+            let done = self.label();
+            self.line(format!("br i1 {oob}, label %{bad}, label %{good}"));
+            self.label_line(&bad);
+            self.record_trap(m, 1);
+            self.line(format!("br label %{done}"));
+            self.label_line(&good);
+            let ep = self.tmp();
+            self.line(format!(
+                "{ep} = getelementptr {arr_llt}, ptr {tgt_slot}, i64 0, i64 {i64idx}"
+            ));
+            let (vllt, val) = self.load_component(source, 2).expect("update value");
+            self.line(format!("store {vllt} {val}, ptr {ep}"));
+            self.line(format!("br label %{done}"));
+            self.label_line(&done);
+            return;
+        }
         self.guard_index(&i64idx, size);
         if let Some(src_arr_ptr) = copy_from {
             // memcpy source array → target (fresh array; ADR-0021). Size via the
@@ -1259,13 +1939,18 @@ impl<'a> FnEmit<'a> {
         // The extension already erased signedness; but the operand's original
         // signedness decided zext vs sext. A zero-extended value is ≥ 0, so the
         // signed two-sided check is always correct on the i64 form.
+        let oob = self.index_oob(i64idx, size);
+        self.trap_if(&oob, 1);
+    }
+
+    fn index_oob(&mut self, i64idx: &str, size: u64) -> String {
         let lo = self.tmp();
         self.line(format!("{lo} = icmp slt i64 {i64idx}, 0"));
         let hi = self.tmp();
         self.line(format!("{hi} = icmp sge i64 {i64idx}, {size}"));
         let oob = self.tmp();
         self.line(format!("{oob} = or i1 {lo}, {hi}"));
-        self.trap_if(&oob, 1);
+        oob
     }
 
     /// Assemble a capturing map/fold body's call operand (ADR-0027): the
@@ -1333,15 +2018,16 @@ impl<'a> FnEmit<'a> {
         let tgt_slot = self.slot(target).expect("map tgt slot");
         let callee = self.fnames[body].clone();
         let ctr = self.scratch("i64");
+        let (lo, hi) = self.bulk_bounds(n);
 
         let (lh, lb, ld) = (self.label(), self.label(), self.label());
-        self.line(format!("store i64 0, ptr {ctr}"));
+        self.line(format!("store i64 {lo}, ptr {ctr}"));
         self.line(format!("br label %{lh}"));
         self.label_line(&lh);
         let iv = self.tmp();
         self.line(format!("{iv} = load i64, ptr {ctr}"));
         let done = self.tmp();
-        self.line(format!("{done} = icmp uge i64 {iv}, {n}"));
+        self.line(format!("{done} = icmp uge i64 {iv}, {hi}"));
         self.line(format!("br i1 {done}, label %{ld}, label %{lb}"));
         self.label_line(&lb);
         let ep = self.tmp();
@@ -1395,8 +2081,9 @@ impl<'a> FnEmit<'a> {
 
         let accslot = self.scratch(&acc_llt);
         let ctr = self.scratch("i64");
+        let (lo, hi) = self.bulk_bounds(n);
         self.line(format!("store {acc_llt} {acc0}, ptr {accslot}"));
-        self.line(format!("store i64 0, ptr {ctr}"));
+        self.line(format!("store i64 {lo}, ptr {ctr}"));
 
         let (lh, lb, ld) = (self.label(), self.label(), self.label());
         self.line(format!("br label %{lh}"));
@@ -1404,7 +2091,7 @@ impl<'a> FnEmit<'a> {
         let iv = self.tmp();
         self.line(format!("{iv} = load i64, ptr {ctr}"));
         let done = self.tmp();
-        self.line(format!("{done} = icmp uge i64 {iv}, {n}"));
+        self.line(format!("{done} = icmp uge i64 {iv}, {hi}"));
         self.line(format!("br i1 {done}, label %{ld}, label %{lb}"));
         self.label_line(&lb);
         let ep = self.tmp();
@@ -1453,15 +2140,16 @@ impl<'a> FnEmit<'a> {
         let tgt_arr_llt = lower_ty(&tgt_ty).expect("zip tgt lowers");
         let tgt_slot = self.slot(target).expect("zip tgt slot");
         let ctr = self.scratch("i64");
+        let (lo, hi) = self.bulk_bounds(n);
 
         let (lh, lb, ld) = (self.label(), self.label(), self.label());
-        self.line(format!("store i64 0, ptr {ctr}"));
+        self.line(format!("store i64 {lo}, ptr {ctr}"));
         self.line(format!("br label %{lh}"));
         self.label_line(&lh);
         let iv = self.tmp();
         self.line(format!("{iv} = load i64, ptr {ctr}"));
         let done = self.tmp();
-        self.line(format!("{done} = icmp uge i64 {iv}, {n}"));
+        self.line(format!("{done} = icmp uge i64 {iv}, {hi}"));
         self.line(format!("br i1 {done}, label %{ld}, label %{lb}"));
         self.label_line(&lb);
         let ea = {
@@ -1507,15 +2195,16 @@ impl<'a> FnEmit<'a> {
         let tgt_arr_llt = lower_ty(&tgt_ty).expect("enum tgt lowers");
         let tgt_slot = self.slot(target).expect("enum tgt slot");
         let ctr = self.scratch("i64");
+        let (lo, hi) = self.bulk_bounds(n);
 
         let (lh, lb, ld) = (self.label(), self.label(), self.label());
-        self.line(format!("store i64 0, ptr {ctr}"));
+        self.line(format!("store i64 {lo}, ptr {ctr}"));
         self.line(format!("br label %{lh}"));
         self.label_line(&lh);
         let iv = self.tmp();
         self.line(format!("{iv} = load i64, ptr {ctr}"));
         let done = self.tmp();
-        self.line(format!("{done} = icmp uge i64 {iv}, {n}"));
+        self.line(format!("{done} = icmp uge i64 {iv}, {hi}"));
         self.line(format!("br i1 {done}, label %{ld}, label %{lb}"));
         self.label_line(&lb);
         let idx32 = self.tmp();
@@ -1549,15 +2238,16 @@ impl<'a> FnEmit<'a> {
         let tgt_arr_llt = lower_ty(&tgt_ty).expect("iota tgt lowers");
         let tgt_slot = self.slot(target).expect("iota tgt slot");
         let ctr = self.scratch("i64");
+        let (lo, hi) = self.bulk_bounds(n);
 
         let (lh, lb, ld) = (self.label(), self.label(), self.label());
-        self.line(format!("store i64 0, ptr {ctr}"));
+        self.line(format!("store i64 {lo}, ptr {ctr}"));
         self.line(format!("br label %{lh}"));
         self.label_line(&lh);
         let iv = self.tmp();
         self.line(format!("{iv} = load i64, ptr {ctr}"));
         let done = self.tmp();
-        self.line(format!("{done} = icmp uge i64 {iv}, {n}"));
+        self.line(format!("{done} = icmp uge i64 {iv}, {hi}"));
         self.line(format!("br i1 {done}, label %{ld}, label %{lb}"));
         self.label_line(&lb);
         let idx32 = self.tmp();
@@ -1583,15 +2273,16 @@ impl<'a> FnEmit<'a> {
         let tgt_slot = self.slot(target).expect("fill tgt slot");
         let (vllt, v) = self.load_component(source, 0).expect("fill value");
         let ctr = self.scratch("i64");
+        let (lo, hi) = self.bulk_bounds(n);
 
         let (lh, lb, ld) = (self.label(), self.label(), self.label());
-        self.line(format!("store i64 0, ptr {ctr}"));
+        self.line(format!("store i64 {lo}, ptr {ctr}"));
         self.line(format!("br label %{lh}"));
         self.label_line(&lh);
         let iv = self.tmp();
         self.line(format!("{iv} = load i64, ptr {ctr}"));
         let done = self.tmp();
-        self.line(format!("{done} = icmp uge i64 {iv}, {n}"));
+        self.line(format!("{done} = icmp uge i64 {iv}, {hi}"));
         self.line(format!("br i1 {done}, label %{ld}, label %{lb}"));
         self.label_line(&lb);
         let dp = self.tmp();
@@ -1645,6 +2336,70 @@ impl<'a> FnEmit<'a> {
 }
 
 // --- free helpers ---------------------------------------------------------
+
+fn checkpoint_injection(
+    ir: &CategoryIr,
+    checkpoint: MorphismId,
+    assigned: &SecondaryMap<MorphismId, ()>,
+    topo: &[MorphismId],
+) -> MorphismId {
+    let mut seen = SecondaryMap::new();
+    let mut stack = vec![
+        ir.morphism(checkpoint)
+            .expect("checkpoint morphism resolves")
+            .source,
+    ];
+    let mut boundary = Vec::new();
+    while let Some(object) = stack.pop() {
+        if seen.insert(object, ()).is_some() {
+            continue;
+        }
+        for &m in ir.in_edges(object) {
+            if assigned.contains_key(m) {
+                continue;
+            }
+            let morph = ir.morphism(m).expect("morphism resolves");
+            if matches!(morph.op, Operation::Pair { .. } | Operation::Proj { .. }) {
+                if ir
+                    .in_edges(morph.source)
+                    .iter()
+                    .any(|producer| assigned.contains_key(*producer))
+                {
+                    boundary.push(m);
+                } else {
+                    stack.push(morph.source);
+                }
+            }
+        }
+    }
+    boundary
+        .into_iter()
+        .min_by_key(|m| {
+            topo.iter()
+                .position(|candidate| candidate == m)
+                .unwrap_or(usize::MAX)
+        })
+        .unwrap_or(checkpoint)
+}
+
+fn wait_global(name: &str, wait: &[WaitEntry]) -> String {
+    let len = wait.len();
+    let value = if wait.is_empty() {
+        "zeroinitializer".to_string()
+    } else {
+        let entries = wait
+            .iter()
+            .map(|entry| {
+                let threshold = entry.threshold.unwrap_or(u32::MAX);
+                let packed = ((entry.task as u64) << 32) | u64::from(threshold);
+                format!("i64 {packed}")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("[{entries}]")
+    };
+    format!("@{name} = private unnamed_addr constant [{len} x i64] {value}\n")
+}
 
 /// The slot-`k` feeder of a product object (the free form of
 /// `FnEmit::pair_source`, for the analysis passes — mirror of cuda

@@ -17,11 +17,13 @@ mod loops;
 mod module;
 mod ty;
 
-use flow_ir::{CategoryIr, SourceLoc};
+use flow_ir::{CategoryIr, FuncId, MorphismId, Operation, PathPlan, SourceLoc, TaskKind};
 use slotmap::SecondaryMap;
 
 use crate::func::{FnAttrs, FnEmit};
-use crate::module::{RT_DECLS, collect_str_globals, emit_main_wrapper, emit_str_globals};
+use crate::module::{
+    PAR_DECLS, RT_DECLS, collect_str_globals, emit_main_wrapper, emit_str_globals,
+};
 
 /// A structured, renderer-free emission error (ADR-0020 §1; C3).
 #[derive(Clone, Debug, PartialEq)]
@@ -75,9 +77,26 @@ pub fn emit(ir: &CategoryIr) -> Result<String, EmitError> {
         fnames.insert(id, name);
     }
 
+    // ponytail: malformed/cyclic plans stay sequential; delete this fallback
+    // when path_plan's total-DAG contract is enforced before backend entry.
+    let path_plan = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ir.path_plan(entry)))
+        .ok()
+        .filter(path_plan_is_acyclic);
+    let parallel = path_plan
+        .as_ref()
+        .is_some_and(|plan| !plan.is_single_path());
+    let body_sites = if parallel {
+        parallel_body_sites(ir, entry, path_plan.as_ref().expect("parallel plan"))
+    } else {
+        SecondaryMap::new()
+    };
+
     let mut out = String::new();
     out.push_str("; flow-backend-llvm emitted module\n");
     out.push_str(RT_DECLS);
+    if parallel {
+        out.push_str(PAR_DECLS);
+    }
     out.push('\n');
 
     let sg = emit_str_globals(&strings);
@@ -87,11 +106,101 @@ pub fn emit(ir: &CategoryIr) -> Result<String, EmitError> {
     }
 
     for (id, _) in ir.funcs() {
-        let fe = FnEmit::new(ir, id, &fnames, &strings, &attrs);
-        out.push_str(&fe.emit());
+        if id == entry && parallel {
+            out.push_str(&FnEmit::emit_parallel(
+                ir,
+                id,
+                &fnames,
+                &strings,
+                &attrs,
+                path_plan.as_ref().expect("parallel plan"),
+            ));
+        } else {
+            let mut fe = FnEmit::new(ir, id, &fnames, &strings, &attrs);
+            if let Some(&site) = body_sites.get(id) {
+                fe.set_task_body_site(site);
+            }
+            out.push_str(&fe.emit());
+        }
         out.push('\n');
     }
 
     out.push_str(&emit_main_wrapper(ir));
     Ok(out)
+}
+
+fn path_plan_is_acyclic(plan: &PathPlan) -> bool {
+    let mut remaining = plan
+        .tasks
+        .iter()
+        .map(|task| task.deps.len())
+        .collect::<Vec<_>>();
+    let mut ready = remaining
+        .iter()
+        .enumerate()
+        .filter_map(|(task, &deps)| (deps == 0).then_some(task))
+        .collect::<Vec<_>>();
+    let mut cursor = 0;
+    while cursor < ready.len() {
+        let before = ready[cursor];
+        cursor += 1;
+        for (after, task) in plan.tasks.iter().enumerate() {
+            if task.deps.contains(&before) {
+                remaining[after] -= 1;
+                if remaining[after] == 0 {
+                    ready.push(after);
+                }
+            }
+        }
+    }
+    ready.len() == plan.tasks.len()
+}
+
+/// Map every Map/Fold body reached from a parallel entry site to that site's
+/// topo position. Lowering mints body functions per site, so the map is
+/// single-valued; nested bodies inherit the outer entry site's trap position.
+fn parallel_body_sites(
+    ir: &CategoryIr,
+    entry: FuncId,
+    plan: &PathPlan,
+) -> SecondaryMap<FuncId, u32> {
+    let topo = ir.topo_order(entry);
+    let mut topo_pos: SecondaryMap<MorphismId, u32> = SecondaryMap::new();
+    for (i, &m) in topo.iter().enumerate() {
+        topo_pos.insert(m, i as u32);
+    }
+
+    let mut out = SecondaryMap::new();
+    for task in &plan.tasks {
+        let members: &[MorphismId] = match &task.kind {
+            TaskKind::Split { site, .. } => std::slice::from_ref(site),
+            TaskKind::Seq { morphisms } => morphisms,
+        };
+        for &m in members {
+            if let Operation::Map { body, .. } | Operation::Fold { body, .. } =
+                ir.morphism(m).expect("morphism resolves").op
+            {
+                mark_body_closure(ir, body, topo_pos[m], &mut out);
+            }
+        }
+    }
+    out
+}
+
+fn mark_body_closure(
+    ir: &CategoryIr,
+    body: FuncId,
+    site_topo: u32,
+    out: &mut SecondaryMap<FuncId, u32>,
+) {
+    if out.insert(body, site_topo).is_some() {
+        return;
+    }
+    for &m in &ir.func(body).expect("body resolves").morphisms {
+        if let Operation::Map { body, .. } | Operation::Fold { body, .. } =
+            ir.morphism(m).expect("morphism resolves").op
+        {
+            mark_body_closure(ir, body, site_topo, out);
+        }
+    }
 }

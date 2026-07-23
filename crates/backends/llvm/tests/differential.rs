@@ -83,6 +83,11 @@ fn rt_lib() -> PathBuf {
 /// `None` on a timeout (the harness fails loudly rather than hanging). Panics if
 /// clang errors.
 fn compile_run(clang: &str, ll: &str, tag: &str, opt: &str) -> Option<(Vec<u8>, i32)> {
+    let (_dir, exe) = compile_exe(clang, ll, tag, opt);
+    run_exe(&exe, TIMEOUT_SECS, None)
+}
+
+fn compile_exe(clang: &str, ll: &str, tag: &str, opt: &str) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let llp = dir.path().join("p.ll");
     let exe = dir.path().join("p");
@@ -100,15 +105,19 @@ fn compile_run(clang: &str, ll: &str, tag: &str, opt: &str) -> Option<(Vec<u8>, 
         "{tag}: clang failed:\n{}\n---\n{ll}",
         String::from_utf8_lossy(&out.stderr)
     );
-    run_exe(&exe, TIMEOUT_SECS)
+    (dir, exe)
 }
 
-fn run_exe(exe: &Path, secs: u64) -> Option<(Vec<u8>, i32)> {
-    let mut child = Command::new(exe)
+fn run_exe(exe: &Path, secs: u64, flow_par: Option<&str>) -> Option<(Vec<u8>, i32)> {
+    let mut command = Command::new(exe);
+    command
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+        .env_remove("FLOW_PAR");
+    if let Some(value) = flow_par {
+        command.env("FLOW_PAR", value);
+    }
+    let mut child = command.spawn().unwrap();
     let start = Instant::now();
     loop {
         if let Some(status) = child.try_wait().unwrap() {
@@ -780,4 +789,141 @@ fn main() {
     };
     assert_parity(&clang, &ir, &rr, "widen/raw");
     assert_parity(&clang, &res.ir, &rr2, "widen/rewritten");
+}
+
+#[test]
+fn differential_parallel_bign() {
+    let Some(clang) = clang() else {
+        eprintln!("SKIP differential_parallel_bign: clang not found");
+        return;
+    };
+    let src = r#"
+fn main() {
+    65536 -> iota -> cells;
+    4 -> iota -> ks;
+    cells -> map { cell ->
+        cell / 256 -> row;
+        cell % 256 -> col;
+        (0, ks) -> fold { acc, k -> acc + (row + k) * (col + k) } -> value;
+        value
+    } -> out;
+    out[65535] -> println;
+}
+"#;
+    let ir = lower_src(src);
+    let rr = run(&ir, BUDGET);
+    let ll = flow_backend_llvm::emit(&ir).unwrap();
+    assert!(
+        ll.contains("i32 1, ptr @task") && ll.contains("i64 65536"),
+        "the large map must use a split task:\n{ll}"
+    );
+    assert_parity(&clang, &ir, &rr, "parallel_bign");
+}
+
+#[test]
+fn differential_parallel_trap_order() {
+    let Some(clang) = clang() else {
+        eprintln!("SKIP differential_parallel_trap_order: clang not found");
+        return;
+    };
+    let src = r#"
+fn main() {
+    32 -> iota -> xs;
+    xs[0] -> first;
+    first -> println;
+    xs -> map { x ->
+        x - first -> shifted;
+        shifted - 7 -> divisor;
+        100 / divisor
+    } -> doomed;
+    "after" -> println;
+}
+"#;
+    let ir = lower_src(src);
+    let rr = run(&ir, BUDGET);
+    assert!(matches!(rr.outcome, Outcome::Trapped(_)));
+    let prefix = run(
+        &lower_src("fn main() { 32 -> iota -> xs; xs[0] -> first; first -> println; }"),
+        BUDGET,
+    )
+    .output;
+    assert_eq!(prefix, "0\n");
+    let ll = flow_backend_llvm::emit(&ir).unwrap();
+    assert!(ll.contains("call void @flow_par_trap(i64 "));
+    for opt in ["-O0", "-O2"] {
+        let (_dir, exe) = compile_exe(&clang, &ll, "parallel_trap_order", opt);
+        let (out, code) = run_exe(&exe, TIMEOUT_SECS, None)
+            .unwrap_or_else(|| panic!("parallel_trap_order/{opt}: timed out"));
+        assert_eq!(code, 101, "parallel_trap_order/{opt}: exit code");
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            prefix,
+            "parallel_trap_order/{opt}: stdout prefix"
+        );
+    }
+}
+
+const PARALLEL_STABLE_SRC: &str = r#"
+fn main() {
+    8192 -> iota -> xs;
+    3 -> scale;
+    xs -> map { x -> x * scale } -> ys;
+    (0, ys) -> fold { acc, x -> acc + x } -> total;
+    total -> println;
+}
+"#;
+
+#[test]
+fn differential_parallel_env_matrix() {
+    let Some(clang) = clang() else {
+        eprintln!("SKIP differential_parallel_env_matrix: clang not found");
+        return;
+    };
+    let ir = lower_src(PARALLEL_STABLE_SRC);
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("oracle completes") else {
+        panic!("parallel env fixture must complete");
+    };
+    let ll = flow_backend_llvm::emit(&ir).unwrap();
+    for opt in ["-O0", "-O2"] {
+        let (_dir, exe) = compile_exe(&clang, &ll, "parallel_env_matrix", opt);
+        for flow_par in [Some("1"), Some("8"), None] {
+            let (out, code) = run_exe(&exe, TIMEOUT_SECS, flow_par)
+                .unwrap_or_else(|| panic!("parallel_env_matrix/{opt}/{flow_par:?}: timed out"));
+            assert_eq!(code, 0, "parallel_env_matrix/{opt}/{flow_par:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&out),
+                want,
+                "parallel_env_matrix/{opt}/{flow_par:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn differential_parallel_run_twice() {
+    let Some(clang) = clang() else {
+        eprintln!("SKIP differential_parallel_run_twice: clang not found");
+        return;
+    };
+    let ir = lower_src(PARALLEL_STABLE_SRC);
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("oracle completes") else {
+        panic!("parallel repeat fixture must complete");
+    };
+    let ll = flow_backend_llvm::emit(&ir).unwrap();
+    for opt in ["-O0", "-O2"] {
+        let (_dir, exe) = compile_exe(&clang, &ll, "parallel_run_twice", opt);
+        let first = run_exe(&exe, TIMEOUT_SECS, None)
+            .unwrap_or_else(|| panic!("parallel_run_twice/{opt}/first: timed out"));
+        let second = run_exe(&exe, TIMEOUT_SECS, None)
+            .unwrap_or_else(|| panic!("parallel_run_twice/{opt}/second: timed out"));
+        assert_eq!(first, second, "parallel_run_twice/{opt}: schedule drift");
+        assert_eq!(first.1, 0, "parallel_run_twice/{opt}: exit code");
+        assert_eq!(
+            String::from_utf8_lossy(&first.0),
+            want,
+            "parallel_run_twice/{opt}: oracle"
+        );
+    }
 }

@@ -421,6 +421,119 @@ fn main() {
     insta::assert_snapshot!("capture_one_kernel_matmul", ll);
 }
 
+#[test]
+fn golden_parallel_matmul_cap() {
+    let src = r#"
+fn main() {
+    64 -> iota -> a;
+    64 -> iota -> b;
+    4 -> iota -> ks;
+    16 -> iota -> cells;
+    cells -> map { cell_id ->
+        cell_id / 4 -> i;
+        cell_id % 4 -> j;
+        (0, ks) -> fold { acc, k ->
+            acc + a[i * 4 + k] * b[k * 4 + j] -> partial;
+            a[100] -> guarded;
+            partial + guarded
+        } -> value;
+        value
+    } -> c;
+    c[0] -> println;
+}
+"#;
+    let ll = emit(&lower_src(src)).unwrap();
+    assert!(ll.contains("%Frame = type {"), "parallel frame:\n{ll}");
+    assert!(
+        ll.contains("define internal void @task0(i64 %lo, i64 %hi, ptr %frame)"),
+        "parallel task functions:\n{ll}"
+    );
+    assert!(
+        ll.contains("@ckpt0_entries = private unnamed_addr constant"),
+        "packed checkpoint entries:\n{ll}"
+    );
+    let fold_body = ll
+        .split("define internal ")
+        .skip(1)
+        .filter_map(|s| s.split("\n}\n").next())
+        .find(|s| {
+            s.contains("getelementptr [64 x i32]") && s.contains("call void @flow_par_trap(i64 ")
+        })
+        .expect("fold body");
+    assert!(
+        fold_body.contains("call void @flow_par_trap(i64 "),
+        "fold body guards speculate into the parallel trap flag:\n{fold_body}"
+    );
+    assert!(
+        !fold_body.contains("call void @flow_trap(i32"),
+        "parallel fold body must not directly trap:\n{fold_body}"
+    );
+    insta::assert_snapshot!("parallel_matmul_cap", ll);
+}
+
+/// S24 review-find pin: a checkpoint INSIDE an effectful loop also fires
+/// BEFORE the loop is entered. The loop's seed/entry glue reads task-produced
+/// frame slots, so `flow_par_wait`+`flow_par_check` must precede the loop CFG
+/// in the host body — the per-iteration hook alone would let the first entry
+/// read race a still-running task.
+#[test]
+fn parallel_effectful_loop_waits_before_entry() {
+    let src = r#"
+fn main() {
+    64 -> iota -> t;
+    t -> map { x -> (x * 7) % 5 } -> a;
+    (0, a) -> fold { acc, x -> acc + x } -> s0;
+    s0 % 10 -> s;
+    mut i: i32 <- s;
+    loop {
+        (i > 0) -> {
+            -true-> { i -> println; i - 1 -> i; -> loop; }
+            -false-> i -> done;
+        }
+    }
+    done -> println;
+}
+"#;
+    let ll = emit(&lower_src(src)).unwrap();
+    let host = ll
+        .split("define internal void @flow_main(")
+        .nth(1)
+        .expect("host fn");
+    let wait = host
+        .find("call void @flow_par_wait")
+        .expect("host emits a checkpoint wait");
+    let first_label = host.find("\nbb").expect("the loop CFG's first label");
+    assert!(
+        wait < first_label,
+        "the in-loop checkpoint's wait+check must precede the loop CFG:\n{host}"
+    );
+    assert!(
+        host.matches("call void @flow_par_wait").count() >= 2,
+        "both the pre-loop and per-iteration checkpoint hooks exist:\n{host}"
+    );
+}
+
+#[test]
+fn parallel_scalar_guard_publishes_watermark() {
+    let src = r#"
+fn main() {
+    4 -> iota -> xs;
+    xs[1] -> divisor;
+    8 / divisor -> value;
+    value -> println;
+}
+"#;
+    let ll = emit(&lower_src(src)).unwrap();
+    assert!(
+        ll.contains("call void @flow_par_trap(i64 "),
+        "scalar divide speculates:\n{ll}"
+    );
+    assert!(
+        ll.contains("call void @flow_par_watermark(i64 "),
+        "scalar guard publishes its decided watermark:\n{ll}"
+    );
+}
+
 /// S20 #6/#8 regression: capture/product staging may forward an array address,
 /// but must never materialize the large array as a first-class SSA value.
 #[test]

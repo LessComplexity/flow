@@ -38,6 +38,20 @@ declare void @flow_print_str(ptr, i64, i1 zeroext)\n\
 declare void @flow_trap(i32) noreturn\n\
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n";
 
+/// The parallel scheduler ABI, emitted only for a parallel `flow_main`.
+pub(crate) const PAR_DECLS: &str = "\
+declare ptr @flow_par_begin(i32)\n\
+declare void @flow_par_task(ptr, i32, i32, ptr, i64, i32)\n\
+declare void @flow_par_pin(ptr, i32)\n\
+declare void @flow_par_dep(ptr, i32, i32)\n\
+declare void @flow_par_launch(ptr, ptr)\n\
+declare void @flow_par_wait(ptr, ptr, i32)\n\
+declare void @flow_par_check(ptr, i64)\n\
+declare void @flow_par_trap(i64, i32)\n\
+declare void @flow_par_watermark(i64)\n\
+declare void @flow_par_run_pinned(ptr, i32)\n\
+declare void @flow_par_finish(ptr)\n";
+
 /// Collect every `Str` constant object → a private global (DESIGN §2). One
 /// global per object, named `@.strN` by deterministic object order.
 pub(crate) fn collect_str_globals(ir: &CategoryIr) -> SecondaryMap<ObjectId, StrGlobal> {

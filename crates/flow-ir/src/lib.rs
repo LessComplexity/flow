@@ -32,7 +32,10 @@ mod mermaid;
 mod ty;
 mod validate;
 
-pub use algo::{BoundsProof, EmissionClass, EmissionPlan, LastUsePlan, LoopPlan, LoopScc};
+pub use algo::{
+    BoundsProof, Checkpoint, EmissionClass, EmissionPlan, LastUsePlan, LoopPlan, LoopScc, PathPlan,
+    Task, TaskId, TaskKind, WaitEntry,
+};
 pub use builder::{Dest, FnBuilder, IrBuilder, IrError, LoopHandle};
 pub use graph::{
     CategoryIr, FuncDef, FuncId, FuncKind, Morphism, MorphismId, Object, ObjectId, ObjectKind,
