@@ -144,6 +144,10 @@ fn rt_lib() -> PathBuf {
 /// forbidden (§4) — `local::compile_recipe_argv_pinned` asserts their absence.
 fn nvcc_argv(cu: &Path, rt: &Path, exe: &Path) -> Vec<String> {
     let s = |p: &Path| p.to_str().expect("temp paths are UTF-8").to_string();
+    // `-fmad=false` here is the CONFORMANCE pin (byte-parity vs the oracle),
+    // deliberately NOT the product default: Sapir flipped the product/bench
+    // recipe to `-fmad=true` at S24b close (DESIGN §4 amendment). This gate
+    // measures semantics, not speed — contraction stays off.
     vec![
         "-std=c++17".into(),
         "-fmad=false".into(),

@@ -148,6 +148,15 @@ Out: kernel fusion beyond what rewrite `fuse` already delivers; any parallel/red
 
 ## 4. nvcc float determinism — `-fmad=false`
 
+> **Amended 2026-07-23 (S24b, Sapir decision — "flip the fmad to true by default"):** the
+> **product/bench recipe defaults to `-fmad=true`** (and the CPU bench recipe gains
+> `-ffp-contract=fast`, the same decision's clang face). The hazard analysis below is
+> unchanged and is precisely why the **conformance differential keeps `-fmad=false`**
+> (contraction changes bytes; the gate measures semantics, not speed). Emitted `.cu`
+> headers state the perf recipe and the conformance pin. Measured price the decision
+> ratifies: f64 kernel ≈2× vs FMA-on peers at saturation (S23 vs chapel-gpu; S24 f64÷f32
+> curve), f32 indifferent.
+
 - **The hazard.** nvcc's default `-fmad=true` contracts mul+add into FMA — one rounding where the oracle does two (Rust/LLVM does not contract without fast-math flags). On general inputs that changes bytes and breaks the differential. **Compile recipe: `nvcc -std=c++17 -fmad=false -arch=sm_89 prog.cu libflow_rt.a -o prog`.** `--use_fast_math` is forbidden (it sets fmad=true, prec-div=false, denormal flush, approximate intrinsics — every clause is a parity break); the recipe relies on the defaults `-prec-div=true` / `-prec-sqrt=true` and states them so a future flag sweep can't drift them silently.
 - **Host side, same discipline.** `-fmad` governs **device code only**. Host float parity relies on the ISO default: `-std=c++17` (ISO mode) on the x86-64 baseline, which lacks FMA in the baseline ISA — the host compiler has no contraction to exploit by default. Host `-march=native` / `-mfma` is **forbidden** in the recipe: either can enable host-side FMA contraction and reintroduce the exact byte-drift the flag exists to kill.
 - **Assumptions, documented as assumptions.** (a) sm_89 add/sub/mul/div/sqrt are IEEE-754 correctly rounded, matching host x86 for the same ops — a documented property of the architecture, but the differential is the evidence, not the manual. (b) Float `Mod` maps to `fmodf`/`fmod` — the same parity question llvm recorded open for `frem` (backend-llvm DESIGN §8); pinned by a differential case, falling back to a `flow-rt` call if it diverges (llvm's resolution path transfers verbatim). (c) **Cross-GPU/driver float determinism is not claimed** — the M3 sweep runs on one box; Core has no transcendentals, so basic-op IEEE conformance should make this moot, but "should" is not "verified". (d) NaN bit patterns are unobservable at the text level — `flow-rt` renders `NaN` via the same `Display` as the oracle — so NaN-payload divergence cannot cross R1.

@@ -3,8 +3,8 @@ source: crates/backends/cuda/tests/golden_cu.rs
 expression: cu
 ---
 // flow-backend-cuda emitted translation unit
-// build: nvcc -std=c++17 -fmad=false -arch=sm_89 prog.cu libflow_rt.a -lpthread -ldl -lm -o prog
-// DESIGN §4: -fmad=false pins oracle float parity; host -march=native/-mfma forbidden.
+// build: nvcc -std=c++17 -fmad=true -arch=sm_89 prog.cu libflow_rt.a -lpthread -ldl -lm -o prog
+// DESIGN §4 (amended S24b, Sapir): -fmad=true is the product/perf default; conformance runs pin -fmad=false for oracle bit-parity. Host -march=native/-mfma stays forbidden in conformance.
 
 #include <cstdint>
 #include <cstdio>

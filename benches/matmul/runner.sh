@@ -12,7 +12,7 @@ rustc --edition 2024 --crate-type=staticlib -O flow_rt.rs -o libflow_rt.a
 echo "== flow-cuda builds (pinned recipe, DESIGN §4/§6) =="
 for n in 4 16 32 64 128; do
   if [ -f "matmul$n.cu" ] && [ ! -f "mm_cu_$n" ]; then
-    nvcc -std=c++17 -fmad=false -arch=sm_89 "matmul$n.cu" libflow_rt.a -o "mm_cu_$n" -lpthread -ldl -lm
+    nvcc -std=c++17 -fmad=true -arch=sm_89 "matmul$n.cu" libflow_rt.a -o "mm_cu_$n" -lpthread -ldl -lm
     echo "built mm_cu_$n"
   fi
 done
@@ -20,26 +20,26 @@ echo "== flow-cuda-cap builds (pinned recipe, same as the loop legs) =="
 for n in 16 64 128 256 512 1024 2048 4096; do
   for v in "cap" "cap_f32" "cap_perf" "cap_f32_perf"; do
     if [ -f "matmul${n}_${v}.cu" ] && [ ! -f "mm_cu_${v}_$n" ]; then
-      nvcc -std=c++17 -fmad=false -arch=sm_89 "matmul${n}_${v}.cu" libflow_rt.a -o "mm_cu_${v}_$n" -lpthread -ldl -lm
+      nvcc -std=c++17 -fmad=true -arch=sm_89 "matmul${n}_${v}.cu" libflow_rt.a -o "mm_cu_${v}_$n" -lpthread -ldl -lm
       echo "built mm_cu_${v}_$n"
     fi
   done
 done
-echo "== flow-llvm builds (clang -O2 -march=native: native-codegen parity with rust_naive's -C target-cpu=native) =="
+echo "== flow-llvm builds (clang -O2 -march=native -ffp-contract=fast: the S24b fmad decision, CPU face — bench is perf mode; the differential gate stays contraction-off) =="
 if command -v clang >/dev/null; then
   # Parallel + incremental (S21: the v2 procedural modules are ~21 KB — each
   # clang build is sub-second after WP3b; the loop stays for rerun-resume).
   pids=()
   for n in 4 16 32 64 128; do
     if [ -f "matmul$n.ll" ] && [ ! -f "mm_ll_$n" ]; then
-      clang -O2 -march=native "matmul$n.ll" libflow_rt.a -o "mm_ll_$n" -lpthread -ldl -lm && echo "built mm_ll_$n" &
+      clang -O2 -march=native -ffp-contract=fast "matmul$n.ll" libflow_rt.a -o "mm_ll_$n" -lpthread -ldl -lm && echo "built mm_ll_$n" &
       pids+=($!)
     fi
   done
   for n in 16 64 128 256 512 1024 2048 4096; do
     for v in "cap" "cap_f32"; do
       if [ -f "matmul${n}_${v}.ll" ] && [ ! -f "mm_ll_${v}_$n" ]; then
-        clang -O2 -march=native "matmul${n}_${v}.ll" libflow_rt.a -o "mm_ll_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_${v}_$n" &
+        clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}.ll" libflow_rt.a -o "mm_ll_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_${v}_$n" &
         pids+=($!)
       fi
     done

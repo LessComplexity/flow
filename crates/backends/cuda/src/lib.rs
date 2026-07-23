@@ -158,10 +158,10 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
     let mut out = String::new();
     out.push_str("// flow-backend-cuda emitted translation unit\n");
     out.push_str(
-        "// build: nvcc -std=c++17 -fmad=false -arch=sm_89 prog.cu libflow_rt.a -lpthread -ldl -lm -o prog\n",
+        "// build: nvcc -std=c++17 -fmad=true -arch=sm_89 prog.cu libflow_rt.a -lpthread -ldl -lm -o prog\n",
     );
     out.push_str(
-        "// DESIGN §4: -fmad=false pins oracle float parity; host -march=native/-mfma forbidden.\n\n",
+        "// DESIGN §4 (amended S24b, Sapir): -fmad=true is the product/perf default; conformance runs pin -fmad=false for oracle bit-parity. Host -march=native/-mfma stays forbidden in conformance.\n\n",
     );
     out.push_str(PRELUDE);
 
