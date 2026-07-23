@@ -1,7 +1,9 @@
 # backend-llvm — implementation map
 
 > The functor DESIGN.md ("Categorical model") → code (ADR-0020). Rows updated WITH
-> the model and the code, in the same change (FRAMEWORK §6.3). Last: 2026-07-22 ·
+> the model and the code, in the same change (FRAMEWORK §6.3). Last: 2026-07-23 ·
+> S26 — tile rung 2: TI register blocking + the fixed-TJ main/remainder split
+> (plan-s26-register-blocking; the tile rows below). Previously 2026-07-22 ·
 > wave 4 — proven-`Index` guard elision + the `FnAttrs` proof refinement (S20
 > `bounds_proof` consumer). Previously wave 3 — last-use `Update` memcpy elision
 > (suggestion #2, plan-last-use §2 rule 4); 2026-07-21 · wave 2 — truthful fn
@@ -74,9 +76,9 @@
 | the deduced task DAG itself (paths, deps, ranks, transitive trap sites, thresholds, pinning, effectful-loop exclusion) | `crates/flow-ir/src/algo.rs:CategoryIr::path_plan` (+ `fn_trap_capabilities`, `WaitEntry`) |
 | R-PAR live pins (big-N split parity; trap stdout-prefix order; env matrix 1/8/unset; run-twice) | `tests/differential.rs:differential_parallel_{bign,trap_order,env_matrix,run_twice}` |
 | parallel structural pins (frame/task/ckpt shapes; speculating fold body; watermark; pre-loop wait order) | `tests/golden_ll.rs:{golden_parallel_matmul_cap,parallel_scalar_guard_publishes_watermark,parallel_effectful_loop_waits_before_entry}` |
-| **tile emission (S25)** — the `TILE_J=16` k-outer/lane-inner register micro-kernel at recognized sites (both flavors via `bulk_bounds`; per-row range clipping; per-cell op/operand/k-order exact) | `src/func.rs:FnEmit::emit_tiled_map` (dispatch in `emit_map` on `tile_plan.sites`; plan computed in `FnEmit::new` when `EmitOpts::tiling`) |
+| **tile emission (S26 rung 2)** — the register micro-kernel at recognized sites (both flavors via `bulk_bounds`; per-cell op/operand/k-order exact): the gate `site.rows > 1 && site.b.ci == 0` (the record's row-invariance cashed — no flow-ir change) routes multi-row sites to TI=`TILE_I`=4 register blocking — the i axis split into head boundary rows (TI=1, signed jw clip) / TI-blocked interior full-window rows (`i_fw_lo = udiv(lo+C-1, C)`, `i_fw_hi = udiv(hi, C)`; split loops, never masked) / tail rows (TI=1), the j axis a constant-`TILE_J` main body + one runtime-`tj` remainder tile per region, acc one flat `[TILE_I*TILE_J x elem]` entry-block scratch (subrow r at `r*TILE_J + lane`; seed splat one lane loop per subrow), per k: TI scalar a-loads + ONE b load per (k, lane) reused across the TI chains (b-traffic ÷TI); ungated 1-D sites (`rows == 1` — FIR/attention-O) keep the rung-1 `TILE_J=16` k-outer/lane-inner nest byte-stable | `src/func.rs:FnEmit::{emit_tiled_map (the gate, :2089), emit_tiled_map_blocked (:2375), emit_tile_row_split_j (:2531), emit_tile_j_split (:2579), emit_tile_trio (:2644)}` + `TileCtx` (:305; consts `TILE_J`/`TILE_I` :300-301) (dispatch in `emit_map` :2857-2865 on `tile_plan.sites`; plan computed in `FnEmit::new` when `EmitOpts::tiling`) |
 | emission options + compute timer (S25) | `src/lib.rs:{EmitOpts,emit_with_opts}` (tiling default-on; `emit` = defaults, byte-identical); `src/module.rs:PERF_DECLS`; `flow_perf_begin/end` brackets in `FnEmit::emit`/`emit_parallel_flow_main` (perf drops clean attrs); example flags `--perf`/`--no-tile` |
-| tile pins (nest shape 2-D/1-D; untiled fallback shape; tiled-vs-oracle + tiled-vs-untiled runtime at -O0/-O2 incl. FIR) | `tests/golden_ll.rs:{tile_nest_shape,tile_nest_shape_1d,untiled_map_shape}` · `tests/differential.rs:{differential_tiled_matmul,differential_tiled_fir}` |
+| tile pins (nest shape 2-D re-pinned S26 — the flat `[64 x elem]` acc alloca, the head/interior/tail udiv row bounds, 16× constant-16 lane-loop guards (15 lane loops + 1 iota), 3 remainder-clip + 7 total selects; 1-D + untiled fallback shapes byte-stable; tiled-vs-oracle + tiled-vs-untiled runtime at -O0/-O2 incl. FIR; the rung-1 remainder-path coverage gap closed — j-remainder + i-tail, two full main tiles + i-tail) | `tests/golden_ll.rs:{tile_nest_shape,tile_nest_shape_1d,untiled_map_shape}` (`golden_tile_map_shapes` :490, `golden_tile_map_shape_1d` :570) · `tests/differential.rs:{differential_tiled_matmul :542, differential_tiled_fir :618, differential_tiled_matmul_r5_c20_k7 :704, differential_tiled_matmul_r6_c32_k5 :779}` (+ shared `assert_tiled_parity` :680) |
 
 ## Notes / divergences
 

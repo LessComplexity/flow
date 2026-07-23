@@ -2,6 +2,8 @@
 
 Measured numbers only. Each benchmark gets one file: tables + one-line notes. Method notes live at file bottom; narrative archives in `docs/notes/`.
 
+Machine-tag rule (S26, Sapir — standing): every results CSV carries a machine-spec comment header (`# utc / cpu / threads / core_quota / ram_gb / clang` — stamped by `benches/matmul/runner.py`); every comparison table is one machine; cross-machine numbers only as explicitly labeled cross-session rows.
+
 | Benchmark | Compares | Latest | File |
 |---|---|---|---|
 | Matmul GEMM | flow-cuda · flow-llvm · interp vs naive CUDA · cuBLAS · numpy · Rust · C++ · Chapel | 2026-07-22 (S20) | [matmul.md](matmul.md) |
