@@ -18,6 +18,16 @@ Commits `be4e827` + the close-out. Workspace 904+ green; box destroyed (≈$0.55
 1280-run -O0/-O2 differential + tiled matmul/FIR cases · rt 16 · remaining crates 672).
 Suggestion #9 closed as shipped-at-S20c (proof pinned at the query level).
 
+## Standing direction (Sapir, S25 close — read `docs/notes/tile-ladder-direction.md` first)
+
+**cuBLAS/cuDNN-class out of the box, every backend, from naive source — the language's
+edge claim.** The ladder per target lives in the note (CPU: TI blocking → packing;
+CUDA: same tile_plan → smem tiles → tensor-core mma, fmad-class parity decision
+pending Sapir; conv2d: derived-var walker extension + conv→matmul rewrite; FPGA/ASIC:
+a recognized site IS a systolic-array spec — P7's inheritance). Post-close S25 commits:
+`f546f29` (readable ratio tables — matchup/conditions/verdict format now standing) +
+the direction note.
+
 ## The S26 agenda (from the S25 numbers + standing items)
 
 1. **BLAS rung 2 — TI register blocking (the headline):** hold a TI×TJ accumulator
