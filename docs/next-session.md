@@ -1,60 +1,47 @@
-# Next Session (S24)
+# Next Session (S25)
 
-Written: 2026-07-22 · close of Session 23 · by: Claude Fable (orchestrator; category-architect skill)
+Written: 2026-07-23 · close of Session 24 · by: Claude Fable (orchestrator; category-architect skill)
 
 ## Where things stand (≤5 lines)
 
-**S23 closed: the S21→S22 mandate ran to its done-bar.** WP-D hoisting shipped (`64f1f50`, codex), WP-E assessed-and-deferred with measurements (`1daef83`), the in-twin Fold force-Named fix landed after the FIRST hardware run of the S22 emitters caught it (`acdb319`), and the **full S23 performance matrix exists** (`7b7680c`): 84 rows, one fresh 4090, every mandated leg, six-way output agreement, `docs/performance/matmul.md` rewritten. Workspace **853 green**, fmt clean, tree committed, box destroyed (≈$0.42). `PREVIEW{.md,-matmul512.cu,-matmul512.ll}` at repo root refreshed to the WP-D text (untracked viewing aids).
+**S24 closed: the parallel orchestrator is real and measured.** Sapir's directive ("the graph's paths ARE the concurrency; each backend maps them to its layout") shipped end-to-end in one day: `flow_ir::path_plan` (the backend-independent task DAG), flow-rt's work-stealing scheduler (static rank seed + steal backstop), and the parallel `flow_main` in backend-llvm (frame + task fns + speculate-and-order traps). **R-PAR holds live** (output byte-equal to the oracle at any thread count, trap prefixes exact, -O0/-O2). **The S23 60× chapel gap is closed: N=1024 f32 flow 184.0 ms vs chapel-multicore 192.7 ms — flow ahead; 19× self-speedup** (`docs/performance/matmul/s24.md`). Workspace green (llvm 15 differential + 19 golden; ir 165; flow-rt 12); commits `36b6d39`, `c98d657`, + the close-out docs commit.
 
 ## Test state
 
-`cargo test --workspace`: **853 green** (200 syntax · 153 ir · 155 lower · 29 check · 62 interp · 63 rewrite · 27 llvm + 1 ignored perf · 1 flow-rt · 163 cuda). The llvm 1280-run differential (-O0/-O2) runs INSIDE the local suite (clang present). The cuda remote differential: **15/15 green on the S23 box** over the S22+WP-D emitters. New local gate: `cargo run -q --release -p flow-backend-cuda --example emit_sweep` — the deterministic 320-draw EMISSION sweep without nvcc (640/640; run it before any future box leg).
+`cargo test --workspace --release`: all green 2026-07-23 (includes the llvm 1280-run -O0/-O2 differential + the four new R-PAR cases). Local gates unchanged: `emit_sweep` (cuda, no nvcc), `regen.sh` (artifacts). The S24 box sweep's stdout matched the oracle on every flow row.
 
-## The numbers (what S24's work rides on — full table in `docs/performance/matmul.md`)
+## The S25 agenda (from the S24 numbers + standing items)
 
-- **GEMM kernel at naive-CUDA PARITY from N=1024 f32** (0.788 vs 0.785 ms @1024 = 1.00×; 1.06× @2048) — the S21 mandate's "equivalent or better than naive CUDA" is MET at saturation sizes. The 1.6× @512 is small-N overhead (`-fmad` + geometry show only there).
-- The remaining GPU distance is cuBLAS's algorithm class (24.6× @4096 f32) — tiling/shared-memory/tensor cores, not codegen.
-- Scale legs exist to 4096 (cuda) / 1024 (llvm, stack-bound — heap lowering unlocks 2048+).
-- cap wall flat ~270 ms at every N (context startup); loop form Θ(N³) launches unchanged (region v2's target).
-- flow-llvm cap f32 = single-thread C++ parity; f64 0.86× (S21's 1.30× reversed — znver3 box variance, recorded; compare within one box only).
-
-## The S24 agenda (Sapir directives at S23 close + the numbers)
-
-1. **flow-llvm parallel orchestrator (Sapir, S23 close — "it should be parallel first, this is the idea"):** the CPU backend is single-thread; design a threading orchestrator so map/fold bulk sites fan across cores (the 60× chapel-48-core gap at N=512 is this). Design sketch to start from: the cuda backend's bulk-site machinery is the template — a bulk op site becomes `flow_par_for(n, body, ctx)` in flow-rt (pthreads in the dependency-free staticlib) instead of a kernel launch; E2/purity already legalizes the fan-out (the same proof that legalizes kernels); first-trap-wins via a shared flag (the cuda trap-protocol shape); float folds stay sequential-pinned unless ADR-0028's tree class applies. Model-first plan before code (§6.1); orchestrator's design lane, codex codes.
-2. **chapel-gpu leg (Sapir, S23 close — "compare cpu to cpu and gpu to gpu"):** the .deb is CPU-locale only; the GPU leg needs a `CHPL_LOCALE_MODEL=gpu` source build with CUDA on the box (budget ~20-30 min box time for the chapel build; cache the tarball). Lands in the s24 report's GPU table against flow-cuda.
-3. **`-fmad` decision (Sapir):** a labeled `-fmad=true` non-oracle perf row would close a chunk of the 1.6×. Standing since S21.
-4. **Launch geometry (#5):** grid-stride + block-size tuning — the other half of the 1.6×; measure-first on the existing FLOW_PERF rows.
-5. **Region emission v2 (S17 directive):** the loop form's Θ(N³)-launches fix; the multi-merge-SCC oracle boundary is the design blocker — orchestrator's lane, plan exists (`plan-region-emission.md`).
-6. **P2 standing:** arena v1.1 (18a), tree-fold (ADR-0028), 17b dedup key, llvm heap lowering, `time` builtin (Sapir), procedural sepia, P7 Verilog, ADR-0030 protocol behind the CLI crate.
-7. **Docs debt:** ADR-0029/0031 `flow-as-implemented` patch rows (standing "on ledger close").
-
-**Perf-report format is now a standing rule (S23, Sapir):** per-session files `docs/performance/matmul/sNN.md` + thin index; compute-only tables grouped GPU-vs-GPU / CPU-vs-CPU; wall tables separate; ratios ONLY vs flow with the numbers visible; no box-ID/cost noise in perf docs. Memory: `perf-report-format`.
+1. **Pool floor knobs (small, measured next box):** container exposed 384 host threads on a ≈48-core quota — pool spawned 8× oversubscribed and still hit 19×; spawn at quota width instead (cgroup-aware count, else `FLOW_PAR=48` in the runner), and give the llvm leg a `FLOW_PERF`-style compute timer (S19 #19's CPU twin) to end the wall-vs-compute estimate game. The ≈11 ms spawn floor is the whole ≤512 story.
+2. **`-fmad` decision (Sapir, standing since S21):** price fully measured (S23: f64 2× vs chapel-gpu; S24 GPU continuity confirms). A labeled `-fmad=true` non-oracle perf row closes most of the remaining f64 kernel gap.
+3. **Launch geometry (#5, cuda):** grid-stride + block tuning — the other half of the small-N GPU gap; measure-first on FLOW_PERF rows.
+4. **cuda streams consume `path_plan` (plan §3):** today cuda serializes paths on one stream; the a-fill ∥ b-fill overlap the CPU now exploits is free on GPU too. Same query, no re-derivation.
+5. **Region emission v2 (S17 directive):** loop form's Θ(N³) launches; plan exists (`plan-region-emission.md`).
+6. **Parallel v1 recorded ceilings (lift when needed):** flow_main-only (named callees' internal graphs stay sequential — call-context analysis or reentrant cheap runs); dual-flavor callee emission would unpin trap-capable named calls; ADR-0028 tree-fold would let exact-op fold tasks split; delete the `catch_unwind` plan fallback once path_plan's DAG contract is enforced upstream.
+7. **P2 standing:** arena v1.1 (18a), 17b dedup key, llvm heap lowering (unlocks N≥2048 CPU legs), `time` builtin (Sapir), procedural sepia, P7 Verilog, ADR-0030 protocol.
+8. **Docs debt:** ADR-0029/0031 `flow-as-implemented` rows (standing "on ledger close").
 
 ## Open questions for Sapir
 
-- `-fmad=false` is oracle-pinned; allow a labeled `-fmad=true` non-oracle perf row? (now measured: it + geometry are the whole remaining kernel gap)
-- `time` builtin: language feature or harness-only? (standing since S19)
-- ADR-0023/0024/0025 in-file questions; lower §16 OQ1–OQ8 (standing).
+- `-fmad=true` labeled non-oracle row — yes/no? (item 2; the number is on the table)
+- Two foreign vast.ai instances were running at S24 close: `45591095`, `45602038` — neither created by this session (45599634 was ours, destroyed). Yours? If not, they're billing someone.
+- `time` builtin: language or harness (standing since S19); ADR-0023/24/25 in-file Qs; lower §16 OQ1–OQ8 (standing).
 
 ## Gotchas / warnings
 
-- **CODEX: always `codex exec "..." </dev/null` (S23 root cause).** The S22 "network-dead" signature (~0.1 s cputime, zero edits) was codex BLOCKING ON STDIN in non-TTY shells — `</dev/null` fixed it on the spot, twice. The health-probe + mtime-watch rules still stand as backstop. Memory updated (`model-split-preference`).
-- **Box differential on big-vCPU boxes: pin to ~16 cores** (`taskset -c 0-15 cargo test -p flow-backend-cuda`). 48-way fan-out serializes CUDA context init and starves the 15 s run timeout — the S23 first attempt's 3 "divergences" were ALL this, zero real.
-- **Run `emit_sweep` locally before trusting emitters** — emission panics hide from the local suite (differential skips without nvcc); this example is the no-GPU gate that would have caught the S22 fold bug.
-- **znver3 + clang 15 `-O2 -march=native` stalls >25 min** on loop-form `.ll` at N≥128 — box-dependent; kill + skip-with-reason (runner.sh already handles a dead clang).
-- **vast.ai box egress may block port-80 apt mirrors** — `sed -i 's|http://|https://|g' /etc/apt/sources.list` before installs (chapel's dep chain hit this).
-- **ssh remote kills: never put the kill pattern and the relaunch text in one command** — `pkill -f` matches the ssh shell's OWN cmdline (use `[s]21`-style bracket guards AND split kill/launch into separate ssh calls; two S23 relaunches were lost to this).
-- **All S08–S22 gotchas stand** (results.csv backup before sweeps — done this session into `results-s21.csv`; vast.ai `loading` >15 min ⇒ recycle — exercised; box-side nohup survives local crashes).
-- Replay-faithfulness invariant (S21) stands; `emission_plan` classes final at the query — backends only force-Named (now incl. `Fold` targets on the twin side).
+- **vast.ai containers can expose FULL host nproc (384 on a 2×EPYC-9B14 host) regardless of the ~48-core quota** — `available_parallelism` believes it; chapel does the same, so within-box ratios stay fair, but absolute walls carry a fat spawn floor. Pin with `FLOW_PAR` when comparing floors (S25 item 1 fixes properly).
+- **flow-llvm bench rows are process wall; every baseline self-times compute** — the N=16 row IS the floor (≈11 ms with a 384-thread pool); floor-adjust or build the compute timer before reading small-N ratios.
+- The box flow-rt build is `rustc --crate-type=staticlib` on the single `lib.rs` (runner.sh) — the scheduler rides it free (std-only); keep flow-rt dependency-free or that build breaks.
+- **CODEX: always `codex exec "..." </dev/null`** (S23 stdin gotcha — held all S24, zero stalls in 5 runs).
+- All S08–S23 gotchas stand (results.csv backed up → `results-s23.csv`; box differential 16-core pinning when cuda tests run; `emit_sweep` before trusting emitters; ssh kill/relaunch split; big-vCPU boxes bootstrap fast but re-query ssh-url per retry).
 
 ## Commands (currently working)
 
 ```sh
-cargo test --workspace                          # 853 green (~6 min, incl. llvm -O0/-O2 differential)
+cargo test --workspace                          # full gate (~8 min incl. llvm -O0/-O2 differential)
 cargo run -q --release -p flow-backend-cuda --example emit_sweep   # 640/640 emission sweep, no nvcc
-cargo run -q -p flow-interp --example run -- benches/matmul/matmul4_cap.flow   # -275\n3748
 ./benches/matmul/regen.sh                       # re-emit all bench artifacts (--rewrite)
-cargo run -q --release -p flow-backend-cuda --example emit -- benches/matmul/matmul512_cap.flow --rewrite -   # the exhibit
-# box driver: benches/matmul/s21_box.sh (differential inside; pin tests to 16 cores on big boxes)
-# perf home: docs/performance/matmul.md · raw: benches/matmul/results.csv (S23, 84 rows) · archives: results-s21.csv, results-pre-s20.csv
+FLOW_PAR=1 ./mm_ll_cap_1024                     # any emitted binary: sequential A/B lever
+# box driver: benches/matmul/s24_box.sh (CPU sweep; expects /root/bench rsync'd — see header)
+# perf home: docs/performance/matmul.md · raw: benches/matmul/results.csv (S24, 104 rows) · archives: results-s23.csv, results-s21.csv, results-pre-s20.csv
 ```
