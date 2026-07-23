@@ -46,6 +46,29 @@ buffers are the same transform at different `Loc`s (FRAMEWORK §4.2). The S25 la
 (next-session item 2b): guards-off auto-SIMD → tiling as a rewrite → per-backend
 vector emission only if measurement demands it.
 
+## Is "the code IS the graph" true in the implementation? (Sapir's validation question, S24b)
+
+**Yes — verified, and defended by two mechanisms.** The surface-to-IR mapping is
+syntax-directed, never reconstructive: `->` is an edge; a binding names a node
+output; `mut` rebind mints a new node; fanout blocks are literal out-edges; guards
+are Phi arms; `loop` is a real cycle (inline SCC); bulk ops are single morphisms
+with body sub-graphs; sequencing and effects are themselves edges (the world token —
+`seq` has zero IR footprint beyond token order, ADR-0019). flow-lower does real
+work (naming, typing, widths, desugaring, 51 L-codes) but ALL of it is local —
+no alias, dependence, or effect analysis exists anywhere in the pipeline, because
+nothing structural is ever lost. The property survived contact by:
+(1) **convergent refinement** — every syntax/graph collision was settled FOR the
+graph (ADR-0013 edges-only; ADR-0019 seq → token discipline; ADR-0027 captures →
+explicit broadcast edges; E1/ADR-0016 cycle semantics); and (2) **rejection over
+analysis** — programs that would make the graph ambiguous are diagnosed away
+(E2 effects-in-fanout, strings-as-data, dynamic sizes out of Core): the language's
+restrictions are the price of the property. It is re-verified continuously:
+`validate` seals the graph invariants (single producer, token linearity), the
+oracle interpreter executes the graph itself, and every differential re-tests
+"the graph means the code". Strongest single evidence: the S24 parallel
+orchestrator needed only reachability over existing edges — had the assumption
+diverged, `path_plan` would have required dependence analysis; it required none.
+
 ## The honest comparison and the honest boundary
 
 Array DSLs (Futhark, XLA, TVM, Accelerate) get this class of win from graph IRs —
