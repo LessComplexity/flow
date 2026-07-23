@@ -1,6 +1,8 @@
 # Plan — S25 pool floor + llvm compute timer (next-session item 1)
 
-Status: session-directive S25 (Sapir: "continue until 1 + 2 are implemented and tested"); model-first per ADR-0014/0017.
+Status: **SHIPPED S25** (commit `be4e827`; no deviations). Local verification:
+`FLOW_PERF total` line parses, compute ≈ wall − startup at 512; quota parsers
+unit-tested + the S24 box shape pinned (`thread_count(None, 384, Some(48)) = 48`).
 Scope: flow-rt (width), backend-llvm + flow-rt (timer). Zero conformance-path change.
 
 ## Why (the measured problem)

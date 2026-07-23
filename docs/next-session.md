@@ -1,48 +1,75 @@
-# Next Session (S25)
+# Next Session (S26)
 
-Written: 2026-07-23 · close of Session 24 · by: Claude Fable (orchestrator; category-architect skill)
+Written: 2026-07-23 · close of Session 25 · by: Claude Fable (orchestrator; category-architect skill)
 
 ## Where things stand (≤5 lines)
 
-**S24 closed: the parallel orchestrator is real and measured.** Sapir's directive ("the graph's paths ARE the concurrency; each backend maps them to its layout") shipped end-to-end in one day: `flow_ir::path_plan` (the backend-independent task DAG), flow-rt's work-stealing scheduler (static rank seed + steal backstop), and the parallel `flow_main` in backend-llvm (frame + task fns + speculate-and-order traps). **R-PAR holds live** (output byte-equal to the oracle at any thread count, trap prefixes exact, -O0/-O2). **The S23 60× chapel gap is closed: N=1024 f32 flow 184.0 ms vs chapel-multicore 192.7 ms — flow ahead; 19× self-speedup** (`docs/performance/matmul/s24.md`). Workspace green (llvm 15 differential + 19 golden; ir 165; flow-rt 12); commits `36b6d39`, `c98d657`, + the close-out docs commit.
+**S25 closed: tile emission v1 — the BLAS ladder's first rung, shipped and measured.**
+`flow_ir::tile_plan` (affine-triple recognition, 2-D + 1-D lane modes) + the backend-llvm
+`TILE_J=16` micro-kernel (per-cell chain order exact ⇒ stdout byte-equal at any thread
+count/opt level) + cgroup-quota pool width + the `FLOW_PERF` llvm compute timer. Box
+(EPYC 7702P, 62-core quota): **flow 3–8.6× ahead of chapel-multicore** at 512/1024 both
+widths; **numpy gap 130× → 13.8×** (f64@1024 like-for-like). `docs/performance/matmul/s25.md`.
+Commits `be4e827` + the close-out. Workspace 904+ green; box destroyed (≈$0.55).
 
 ## Test state
 
-`cargo test --workspace --release`: all green 2026-07-23 (includes the llvm 1280-run -O0/-O2 differential + the four new R-PAR cases). Local gates unchanged: `emit_sweep` (cuda, no nvcc), `regen.sh` (artifacts). The S24 box sweep's stdout matched the oracle on every flow row.
+`cargo test --workspace --release` green 2026-07-23 (ir 176 · llvm 40 incl. the
+1280-run -O0/-O2 differential + tiled matmul/FIR cases · rt 16 · remaining crates 672).
+Suggestion #9 closed as shipped-at-S20c (proof pinned at the query level).
 
-## The S25 agenda (from the S24 numbers + standing items)
+## The S26 agenda (from the S25 numbers + standing items)
 
-1. **Pool floor knobs (small, measured next box):** container exposed 384 host threads on a ≈48-core quota — pool spawned 8× oversubscribed and still hit 19×; spawn at quota width instead (cgroup-aware count, else `FLOW_PAR=48` in the runner), and give the llvm leg a `FLOW_PERF`-style compute timer (S19 #19's CPU twin) to end the wall-vs-compute estimate game. The ≈11 ms spawn floor is half the ≤512 story; the other half is the fold-body bounds guards — **suggestion #9** (prove captured-ramp indices through the by-ref Proj; guards then drop with zero emitter change) — chapel runs checks-off (`--fast`), we pay 2 guarded checks per inner iteration. **Next box also fills the new `naive-cuda-f64` column** (baseline templated this session — S24 close review: flow-f64 GPU had no like-for-like until now).
-2. **~~`-fmad` decision~~ DECIDED at S24b (Sapir: "flip to true by default"):** product/bench recipe = `-fmad=true` + clang `-ffp-contract=fast`; conformance differential keeps `-fmad=false` (byte-parity gate). Shipped `6867bdc`; measured same day (s24.md addendum). Remaining tail: none.
-2b. **Structure-aware SIMD (Sapir, S24b — "parallelism means the optimal parallel structure, not just threads"):** the ladder, cheap-first: (i) **guards-off auto-vectorization** — the fold-body bounds guards (suggestion #9) are what keep clang's vectorizer out of the hot k-loop; prove the captured ramps, guards drop, clang emits SIMD FMA with zero emitter change (contraction now allowed by 2); measure at cache-resident N (256–512) where compute is the bound. (ii) **tiling as a graph transform** — the exec graph *knows* the reuse (`a[i,k]` fans out N ways); iteration-space blocking is a semantics-preserving rewrite (R1-licensed), THE BLAS-class step — SIMD alone buys ~4–8×, the other ~10–20× of BLAS's constant is cache reuse; design with region-emission v2 (same family). (iii) explicit vector ops in emitters only if (i)+(ii) measurably under-deliver. The honest frame: at N≥1024 we already sit at DRAM parity — vectorization pays at the cache-resident sizes and inside future tiles.
-3. **Launch geometry (#5, cuda):** grid-stride + block tuning — the other half of the small-N GPU gap; measure-first on FLOW_PERF rows.
-4. **cuda streams consume `path_plan` (plan §3):** today cuda serializes paths on one stream; the a-fill ∥ b-fill overlap the CPU now exploits is free on GPU too. Same query, no re-derivation.
-5. **Region emission v2 (S17 directive):** loop form's Θ(N³) launches; plan exists (`plan-region-emission.md`).
-6. **Parallel v1 recorded ceilings (lift when needed):** flow_main-only (named callees' internal graphs stay sequential — call-context analysis or reentrant cheap runs); dual-flavor callee emission would unpin trap-capable named calls; ADR-0028 tree-fold would let exact-op fold tasks split; delete the `catch_unwind` plan fallback once path_plan's DAG contract is enforced upstream.
-7. **P2 standing:** arena v1.1 (18a), 17b dedup key, llvm heap lowering (unlocks N≥2048 CPU legs), `time` builtin (Sapir), procedural sepia, P7 Verilog, ADR-0030 protocol.
-8. **Docs debt:** ADR-0029/0031 `flow-as-implemented` rows (standing "on ledger close").
+1. **BLAS rung 2 — TI register blocking (the headline):** hold a TI×TJ accumulator
+   block, reuse each b-vector across TI rows (b-traffic ÷TI). Same deduction, contained
+   `TileSite`/emitter delta, per-cell order preserved (R1-legal). Expected ~2–4× on the
+   13.8× numpy gap. Design with the fixed-TJ split (item 2) — one emitter wave.
+2. **Fixed-TJ main body + scalar remainder:** the runtime `tj` bound is what holds x86
+   clang at xmm/partial vectorization (box disasm: `vmulps` xmm, no `vfmadd`, no ymm;
+   local Apple clang does 4-lane+2× on the same nest). Emit the TILE_J-constant main
+   loop + a scalar tail → full-width `ymm`/`vfmadd`. Cheap, measured next box.
+3. **Shapes → runner legs:** `benches/shapes/` corpus (fir/attn/conv2d) has oracle pins
+   + local A/B only; give the box runner shape legs so attention/FIR carry standing
+   numbers (attn already: 2 chained tiled sites, 4.6× local).
+4. **conv2d derived-var affine forms:** `k/3`,`k%3` inside the fold body → non-affine in
+   raw k → refused today (guards still elided). Extending the walker over derived vars
+   tiles the conv class. Gate: measured demand.
+5. **cuda consumes `tile_plan` + streams consume `path_plan`** (S25/S24 queries, standing).
+6. **Region emission v2** (S17 directive; plan exists) · **P2 standing:** arena v1.1,
+   17b dedup key, llvm heap lowering (the 1024 ulimit dance + N≥2048 CPU legs), `time`
+   builtin (Sapir), P7 Verilog, ADR-0030 protocol.
+7. **Docs debt:** ADR-0029/0031 `flow-as-implemented` rows (standing "on ledger close").
 
 ## Open questions for Sapir
 
-- `-fmad=true` labeled non-oracle row — yes/no? (item 2; the number is on the table)
-- Two foreign vast.ai instances were running at S24 close: `45591095`, `45602038` — neither created by this session (45599634 was ours, destroyed). Yours? If not, they're billing someone.
-- `time` builtin: language or harness (standing since S19); ADR-0023/24/25 in-file Qs; lower §16 OQ1–OQ8 (standing).
+- **`exp`/transcendentals in Core?** Real attention needs softmax; the op set has no
+  `exp`. Language question (ADR-scale: op or builtin family, backend duty, oracle parity).
+- **Non-const fold seeds for tiling** (T6 ceiling) — worth lifting when a real program hits it.
+- **Unknown vast.ai instance `45610428` running at close** — not created by any Flow
+  session (S24's foreign pair gone). Yours? Billing someone. Balance shows 0.
+- `time` builtin language-vs-harness (standing since S19); ADR-0023/24/25 in-file Qs.
 
 ## Gotchas / warnings
 
-- **vast.ai containers can expose FULL host nproc (384 on a 2×EPYC-9B14 host) regardless of the ~48-core quota** — `available_parallelism` believes it; chapel does the same, so within-box ratios stay fair, but absolute walls carry a fat spawn floor. Pin with `FLOW_PAR` when comparing floors (S25 item 1 fixes properly).
-- **flow-llvm bench rows are process wall; every baseline self-times compute** — the N=16 row IS the floor (≈11 ms with a 384-thread pool); floor-adjust or build the compute timer before reading small-N ratios.
-- The box flow-rt build is `rustc --crate-type=staticlib` on the single `lib.rs` (runner.sh) — the scheduler rides it free (std-only); keep flow-rt dependency-free or that build breaks.
-- **CODEX: always `codex exec "..." </dev/null`** (S23 stdin gotcha — held all S24, zero stalls in 5 runs).
-- All S08–S23 gotchas stand (results.csv backed up → `results-s23.csv`; box differential 16-core pinning when cuda tests run; `emit_sweep` before trusting emitters; ssh kill/relaunch split; big-vCPU boxes bootstrap fast but re-query ssh-url per retry).
+- **Box clang version is a result-changing variable for the tile nest:** apt clang-15 =
+  fully scalar (still beat chapel); clang-18 = partial xmm. Install clang-18 via
+  llvm.sh on every future box (add to the box script) and record the version in the CSV.
+- **This box's clang-15 HANGS >56 min on loop-form array-literal modules**
+  (matmul128.ll; S13/S16 pathology) — kill + skip-with-reason; cap forms unaffected.
+- 1024+ llvm binaries need `ulimit -s` (alloca stack; runner wraps it — direct ssh runs
+  must too). Heap lowering (agenda 6) retires this.
+- vast.ai balance 0 — creation still worked (credit), but check before planning box time.
+- **CODEX: always `codex exec "..." </dev/null`** (S23 stdin gotcha — held S24+S25).
+- All S08–S24 gotchas stand (results.csv one-box rule; 16-core pinning for cuda
+  differential boxes; `emit_sweep` before trusting cuda emitters; ssh re-query per retry).
 
 ## Commands (currently working)
 
 ```sh
-cargo test --workspace                          # full gate (~8 min incl. llvm -O0/-O2 differential)
-cargo run -q --release -p flow-backend-cuda --example emit_sweep   # 640/640 emission sweep, no nvcc
-./benches/matmul/regen.sh                       # re-emit all bench artifacts (--rewrite)
-FLOW_PAR=1 ./mm_ll_cap_1024                     # any emitted binary: sequential A/B lever
-# box driver: benches/matmul/s24_box.sh (CPU sweep; expects /root/bench rsync'd — see header)
-# perf home: docs/performance/matmul.md · raw: benches/matmul/results.csv (S24, 104 rows) · archives: results-s23.csv, results-s21.csv, results-pre-s20.csv
+cargo test --workspace --release                # full gate (~10 min)
+cargo run -q --release -p flow-backend-llvm --example emit -- <f.flow> - --rewrite [--perf|--no-tile]
+./benches/matmul/regen.sh                       # re-emit bench artifacts (tiled default)
+FLOW_PAR=1 ./mm_ll_cap_1024                     # sequential lever; FLOW_PERF row on _perf builds
+# box driver: benches/matmul/s25_box.sh (CPU sweep; + clang-18 via llvm.sh — see gotcha)
+# perf home: docs/performance/matmul.md · raw: benches/matmul/results-s25.csv (this session)
 ```

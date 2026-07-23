@@ -1,7 +1,13 @@
 # Plan — tile emission v1: `tile_plan` + the register micro-kernel (S25 item 2b)
 
-Status: session-directive S25 (Sapir: parallel-first = "the optimal parallel structure,
-not just threads"; "continue until 1 + 2 are implemented and tested"). Model-first.
+Status: **SHIPPED S25** (v1 matmul kernel + v2 affine/1-D generalization; commit
+`be4e827`). Deviations from the plan as written: (1) recognition fires on
+**rewritten** IR only — raw lowering wraps the constant seed in a capture `Proj`
+(bench recipe is `--rewrite`; the differential gates both forms, raw taking the
+untiled fallback); (2) T6 tightened to `Constant` seeds (non-const = recorded
+ceiling); (3) address `Add` accepts any nesting/order via the affine walker, but
+`Sub`/var×var reject. Measured + shape-corpus results: `docs/performance/matmul/s25.md`.
+Original text below.
 Family: region-emission (ir owns legality once; each backend refines with its own cost
 model — the `region_plan` principle, here instantiated for iteration-space structure).
 

@@ -74,6 +74,9 @@
 | the deduced task DAG itself (paths, deps, ranks, transitive trap sites, thresholds, pinning, effectful-loop exclusion) | `crates/flow-ir/src/algo.rs:CategoryIr::path_plan` (+ `fn_trap_capabilities`, `WaitEntry`) |
 | R-PAR live pins (big-N split parity; trap stdout-prefix order; env matrix 1/8/unset; run-twice) | `tests/differential.rs:differential_parallel_{bign,trap_order,env_matrix,run_twice}` |
 | parallel structural pins (frame/task/ckpt shapes; speculating fold body; watermark; pre-loop wait order) | `tests/golden_ll.rs:{golden_parallel_matmul_cap,parallel_scalar_guard_publishes_watermark,parallel_effectful_loop_waits_before_entry}` |
+| **tile emission (S25)** — the `TILE_J=16` k-outer/lane-inner register micro-kernel at recognized sites (both flavors via `bulk_bounds`; per-row range clipping; per-cell op/operand/k-order exact) | `src/func.rs:FnEmit::emit_tiled_map` (dispatch in `emit_map` on `tile_plan.sites`; plan computed in `FnEmit::new` when `EmitOpts::tiling`) |
+| emission options + compute timer (S25) | `src/lib.rs:{EmitOpts,emit_with_opts}` (tiling default-on; `emit` = defaults, byte-identical); `src/module.rs:PERF_DECLS`; `flow_perf_begin/end` brackets in `FnEmit::emit`/`emit_parallel_flow_main` (perf drops clean attrs); example flags `--perf`/`--no-tile` |
+| tile pins (nest shape 2-D/1-D; untiled fallback shape; tiled-vs-oracle + tiled-vs-untiled runtime at -O0/-O2 incl. FIR) | `tests/golden_ll.rs:{tile_nest_shape,tile_nest_shape_1d,untiled_map_shape}` · `tests/differential.rs:{differential_tiled_matmul,differential_tiled_fir}` |
 
 ## Notes / divergences
 
