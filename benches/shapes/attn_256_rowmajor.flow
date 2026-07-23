@@ -1,0 +1,23 @@
+// Refusal twin of attn_256.flow: K row-major — the score read kmat[j*256+k] is
+// lane(j)-stride-256, no unit-stride lane read exists, so the S site must NOT
+// tile (needs packing/transpose — recorded ceiling). The O site stays standard
+// and tiles: a mixed recognized/refused program.
+fn main() {
+    65536 -> iota -> tq;
+    tq -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> q;
+    tq -> map { t -> (t * 5 + 29) % 101 - 50 -> widen_f32 } -> kmat;
+    tq -> map { t -> (t * 3 + 41) % 101 - 50 -> widen_f32 } -> v;
+    256 -> iota -> kr;
+    tq -> map { t ->
+        t / 256 -> i;
+        t % 256 -> j;
+        (0.0, kr) -> fold { acc, k -> acc + q[i * 256 + k] * kmat[j * 256 + k] }
+    } -> s;
+    tq -> map { t ->
+        t / 256 -> i;
+        t % 256 -> j;
+        (0.0, kr) -> fold { acc, k -> acc + s[i * 256 + k] * v[k * 256 + j] }
+    } -> o;
+    o[0] -> println;
+    o[65535] -> println;
+}

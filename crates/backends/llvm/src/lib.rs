@@ -22,7 +22,7 @@ use slotmap::SecondaryMap;
 
 use crate::func::{FnAttrs, FnEmit};
 use crate::module::{
-    PAR_DECLS, RT_DECLS, collect_str_globals, emit_main_wrapper, emit_str_globals,
+    PAR_DECLS, PERF_DECLS, RT_DECLS, collect_str_globals, emit_main_wrapper, emit_str_globals,
 };
 
 /// A structured, renderer-free emission error (ADR-0020 §1; C3).
@@ -35,9 +35,32 @@ pub enum EmitError {
     Internal(String),
 }
 
+/// Emission options. [`emit`] delegates to these product defaults.
+#[derive(Clone, Copy, Debug)]
+pub struct EmitOpts {
+    /// Bracket `flow_main` with the flow-rt compute timer.
+    pub perf_timing: bool,
+    /// Tile recognized matmul-shaped map sites.
+    pub tiling: bool,
+}
+
+impl Default for EmitOpts {
+    fn default() -> Self {
+        Self {
+            perf_timing: false,
+            tiling: true,
+        }
+    }
+}
+
 /// Emit one LLVM translation unit for `ir` (ADR-0020 §1). `Ok` is the `.ll`
 /// text; `Err(Unsupported)` for a non-canonical loop (L3).
 pub fn emit(ir: &CategoryIr) -> Result<String, EmitError> {
+    emit_with_opts(ir, &EmitOpts::default())
+}
+
+/// [`emit`] with options (see [`EmitOpts`]).
+pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitError> {
     // Capability gate (L3): canonical loops only — every SCC has exactly one
     // merge and a well-formed `loop_plan`. Same predicate as rewrite's
     // `is_canonical` / interp M1 (BL6/BL7).
@@ -94,6 +117,9 @@ pub fn emit(ir: &CategoryIr) -> Result<String, EmitError> {
     let mut out = String::new();
     out.push_str("; flow-backend-llvm emitted module\n");
     out.push_str(RT_DECLS);
+    if opts.perf_timing {
+        out.push_str(PERF_DECLS);
+    }
     if parallel {
         out.push_str(PAR_DECLS);
     }
@@ -114,9 +140,14 @@ pub fn emit(ir: &CategoryIr) -> Result<String, EmitError> {
                 &strings,
                 &attrs,
                 path_plan.as_ref().expect("parallel plan"),
+                opts.perf_timing,
+                opts.tiling,
             ));
         } else {
-            let mut fe = FnEmit::new(ir, id, &fnames, &strings, &attrs);
+            let mut fe = FnEmit::new(ir, id, &fnames, &strings, &attrs, opts.tiling);
+            if id == entry {
+                fe.set_perf_timing(opts.perf_timing);
+            }
             if let Some(&site) = body_sites.get(id) {
                 fe.set_task_body_site(site);
             }

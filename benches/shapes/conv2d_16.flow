@@ -1,0 +1,15 @@
+// conv2d 3×3 — oracle-size sibling of conv2d_512.flow (18×18 image, 16×16 out).
+fn main() {
+    324 -> iota -> ti;
+    ti -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> img;
+    9 -> iota -> kr;
+    kr -> map { t -> (t * 5 + 3) % 31 - 15 -> widen_f32 } -> w;
+    256 -> iota -> ts;
+    ts -> map { t ->
+        t / 16 -> i;
+        t % 16 -> j;
+        (0.0, kr) -> fold { acc, k -> acc + w[k] * img[(i + k / 3) * 18 + j + k % 3] }
+    } -> y;
+    y[0] -> println;
+    y[255] -> println;
+}

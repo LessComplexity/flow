@@ -1,0 +1,13 @@
+// FIR / conv1d class — oracle-size sibling of fir_65536.flow (16 taps, 256 out).
+fn main() {
+    271 -> iota -> tx;
+    tx -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> x;
+    16 -> iota -> kr;
+    kr -> map { t -> (t * 5 + 3) % 31 - 15 -> widen_f32 } -> w;
+    256 -> iota -> ts;
+    ts -> map { t ->
+        (0.0, kr) -> fold { acc, k -> acc + w[k] * x[t + k] }
+    } -> y;
+    y[0] -> println;
+    y[255] -> println;
+}

@@ -1,0 +1,16 @@
+// FIR / conv1d class (S25 tile-shape corpus): y[t] = Σₖ w[k]·x[t+k], 64 taps.
+// 1-D lane form — no div/mod decomposition; lanes are t itself. The w read is
+// lane-invariant (stride 0), the x read lane-stride-1: the same micro-kernel
+// role split as matmul's a/b. Perf size; oracle sibling: fir_256.flow.
+fn main() {
+    65599 -> iota -> tx;
+    tx -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> x;
+    64 -> iota -> kr;
+    kr -> map { t -> (t * 5 + 3) % 31 - 15 -> widen_f32 } -> w;
+    65536 -> iota -> ts;
+    ts -> map { t ->
+        (0.0, kr) -> fold { acc, k -> acc + w[k] * x[t + k] }
+    } -> y;
+    y[0] -> println;
+    y[65535] -> println;
+}

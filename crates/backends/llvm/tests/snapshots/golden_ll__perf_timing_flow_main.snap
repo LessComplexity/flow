@@ -1,0 +1,24 @@
+---
+source: crates/backends/llvm/tests/golden_ll.rs
+assertion_line: 745
+expression: main
+---
+define internal void @flow_main() {
+entry:
+  call void @flow_perf_begin()
+  %frame = alloca %Frame
+  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
+  %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
+  %h = call ptr @flow_par_begin(i32 1)
+  call void @flow_par_task(ptr %h, i32 0, i32 0, ptr @task0, i64 1, i32 1)
+  call void @flow_par_launch(ptr %h, ptr %frame)
+  call void @flow_par_wait(ptr %h, ptr @ckpt0_entries, i32 1)
+  call void @flow_par_check(ptr %h, i64 3)
+  %t0 = load i32, ptr %o2
+  store i32 %t0, ptr %o3
+  %t1 = load i32, ptr %o3
+  call void @flow_print_i32(i32 %t1, i1 zeroext true)
+  call void @flow_par_finish(ptr %h)
+  call void @flow_perf_end()
+  ret void
+}

@@ -38,6 +38,11 @@ declare void @flow_print_str(ptr, i64, i1 zeroext)\n\
 declare void @flow_trap(i32) noreturn\n\
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n";
 
+/// Opt-in compute timer ABI, emitted only with `EmitOpts::perf_timing`.
+pub(crate) const PERF_DECLS: &str = "\
+declare void @flow_perf_begin()\n\
+declare void @flow_perf_end()\n";
+
 /// The parallel scheduler ABI, emitted only for a parallel `flow_main`.
 pub(crate) const PAR_DECLS: &str = "\
 declare ptr @flow_par_begin(i32)\n\

@@ -135,6 +135,38 @@ pub struct PathPlan {
     pub checkpoints: Vec<Checkpoint>,
 }
 
+/// Map/fold sites whose iteration space may be tiled without changing any
+/// per-cell operation order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TilePlan {
+    /// Recognized `Operation::Map` morphisms and their complete emission data.
+    pub sites: SecondaryMap<MorphismId, TileSite>,
+}
+
+/// One affine array read in a tiled map/fold site.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TileRead {
+    pub slot: u32,
+    pub base: u64,
+    pub ci: u64,
+    pub ck: u64,
+    pub clane: u64,
+}
+
+/// Everything a backend needs to emit one recognized tiled map site.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TileSite {
+    pub rows: u64,
+    pub c: u64,
+    pub k: u64,
+    pub a: TileRead,
+    pub b: TileRead,
+    pub seed: Value,
+    pub elem: Ty,
+    pub mul_a_first: bool,
+    pub add_acc_first: bool,
+}
+
 impl PathPlan {
     /// Whether scheduling can be skipped entirely.
     pub fn is_single_path(&self) -> bool {
@@ -471,6 +503,435 @@ impl CategoryIr {
             Operation::Index | Operation::Update => !bounds.proven(m),
             _ => false,
         }
+    }
+
+    /// Recognize affine map/fold sites whose cell chains may be interleaved
+    /// without changing their operation or operand order.
+    pub fn tile_plan(&self, f: FuncId) -> TilePlan {
+        let mut sites = SecondaryMap::new();
+        let Some(fd) = self.func(f) else {
+            return TilePlan { sites };
+        };
+        for &m in &fd.morphisms {
+            if let Some(site) = self.tile_site(m) {
+                sites.insert(m, site);
+            }
+        }
+        TilePlan { sites }
+    }
+
+    fn tile_site(&self, site: MorphismId) -> Option<TileSite> {
+        let map = self.morphisms.get(site)?;
+        let Operation::Map {
+            body,
+            captures: map_captures,
+        } = map.op
+        else {
+            return None;
+        };
+        if map_captures == 0 {
+            return None;
+        }
+
+        let mapped = self.pair_slot_source(map.source, map_captures)?;
+        let mapped_size = self.tile_iota_size(mapped)?;
+        let Ty::Array {
+            size: target_size, ..
+        } = &self.objects.get(map.target)?.ty
+        else {
+            return None;
+        };
+        if *target_size != mapped_size {
+            return None;
+        }
+
+        let body_def = self.func(body)?;
+        let mut fold_id = None;
+        for &m in &body_def.morphisms {
+            let morph = self.morphisms.get(m)?;
+            if matches!(morph.op, Operation::Fold { .. }) {
+                if fold_id.replace(m).is_some() {
+                    return None;
+                }
+            }
+        }
+        let fold_id = fold_id?;
+        let fold = self.morphisms.get(fold_id)?;
+        if fold.target != body_def.output {
+            return None;
+        }
+        let Operation::Fold {
+            body: fold_body,
+            captures: fold_captures,
+        } = fold.op
+        else {
+            return None;
+        };
+        let depth = self
+            .tile_iota_size(self.pair_slot_source(fold.source, fold_captures.checked_add(1)?)?)?;
+        let seed_object = self
+            .objects
+            .get(self.pair_slot_source(fold.source, fold_captures)?)?;
+        if seed_object.kind != ObjectKind::Constant {
+            return None;
+        }
+        let seed = seed_object.value.clone()?;
+        let body_bounds = self.bounds_proof(body);
+        let fold_bounds = self.bounds_proof(fold_body);
+        if !self.tile_trap_free(body, &body_bounds, Some(fold_id))
+            || !self.tile_trap_free(fold_body, &fold_bounds, None)
+        {
+            return None;
+        }
+
+        let mut has_split = false;
+        for &div_id in &body_def.morphisms {
+            let Some((i, c)) =
+                self.tile_split(div_id, body_def.input, map_captures, Operation::Div)
+            else {
+                continue;
+            };
+            for &mod_id in &body_def.morphisms {
+                let Some((j, mod_c)) =
+                    self.tile_split(mod_id, body_def.input, map_captures, Operation::Mod)
+                else {
+                    continue;
+                };
+                if mod_c != c {
+                    continue;
+                }
+                has_split = true;
+                if mapped_size % c != 0 {
+                    continue;
+                }
+                let rows = mapped_size / c;
+                if rows.checked_mul(c) != Some(mapped_size) {
+                    continue;
+                }
+                let Some(site) = self.tile_fold_shape(
+                    map.target,
+                    map_captures,
+                    body_def.input,
+                    fold,
+                    Some(i),
+                    j,
+                    rows,
+                    c,
+                    depth,
+                    seed.clone(),
+                ) else {
+                    continue;
+                };
+                return Some(site);
+            }
+        }
+        if has_split {
+            return None;
+        }
+        if mapped_size == 0 {
+            return None;
+        }
+
+        let lane = body_def.morphisms.iter().find_map(|m| {
+            let morph = self.morphisms.get(*m)?;
+            (self.tile_input_proj_index(morph.target, body_def.input) == Some(map_captures))
+                .then_some(morph.target)
+        })?;
+        self.tile_fold_shape(
+            map.target,
+            map_captures,
+            body_def.input,
+            fold,
+            None,
+            lane,
+            1,
+            mapped_size,
+            depth,
+            seed,
+        )
+    }
+
+    fn tile_split(
+        &self,
+        m: MorphismId,
+        body_input: ObjectId,
+        element_slot: u32,
+        op: Operation,
+    ) -> Option<(ObjectId, u64)> {
+        let morph = self.morphisms.get(m)?;
+        if morph.op != op {
+            return None;
+        }
+        let element = self.pair_slot_source(morph.source, 0)?;
+        if self.tile_input_proj_index(element, body_input) != Some(element_slot) {
+            return None;
+        }
+        let c = self.tile_literal_u64(self.pair_slot_source(morph.source, 1)?)?;
+        (c != 0).then_some((morph.target, c))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn tile_fold_shape(
+        &self,
+        map_target: ObjectId,
+        map_captures: u32,
+        body_input: ObjectId,
+        fold: &crate::graph::Morphism,
+        i: Option<ObjectId>,
+        lane: ObjectId,
+        rows: u64,
+        c: u64,
+        k: u64,
+        seed: Value,
+    ) -> Option<TileSite> {
+        let Operation::Fold {
+            body,
+            captures: fold_captures,
+        } = fold.op
+        else {
+            return None;
+        };
+        let fold_def = self.func(body)?;
+        let add = self.tile_definer(fold_def.output, Operation::Add)?;
+        let add_lhs = self.pair_slot_source(add.source, 0)?;
+        let add_rhs = self.pair_slot_source(add.source, 1)?;
+        let lhs_acc = self.tile_input_proj_index(add_lhs, fold_def.input) == Some(fold_captures);
+        let rhs_acc = self.tile_input_proj_index(add_rhs, fold_def.input) == Some(fold_captures);
+        let (acc, product, add_acc_first) = match (lhs_acc, rhs_acc) {
+            (true, false) => (add_lhs, add_rhs, true),
+            (false, true) => (add_rhs, add_lhs, false),
+            _ => return None,
+        };
+
+        let mul = self.tile_definer(product, Operation::Mul)?;
+        let load0 = self.pair_slot_source(mul.source, 0)?;
+        let load1 = self.pair_slot_source(mul.source, 1)?;
+        let index_parts = |value: ObjectId| -> Option<(TileRead, Ty)> {
+            let index = self.tile_definer(value, Operation::Index)?;
+            let array = self.pair_slot_source(index.source, 0)?;
+            let address = self.pair_slot_source(index.source, 1)?;
+            let body_value =
+                self.tile_fold_capture(array, fold.source, fold_def.input, fold_captures)?;
+            let slot = self.tile_input_proj_index(body_value, body_input)?;
+            if slot >= map_captures {
+                return None;
+            }
+            let Ty::Array { elem, .. } = &self.objects.get(array)?.ty else {
+                return None;
+            };
+            if self.objects.get(value)?.ty != **elem {
+                return None;
+            }
+            let (base, ci, clane, ck) =
+                self.tile_affine(address, fold.source, fold_def.input, fold_captures, i, lane)?;
+            Some((
+                TileRead {
+                    slot,
+                    base,
+                    ci,
+                    ck,
+                    clane,
+                },
+                (**elem).clone(),
+            ))
+        };
+        let (read0, elem0) = index_parts(load0)?;
+        let (read1, elem1) = index_parts(load1)?;
+
+        if elem0 != elem1 {
+            return None;
+        }
+        let (a, b, mul_a_first) = match (read0.clane, read1.clane) {
+            (0, 1) => (read0, read1, true),
+            (1, 0) => (read1, read0, false),
+            _ => return None,
+        };
+
+        let acc_ty = self.objects.get(acc)?.ty.clone();
+        let Ty::Array { elem: map_elem, .. } = &self.objects.get(map_target)?.ty else {
+            return None;
+        };
+        if elem0 != acc_ty || elem0 != **map_elem || seed.ty() != elem0 || !elem0.is_numeric() {
+            return None;
+        }
+        Some(TileSite {
+            rows,
+            c,
+            k,
+            a,
+            b,
+            seed,
+            elem: elem0,
+            mul_a_first,
+            add_acc_first,
+        })
+    }
+
+    fn tile_affine(
+        &self,
+        object: ObjectId,
+        fold_source: ObjectId,
+        fold_input: ObjectId,
+        fold_captures: u32,
+        i: Option<ObjectId>,
+        lane: ObjectId,
+    ) -> Option<(u64, u64, u64, u64)> {
+        if let Some(captured) =
+            self.tile_fold_capture(object, fold_source, fold_input, fold_captures)
+        {
+            if i == Some(captured) {
+                return Some((0, 1, 0, 0));
+            }
+            if captured == lane {
+                return Some((0, 0, 1, 0));
+            }
+        }
+        if self.tile_input_proj_index(object, fold_input) == fold_captures.checked_add(1) {
+            return Some((0, 0, 0, 1));
+        }
+        if let Some(base) = self.tile_literal_u64(object) {
+            return Some((base, 0, 0, 0));
+        }
+
+        let [m] = self.in_edges(object) else {
+            return None;
+        };
+        let morph = self.morphisms.get(*m)?;
+        let lhs = self.pair_slot_source(morph.source, 0)?;
+        let rhs = self.pair_slot_source(morph.source, 1)?;
+        match morph.op {
+            Operation::Add => {
+                let x = self.tile_affine(lhs, fold_source, fold_input, fold_captures, i, lane)?;
+                let y = self.tile_affine(rhs, fold_source, fold_input, fold_captures, i, lane)?;
+                Some((
+                    x.0.checked_add(y.0)?,
+                    x.1.checked_add(y.1)?,
+                    x.2.checked_add(y.2)?,
+                    x.3.checked_add(y.3)?,
+                ))
+            }
+            Operation::Mul => {
+                let (scale, value) = if let Some(scale) = self.tile_literal_u64(lhs) {
+                    (scale, rhs)
+                } else {
+                    (self.tile_literal_u64(rhs)?, lhs)
+                };
+                let value =
+                    self.tile_affine(value, fold_source, fold_input, fold_captures, i, lane)?;
+                Some((
+                    value.0.checked_mul(scale)?,
+                    value.1.checked_mul(scale)?,
+                    value.2.checked_mul(scale)?,
+                    value.3.checked_mul(scale)?,
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn tile_definer(&self, object: ObjectId, op: Operation) -> Option<&crate::graph::Morphism> {
+        let [m] = self.in_edges(object) else {
+            return None;
+        };
+        let morph = self.morphisms.get(*m)?;
+        (morph.op == op).then_some(morph)
+    }
+
+    fn tile_input_proj_index(&self, object: ObjectId, input: ObjectId) -> Option<u32> {
+        let [m] = self.in_edges(object) else {
+            return None;
+        };
+        let proj = self.morphisms.get(*m)?;
+        let Operation::Proj { index } = proj.op else {
+            return None;
+        };
+        (proj.source == input).then_some(index)
+    }
+
+    fn tile_fold_capture(
+        &self,
+        object: ObjectId,
+        fold_source: ObjectId,
+        fold_input: ObjectId,
+        captures: u32,
+    ) -> Option<ObjectId> {
+        let slot = self.tile_input_proj_index(object, fold_input)?;
+        (slot < captures)
+            .then(|| self.pair_slot_source(fold_source, slot))
+            .flatten()
+    }
+
+    fn tile_iota_size(&self, mut array: ObjectId) -> Option<u64> {
+        for _ in 0..16 {
+            let next = self
+                .proj_of_pair(array)
+                .or_else(|| self.capture_proj_of_input(array));
+            let Some(next) = next else {
+                break;
+            };
+            if next == array {
+                return None;
+            }
+            array = next;
+        }
+        let Ty::Array { size, .. } = &self.objects.get(array)?.ty else {
+            return None;
+        };
+        let [definer] = self.in_edges(array) else {
+            return None;
+        };
+        (self.morphisms.get(*definer)?.op == Operation::Iota).then_some(*size)
+    }
+
+    fn tile_literal_u64(&self, object: ObjectId) -> Option<u64> {
+        let object = self.objects.get(object)?;
+        if object.kind != ObjectKind::Constant {
+            return None;
+        }
+        match object.value.as_ref()? {
+            Value::I32(v) => u64::try_from(*v).ok(),
+            Value::I64(v) => u64::try_from(*v).ok(),
+            Value::U8(v) => Some((*v).into()),
+            _ => None,
+        }
+    }
+
+    /// Trap-freedom AND emission-completeness for a tiled body: the micro-kernel
+    /// emits only the recognized chain, so anything it would skip must be
+    /// provably unobservable — pure, trap-free, and with no nested body it
+    /// cannot see into. `Call` and any Map/Fold other than the recognized fold
+    /// (`allow_fold`) are rejected outright: their subgraphs could trap while
+    /// the tiled form skips them (an R1 divergence, not just a missed proof).
+    fn tile_trap_free(
+        &self,
+        f: FuncId,
+        bounds: &BoundsProof,
+        allow_fold: Option<MorphismId>,
+    ) -> bool {
+        self.func(f).is_some_and(|fd| {
+            fd.morphisms.iter().all(|m| {
+                let Some(morph) = self.morphisms.get(*m) else {
+                    return false;
+                };
+                match morph.op {
+                    Operation::Div | Operation::Mod => {
+                        self.objects.get(morph.target).is_some_and(|target| {
+                            matches!(target.ty, Ty::Float { .. })
+                                || self
+                                    .pair_slot_source(morph.source, 1)
+                                    .and_then(|o| self.objects.get(o))
+                                    .is_some_and(safe_integer_divisor)
+                        })
+                    }
+                    Operation::Index => bounds.proven(*m),
+                    Operation::Update => false,
+                    Operation::Call { .. } => false,
+                    Operation::Fold { .. } => allow_fold == Some(*m),
+                    Operation::Map { .. } => false,
+                    _ => true,
+                }
+            })
+        })
     }
 
     /// The per-function parallel path query. Tasks are emitted in first topo

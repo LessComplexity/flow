@@ -193,21 +193,79 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap()
 }
 
-fn configured_threads() -> usize {
-    std::env::var("FLOW_PAR")
+fn parse_cpu_max(text: &str) -> Option<usize> {
+    let mut fields = text.split_whitespace();
+    let quota = fields.next()?;
+    let period = fields.next()?;
+    if fields.next().is_some() || quota == "max" {
+        return None;
+    }
+    let quota = quota.parse::<u64>().ok()?;
+    let period = period.parse::<u64>().ok()?;
+    (period > 0)
+        .then(|| quota.div_ceil(period).max(1))
+        .and_then(|threads| usize::try_from(threads).ok())
+}
+
+fn parse_cfs(quota: &str, period: &str) -> Option<usize> {
+    let quota = quota.trim().parse::<i64>().ok()?;
+    let period = period.trim().parse::<u64>().ok()?;
+    if quota < 0 || period == 0 {
+        return None;
+    }
+    usize::try_from((quota as u64).div_ceil(period).max(1)).ok()
+}
+
+fn cgroup_quota() -> Option<usize> {
+    std::fs::read_to_string("/sys/fs/cgroup/cpu.max")
         .ok()
+        .and_then(|text| parse_cpu_max(&text))
+        .or_else(|| {
+            let quota = std::fs::read_to_string("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").ok()?;
+            let period = std::fs::read_to_string("/sys/fs/cgroup/cpu/cpu.cfs_period_us").ok()?;
+            parse_cfs(&quota, &period)
+        })
+}
+
+fn thread_count(flow_par: Option<&str>, available: usize, quota: Option<usize>) -> usize {
+    flow_par
         .and_then(|value| value.parse().ok())
         .filter(|&value| value >= 1)
-        .unwrap_or_else(|| {
-            thread::available_parallelism()
-                .map(usize::from)
-                .unwrap_or(1)
-        })
+        .unwrap_or_else(|| quota.map_or(available, |quota| available.min(quota)).max(1))
+}
+
+fn configured_threads() -> usize {
+    let flow_par = std::env::var("FLOW_PAR").ok();
+    let available = thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    thread_count(flow_par.as_deref(), available, cgroup_quota())
 }
 
 fn global_pool() -> Arc<Pool> {
     static POOL: OnceLock<Arc<Pool>> = OnceLock::new();
     POOL.get_or_init(|| Pool::new(configured_threads())).clone()
+}
+
+static PERF_START: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn flow_perf_begin() {
+    if configured_threads() > 1 {
+        drop(global_pool());
+    }
+    *lock(&PERF_START) = Some(std::time::Instant::now());
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn flow_perf_end() {
+    let elapsed = lock(&PERF_START)
+        .take()
+        .expect("flow_perf_end called without flow_perf_begin")
+        .elapsed()
+        .as_secs_f64()
+        * 1000.0;
+    emit(&format_args!("FLOW_PERF total ms={elapsed:.4}"), true);
 }
 
 impl Pool {
@@ -837,6 +895,36 @@ mod tests {
         },
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn parse_cpu_max_cases() {
+        assert_eq!(parse_cpu_max("max 100000"), None);
+        assert_eq!(parse_cpu_max("4800000 100000"), Some(48));
+        assert_eq!(parse_cpu_max("100 100000"), Some(1));
+        assert_eq!(parse_cpu_max("garbage"), None);
+    }
+
+    #[test]
+    fn parse_cfs_cases() {
+        assert_eq!(parse_cfs("-1", "100000"), None);
+        assert_eq!(parse_cfs("4800000", "100000"), Some(48));
+        assert_eq!(parse_cfs("100", "100000"), Some(1));
+        assert_eq!(parse_cfs("garbage", "100000"), None);
+        assert_eq!(parse_cfs("100", "0"), None);
+    }
+
+    #[test]
+    fn flow_par_override_wins() {
+        assert_eq!(thread_count(Some("7"), 64, Some(2)), 7);
+    }
+
+    #[test]
+    fn quota_caps_available() {
+        // The S24 box shape: 384 visible host threads, ≈48-core cgroup quota.
+        assert_eq!(thread_count(None, 384, Some(48)), 48);
+        assert_eq!(thread_count(None, 8, Some(48)), 8);
+        assert_eq!(thread_count(None, 8, None), 8);
+    }
 
     /// Render-parity table (DESIGN §1): every scalar flow-rt prints must be
     /// byte-identical to `flow_interp::render`. flow-rt prints `v` via

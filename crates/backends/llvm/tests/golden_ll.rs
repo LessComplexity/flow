@@ -10,7 +10,7 @@
 //! and loop CFG are additionally covered by the `abs` / `fir` / `sum_to_n`
 //! example snapshots.
 
-use flow_backend_llvm::{EmitError, emit};
+use flow_backend_llvm::{EmitError, EmitOpts, emit, emit_with_opts};
 use flow_ir::{CategoryIr, Dest, FuncKind, IrBuilder, Operation, SourceLoc, Ty, Value};
 
 const L: SourceLoc = SourceLoc { start: 0, end: 0 };
@@ -28,6 +28,47 @@ const EXAMPLES: &[&str] = &[
     "zip_demo",
 ];
 
+const TILE_MATMUL_SRC: &str = r#"
+fn matmul(a: [f32; 16], b: [f32; 16]) -> [f32; 16] {
+    16 -> iota -> cells;
+    4 -> iota -> ks;
+    cells -> map { cell ->
+        cell / 4 -> i;
+        cell % 4 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 4 + k] * b[k * 4 + j] }
+    } -> c;
+    c -> ret;
+}
+fn main() {
+    [ -37.0, -30.0, -23.0, -16.0, -9.0, -2.0, 5.0, 12.0,
+      19.0, 26.0, 33.0, 40.0, 47.0, -47.0, -40.0, -33.0] -> a: [f32; 16];
+    [7.0, 14.0, 21.0, 28.0, 35.0, 42.0, 49.0, -45.0,
+     -38.0, -31.0, -24.0, -17.0, -10.0, -3.0, 4.0, 11.0] -> b: [f32; 16];
+    (a, b) -> matmul -> c;
+    c[0] -> println;
+    c[15] -> println;
+}
+"#;
+
+const TILE_FIR_SRC: &str = r#"
+fn fir(w: [f32; 4], x: [f32; 19]) -> [f32; 16] {
+    16 -> iota -> ts;
+    4 -> iota -> kr;
+    ts -> map { t ->
+        (0.0, kr) -> fold { acc, k -> acc + w[k] * x[t + k] }
+    } -> y;
+    y -> ret;
+}
+fn main() {
+    [1.0, -2.0, 3.0, -4.0] -> w: [f32; 4];
+    [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
+     11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0] -> x: [f32; 19];
+    (w, x) -> fir -> y;
+    y[0] -> println;
+    y[15] -> println;
+}
+"#;
+
 fn lower_src(src: &str) -> CategoryIr {
     let po = flow_syntax::parse(src);
     assert!(po.diagnostics.is_empty(), "parse: {:?}", po.diagnostics);
@@ -42,6 +83,30 @@ fn build_example(name: &str) -> CategoryIr {
     );
     let src = std::fs::read_to_string(&path).unwrap();
     lower_src(&src)
+}
+
+fn flow_main(ll: &str) -> &str {
+    let marker = ll.find("@flow_main(").expect("flow_main");
+    let start = ll[..marker]
+        .rfind("define internal ")
+        .expect("flow_main def");
+    let end = start + ll[start..].find("\n}\n").expect("flow_main end") + 3;
+    &ll[start..end]
+}
+
+fn function_containing<'a>(ll: &'a str, needle: &str) -> &'a str {
+    let marker = ll
+        .find(needle)
+        .unwrap_or_else(|| panic!("missing {needle}"));
+    let start = if ll[marker..].starts_with("define internal ") {
+        marker
+    } else {
+        ll[..marker]
+            .rfind("define internal ")
+            .expect("function start")
+    };
+    let end = start + ll[start..].find("\n}\n").expect("function end") + 3;
+    &ll[start..end]
 }
 
 #[test]
@@ -422,6 +487,76 @@ fn main() {
 }
 
 #[test]
+fn golden_tile_map_shapes() {
+    let ir = flow_rewrite::rewrite(lower_src(TILE_MATMUL_SRC)).ir;
+    let tiled = emit(&ir).unwrap();
+    let tiled_fn = function_containing(&tiled, "define internal [16 x float]");
+    assert!(
+        tiled_fn
+            .lines()
+            .any(|line| line.trim_start().starts_with("%s")
+                && line.contains(" = alloca [16 x float]")),
+        "tile accumulator must be an entry-block scratch alloca:\n{tiled_fn}"
+    );
+    assert!(
+        !tiled_fn.contains(" = call float @fn"),
+        "tiled map must not call its per-cell body:\n{tiled_fn}"
+    );
+    assert!(
+        tiled_fn.contains(" = udiv i64 0, 4") && tiled_fn.matches(" = select i1 ").count() == 3,
+        "tile nest must contain row bounds and jw/tj clipping:\n{tiled_fn}"
+    );
+    insta::assert_snapshot!("tile_nest_shape", tiled_fn);
+
+    let untiled = emit_with_opts(
+        &ir,
+        &EmitOpts {
+            tiling: false,
+            ..EmitOpts::default()
+        },
+    )
+    .unwrap();
+    let untiled_fn = function_containing(&untiled, "define internal [16 x float]");
+    assert!(
+        !untiled_fn
+            .lines()
+            .any(|line| line.trim_start().starts_with("%s")
+                && line.contains(" = alloca [16 x float]")),
+        "untiled map must not allocate the tile accumulator:\n{untiled_fn}"
+    );
+    assert!(
+        untiled_fn.contains(" = call float @fn"),
+        "untiled map must retain its per-cell body call:\n{untiled_fn}"
+    );
+    insta::assert_snapshot!("untiled_map_shape", untiled_fn);
+}
+
+#[test]
+fn golden_tile_map_shape_1d() {
+    let ir = flow_rewrite::rewrite(lower_src(TILE_FIR_SRC)).ir;
+    let tiled = emit(&ir).unwrap();
+    let tiled_fn = function_containing(&tiled, "define internal [16 x float]");
+    assert!(
+        tiled_fn
+            .lines()
+            .any(|line| line.trim_start().starts_with("%s")
+                && line.contains(" = alloca [16 x float]")),
+        "FIR tile accumulator must be an entry-block scratch alloca:\n{tiled_fn}"
+    );
+    assert!(
+        !tiled_fn.contains(" = call float @fn"),
+        "tiled FIR map must not call its per-sample body:\n{tiled_fn}"
+    );
+    assert!(
+        tiled_fn.contains(" = udiv i64 0, 16")
+            && tiled_fn.contains(" = add i64 16, 15")
+            && tiled_fn.contains(" = udiv i64 %t"),
+        "FIR tile nest must retain the generic row loop with i_hi=1:\n{tiled_fn}"
+    );
+    insta::assert_snapshot!("tile_nest_shape_1d", tiled_fn);
+}
+
+#[test]
 fn golden_parallel_matmul_cap() {
     let src = r#"
 fn main() {
@@ -714,6 +849,55 @@ fn determinism_emit_twice_byte_equal() {
         let b = emit(&build_example(name)).unwrap();
         assert_eq!(a, b, "{name}: emit is not byte-deterministic");
     }
+}
+
+#[test]
+fn perf_timing_golden() {
+    let opts = EmitOpts {
+        perf_timing: true,
+        ..EmitOpts::default()
+    };
+    let parallel = emit_with_opts(&build_example("abs"), &opts).unwrap();
+    let main = flow_main(&parallel);
+    assert!(
+        main.starts_with(
+            "define internal void @flow_main() {\nentry:\n  call void @flow_perf_begin()\n"
+        ),
+        "perf begin is the first entry instruction:\n{main}"
+    );
+    let finish = main
+        .find("call void @flow_par_finish")
+        .expect("parallel finish");
+    let end = main.find("call void @flow_perf_end()").expect("perf end");
+    let ret = main.rfind("ret void").expect("return");
+    assert!(finish < end && end < ret, "parallel timer order:\n{main}");
+    insta::assert_snapshot!("perf_timing_flow_main", main);
+
+    let sequential = emit_with_opts(&lower_src("fn main() {}\n"), &opts).unwrap();
+    let main = flow_main(&sequential);
+    assert!(
+        !main.contains("flow_par_finish"),
+        "sequential fixture:\n{main}"
+    );
+    assert!(
+        main.starts_with(
+            "define internal void @flow_main() {\nentry:\n  call void @flow_perf_begin()\n"
+        ),
+        "sequential perf begin:\n{main}"
+    );
+    assert!(
+        main.ends_with("  call void @flow_perf_end()\n  ret void\n}\n"),
+        "sequential perf end:\n{main}"
+    );
+}
+
+#[test]
+fn default_opts_are_byte_identical() {
+    let ir = build_example("vector_add");
+    assert_eq!(
+        emit(&ir).unwrap(),
+        emit_with_opts(&ir, &EmitOpts::default()).unwrap()
+    );
 }
 
 // --- Unsupported pin (L3) -------------------------------------------------

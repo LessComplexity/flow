@@ -1,0 +1,173 @@
+---
+source: crates/backends/llvm/tests/golden_ll.rs
+expression: tiled_fn
+---
+define internal [16 x float] @fn0({ ptr, ptr } %arg) readonly nounwind willreturn {
+entry:
+  %o0 = alloca { ptr, ptr }
+  %o1 = alloca [16 x float]
+  %o2 = alloca ptr
+  %o3 = alloca ptr
+  %o4 = alloca [16 x i32]
+  %o5 = alloca [4 x i32]
+  %o6 = alloca { ptr, ptr, ptr, ptr }
+  %o7 = alloca [16 x float]
+  %s4 = alloca i64
+  %s13 = alloca i64
+  %s30 = alloca [16 x float]
+  %s31 = alloca i64
+  %s32 = alloca i64
+  %s33 = alloca i64
+  %s34 = alloca i64
+  store { ptr, ptr } %arg, ptr %o0
+  %t0 = getelementptr { ptr, ptr }, ptr %o0, i32 0, i32 0
+  %t1 = load ptr, ptr %t0
+  store ptr %t1, ptr %o2
+  %t2 = getelementptr { ptr, ptr }, ptr %o0, i32 0, i32 1
+  %t3 = load ptr, ptr %t2
+  store ptr %t3, ptr %o3
+  store i64 0, ptr %s4
+  br label %bb5
+bb5:
+  %t8 = load i64, ptr %s4
+  %t9 = icmp uge i64 %t8, 16
+  br i1 %t9, label %bb7, label %bb6
+bb6:
+  %t10 = trunc i64 %t8 to i32
+  %t11 = getelementptr [16 x i32], ptr %o4, i64 0, i64 %t8
+  store i32 %t10, ptr %t11
+  %t12 = add i64 %t8, 1
+  store i64 %t12, ptr %s4
+  br label %bb5
+bb7:
+  store i64 0, ptr %s13
+  br label %bb14
+bb14:
+  %t17 = load i64, ptr %s13
+  %t18 = icmp uge i64 %t17, 4
+  br i1 %t18, label %bb16, label %bb15
+bb15:
+  %t19 = trunc i64 %t17 to i32
+  %t20 = getelementptr [4 x i32], ptr %o5, i64 0, i64 %t17
+  store i32 %t19, ptr %t20
+  %t21 = add i64 %t17, 1
+  store i64 %t21, ptr %s13
+  br label %bb14
+bb16:
+  %t22 = load ptr, ptr %o2
+  %t23 = getelementptr { ptr, ptr, ptr, ptr }, ptr %o6, i32 0, i32 1
+  store ptr %t22, ptr %t23
+  %t24 = load ptr, ptr %o3
+  %t25 = getelementptr { ptr, ptr, ptr, ptr }, ptr %o6, i32 0, i32 2
+  store ptr %t24, ptr %t25
+  %t26 = getelementptr { ptr, ptr, ptr, ptr }, ptr %o6, i32 0, i32 3
+  store ptr %o4, ptr %t26
+  %t27 = getelementptr { ptr, ptr, ptr, ptr }, ptr %o6, i32 0, i32 0
+  store ptr %o5, ptr %t27
+  %t28 = load ptr, ptr %o2
+  %t29 = load ptr, ptr %o3
+  %t35 = udiv i64 0, 4
+  %t36 = add i64 16, 3
+  %t37 = udiv i64 %t36, 4
+  store i64 %t35, ptr %s31
+  br label %bb38
+bb38:
+  %t56 = load i64, ptr %s31
+  %t57 = icmp uge i64 %t56, %t37
+  br i1 %t57, label %bb40, label %bb39
+bb39:
+  %t58 = mul i64 %t56, 4
+  %t59 = sub i64 0, %t58
+  %t60 = icmp slt i64 %t59, 0
+  %t61 = select i1 %t60, i64 0, i64 %t59
+  %t62 = sub i64 16, %t58
+  %t63 = icmp sgt i64 %t62, 4
+  %t64 = select i1 %t63, i64 4, i64 %t62
+  %t65 = mul i64 %t56, 4
+  store i64 %t61, ptr %s32
+  br label %bb41
+bb41:
+  %t66 = load i64, ptr %s32
+  %t67 = icmp uge i64 %t66, %t64
+  br i1 %t67, label %bb43, label %bb42
+bb42:
+  %t68 = sub i64 %t64, %t66
+  %t69 = icmp ult i64 %t68, 16
+  %t70 = select i1 %t69, i64 %t68, i64 16
+  store i64 0, ptr %s34
+  br label %bb44
+bb44:
+  %t71 = load i64, ptr %s34
+  %t72 = icmp uge i64 %t71, %t70
+  br i1 %t72, label %bb46, label %bb45
+bb45:
+  %t73 = getelementptr [16 x float], ptr %s30, i64 0, i64 %t71
+  store float 0x0000000000000000, ptr %t73
+  %t74 = add i64 %t71, 1
+  store i64 %t74, ptr %s34
+  br label %bb44
+bb46:
+  store i64 0, ptr %s33
+  br label %bb47
+bb47:
+  %t75 = load i64, ptr %s33
+  %t76 = icmp uge i64 %t75, 4
+  br i1 %t76, label %bb49, label %bb48
+bb48:
+  %t77 = add i64 %t65, %t75
+  %t78 = getelementptr [16 x float], ptr %t28, i64 0, i64 %t77
+  %t79 = load float, ptr %t78
+  %t80 = mul i64 %t75, 4
+  %t81 = add i64 %t80, %t66
+  store i64 0, ptr %s34
+  br label %bb50
+bb50:
+  %t82 = load i64, ptr %s34
+  %t83 = icmp uge i64 %t82, %t70
+  br i1 %t83, label %bb52, label %bb51
+bb51:
+  %t84 = add i64 %t81, %t82
+  %t85 = getelementptr [16 x float], ptr %t29, i64 0, i64 %t84
+  %t86 = load float, ptr %t85
+  %t87 = fmul float %t79, %t86
+  %t88 = getelementptr [16 x float], ptr %s30, i64 0, i64 %t82
+  %t89 = load float, ptr %t88
+  %t90 = fadd float %t89, %t87
+  store float %t90, ptr %t88
+  %t91 = add i64 %t82, 1
+  store i64 %t91, ptr %s34
+  br label %bb50
+bb52:
+  %t92 = add i64 %t75, 1
+  store i64 %t92, ptr %s33
+  br label %bb47
+bb49:
+  %t93 = add i64 %t58, %t66
+  store i64 0, ptr %s34
+  br label %bb53
+bb53:
+  %t94 = load i64, ptr %s34
+  %t95 = icmp uge i64 %t94, %t70
+  br i1 %t95, label %bb55, label %bb54
+bb54:
+  %t96 = getelementptr [16 x float], ptr %s30, i64 0, i64 %t94
+  %t97 = load float, ptr %t96
+  %t98 = add i64 %t93, %t94
+  %t99 = getelementptr [16 x float], ptr %o7, i64 0, i64 %t98
+  store float %t97, ptr %t99
+  %t100 = add i64 %t94, 1
+  store i64 %t100, ptr %s34
+  br label %bb53
+bb55:
+  %t101 = add i64 %t66, 16
+  store i64 %t101, ptr %s32
+  br label %bb41
+bb43:
+  %t102 = add i64 %t56, 1
+  store i64 %t102, ptr %s31
+  br label %bb38
+bb40:
+  call void @llvm.memcpy.p0.p0.i64(ptr %o1, ptr %o7, i64 ptrtoint (ptr getelementptr ([16 x float], ptr null, i64 1) to i64), i1 false)
+  %t103 = load [16 x float], ptr %o1
+  ret [16 x float] %t103
+}

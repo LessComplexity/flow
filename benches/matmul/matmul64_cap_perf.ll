@@ -8,6 +8,8 @@ declare void @flow_print_f64(double, i1 zeroext)
 declare void @flow_print_str(ptr, i64, i1 zeroext)
 declare void @flow_trap(i32) noreturn
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
+declare void @flow_perf_begin()
+declare void @flow_perf_end()
 declare ptr @flow_par_begin(i32)
 declare void @flow_par_task(ptr, i32, i32, ptr, i64, i32)
 declare void @flow_par_pin(ptr, i32)
@@ -279,6 +281,7 @@ bb10:
 
 define internal void @flow_main() {
 entry:
+  call void @flow_perf_begin()
   %frame = alloca %Frame
   %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
   %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
@@ -322,6 +325,7 @@ entry:
   %t3 = load double, ptr %o14
   call void @flow_print_f64(double %t3, i1 zeroext true)
   call void @flow_par_finish(ptr %h)
+  call void @flow_perf_end()
   ret void
 }
 

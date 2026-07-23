@@ -3,7 +3,8 @@
 flow-cuda, flow-llvm, flow-cuda-cap-{f64,f32} and flow-llvm-cap-{f64,f32} are
 process-wall min-of-3 with an adaptive cap; flow-cuda-cap-kernel-{f64,f32} are
 per-iteration compute (sum of the binary's FLOW_PERF kernel-event times, min of
-3 process runs); the compiled CUDA / BLAS / numpy / rust / cpp / chapel legs
+3 process runs); flow-llvm-cap-compute-{f64,f32} are flow_main compute time,
+also min-of-3; the compiled CUDA / BLAS / numpy / rust / cpp / chapel legs
 self-report per-iteration times."""
 import subprocess, time, csv, sys, re
 
@@ -122,6 +123,42 @@ for leg, fmt in (
                 note = f"out={out} " + " ".join(f"{k}:{ms}" for k, ms in launches)
                 if total:
                     note += f" total:{total.group(1)}"
+            if best is None:
+                continue
+            add(leg, n, best, note)
+        except FileNotFoundError:
+            break
+        except subprocess.TimeoutExpired:
+            print(f"{leg} N={n} TIMEOUT — stopping leg", flush=True)
+            break
+
+# --- flow-llvm-cap-compute-{f64,f32} (flow_main timer, min of 3) ---
+for leg, fmt in (
+    ("flow-llvm-cap-compute-f64", "./mm_ll_perf_cap_{}"),
+    ("flow-llvm-cap-compute-f32", "./mm_ll_perf_cap_f32_{}"),
+):
+    for n in (16, 64, 128, 256, 512, 1024):
+        try:
+            best, note = float("inf"), ""
+            cmd = [
+                "bash",
+                "-c",
+                f"unset FLOW_PAR; ulimit -s unlimited 2>/dev/null || ulimit -s hard; {fmt.format(n)}",
+            ]
+            for _ in range(3):
+                r = run(cmd, timeout=3600)
+                if r.returncode != 0:
+                    print(f"{leg} N={n} FAILED rc={r.returncode}: {r.stderr[-300:]}", flush=True)
+                    best = None
+                    break
+                total = re.search(r"FLOW_PERF total ms=([\d.]+)", r.stdout)
+                if not total:
+                    print(f"{leg} N={n} FAILED: no FLOW_PERF total in stdout", flush=True)
+                    best = None
+                    break
+                best = min(best, float(total.group(1)))
+                out = "/".join(l for l in r.stdout.strip().splitlines() if not l.startswith("FLOW_PERF"))
+                note = f"out={out} total:{total.group(1)}"
             if best is None:
                 continue
             add(leg, n, best, note)

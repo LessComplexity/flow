@@ -42,6 +42,10 @@ if command -v clang >/dev/null; then
         clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}.ll" libflow_rt.a -o "mm_ll_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_${v}_$n" &
         pids+=($!)
       fi
+      if [ -f "matmul${n}_${v}_perf.ll" ] && [ ! -f "mm_ll_perf_${v}_$n" ]; then
+        clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}_perf.ll" libflow_rt.a -o "mm_ll_perf_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_perf_${v}_$n" &
+        pids+=($!)
+      fi
     done
   done
   rc=0

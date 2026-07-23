@@ -537,6 +537,132 @@ fn main() {
         assert_parity(&clang, &res.ir, &rr2, &format!("{tag}/rewritten"));
     }
 }
+
+#[test]
+fn differential_tiled_matmul() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn main() {
+    [ -37.0, -30.0, -23.0, -16.0, -9.0, -2.0, 5.0, 12.0,
+      19.0, 26.0, 33.0, 40.0, 47.0, -47.0, -40.0, -33.0] -> a: [f32; 16];
+    [7.0, 14.0, 21.0, 28.0, 35.0, 42.0, 49.0, -45.0,
+     -38.0, -31.0, -24.0, -17.0, -10.0, -3.0, 4.0, 11.0] -> b: [f32; 16];
+    16 -> iota -> cells;
+    4 -> iota -> ks;
+    cells -> map { cell ->
+        cell / 4 -> i;
+        cell % 4 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 4 + k] * b[k * 4 + j] }
+    } -> c;
+    c[0] -> println;
+    c[15] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("matmul oracle completes") else {
+        panic!("matmul oracle must complete");
+    };
+    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    assert!(
+        tiled.contains(" = alloca [16 x float]")
+            && tiled.contains(" = udiv i64 %lo, 4")
+            && tiled.contains(" = add i64 %hi, 3"),
+        "split task must contain the tiled row-clipping nest:\n{tiled}"
+    );
+    let untiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        untiled.contains(" = call float @fn"),
+        "untiled map must retain its body call:\n{untiled}"
+    );
+
+    for opt in ["-O0", "-O2"] {
+        let tiled_run = compile_run(&clang, &tiled, &format!("tiled_matmul/{opt}"), opt)
+            .unwrap_or_else(|| panic!("tiled_matmul/{opt}: tiled run timed out"));
+        let untiled_run = compile_run(&clang, &untiled, &format!("untiled_matmul/{opt}"), opt)
+            .unwrap_or_else(|| panic!("tiled_matmul/{opt}: untiled run timed out"));
+        assert_eq!(tiled_run.1, 0, "tiled_matmul/{opt}: tiled exit code");
+        assert_eq!(untiled_run.1, 0, "tiled_matmul/{opt}: untiled exit code");
+        assert_eq!(
+            String::from_utf8_lossy(&tiled_run.0),
+            want,
+            "tiled_matmul/{opt}: oracle stdout"
+        );
+        assert_eq!(
+            tiled_run.0, untiled_run.0,
+            "tiled_matmul/{opt}: tiled/untiled stdout"
+        );
+    }
+}
+
+#[test]
+fn differential_tiled_fir() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn main() {
+    71 -> iota -> tx;
+    tx -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> x;
+    8 -> iota -> kr;
+    kr -> map { t -> (t * 5 + 3) % 31 - 15 -> widen_f32 } -> w;
+    64 -> iota -> ts;
+    ts -> map { t ->
+        (0.0, kr) -> fold { acc, k -> acc + w[k] * x[t + k] }
+    } -> y;
+    y[0] -> println;
+    y[63] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("FIR oracle completes") else {
+        panic!("FIR oracle must complete");
+    };
+    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    assert!(
+        tiled.contains(" = alloca [16 x float]")
+            && tiled.contains(" = udiv i64 %lo, 64")
+            && tiled.contains(" = add i64 %hi, 63"),
+        "split task must contain the collapsed one-row tile nest:\n{tiled}"
+    );
+    let untiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+
+    for opt in ["-O0", "-O2"] {
+        let tiled_run = compile_run(&clang, &tiled, &format!("tiled_fir/{opt}"), opt)
+            .unwrap_or_else(|| panic!("tiled_fir/{opt}: tiled run timed out"));
+        let untiled_run = compile_run(&clang, &untiled, &format!("untiled_fir/{opt}"), opt)
+            .unwrap_or_else(|| panic!("tiled_fir/{opt}: untiled run timed out"));
+        assert_eq!(tiled_run.1, 0, "tiled_fir/{opt}: tiled exit code");
+        assert_eq!(untiled_run.1, 0, "tiled_fir/{opt}: untiled exit code");
+        assert_eq!(
+            String::from_utf8_lossy(&tiled_run.0),
+            want,
+            "tiled_fir/{opt}: oracle stdout"
+        );
+        assert_eq!(
+            tiled_run.0, untiled_run.0,
+            "tiled_fir/{opt}: tiled/untiled stdout"
+        );
+    }
+}
+
 /// loop building the result via a loop-carried `mut c` array and `c[t] <- v`
 /// (the U4 contract) — compiled and run through clang, oracle-equal ("8\n136\n").
 /// Covers the combined loop-carried + `Update` shape that testgen's disjoint

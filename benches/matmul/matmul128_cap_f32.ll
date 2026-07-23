@@ -165,38 +165,115 @@ entry:
 
 define internal void @task6(i64 %lo, i64 %hi, ptr %frame) {
 entry:
-  %s0 = alloca i64
-  %s8 = alloca { ptr, ptr, ptr, i32 }
-  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
-  %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
-  %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
+  %s0 = alloca [16 x float]
+  %s1 = alloca i64
+  %s2 = alloca i64
+  %s3 = alloca i64
+  %s4 = alloca i64
   %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
   %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
-  store i64 %lo, ptr %s0
-  br label %bb1
-bb1:
-  %t4 = load i64, ptr %s0
-  %t5 = icmp uge i64 %t4, %hi
-  br i1 %t5, label %bb3, label %bb2
-bb2:
-  %t6 = getelementptr [16384 x i32], ptr %o2, i64 0, i64 %t4
-  %t7 = load i32, ptr %t6
-  %t9 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s8, i32 0, i32 0
-  store ptr %o3, ptr %t9
-  %t10 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s8, i32 0, i32 1
-  store ptr %o4, ptr %t10
-  %t11 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s8, i32 0, i32 2
-  store ptr %o5, ptr %t11
-  %t12 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s8, i32 0, i32 3
-  store i32 %t7, ptr %t12
-  %t13 = load { ptr, ptr, ptr, i32 }, ptr %s8
-  %t14 = call float @fn4({ ptr, ptr, ptr, i32 } %t13)
-  %t15 = getelementptr [16384 x float], ptr %o7, i64 0, i64 %t4
-  store float %t14, ptr %t15
-  %t16 = add i64 %t4, 1
-  store i64 %t16, ptr %s0
-  br label %bb1
-bb3:
+  %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
+  %t5 = udiv i64 %lo, 128
+  %t6 = add i64 %hi, 127
+  %t7 = udiv i64 %t6, 128
+  store i64 %t5, ptr %s1
+  br label %bb8
+bb8:
+  %t26 = load i64, ptr %s1
+  %t27 = icmp uge i64 %t26, %t7
+  br i1 %t27, label %bb10, label %bb9
+bb9:
+  %t28 = mul i64 %t26, 128
+  %t29 = sub i64 %lo, %t28
+  %t30 = icmp slt i64 %t29, 0
+  %t31 = select i1 %t30, i64 0, i64 %t29
+  %t32 = sub i64 %hi, %t28
+  %t33 = icmp sgt i64 %t32, 128
+  %t34 = select i1 %t33, i64 128, i64 %t32
+  %t35 = mul i64 %t26, 128
+  store i64 %t31, ptr %s2
+  br label %bb11
+bb11:
+  %t36 = load i64, ptr %s2
+  %t37 = icmp uge i64 %t36, %t34
+  br i1 %t37, label %bb13, label %bb12
+bb12:
+  %t38 = sub i64 %t34, %t36
+  %t39 = icmp ult i64 %t38, 16
+  %t40 = select i1 %t39, i64 %t38, i64 16
+  store i64 0, ptr %s4
+  br label %bb14
+bb14:
+  %t41 = load i64, ptr %s4
+  %t42 = icmp uge i64 %t41, %t40
+  br i1 %t42, label %bb16, label %bb15
+bb15:
+  %t43 = getelementptr [16 x float], ptr %s0, i64 0, i64 %t41
+  store float 0x0000000000000000, ptr %t43
+  %t44 = add i64 %t41, 1
+  store i64 %t44, ptr %s4
+  br label %bb14
+bb16:
+  store i64 0, ptr %s3
+  br label %bb17
+bb17:
+  %t45 = load i64, ptr %s3
+  %t46 = icmp uge i64 %t45, 128
+  br i1 %t46, label %bb19, label %bb18
+bb18:
+  %t47 = add i64 %t35, %t45
+  %t48 = getelementptr [16384 x float], ptr %o4, i64 0, i64 %t47
+  %t49 = load float, ptr %t48
+  %t50 = mul i64 %t45, 128
+  %t51 = add i64 %t50, %t36
+  store i64 0, ptr %s4
+  br label %bb20
+bb20:
+  %t52 = load i64, ptr %s4
+  %t53 = icmp uge i64 %t52, %t40
+  br i1 %t53, label %bb22, label %bb21
+bb21:
+  %t54 = add i64 %t51, %t52
+  %t55 = getelementptr [16384 x float], ptr %o5, i64 0, i64 %t54
+  %t56 = load float, ptr %t55
+  %t57 = fmul float %t49, %t56
+  %t58 = getelementptr [16 x float], ptr %s0, i64 0, i64 %t52
+  %t59 = load float, ptr %t58
+  %t60 = fadd float %t59, %t57
+  store float %t60, ptr %t58
+  %t61 = add i64 %t52, 1
+  store i64 %t61, ptr %s4
+  br label %bb20
+bb22:
+  %t62 = add i64 %t45, 1
+  store i64 %t62, ptr %s3
+  br label %bb17
+bb19:
+  %t63 = add i64 %t28, %t36
+  store i64 0, ptr %s4
+  br label %bb23
+bb23:
+  %t64 = load i64, ptr %s4
+  %t65 = icmp uge i64 %t64, %t40
+  br i1 %t65, label %bb25, label %bb24
+bb24:
+  %t66 = getelementptr [16 x float], ptr %s0, i64 0, i64 %t64
+  %t67 = load float, ptr %t66
+  %t68 = add i64 %t63, %t64
+  %t69 = getelementptr [16384 x float], ptr %o7, i64 0, i64 %t68
+  store float %t67, ptr %t69
+  %t70 = add i64 %t64, 1
+  store i64 %t70, ptr %s4
+  br label %bb23
+bb25:
+  %t71 = add i64 %t36, 16
+  store i64 %t71, ptr %s2
+  br label %bb11
+bb13:
+  %t72 = add i64 %t26, 1
+  store i64 %t72, ptr %s1
+  br label %bb8
+bb10:
   ret void
 }
 
