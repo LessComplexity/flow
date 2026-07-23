@@ -1,0 +1,21 @@
+leg,N,ms,gflops,note
+flow-cuda-cap-kernel-f32-fmad,512,0.1679,1598.78,fmad=true S24b box
+flow-cuda-cap-kernel-f32-fmad,1024,0.8509,2523.78,fmad=true S24b box
+flow-cuda-cap-kernel-f32-fmad,2048,7.1158,2414.33,fmad=true S24b box
+flow-cuda-cap-kernel-f32-fmad,4096,54.2700,2532.50,fmad=true S24b box
+flow-cuda-cap-kernel-f64-fmad,512,0.2673,1004.25,fmad=true S24b box
+flow-cuda-cap-kernel-f64-fmad,1024,1.8113,1185.60,fmad=true S24b box
+flow-cuda-cap-kernel-f64-fmad,2048,14.4374,1189.96,fmad=true S24b box
+flow-cuda-cap-kernel-f64-fmad,4096,113.9958,1205.65,fmad=true S24b box
+naive-cuda,512,0.0781,3435.7,c0=-22592.0 clast=-38634.0
+naive-cuda-f64,512,0.2337,1148.4,c0=-22592.0 clast=-38634.0
+cublas,512,0.0118,22716.1,c0=-22592.0 clast=-38634.0
+naive-cuda,1024,0.8420,2550.5,c0=11107.0 clast=91690.0
+naive-cuda-f64,1024,1.8400,1167.1,c0=11107.0 clast=91690.0
+cublas,1024,0.0446,48099.8,c0=11107.0 clast=91690.0
+naive-cuda,2048,7.1524,2402.0,c0=-1045.0 clast=51275.0
+naive-cuda-f64,2048,13.6886,1255.0,c0=-1045.0 clast=51275.0
+cublas,2048,0.2951,58213.8,c0=-1045.0 clast=51275.0
+naive-cuda,4096,54.5464,2519.7,c0=74348.0 clast=-302529.0
+naive-cuda-f64,4096,115.3898,1191.1,c0=74348.0 clast=-302529.0
+cublas,4096,2.2331,61547.2,c0=74348.0 clast=-302529.0
