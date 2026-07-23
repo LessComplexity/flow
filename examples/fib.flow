@@ -1,0 +1,32 @@
+// fib — the iteration idiom (S24b, Sapir's ask).
+//
+// Cycles live in the DATAFLOW graph (`loop`), never the call graph:
+// a recursive `fib` is rejected by design with the teaching diagnostic
+//   L1008: recursive call cycle: fib -> fib (recursion is out of Core)
+// — the rejection-over-analysis rule that keeps "the code IS the graph" true.
+//
+// Bonus the graph gives for free (S24 parallel orchestrator): the three
+// calls below are three independent paths — path_plan emits three tasks
+// with ZERO dependency edges, so they compute CONCURRENTLY on the pool
+// while the prints checkpoint in program order.
+//
+// Oracle-verified: 55 / 832040 / 1134903170 (fib(45), exact in i32).
+
+fn fib(n: i32) -> i32 {
+    mut a: i32 <- 0;
+    mut b: i32 <- 1;
+    mut i: i32 <- 0;
+    loop {
+        (i < n) -> {
+            -true-> { a + b -> t; b -> a; t -> b; i + 1 -> i; -> loop; }
+            -false-> a -> out;
+        }
+    }
+    out -> ret;
+}
+
+fn main() {
+    10 -> fib -> println;
+    30 -> fib -> println;
+    45 -> fib -> println;
+}
