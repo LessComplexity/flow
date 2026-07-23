@@ -566,11 +566,21 @@ fn main() {
         panic!("matmul oracle must complete");
     };
     let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    // S26 nest: flat [TILE_I * TILE_J] acc scratch, the head/interior/tail row
+    // split (biased-`lo` + direct-`hi` udivs bound the interior full-window
+    // rows), and a constant-TILE_J lane bound on the main j body. SSA tmp names
+    // renumber with any emitter edit, so the lane bound pins the line shape
+    // (`icmp uge i64 .., 16`), not a name.
     assert!(
-        tiled.contains(" = alloca [16 x float]")
+        tiled.contains(" = alloca [64 x float]")
             && tiled.contains(" = udiv i64 %lo, 4")
-            && tiled.contains(" = add i64 %hi, 3"),
-        "split task must contain the tiled row-clipping nest:\n{tiled}"
+            && tiled.contains(" = add i64 %hi, 3")
+            && tiled.contains(" = add i64 %lo, 3")
+            && tiled.contains(" = udiv i64 %hi, 4")
+            && tiled
+                .lines()
+                .any(|l| l.contains(" = icmp uge i64 ") && l.ends_with(", 16")),
+        "split task must contain the TI-blocked tiled row-clipping nest:\n{tiled}"
     );
     let untiled = flow_backend_llvm::emit_with_opts(
         &ir,
@@ -661,6 +671,180 @@ fn main() {
             "tiled_fir/{opt}: tiled/untiled stdout"
         );
     }
+}
+
+/// The tiled differential run loop: compile tiled + untiled at -O0 and -O2,
+/// run each — exit 0, tiled stdout byte-equal to the interp oracle, and
+/// tiled == untiled byte-equal (per-cell bit-exactness is the tile nest's
+/// hard invariant).
+fn assert_tiled_parity(clang: &str, tiled: &str, untiled: &str, want: &str, tag: &str) {
+    for opt in ["-O0", "-O2"] {
+        let tag_o = format!("{tag}/{opt}");
+        let tiled_run = compile_run(clang, tiled, &format!("{tag_o}/tiled"), opt)
+            .unwrap_or_else(|| panic!("{tag_o}/tiled: run timed out"));
+        let untiled_run = compile_run(clang, untiled, &format!("{tag_o}/untiled"), opt)
+            .unwrap_or_else(|| panic!("{tag_o}/untiled: run timed out"));
+        assert_eq!(tiled_run.1, 0, "{tag_o}/tiled: exit code");
+        assert_eq!(untiled_run.1, 0, "{tag_o}/untiled: exit code");
+        assert_eq!(
+            String::from_utf8_lossy(&tiled_run.0),
+            want,
+            "{tag_o}/tiled: oracle stdout"
+        );
+        assert_eq!(tiled_run.0, untiled_run.0, "{tag_o}: tiled/untiled stdout");
+    }
+}
+
+/// S26 coverage gap (a): a j **remainder after a full main tile** plus a
+/// `rows % TILE_I` i-tail. rows=5, C=20, K=7: each row runs one constant-16
+/// main j-tile then the runtime `tj = 4` remainder; `rows % 4 == 1` sends row
+/// 4 through the TI=1 tail path (the 4x4 case above has C < TILE_J, so its
+/// main body never executes, and rows=4 leaves no tail).
+#[test]
+fn differential_tiled_matmul_r5_c20_k7() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn main() {
+    [-30.0, -25.0, -20.0, -15.0, -10.0, -5.0, 0.0, 5.0,
+      10.0, 15.0, 20.0, 25.0, 30.0, -32.0, -27.0, -22.0,
+     -17.0, -12.0, -7.0, -2.0, 3.0, 8.0, 13.0, 18.0,
+      23.0, 28.0, 33.0, -29.0, -24.0, -19.0, -14.0, -9.0,
+      -4.0, 1.0, 6.0] -> a: [f32; 35];
+    [-37.0, -30.0, -23.0, -16.0, -9.0, -2.0, 5.0, 12.0,
+      19.0, 26.0, 33.0, 40.0, 47.0, -47.0, -40.0, -33.0,
+     -26.0, -19.0, -12.0, -5.0, 2.0, 9.0, 16.0, 23.0,
+      30.0, 37.0, 44.0, -50.0, -43.0, -36.0, -29.0, -22.0,
+     -15.0, -8.0, -1.0, 6.0, 13.0, 20.0, 27.0, 34.0,
+      41.0, 48.0, -46.0, -39.0, -32.0, -25.0, -18.0, -11.0,
+      -4.0, 3.0, 10.0, 17.0, 24.0, 31.0, 38.0, 45.0,
+     -49.0, -42.0, -35.0, -28.0, -21.0, -14.0, -7.0, 0.0,
+      7.0, 14.0, 21.0, 28.0, 35.0, 42.0, 49.0, -45.0,
+     -38.0, -31.0, -24.0, -17.0, -10.0, -3.0, 4.0, 11.0,
+      18.0, 25.0, 32.0, 39.0, 46.0, -48.0, -41.0, -34.0,
+     -27.0, -20.0, -13.0, -6.0, 1.0, 8.0, 15.0, 22.0,
+      29.0, 36.0, 43.0, 50.0, -44.0, -37.0, -30.0, -23.0,
+     -16.0, -9.0, -2.0, 5.0, 12.0, 19.0, 26.0, 33.0,
+      40.0, 47.0, -47.0, -40.0, -33.0, -26.0, -19.0, -12.0,
+      -5.0, 2.0, 9.0, 16.0, 23.0, 30.0, 37.0, 44.0,
+     -50.0, -43.0, -36.0, -29.0, -22.0, -15.0, -8.0, -1.0,
+      6.0, 13.0, 20.0, 27.0] -> b: [f32; 140];
+    100 -> iota -> cells;
+    7 -> iota -> ks;
+    cells -> map { cell ->
+        cell / 20 -> i;
+        cell % 20 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 7 + k] * b[k * 20 + j] }
+    } -> c;
+    c[0] -> println;
+    c[80] -> println;
+    c[99] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("matmul r5_c20_k7 oracle completes")
+    else {
+        panic!("matmul r5_c20_k7 oracle must complete");
+    };
+    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    assert!(
+        tiled.contains(" = alloca [64 x float]")
+            && tiled.contains(" = udiv i64 %lo, 20")
+            && tiled.contains(" = udiv i64 %hi, 20"),
+        "split task must contain the TI-blocked tiled nest:\n{tiled}"
+    );
+    let untiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        untiled.contains(" = call float @fn"),
+        "untiled map must retain its body call:\n{untiled}"
+    );
+
+    assert_tiled_parity(&clang, &tiled, &untiled, &want, "tiled_matmul_r5_c20_k7");
+}
+
+/// S26 coverage gap (b): **two full main j-tiles, no remainder** plus a
+/// two-row i-tail. rows=6, C=32, K=5: j runs the constant-16 main body twice
+/// and the remainder check falls through (`32 % 16 == 0`); `rows % 4 == 2`
+/// sends rows 4-5 through the TI=1 tail path.
+#[test]
+fn differential_tiled_matmul_r6_c32_k5() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn main() {
+    [-30.0, -25.0, -20.0, -15.0, -10.0, -5.0, 0.0, 5.0,
+      10.0, 15.0, 20.0, 25.0, 30.0, -32.0, -27.0, -22.0,
+     -17.0, -12.0, -7.0, -2.0, 3.0, 8.0, 13.0, 18.0,
+      23.0, 28.0, 33.0, -29.0, -24.0, -19.0] -> a: [f32; 30];
+    [-37.0, -30.0, -23.0, -16.0, -9.0, -2.0, 5.0, 12.0,
+      19.0, 26.0, 33.0, 40.0, 47.0, -47.0, -40.0, -33.0,
+     -26.0, -19.0, -12.0, -5.0, 2.0, 9.0, 16.0, 23.0,
+      30.0, 37.0, 44.0, -50.0, -43.0, -36.0, -29.0, -22.0,
+     -15.0, -8.0, -1.0, 6.0, 13.0, 20.0, 27.0, 34.0,
+      41.0, 48.0, -46.0, -39.0, -32.0, -25.0, -18.0, -11.0,
+      -4.0, 3.0, 10.0, 17.0, 24.0, 31.0, 38.0, 45.0,
+     -49.0, -42.0, -35.0, -28.0, -21.0, -14.0, -7.0, 0.0,
+      7.0, 14.0, 21.0, 28.0, 35.0, 42.0, 49.0, -45.0,
+     -38.0, -31.0, -24.0, -17.0, -10.0, -3.0, 4.0, 11.0,
+      18.0, 25.0, 32.0, 39.0, 46.0, -48.0, -41.0, -34.0,
+     -27.0, -20.0, -13.0, -6.0, 1.0, 8.0, 15.0, 22.0,
+      29.0, 36.0, 43.0, 50.0, -44.0, -37.0, -30.0, -23.0,
+     -16.0, -9.0, -2.0, 5.0, 12.0, 19.0, 26.0, 33.0,
+      40.0, 47.0, -47.0, -40.0, -33.0, -26.0, -19.0, -12.0,
+      -5.0, 2.0, 9.0, 16.0, 23.0, 30.0, 37.0, 44.0,
+     -50.0, -43.0, -36.0, -29.0, -22.0, -15.0, -8.0, -1.0,
+      6.0, 13.0, 20.0, 27.0, 34.0, 41.0, 48.0, -46.0,
+     -39.0, -32.0, -25.0, -18.0, -11.0, -4.0, 3.0, 10.0,
+      17.0, 24.0, 31.0, 38.0, 45.0, -49.0, -42.0, -35.0] -> b: [f32; 160];
+    192 -> iota -> cells;
+    5 -> iota -> ks;
+    cells -> map { cell ->
+        cell / 32 -> i;
+        cell % 32 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 5 + k] * b[k * 32 + j] }
+    } -> c;
+    c[0] -> println;
+    c[128] -> println;
+    c[191] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("matmul r6_c32_k5 oracle completes")
+    else {
+        panic!("matmul r6_c32_k5 oracle must complete");
+    };
+    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    assert!(
+        tiled.contains(" = alloca [64 x float]")
+            && tiled.contains(" = udiv i64 %lo, 32")
+            && tiled.contains(" = udiv i64 %hi, 32"),
+        "split task must contain the TI-blocked tiled nest:\n{tiled}"
+    );
+    let untiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        untiled.contains(" = call float @fn"),
+        "untiled map must retain its body call:\n{untiled}"
+    );
+
+    assert_tiled_parity(&clang, &tiled, &untiled, &want, "tiled_matmul_r6_c32_k5");
 }
 
 /// loop building the result via a loop-carried `mut c` array and `c[t] <- v`

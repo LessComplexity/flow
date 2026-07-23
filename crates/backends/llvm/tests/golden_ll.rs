@@ -491,20 +491,55 @@ fn golden_tile_map_shapes() {
     let ir = flow_rewrite::rewrite(lower_src(TILE_MATMUL_SRC)).ir;
     let tiled = emit(&ir).unwrap();
     let tiled_fn = function_containing(&tiled, "define internal [16 x float]");
+    // S26: rows run in TI=4 register blocks, so the accumulator is ONE flat
+    // entry-block scratch of TI×TJ elems (subrow r at r*16 + lane).
     assert!(
         tiled_fn
             .lines()
             .any(|line| line.trim_start().starts_with("%s")
-                && line.contains(" = alloca [16 x float]")),
-        "tile accumulator must be an entry-block scratch alloca:\n{tiled_fn}"
+                && line.contains(" = alloca [64 x float]")),
+        "tile accumulator must be one flat [TI=4 x TJ=16] entry-block scratch alloca:\n{tiled_fn}"
     );
     assert!(
         !tiled_fn.contains(" = call float @fn"),
         "tiled map must not call its per-cell body:\n{tiled_fn}"
     );
+    // Row bounds: the row lo plus the interior full-window row end — the i
+    // loop splits into boundary head rows / TI-blocked full-window interior /
+    // tail rows.
     assert!(
-        tiled_fn.contains(" = udiv i64 0, 4") && tiled_fn.matches(" = select i1 ").count() == 3,
-        "tile nest must contain row bounds and jw/tj clipping:\n{tiled_fn}"
+        tiled_fn.contains(" = udiv i64 0, 4") && tiled_fn.contains(" = udiv i64 16, 4"),
+        "tile nest must contain the row bounds, incl. the interior full-window end:\n{tiled_fn}"
+    );
+    // Fixed-TJ main body: every lane loop (zero/mac/store in each region's
+    // main body) is bounded by the compile-time constant TJ=16 — 15 lane-loop
+    // guards (3 head + 9 interior + 3 tail); the 16th match is the
+    // `16 -> iota` materialization guard.
+    assert_eq!(
+        tiled_fn
+            .lines()
+            .filter(|line| {
+                let line = line.trim();
+                line.contains(" = icmp uge i64 %t") && line.ends_with(", 16")
+            })
+            .count(),
+        16,
+        "main-body lane loops must be bounded by the constant TJ=16:\n{tiled_fn}"
+    );
+    // Runtime-tj remainder: one `tj = min(remaining, TJ)` select per i region
+    // (head/interior/tail); the four other selects are the jw clip pairs on
+    // the boundary (head/tail) rows.
+    assert!(
+        tiled_fn
+            .lines()
+            .filter(|line| {
+                let line = line.trim();
+                line.contains(" = select i1 ") && line.ends_with(", i64 16")
+            })
+            .count()
+            == 3
+            && tiled_fn.matches(" = select i1 ").count() == 7,
+        "each i region must clip its remainder tile to tj = min(remaining, TJ):\n{tiled_fn}"
     );
     insta::assert_snapshot!("tile_nest_shape", tiled_fn);
 

@@ -5,13 +5,71 @@ process-wall min-of-3 with an adaptive cap; flow-cuda-cap-kernel-{f64,f32} are
 per-iteration compute (sum of the binary's FLOW_PERF kernel-event times, min of
 3 process runs); flow-llvm-cap-compute-{f64,f32} are flow_main compute time,
 also min-of-3; the compiled CUDA / BLAS / numpy / rust / cpp / chapel legs
-self-report per-iteration times."""
-import subprocess, time, csv, sys, re
+self-report per-iteration times. A machine-spec comment header (utc / cpu /
+threads / core quota / RAM / clang) is stamped above the CSV header (S26
+standing rule: comparisons are same-machine, specs on the record).
+S26b: cpp-mt/rust-mt quota-aware threaded baselines + numpy-1t/chapel-1t
+env-pinned variants (Sapir's par-on-par directive; existing legs untouched).
+An optional argv leg filter (`python3 runner.py leg1 leg2 ...`) runs only the
+named legs; no args = the full standing sweep."""
+import subprocess, time, csv, sys, re, os, datetime
 
 ROWS = []
 
-def run(cmd, timeout=None, cap=None):
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+# --- machine-spec header probes (S26 rule; every probe guarded -> "unknown", ---
+# an absent cgroup quota reads "none" = uncapped; safe on macOS + minimal images)
+def _probe_cpu():
+    try:
+        m = re.search(r"model name\s*:\s*(.+)", open("/proc/cpuinfo").read())
+        return m.group(1).strip() if m else "unknown"
+    except Exception:
+        return "unknown"
+
+def _probe_quota():
+    try:  # cgroup v2: "max 100000" or "<quota_us> <period_us>"
+        v = open("/sys/fs/cgroup/cpu.max").read().split()
+        return "none" if v[0] == "max" else f"{int(v[0]) / int(v[1]):.2f}"
+    except Exception:
+        pass
+    try:  # cgroup v1: quota -1 = uncapped (paths carry the cpu/ controller dir)
+        q = int(open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read())
+        p = int(open("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read())
+        return "none" if q <= 0 else f"{q / p:.2f}"
+    except Exception:
+        return "unknown"
+
+def _probe_ram_gb():
+    try:
+        m = re.search(r"MemTotal:\s*(\d+) kB", open("/proc/meminfo").read())
+        return f"{int(m.group(1)) / 2**20:.0f}" if m else "unknown"
+    except Exception:
+        return "unknown"
+
+def _probe_clang():
+    try:
+        return subprocess.run(["clang", "--version"], capture_output=True, text=True, timeout=10).stdout.splitlines()[0]
+    except Exception:
+        return "unknown"
+
+SPEC = [
+    ("utc", datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")),
+    ("cpu", _probe_cpu()),
+    ("threads", os.cpu_count() or "unknown"),
+    ("core_quota", _probe_quota()),
+    ("ram_gb", _probe_ram_gb()),
+    ("clang", _probe_clang()),
+]
+
+def run(cmd, timeout=None, cap=None, env=None):
+    # env: None = inherit; a dict of deltas is expanded over os.environ here.
+    if env:
+        env = {**os.environ, **env}
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+
+ONLY = set(sys.argv[1:])  # optional leg filter (S26b trimmed box runs)
+
+def wanted(leg):
+    return not ONLY or leg in ONLY
 
 def add(leg, n, ms, note=""):
     gf = 2.0 * n**3 / (ms * 1e6)
@@ -19,7 +77,7 @@ def add(leg, n, ms, note=""):
     print(f"{leg:12s} N={n:5d} {ms:12.4f} ms {gf:10.2f} GFLOP/s {note}", flush=True)
 
 # --- flow-cuda (process wall, min of 3; correctness stdout shown for N=4) ---
-for n in (4, 16, 32, 64, 128):
+for n in ((4, 16, 32, 64, 128) if wanted("flow-cuda") else ()):
     try:
         best, out = float("inf"), ""
         for _ in range(3):
@@ -63,6 +121,8 @@ for leg, fmt, sizes, cap_at, cap_ms in (
     ("flow-llvm-cap-f64-1t", "FLOW_PAR=1 ./mm_ll_cap_{}", (512, 1024), 1024, 3_600_000),
     ("flow-llvm-cap-f32-1t", "FLOW_PAR=1 ./mm_ll_cap_f32_{}", (512, 1024), 1024, 3_600_000),
 ):
+    if not wanted(leg):
+        continue
     for n in sizes:
         try:
             best, out = float("inf"), ""
@@ -103,6 +163,8 @@ for leg, fmt in (
     ("flow-cuda-cap-kernel-f64", "./mm_cu_cap_perf_{}"),
     ("flow-cuda-cap-kernel-f32", "./mm_cu_cap_f32_perf_{}"),
 ):
+    if not wanted(leg):
+        continue
     for n in (16, 64, 128, 256, 512, 1024, 2048, 4096):
         try:
             best, note = float("inf"), ""
@@ -137,6 +199,8 @@ for leg, fmt in (
     ("flow-llvm-cap-compute-f64", "./mm_ll_perf_cap_{}"),
     ("flow-llvm-cap-compute-f32", "./mm_ll_perf_cap_f32_{}"),
 ):
+    if not wanted(leg):
+        continue
     for n in (16, 64, 128, 256, 512, 1024):
         try:
             best, note = float("inf"), ""
@@ -184,15 +248,33 @@ SCHED = {
     "chapel-f64": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
     "chapel-gpu-f32": [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
     "chapel-gpu-f64": [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
+    # S26b framing directive (Sapir): par-on-par + 1t-on-1t only. The mt legs
+    # are the quota-aware threaded twins (cpp_mt/rust_mt); the -1t legs pin
+    # the threaded runtimes to one worker via env (same binary, same recipe).
+    "cpp-mt-f32": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
+    "cpp-mt-f64": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
+    "rust-mt":    [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
+    "numpy-1t":   [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
+    "chapel-1t-f32": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
+    "chapel-1t-f64": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
 }
 BINS = {"naive-cuda": "./naive_cuda", "naive-cuda-f64": "./naive_cuda",
         "hip-naive": "./hip_naive", "cublas": "./cublas_gemm",
         "numpy": None, "rust-naive": "./rust_naive",
         "cpp-naive-f32": "./cpp_naive", "cpp-naive-f64": "./cpp_naive",
         "chapel-f32": "./chapel_matmul", "chapel-f64": "./chapel_matmul",
-        "chapel-gpu-f32": "./chapel_matmul_gpu", "chapel-gpu-f64": "./chapel_matmul_gpu"}
-WIDTH = {"cpp-naive-f32": "f32", "cpp-naive-f64": "f64", "naive-cuda-f64": "f64"}
+        "chapel-gpu-f32": "./chapel_matmul_gpu", "chapel-gpu-f64": "./chapel_matmul_gpu",
+        "cpp-mt-f32": "./cpp_mt", "cpp-mt-f64": "./cpp_mt",
+        "rust-mt": "./rust_mt", "numpy-1t": None,
+        "chapel-1t-f32": "./chapel_matmul", "chapel-1t-f64": "./chapel_matmul"}
+WIDTH = {"cpp-naive-f32": "f32", "cpp-naive-f64": "f64", "naive-cuda-f64": "f64",
+         "cpp-mt-f32": "f32", "cpp-mt-f64": "f64"}
+ENV = {"numpy-1t": {"OPENBLAS_NUM_THREADS": "1"},
+       "chapel-1t-f32": {"CHPL_RT_NUM_THREADS_PER_LOCALE": "1"},
+       "chapel-1t-f64": {"CHPL_RT_NUM_THREADS_PER_LOCALE": "1"}}
 for leg, sizes in SCHED.items():
+    if not wanted(leg):
+        continue
     for n, iters in sizes:
         if leg.startswith("chapel-"):
             # Chapel config consts take --name=value (no positional args).
@@ -201,7 +283,7 @@ for leg, sizes in SCHED.items():
             args = [str(n), str(iters)] + ([WIDTH[leg]] if leg in WIDTH else [])
             cmd = [BINS[leg], *args] if BINS[leg] else ["python3", "numpy_bench.py", *args]
         try:
-            r = run(cmd, timeout=1800)
+            r = run(cmd, timeout=1800, env=ENV.get(leg))
             line = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr[-200:]
             print("  " + line, flush=True)
             parts = line.split()
@@ -211,6 +293,8 @@ for leg, sizes in SCHED.items():
             print(f"{leg} N={n} ERROR: {e}", flush=True)
 
 with open("results.csv", "w", newline="") as f:
+    for k, v in SPEC:
+        f.write(f"# {k}: {v}\n")
     w = csv.writer(f)
     w.writerow(["leg", "N", "ms", "gflops", "note"])
     w.writerows(ROWS)

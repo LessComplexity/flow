@@ -58,11 +58,14 @@ echo "== baseline builds =="
 nvcc -O3 -arch=sm_89 naive_cuda.cu -o naive_cuda
 nvcc -O3 -arch=sm_89 cublas_gemm.cu -lcublas -o cublas_gemm
 rustc -O -C target-cpu=native rust_naive.rs -o rust_naive
+rustc -O -C target-cpu=native rust_mt.rs -o rust_mt
 if command -v clang++ >/dev/null; then
   clang++ -O3 -march=native cpp_naive.cpp -o cpp_naive
+  clang++ -O3 -march=native cpp_mt.cpp -o cpp_mt -lpthread
 else
   echo "clang++ not on box — falling back to g++ for cpp_naive"
   g++ -O3 -march=native cpp_naive.cpp -o cpp_naive
+  g++ -O3 -march=native cpp_mt.cpp -o cpp_mt -lpthread
 fi
 echo "== chapel (binary .deb; the .chpl compile-check happens here, box-side) =="
 # Official Chapel 2.9.0 binary package for Ubuntu 22.04 x86_64 (the documented

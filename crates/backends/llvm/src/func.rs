@@ -294,6 +294,31 @@ pub(crate) struct FnEmit<'a> {
     tile_plan: Option<TilePlan>,
 }
 
+/// Register micro-kernel tile factors (S26 rung 2): `TILE_J` accumulator
+/// lanes per j-tile, `TILE_I` rows per i-block. Per-backend emission widths,
+/// not language constants — `TILE_I` swept locally (2/4/8), 4 shipped.
+const TILE_J: u64 = 16;
+const TILE_I: u64 = 4;
+
+/// Shared emission context for one gated tiled site's lane-loop trio: every
+/// SSA name and lowered type the seed/k/store loops need, built once per site.
+struct TileCtx {
+    acc: String,
+    acc_llt: String,
+    elem_llt: String,
+    seed: String,
+    mul_op: &'static str,
+    add_op: &'static str,
+    a_ptr: String,
+    b_ptr: String,
+    out_ptr: String,
+    a_llt: String,
+    b_llt: String,
+    out_llt: String,
+    k_ctr: String,
+    lane_ctr: String,
+}
+
 impl<'a> FnEmit<'a> {
     pub fn new(
         ir: &'a CategoryIr,
@@ -2062,7 +2087,13 @@ impl<'a> FnEmit<'a> {
     }
 
     fn emit_tiled_map(&mut self, source: ObjectId, target: ObjectId, site: &TileSite) {
-        const TILE_J: u64 = 16;
+        // S26 rung 2 gate: TI register blocking cashes the record's
+        // row-invariance fact (`b.ci == 0`) on multi-row sites. Every other
+        // site (1-D FIR/attention-O has `rows == 1`) keeps the rung-1 nest.
+        if site.rows > 1 && site.b.ci == 0 {
+            self.emit_tiled_map_blocked(source, target, site);
+            return;
+        }
 
         let source_ty = self.obj_ty(source);
         let a_ty = source_ty
@@ -2328,6 +2359,491 @@ impl<'a> FnEmit<'a> {
         self.line(format!("store i64 {i_next}, ptr {i_ctr}"));
         self.line(format!("br label %{i_head}"));
         self.label_line(&i_done);
+    }
+
+    /// The gated S26 nest: TI register blocking + the fixed-TJ main/remainder
+    /// split. The i axis runs TI-blocked over **interior full-window rows**
+    /// only — a block [i, i+TI) is legal only where every subrow's lane
+    /// window is the whole [0, C), so head rows (a task range's clipped first
+    /// row), tail rows (`rows % TILE_I`), and the clipped last row all go
+    /// through the TI=1 path: loops are split, never masked (a clamped dead
+    /// subrow would load out of bounds and corrupt neighbor outputs). The j
+    /// axis splits every row flavor into a `TILE_J`-constant main body and
+    /// one runtime-`tj` remainder tile. Per cell the chain is unchanged:
+    /// `acc ← add(acc, mul(a, b))`, k ascending, recorded operand order — TI
+    /// and TJ only interleave independent cells' chains.
+    fn emit_tiled_map_blocked(&mut self, source: ObjectId, target: ObjectId, site: &TileSite) {
+        let source_ty = self.obj_ty(source);
+        let a_ty = source_ty
+            .component_ty(site.a.slot)
+            .cloned()
+            .expect("tile a array");
+        let b_ty = source_ty
+            .component_ty(site.b.slot)
+            .cloned()
+            .expect("tile b array");
+        let a_llt = lower_ty(&a_ty).expect("tile a lowers");
+        let b_llt = lower_ty(&b_ty).expect("tile b lowers");
+        let out_ty = self.obj_ty(target);
+        let out_llt = lower_ty(&out_ty).expect("tile output lowers");
+        let (_, n) = array_parts(&out_ty);
+        debug_assert_eq!(n, site.rows * site.c);
+        let elem_llt = lower_ty(&site.elem).expect("tile element lowers");
+        let mul_op = if is_float(&site.elem) { "fmul" } else { "mul" };
+        let add_op = if is_float(&site.elem) { "fadd" } else { "add" };
+
+        let a_ptr = self
+            .array_operand_ptr(source, Some(site.a.slot))
+            .expect("tile a ptr");
+        let b_ptr = self
+            .array_operand_ptr(source, Some(site.b.slot))
+            .expect("tile b ptr");
+        let out_ptr = self.slot(target).expect("tile output slot");
+        let acc_llt = format!("[{} x {elem_llt}]", TILE_I * TILE_J);
+        let acc = self.scratch(&acc_llt);
+        let i_ctr = self.scratch("i64");
+        let j_ctr = self.scratch("i64");
+        let k_ctr = self.scratch("i64");
+        let lane_ctr = self.scratch("i64");
+        let ctx = TileCtx {
+            acc,
+            acc_llt,
+            elem_llt,
+            seed: const_literal(&site.seed),
+            mul_op,
+            add_op,
+            a_ptr,
+            b_ptr,
+            out_ptr,
+            a_llt,
+            b_llt,
+            out_llt,
+            k_ctr,
+            lane_ctr,
+        };
+        let (lo, hi) = self.bulk_bounds(n);
+
+        let i_lo = self.tmp();
+        self.line(format!("{i_lo} = udiv i64 {lo}, {}", site.c));
+        let hi_biased = self.tmp();
+        self.line(format!("{hi_biased} = add i64 {hi}, {}", site.c - 1));
+        let i_hi = self.tmp();
+        self.line(format!("{i_hi} = udiv i64 {hi_biased}, {}", site.c));
+        // Interior full-window rows are [ceil(lo/C), floor(hi/C)): row i has
+        // the whole lane window iff lo - i*C <= 0 and hi - i*C >= C.
+        let lo_biased = self.tmp();
+        self.line(format!("{lo_biased} = add i64 {lo}, {}", site.c - 1));
+        let i_fw_lo = self.tmp();
+        self.line(format!("{i_fw_lo} = udiv i64 {lo_biased}, {}", site.c));
+        let i_fw_hi = self.tmp();
+        self.line(format!("{i_fw_hi} = udiv i64 {hi}, {}", site.c));
+
+        // Head boundary rows (a task range's clipped first row), TI=1.
+        let (head_i_head, head_i_body, head_i_done) =
+            (self.label(), self.label(), self.label());
+        self.line(format!("store i64 {i_lo}, ptr {i_ctr}"));
+        self.line(format!("br label %{head_i_head}"));
+        self.label_line(&head_i_head);
+        let i = self.tmp();
+        self.line(format!("{i} = load i64, ptr {i_ctr}"));
+        let head_done = self.tmp();
+        self.line(format!("{head_done} = icmp uge i64 {i}, {i_fw_lo}"));
+        self.line(format!(
+            "br i1 {head_done}, label %{head_i_done}, label %{head_i_body}"
+        ));
+        self.label_line(&head_i_body);
+        self.emit_tile_row_split_j(site, &ctx, &j_ctr, &lo, &hi, &i);
+        let i_next = self.tmp();
+        self.line(format!("{i_next} = add i64 {i}, 1"));
+        self.line(format!("store i64 {i_next}, ptr {i_ctr}"));
+        self.line(format!("br label %{head_i_head}"));
+        self.label_line(&head_i_done);
+
+        // TI-blocked main over interior full-window rows: subrow r's
+        // accumulators sit at acc offset r*TILE_J; one b load per (k, lane)
+        // feeds all TILE_I chains (b.ci == 0 — the cashed row-invariance).
+        let (blk_i_head, blk_i_body, blk_i_done) =
+            (self.label(), self.label(), self.label());
+        self.line(format!("store i64 {i_fw_lo}, ptr {i_ctr}"));
+        self.line(format!("br label %{blk_i_head}"));
+        self.label_line(&blk_i_head);
+        let i_blk = self.tmp();
+        self.line(format!("{i_blk} = load i64, ptr {i_ctr}"));
+        let i_blk_end = self.tmp();
+        self.line(format!("{i_blk_end} = add i64 {i_blk}, {TILE_I}"));
+        let block_fits = self.tmp();
+        self.line(format!(
+            "{block_fits} = icmp ule i64 {i_blk_end}, {i_fw_hi}"
+        ));
+        self.line(format!(
+            "br i1 {block_fits}, label %{blk_i_body}, label %{blk_i_done}"
+        ));
+        self.label_line(&blk_i_body);
+        let row0 = self.tmp();
+        self.line(format!("{row0} = mul i64 {i_blk}, {}", site.c));
+        let mut a_rows = Vec::with_capacity(TILE_I as usize);
+        for r in 0..TILE_I {
+            let base_r = site.a.base + site.a.ci * r;
+            a_rows.push(self.emit_tile_index(
+                (base_r != 0).then(|| base_r.to_string()),
+                &[(site.a.ci, i_blk.as_str())],
+            ));
+        }
+        let b_row = (site.b.base != 0).then(|| site.b.base.to_string());
+        self.emit_tile_j_split(
+            site,
+            &ctx,
+            &j_ctr,
+            "0",
+            &site.c.to_string(),
+            &row0,
+            &a_rows,
+            &b_row,
+        );
+        self.line(format!("store i64 {i_blk_end}, ptr {i_ctr}"));
+        self.line(format!("br label %{blk_i_head}"));
+        self.label_line(&blk_i_done);
+
+        // Tail rows (rows % TILE_I) plus a task range's clipped last row, TI=1.
+        let (tail_i_head, tail_i_body, tail_i_done) =
+            (self.label(), self.label(), self.label());
+        self.line(format!("br label %{tail_i_head}"));
+        self.label_line(&tail_i_head);
+        let i = self.tmp();
+        self.line(format!("{i} = load i64, ptr {i_ctr}"));
+        let tail_done = self.tmp();
+        self.line(format!("{tail_done} = icmp uge i64 {i}, {i_hi}"));
+        self.line(format!(
+            "br i1 {tail_done}, label %{tail_i_done}, label %{tail_i_body}"
+        ));
+        self.label_line(&tail_i_body);
+        self.emit_tile_row_split_j(site, &ctx, &j_ctr, &lo, &hi, &i);
+        let i_next = self.tmp();
+        self.line(format!("{i_next} = add i64 {i}, 1"));
+        self.line(format!("store i64 {i_next}, ptr {i_ctr}"));
+        self.line(format!("br label %{tail_i_head}"));
+        self.label_line(&tail_i_done);
+    }
+
+    /// One TI=1 row body for the gated nest: the rung-1 clipped lane window
+    /// (signed — `lo - i*C` goes negative) and hoisted row bases, then the
+    /// fixed-TJ j split.
+    fn emit_tile_row_split_j(
+        &mut self,
+        site: &TileSite,
+        ctx: &TileCtx,
+        j_ctr: &str,
+        lo: &str,
+        hi: &str,
+        i: &str,
+    ) {
+        let row0 = self.tmp();
+        self.line(format!("{row0} = mul i64 {i}, {}", site.c));
+        let jw_lo_raw = self.tmp();
+        self.line(format!("{jw_lo_raw} = sub i64 {lo}, {row0}"));
+        let jw_lo_negative = self.tmp();
+        self.line(format!("{jw_lo_negative} = icmp slt i64 {jw_lo_raw}, 0"));
+        let jw_lo = self.tmp();
+        self.line(format!(
+            "{jw_lo} = select i1 {jw_lo_negative}, i64 0, i64 {jw_lo_raw}"
+        ));
+        let jw_hi_raw = self.tmp();
+        self.line(format!("{jw_hi_raw} = sub i64 {hi}, {row0}"));
+        let jw_hi_past_c = self.tmp();
+        self.line(format!(
+            "{jw_hi_past_c} = icmp sgt i64 {jw_hi_raw}, {}",
+            site.c
+        ));
+        let jw_hi = self.tmp();
+        self.line(format!(
+            "{jw_hi} = select i1 {jw_hi_past_c}, i64 {}, i64 {jw_hi_raw}",
+            site.c
+        ));
+        let a_row = self.emit_tile_index(
+            (site.a.base != 0).then(|| site.a.base.to_string()),
+            &[(site.a.ci, i)],
+        );
+        let b_row = self.emit_tile_index(
+            (site.b.base != 0).then(|| site.b.base.to_string()),
+            &[(site.b.ci, i)],
+        );
+        self.emit_tile_j_split(site, ctx, j_ctr, &jw_lo, &jw_hi, &row0, &[a_row], &b_row);
+    }
+
+    /// The fixed-TJ j loop over one row block: main tiles bounded by the
+    /// compile-time `TILE_J` while `j0 + TILE_J <= jw_hi`, then one remainder
+    /// tile at the runtime `tj` bound, entered only when `j0 < jw_hi` remains
+    /// (task-grain splits make `jw_hi` runtime in general — the remainder
+    /// path is never dead code).
+    #[allow(clippy::too_many_arguments)]
+    fn emit_tile_j_split(
+        &mut self,
+        site: &TileSite,
+        ctx: &TileCtx,
+        j_ctr: &str,
+        jw_lo: &str,
+        jw_hi: &str,
+        row0: &str,
+        a_rows: &[Option<String>],
+        b_row: &Option<String>,
+    ) {
+        let (j_head, j_main, j_rem_check, j_rem, j_done) = (
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+        );
+        self.line(format!("store i64 {jw_lo}, ptr {j_ctr}"));
+        self.line(format!("br label %{j_head}"));
+        self.label_line(&j_head);
+        let j0 = self.tmp();
+        self.line(format!("{j0} = load i64, ptr {j_ctr}"));
+        let j0_full = self.tmp();
+        self.line(format!("{j0_full} = add i64 {j0}, {TILE_J}"));
+        let full_tile = self.tmp();
+        self.line(format!("{full_tile} = icmp ule i64 {j0_full}, {jw_hi}"));
+        self.line(format!(
+            "br i1 {full_tile}, label %{j_main}, label %{j_rem_check}"
+        ));
+        self.label_line(&j_main);
+        let lane_full = TILE_J.to_string();
+        self.emit_tile_trio(site, ctx, &j0, row0, a_rows, b_row, &lane_full);
+        let j0_next = self.tmp();
+        self.line(format!("{j0_next} = add i64 {j0}, {TILE_J}"));
+        self.line(format!("store i64 {j0_next}, ptr {j_ctr}"));
+        self.line(format!("br label %{j_head}"));
+        self.label_line(&j_rem_check);
+        let rem_exists = self.tmp();
+        self.line(format!("{rem_exists} = icmp ult i64 {j0}, {jw_hi}"));
+        self.line(format!("br i1 {rem_exists}, label %{j_rem}, label %{j_done}"));
+        self.label_line(&j_rem);
+        let remaining = self.tmp();
+        self.line(format!("{remaining} = sub i64 {jw_hi}, {j0}"));
+        let partial = self.tmp();
+        self.line(format!("{partial} = icmp ult i64 {remaining}, {TILE_J}"));
+        let tj = self.tmp();
+        self.line(format!(
+            "{tj} = select i1 {partial}, i64 {remaining}, i64 {TILE_J}"
+        ));
+        self.emit_tile_trio(site, ctx, &j0, row0, a_rows, b_row, &tj);
+        self.line(format!("br label %{j_done}"));
+        self.label_line(&j_done);
+    }
+
+    /// The seed-splat / k-loop / store lane-loop trio for one j-tile of an
+    /// `a_rows.len()`-row block; subrow r's accumulators live at acc offset
+    /// `r*TILE_J + lane`. `bound` is the lane trip count — the literal
+    /// `TILE_J` on the main path, the runtime `tj` on the remainder path.
+    /// `a_rows[r]` is subrow r's hoisted `a.base + a.ci*(i+r)` (None ⇒ 0),
+    /// `b_row` the hoisted `b.base + b.ci*i`, `row0` the block's first row
+    /// times C. The k loop bound stays the constant `site.k`; per k the body
+    /// does one scalar a-load per subrow and ONE b load per lane, reused
+    /// across every subrow's `mul`/`add` accumulator update.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_tile_trio(
+        &mut self,
+        site: &TileSite,
+        ctx: &TileCtx,
+        j0: &str,
+        row0: &str,
+        a_rows: &[Option<String>],
+        b_row: &Option<String>,
+        bound: &str,
+    ) {
+        let rows = a_rows.len() as u64;
+
+        // Seed splat: one lane loop per subrow — subrow r's lanes are at acc
+        // offset r*TILE_J + lane, so a flat rows*bound range would leave the
+        // strided remainder lanes (bound < TILE_J) of subrows > 0 unseeded.
+        for r in 0..rows {
+            let (seed_head, seed_body, seed_done) = (self.label(), self.label(), self.label());
+            self.line(format!("store i64 0, ptr {}", ctx.lane_ctr));
+            self.line(format!("br label %{seed_head}"));
+            self.label_line(&seed_head);
+            let seed_lane = self.tmp();
+            self.line(format!("{seed_lane} = load i64, ptr {}", ctx.lane_ctr));
+            let seed_done_cond = self.tmp();
+            self.line(format!("{seed_done_cond} = icmp uge i64 {seed_lane}, {bound}"));
+            self.line(format!(
+                "br i1 {seed_done_cond}, label %{seed_done}, label %{seed_body}"
+            ));
+            self.label_line(&seed_body);
+            let acc_lane = if r == 0 {
+                seed_lane.clone()
+            } else {
+                let offset = self.tmp();
+                self.line(format!("{offset} = add i64 {seed_lane}, {}", r * TILE_J));
+                offset
+            };
+            let seed_ptr = self.tmp();
+            self.line(format!(
+                "{seed_ptr} = getelementptr {}, ptr {}, i64 0, i64 {acc_lane}",
+                ctx.acc_llt, ctx.acc
+            ));
+            self.line(format!("store {} {}, ptr {seed_ptr}", ctx.elem_llt, ctx.seed));
+            let seed_lane_next = self.tmp();
+            self.line(format!("{seed_lane_next} = add i64 {seed_lane}, 1"));
+            self.line(format!("store i64 {seed_lane_next}, ptr {}", ctx.lane_ctr));
+            self.line(format!("br label %{seed_head}"));
+            self.label_line(&seed_done);
+        }
+
+        // k loop: constant bound site.k, one scalar a-load per subrow, one
+        // b load per (k, lane) shared across the subrow chains.
+        let (k_head, k_body, k_done) = (self.label(), self.label(), self.label());
+        let (inner_head, inner_body, inner_done) = (self.label(), self.label(), self.label());
+        self.line(format!("store i64 0, ptr {}", ctx.k_ctr));
+        self.line(format!("br label %{k_head}"));
+        self.label_line(&k_head);
+        let kk = self.tmp();
+        self.line(format!("{kk} = load i64, ptr {}", ctx.k_ctr));
+        let depth_done = self.tmp();
+        self.line(format!("{depth_done} = icmp uge i64 {kk}, {}", site.k));
+        self.line(format!(
+            "br i1 {depth_done}, label %{k_done}, label %{k_body}"
+        ));
+        self.label_line(&k_body);
+        let mut a_values = Vec::with_capacity(a_rows.len());
+        for a_row in a_rows {
+            let a_index = self
+                .emit_tile_index(a_row.clone(), &[(site.a.ck, kk.as_str())])
+                .unwrap_or_else(|| "0".to_owned());
+            let a_elem_ptr = self.tmp();
+            self.line(format!(
+                "{a_elem_ptr} = getelementptr {}, ptr {}, i64 0, i64 {a_index}",
+                ctx.a_llt, ctx.a_ptr
+            ));
+            let a_value = self.tmp();
+            self.line(format!("{a_value} = load {}, ptr {a_elem_ptr}", ctx.elem_llt));
+            a_values.push(a_value);
+        }
+        let b_start = self
+            .emit_tile_index(b_row.clone(), &[(site.b.ck, kk.as_str()), (1, j0)])
+            .expect("tile b has lane term");
+        self.line(format!("store i64 0, ptr {}", ctx.lane_ctr));
+        self.line(format!("br label %{inner_head}"));
+        self.label_line(&inner_head);
+        let lane = self.tmp();
+        self.line(format!("{lane} = load i64, ptr {}", ctx.lane_ctr));
+        let inner_done_cond = self.tmp();
+        self.line(format!("{inner_done_cond} = icmp uge i64 {lane}, {bound}"));
+        self.line(format!(
+            "br i1 {inner_done_cond}, label %{inner_done}, label %{inner_body}"
+        ));
+        self.label_line(&inner_body);
+        let b_index = self.tmp();
+        self.line(format!("{b_index} = add i64 {b_start}, {lane}"));
+        let b_elem_ptr = self.tmp();
+        self.line(format!(
+            "{b_elem_ptr} = getelementptr {}, ptr {}, i64 0, i64 {b_index}",
+            ctx.b_llt, ctx.b_ptr
+        ));
+        let b_value = self.tmp();
+        self.line(format!("{b_value} = load {}, ptr {b_elem_ptr}", ctx.elem_llt));
+        for (r, a_value) in a_values.iter().enumerate() {
+            let product = self.tmp();
+            let (mul_lhs, mul_rhs) = if site.mul_a_first {
+                (a_value, &b_value)
+            } else {
+                (&b_value, a_value)
+            };
+            self.line(format!(
+                "{product} = {} {} {mul_lhs}, {mul_rhs}",
+                ctx.mul_op, ctx.elem_llt
+            ));
+            let acc_lane = if r == 0 {
+                lane.clone()
+            } else {
+                let offset = self.tmp();
+                self.line(format!("{offset} = add i64 {lane}, {}", r as u64 * TILE_J));
+                offset
+            };
+            let acc_ptr = self.tmp();
+            self.line(format!(
+                "{acc_ptr} = getelementptr {}, ptr {}, i64 0, i64 {acc_lane}",
+                ctx.acc_llt, ctx.acc
+            ));
+            let acc_value = self.tmp();
+            self.line(format!("{acc_value} = load {}, ptr {acc_ptr}", ctx.elem_llt));
+            let sum = self.tmp();
+            let (add_lhs, add_rhs) = if site.add_acc_first {
+                (&acc_value, &product)
+            } else {
+                (&product, &acc_value)
+            };
+            self.line(format!("{sum} = {} {} {add_lhs}, {add_rhs}", ctx.add_op, ctx.elem_llt));
+            self.line(format!("store {} {sum}, ptr {acc_ptr}", ctx.elem_llt));
+        }
+        let lane_next = self.tmp();
+        self.line(format!("{lane_next} = add i64 {lane}, 1"));
+        self.line(format!("store i64 {lane_next}, ptr {}", ctx.lane_ctr));
+        self.line(format!("br label %{inner_head}"));
+        self.label_line(&inner_done);
+        let kk_next = self.tmp();
+        self.line(format!("{kk_next} = add i64 {kk}, 1"));
+        self.line(format!("store i64 {kk_next}, ptr {}", ctx.k_ctr));
+        self.line(format!("br label %{k_head}"));
+        self.label_line(&k_done);
+
+        // Store: one lane loop per subrow at out[(i+r)*C + j0 + lane].
+        let out_start = self.tmp();
+        self.line(format!("{out_start} = add i64 {row0}, {j0}"));
+        for r in 0..rows {
+            let out_start_r = if r == 0 {
+                out_start.clone()
+            } else {
+                let shifted = self.tmp();
+                self.line(format!("{shifted} = add i64 {out_start}, {}", r * site.c));
+                shifted
+            };
+            let (store_head, store_body, store_done) =
+                (self.label(), self.label(), self.label());
+            self.line(format!("store i64 0, ptr {}", ctx.lane_ctr));
+            self.line(format!("br label %{store_head}"));
+            self.label_line(&store_head);
+            let store_lane = self.tmp();
+            self.line(format!("{store_lane} = load i64, ptr {}", ctx.lane_ctr));
+            let stores_done = self.tmp();
+            self.line(format!("{stores_done} = icmp uge i64 {store_lane}, {bound}"));
+            self.line(format!(
+                "br i1 {stores_done}, label %{store_done}, label %{store_body}"
+            ));
+            self.label_line(&store_body);
+            let acc_lane = if r == 0 {
+                store_lane.clone()
+            } else {
+                let offset = self.tmp();
+                self.line(format!("{offset} = add i64 {store_lane}, {}", r * TILE_J));
+                offset
+            };
+            let final_acc_ptr = self.tmp();
+            self.line(format!(
+                "{final_acc_ptr} = getelementptr {}, ptr {}, i64 0, i64 {acc_lane}",
+                ctx.acc_llt, ctx.acc
+            ));
+            let final_value = self.tmp();
+            self.line(format!(
+                "{final_value} = load {}, ptr {final_acc_ptr}",
+                ctx.elem_llt
+            ));
+            let out_index = self.tmp();
+            self.line(format!("{out_index} = add i64 {out_start_r}, {store_lane}"));
+            let out_elem_ptr = self.tmp();
+            self.line(format!(
+                "{out_elem_ptr} = getelementptr {}, ptr {}, i64 0, i64 {out_index}",
+                ctx.out_llt, ctx.out_ptr
+            ));
+            self.line(format!(
+                "store {} {final_value}, ptr {out_elem_ptr}",
+                ctx.elem_llt
+            ));
+            let store_lane_next = self.tmp();
+            self.line(format!("{store_lane_next} = add i64 {store_lane}, 1"));
+            self.line(format!("store i64 {store_lane_next}, ptr {}", ctx.lane_ctr));
+            self.line(format!("br label %{store_head}"));
+            self.label_line(&store_done);
+        }
     }
 
     fn emit_map(
