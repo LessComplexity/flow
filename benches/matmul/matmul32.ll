@@ -8,6 +8,17 @@ declare void @flow_print_f64(double, i1 zeroext)
 declare void @flow_print_str(ptr, i64, i1 zeroext)
 declare void @flow_trap(i32) noreturn
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
+declare ptr @flow_par_begin(i32)
+declare void @flow_par_task(ptr, i32, i32, ptr, i64, i32)
+declare void @flow_par_pin(ptr, i32)
+declare void @flow_par_dep(ptr, i32, i32)
+declare void @flow_par_launch(ptr, ptr)
+declare void @flow_par_wait(ptr, ptr, i32)
+declare void @flow_par_check(ptr, i64)
+declare void @flow_par_trap(i64, i32)
+declare void @flow_par_watermark(i64)
+declare void @flow_par_run_pinned(ptr, i32)
+declare void @flow_par_finish(ptr)
 
 define internal float @fn0({ ptr, ptr, i32, i32 } %arg) {
 entry:
@@ -415,19 +426,23 @@ bb11:
   ret [1024 x float] %t98
 }
 
-define internal void @flow_main() {
+%Frame = type { [1024 x float], [1024 x float], { ptr, ptr }, [1024 x float], { ptr, i32 }, float, float, { ptr, i32 }, float, float }
+
+@ckpt0_entries = private unnamed_addr constant [1 x i64] [i64 4294967295]
+@ckpt1_entries = private unnamed_addr constant [1 x i64] [i64 4294967295]
+@pin0_entries = private unnamed_addr constant [0 x i64] zeroinitializer
+
+define internal void @task0(i64 %lo, i64 %hi, ptr %frame) {
 entry:
-  %o2 = alloca [1024 x float]
-  %o3 = alloca [1024 x float]
-  %o4 = alloca { ptr, ptr }
-  %o5 = alloca [1024 x float]
-  %o6 = alloca { ptr, i32 }
-  %o7 = alloca float
-  %o8 = alloca float
-  %o10 = alloca { ptr, i32 }
-  %o11 = alloca float
-  %o12 = alloca float
   %s2052 = alloca { ptr, ptr }
+  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
+  %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
+  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 4
+  %o10 = getelementptr %Frame, ptr %frame, i32 0, i32 7
+  %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
+  %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
+  %o11 = getelementptr %Frame, ptr %frame, i32 0, i32 8
   %t0 = getelementptr [1024 x float], ptr %o2, i64 0, i64 0
   store float 0xC042800000000000, ptr %t0
   %t1 = getelementptr [1024 x float], ptr %o2, i64 0, i64 1
@@ -4555,14 +4570,42 @@ entry:
   %t2067 = getelementptr [1024 x float], ptr %o5, i64 0, i64 %t2066
   %t2068 = load float, ptr %t2067
   store float %t2068, ptr %o11
-  %t2069 = load float, ptr %o7
-  store float %t2069, ptr %o8
-  %t2070 = load float, ptr %o11
-  store float %t2070, ptr %o12
-  %t2071 = load float, ptr %o8
-  call void @flow_print_f32(float %t2071, i1 zeroext true)
-  %t2072 = load float, ptr %o12
-  call void @flow_print_f32(float %t2072, i1 zeroext true)
+  ret void
+}
+
+define internal void @flow_main() {
+entry:
+  %frame = alloca %Frame
+  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
+  %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
+  %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
+  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 4
+  %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
+  %o8 = getelementptr %Frame, ptr %frame, i32 0, i32 6
+  %o10 = getelementptr %Frame, ptr %frame, i32 0, i32 7
+  %o11 = getelementptr %Frame, ptr %frame, i32 0, i32 8
+  %o12 = getelementptr %Frame, ptr %frame, i32 0, i32 9
+  %h = call ptr @flow_par_begin(i32 1)
+  call void @flow_par_task(ptr %h, i32 0, i32 0, ptr @task0, i64 2057, i32 1)
+  call void @flow_par_pin(ptr %h, i32 0)
+  call void @flow_par_launch(ptr %h, ptr %frame)
+  call void @flow_par_wait(ptr %h, ptr @pin0_entries, i32 0)
+  call void @flow_par_check(ptr %h, i64 1)
+  call void @flow_par_run_pinned(ptr %h, i32 0)
+  call void @flow_par_wait(ptr %h, ptr @ckpt0_entries, i32 1)
+  call void @flow_par_check(ptr %h, i64 2060)
+  %t0 = load float, ptr %o7
+  store float %t0, ptr %o8
+  call void @flow_par_wait(ptr %h, ptr @ckpt1_entries, i32 1)
+  call void @flow_par_check(ptr %h, i64 2062)
+  %t1 = load float, ptr %o11
+  store float %t1, ptr %o12
+  %t2 = load float, ptr %o8
+  call void @flow_print_f32(float %t2, i1 zeroext true)
+  %t3 = load float, ptr %o12
+  call void @flow_print_f32(float %t3, i1 zeroext true)
+  call void @flow_par_finish(ptr %h)
   ret void
 }
 

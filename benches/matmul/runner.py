@@ -54,8 +54,13 @@ for leg, fmt, sizes, cap_at, cap_ms in (
     ("flow-cuda-cap-f32", "./mm_cu_cap_f32_{}", (16, 64, 128, 256, 512, 1024, 2048, 4096), 64, 600_000),
     # S21: the llvm cap legs run every size — WP3b killed the by-value/aggregate
     # walls; the 256-checkpoint cap still guards the 512 leg adaptively.
+    # S24: the plain legs run the parallel orchestrator (FLOW_PAR unset = all
+    # cores); the -1t rows pin the same binaries to one thread at the
+    # comparison sizes — the single-thread baseline in the same table.
     ("flow-llvm-cap-f64", "./mm_ll_cap_{}", (16, 64, 128, 256, 512, 1024), 256, 60_000),
     ("flow-llvm-cap-f32", "./mm_ll_cap_f32_{}", (16, 64, 128, 256, 512, 1024), 256, 60_000),
+    ("flow-llvm-cap-f64-1t", "FLOW_PAR=1 ./mm_ll_cap_{}", (512, 1024), 1024, 3_600_000),
+    ("flow-llvm-cap-f32-1t", "FLOW_PAR=1 ./mm_ll_cap_f32_{}", (512, 1024), 1024, 3_600_000),
 ):
     for n in sizes:
         try:
@@ -63,8 +68,10 @@ for leg, fmt, sizes, cap_at, cap_ms in (
             cmd = [fmt.format(n)]
             if leg.startswith("flow-llvm"):
                 # allocas hold the arrays; N>=1024 needs a big stack (heap
-                # lowering is the recorded fix)
-                cmd = ["bash", "-c", f"ulimit -s unlimited 2>/dev/null || ulimit -s hard; exec {cmd[0]}"]
+                # lowering is the recorded fix). No `exec` — the -1t legs carry
+                # an env prefix; the ~ms bash wrapper cost is identical across
+                # every flow-llvm row, so within-table ratios stay clean.
+                cmd = ["bash", "-c", f"ulimit -s unlimited 2>/dev/null || ulimit -s hard; {cmd[0]}"]
             for _ in range(3):
                 t0 = time.perf_counter()
                 r = run(cmd, timeout=3600)

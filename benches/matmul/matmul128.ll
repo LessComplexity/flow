@@ -8,6 +8,17 @@ declare void @flow_print_f64(double, i1 zeroext)
 declare void @flow_print_str(ptr, i64, i1 zeroext)
 declare void @flow_trap(i32) noreturn
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
+declare ptr @flow_par_begin(i32)
+declare void @flow_par_task(ptr, i32, i32, ptr, i64, i32)
+declare void @flow_par_pin(ptr, i32)
+declare void @flow_par_dep(ptr, i32, i32)
+declare void @flow_par_launch(ptr, ptr)
+declare void @flow_par_wait(ptr, ptr, i32)
+declare void @flow_par_check(ptr, i64)
+declare void @flow_par_trap(i64, i32)
+declare void @flow_par_watermark(i64)
+declare void @flow_par_run_pinned(ptr, i32)
+declare void @flow_par_finish(ptr)
 
 define internal float @fn0({ ptr, ptr, i32, i32 } %arg) {
 entry:
@@ -415,28 +426,21 @@ bb11:
   ret [16384 x float] %t98
 }
 
-define internal void @flow_main() {
+%Frame = type { [16384 x i32], [16384 x float], [16384 x float], { ptr, ptr }, [16384 x float], { ptr, i32 }, float, float, { ptr, i32 }, float, float }
+
+@ckpt0_entries = private unnamed_addr constant [3 x i64] [i64 8589934591, i64 8589934596, i64 12884901893]
+@ckpt1_entries = private unnamed_addr constant [3 x i64] [i64 8589934591, i64 8589934596, i64 12884901893]
+@pin1_entries = private unnamed_addr constant [2 x i64] [i64 12884901887, i64 17179869183]
+
+define internal void @task0(i64 %lo, i64 %hi, ptr %frame) {
 entry:
-  %o2 = alloca [16384 x i32]
-  %o3 = alloca [16384 x float]
-  %o4 = alloca [16384 x float]
-  %o5 = alloca { ptr, ptr }
-  %o6 = alloca [16384 x float]
-  %o7 = alloca { ptr, i32 }
-  %o8 = alloca float
-  %o9 = alloca float
-  %o11 = alloca { ptr, i32 }
-  %o12 = alloca float
-  %o13 = alloca float
   %s0 = alloca i64
-  %s11 = alloca i64
-  %s22 = alloca i64
-  %s35 = alloca { ptr, ptr }
-  store i64 0, ptr %s0
+  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
+  store i64 %lo, ptr %s0
   br label %bb1
 bb1:
   %t4 = load i64, ptr %s0
-  %t5 = icmp uge i64 %t4, 16384
+  %t5 = icmp uge i64 %t4, %hi
   br i1 %t5, label %bb3, label %bb2
 bb2:
   %t6 = trunc i64 %t4 to i32
@@ -446,77 +450,143 @@ bb2:
   store i64 %t8, ptr %s0
   br label %bb1
 bb3:
-  %t9 = getelementptr { ptr, i32 }, ptr %o7, i32 0, i32 1
-  store i32 0, ptr %t9
-  %t10 = getelementptr { ptr, i32 }, ptr %o11, i32 0, i32 1
-  store i32 16383, ptr %t10
-  store i64 0, ptr %s11
-  br label %bb12
-bb12:
-  %t15 = load i64, ptr %s11
-  %t16 = icmp uge i64 %t15, 16384
-  br i1 %t16, label %bb14, label %bb13
-bb13:
-  %t17 = getelementptr [16384 x i32], ptr %o2, i64 0, i64 %t15
-  %t18 = load i32, ptr %t17
-  %t19 = call float @fn3(i32 %t18)
-  %t20 = getelementptr [16384 x float], ptr %o3, i64 0, i64 %t15
-  store float %t19, ptr %t20
-  %t21 = add i64 %t15, 1
-  store i64 %t21, ptr %s11
-  br label %bb12
-bb14:
-  store i64 0, ptr %s22
-  br label %bb23
-bb23:
-  %t26 = load i64, ptr %s22
-  %t27 = icmp uge i64 %t26, 16384
-  br i1 %t27, label %bb25, label %bb24
-bb24:
-  %t28 = getelementptr [16384 x i32], ptr %o2, i64 0, i64 %t26
-  %t29 = load i32, ptr %t28
-  %t30 = call float @fn4(i32 %t29)
-  %t31 = getelementptr [16384 x float], ptr %o4, i64 0, i64 %t26
-  store float %t30, ptr %t31
-  %t32 = add i64 %t26, 1
-  store i64 %t32, ptr %s22
-  br label %bb23
-bb25:
-  %t33 = getelementptr { ptr, ptr }, ptr %o5, i32 0, i32 0
-  store ptr %o3, ptr %t33
-  %t34 = getelementptr { ptr, ptr }, ptr %o5, i32 0, i32 1
-  store ptr %o4, ptr %t34
-  %t36 = getelementptr { ptr, ptr }, ptr %s35, i32 0, i32 0
-  store ptr %o3, ptr %t36
-  %t37 = getelementptr { ptr, ptr }, ptr %s35, i32 0, i32 1
-  store ptr %o4, ptr %t37
-  %t38 = load { ptr, ptr }, ptr %s35
-  %t39 = call [16384 x float] @fn1({ ptr, ptr } %t38)
-  store [16384 x float] %t39, ptr %o6
-  %t40 = getelementptr { ptr, i32 }, ptr %o7, i32 0, i32 0
-  store ptr %o6, ptr %t40
-  %t41 = getelementptr { ptr, i32 }, ptr %o11, i32 0, i32 0
-  store ptr %o6, ptr %t41
-  %t42 = getelementptr { ptr, i32 }, ptr %o7, i32 0, i32 1
-  %t43 = load i32, ptr %t42
-  %t44 = sext i32 %t43 to i64
-  %t45 = getelementptr [16384 x float], ptr %o6, i64 0, i64 %t44
-  %t46 = load float, ptr %t45
-  store float %t46, ptr %o8
-  %t47 = getelementptr { ptr, i32 }, ptr %o11, i32 0, i32 1
-  %t48 = load i32, ptr %t47
-  %t49 = sext i32 %t48 to i64
-  %t50 = getelementptr [16384 x float], ptr %o6, i64 0, i64 %t49
-  %t51 = load float, ptr %t50
-  store float %t51, ptr %o12
-  %t52 = load float, ptr %o8
-  store float %t52, ptr %o9
-  %t53 = load float, ptr %o12
-  store float %t53, ptr %o13
-  %t54 = load float, ptr %o9
-  call void @flow_print_f32(float %t54, i1 zeroext true)
-  %t55 = load float, ptr %o13
-  call void @flow_print_f32(float %t55, i1 zeroext true)
+  ret void
+}
+
+define internal void @task1(i64 %lo, i64 %hi, ptr %frame) {
+entry:
+  %s4 = alloca { ptr, ptr }
+  %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
+  %o11 = getelementptr %Frame, ptr %frame, i32 0, i32 8
+  %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
+  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
+  %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 4
+  %o8 = getelementptr %Frame, ptr %frame, i32 0, i32 6
+  %o12 = getelementptr %Frame, ptr %frame, i32 0, i32 9
+  %t0 = getelementptr { ptr, i32 }, ptr %o7, i32 0, i32 1
+  store i32 0, ptr %t0
+  %t1 = getelementptr { ptr, i32 }, ptr %o11, i32 0, i32 1
+  store i32 16383, ptr %t1
+  %t2 = getelementptr { ptr, ptr }, ptr %o5, i32 0, i32 0
+  store ptr %o3, ptr %t2
+  %t3 = getelementptr { ptr, ptr }, ptr %o5, i32 0, i32 1
+  store ptr %o4, ptr %t3
+  %t5 = getelementptr { ptr, ptr }, ptr %s4, i32 0, i32 0
+  store ptr %o3, ptr %t5
+  %t6 = getelementptr { ptr, ptr }, ptr %s4, i32 0, i32 1
+  store ptr %o4, ptr %t6
+  %t7 = load { ptr, ptr }, ptr %s4
+  %t8 = call [16384 x float] @fn1({ ptr, ptr } %t7)
+  store [16384 x float] %t8, ptr %o6
+  %t9 = getelementptr { ptr, i32 }, ptr %o7, i32 0, i32 0
+  store ptr %o6, ptr %t9
+  %t10 = getelementptr { ptr, i32 }, ptr %o11, i32 0, i32 0
+  store ptr %o6, ptr %t10
+  %t11 = getelementptr { ptr, i32 }, ptr %o7, i32 0, i32 1
+  %t12 = load i32, ptr %t11
+  %t13 = sext i32 %t12 to i64
+  %t14 = getelementptr [16384 x float], ptr %o6, i64 0, i64 %t13
+  %t15 = load float, ptr %t14
+  store float %t15, ptr %o8
+  %t16 = getelementptr { ptr, i32 }, ptr %o11, i32 0, i32 1
+  %t17 = load i32, ptr %t16
+  %t18 = sext i32 %t17 to i64
+  %t19 = getelementptr [16384 x float], ptr %o6, i64 0, i64 %t18
+  %t20 = load float, ptr %t19
+  store float %t20, ptr %o12
+  ret void
+}
+
+define internal void @task2(i64 %lo, i64 %hi, ptr %frame) {
+entry:
+  %s0 = alloca i64
+  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
+  %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
+  store i64 %lo, ptr %s0
+  br label %bb1
+bb1:
+  %t4 = load i64, ptr %s0
+  %t5 = icmp uge i64 %t4, %hi
+  br i1 %t5, label %bb3, label %bb2
+bb2:
+  %t6 = getelementptr [16384 x i32], ptr %o2, i64 0, i64 %t4
+  %t7 = load i32, ptr %t6
+  %t8 = call float @fn3(i32 %t7)
+  %t9 = getelementptr [16384 x float], ptr %o3, i64 0, i64 %t4
+  store float %t8, ptr %t9
+  %t10 = add i64 %t4, 1
+  store i64 %t10, ptr %s0
+  br label %bb1
+bb3:
+  ret void
+}
+
+define internal void @task3(i64 %lo, i64 %hi, ptr %frame) {
+entry:
+  %s0 = alloca i64
+  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
+  %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  store i64 %lo, ptr %s0
+  br label %bb1
+bb1:
+  %t4 = load i64, ptr %s0
+  %t5 = icmp uge i64 %t4, %hi
+  br i1 %t5, label %bb3, label %bb2
+bb2:
+  %t6 = getelementptr [16384 x i32], ptr %o2, i64 0, i64 %t4
+  %t7 = load i32, ptr %t6
+  %t8 = call float @fn4(i32 %t7)
+  %t9 = getelementptr [16384 x float], ptr %o4, i64 0, i64 %t4
+  store float %t8, ptr %t9
+  %t10 = add i64 %t4, 1
+  store i64 %t10, ptr %s0
+  br label %bb1
+bb3:
+  ret void
+}
+
+define internal void @flow_main() {
+entry:
+  %frame = alloca %Frame
+  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
+  %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
+  %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
+  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 4
+  %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
+  %o8 = getelementptr %Frame, ptr %frame, i32 0, i32 6
+  %o9 = getelementptr %Frame, ptr %frame, i32 0, i32 7
+  %o11 = getelementptr %Frame, ptr %frame, i32 0, i32 8
+  %o12 = getelementptr %Frame, ptr %frame, i32 0, i32 9
+  %o13 = getelementptr %Frame, ptr %frame, i32 0, i32 10
+  %h = call ptr @flow_par_begin(i32 4)
+  call void @flow_par_task(ptr %h, i32 0, i32 1, ptr @task0, i64 16384, i32 32769)
+  call void @flow_par_task(ptr %h, i32 1, i32 0, ptr @task1, i64 9, i32 1)
+  call void @flow_par_task(ptr %h, i32 2, i32 1, ptr @task2, i64 16384, i32 16385)
+  call void @flow_par_task(ptr %h, i32 3, i32 1, ptr @task3, i64 16384, i32 16385)
+  call void @flow_par_pin(ptr %h, i32 1)
+  call void @flow_par_dep(ptr %h, i32 2, i32 1)
+  call void @flow_par_dep(ptr %h, i32 3, i32 1)
+  call void @flow_par_dep(ptr %h, i32 0, i32 2)
+  call void @flow_par_dep(ptr %h, i32 0, i32 3)
+  call void @flow_par_launch(ptr %h, ptr %frame)
+  call void @flow_par_wait(ptr %h, ptr @pin1_entries, i32 2)
+  call void @flow_par_check(ptr %h, i64 2)
+  call void @flow_par_run_pinned(ptr %h, i32 1)
+  call void @flow_par_wait(ptr %h, ptr @ckpt0_entries, i32 3)
+  call void @flow_par_check(ptr %h, i64 15)
+  %t0 = load float, ptr %o8
+  store float %t0, ptr %o9
+  call void @flow_par_wait(ptr %h, ptr @ckpt1_entries, i32 3)
+  call void @flow_par_check(ptr %h, i64 17)
+  %t1 = load float, ptr %o12
+  store float %t1, ptr %o13
+  %t2 = load float, ptr %o9
+  call void @flow_print_f32(float %t2, i1 zeroext true)
+  %t3 = load float, ptr %o13
+  call void @flow_print_f32(float %t3, i1 zeroext true)
+  call void @flow_par_finish(ptr %h)
   ret void
 }
 
