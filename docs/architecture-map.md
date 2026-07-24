@@ -5,6 +5,9 @@
 > and runs the §4.5 coherence checklist against the code. High-level — detail lives
 > in the linked component docs. Method + firewall + cross-component bridges:
 > [`architecture/categorical-model.md`](architecture/categorical-model.md).
+> Plain-terms explainer of the deduced-query layer (`loop_plan`, `path_plan`,
+> `tile_plan`, `bounds_proof`, `last_use_plan`):
+> [`architecture/deduced-queries.md`](architecture/deduced-queries.md).
 > **Firewall (ADR-0014):** everything here is Level B — the compiler's own types and
 > passes. Flow-Cat (Level A, `docs/spec/category-ir.md`, frozen) appears only as data.
 

@@ -38,40 +38,61 @@ runner.py stamps them; comparison tables stay one machine, cross-machine numbers
 as explicitly labeled cross-session rows.** **S26b addition (Sapir, standing): every
 verdict is 1t-on-1t or par-on-par — no multithread-flow vs 1t-baseline rows, ever;
 baselines get their best threading too (cpp_mt/rust_mt are quota-aware, flow-rt's own
-cgroup rule).**
+cgroup rule).** **S26c addition (Sapir, standing): perf tables run to 4096 MINIMUM —
+1024-only tables are rookie numbers; every matchup table carries 2048/4096 rows
+(enabler: item 4's ulimit/heap question).**
 
-## The S27 agenda (from the S26 numbers + standing items)
+## The S27 agenda (Sapir, S26 review: **"all three gaps — implement and test every and
+## each one"** + the 4096-minimum directive; then standing items)
 
-1. **BLAS rung 3 — packing + k-panel L2 blocking (the headline):** owns the 62-thread
-   parallel floor — par f32@1024 flat vs S25 (15.9 vs 15.7): the ≥4× 1t kernel gain never
-   reached the parallel cell (memory/startup wall, s26.md reading 3). Packing + k-panels
-   is exactly the rung that addresses this floor.
-2. **vfmadd / fma contraction — DECISION FOR SAPIR:** clang-18 keeps mul/add split under
-   `-ffp-contract=fast` (box disasm: 28 ymm vmulps/vaddps, 0 xmm, zero vfmadd) — ~2× FLOP
-   density left on the table. Emitting `llvm.fma` changes rounding (single- vs
-   double-rounding) = the fmad-class product-vs-conformance split again, this time on the
-   CPU face (S24b settled it GPU-side). Spec/oracle implications first, emitter second.
-3. **Shapes → runner legs** (standing): `benches/shapes/` corpus (fir/attn/conv2d) has
+**The numpy-gap closers (Sapir-ratified, all three land in S27 with measurements;
+gap decomposition: s26b numpy-1t 3.3× / threaded 3.9× f32@1024, numpy-1t ≈ 90% of
+the zen2 AVX2-FMA roofline):**
+
+1. **FMA contraction (~2×):** clang-18 keeps mul/add split under `-ffp-contract=fast`
+   (box disasm: 28 ymm vmulps/vaddps, 0 xmm, zero vfmadd). Working hypothesis
+   (verify in one golden first): since LLVM 14 contraction is gated on per-instruction
+   fast-math flags IN the IR — the driver flag doesn't retroactively add them to
+   hand-written textual IR. Emit `fadd contract`/`fmul contract` (or `llvm.fma`) in
+   the kernel. FMA is single-rounding ⇒ bits change vs the interp oracle ⇒ the
+   fmad-class product-vs-conformance split, CPU face (S24b settled it GPU-side:
+   **product recipe contracts, conformance gate stays bit-exact** — taken as Sapir's
+   ratification via "implement and test every one"; veto = say so). ~2× FLOP density.
+2. **BLAS rung 3 — packing + k-panel L2 blocking (~1.5–2×):** owns BOTH walls — the
+   1t kernel's cache behavior and the 62-thread parallel floor (par f32@1024 flat
+   vs S25, 15.9 vs 15.7 — memory-pinned). Same deduction off the tile record:
+   packing changes data layout, never per-cell values — R1 by the same interleaving
+   argument. Plan doc first (model-first, §6.1).
+3. **Micro-kernel finishing (~1.1–1.3×):** per-element-width tile factors (f64 wants
+   TJ=8 — today's f64 gap is worse for exactly this), k-unroll ×2, software prefetch
+   of the next b-panel, alignment hints. Fold into rung 3's measurement loop.
+4. **Sizes up to 4096 minimum on ALL perf tables (Sapir, standing):** every
+   matchup/conditions/verdict table extends to 2048/4096. Enabler question: the
+   1024-ulimit dance at 4096 (3 × 134 MB allocas at f64) — verify `ulimit -s
+   unlimited` holds on the box or pull llvm heap lowering (item 9) forward as the
+   enabler. Naive 1t baselines at 4096 are ~8 min/run — budget box time (~1–2 h).
+5. **Shapes → runner legs** (standing): `benches/shapes/` corpus (fir/attn/conv2d) has
    oracle pins + local A/B only; box runner legs so attention/FIR carry standing numbers.
-4. **cuda consumes `tile_plan`** (+ streams consume `path_plan`) — S25/S24 queries, standing.
-5. **conv2d derived-var walker:** `k/3`,`k%3` in the fold body → non-affine in raw k →
+6. **cuda consumes `tile_plan`** (+ streams consume `path_plan`) — S25/S24 queries, standing.
+7. **conv2d derived-var walker:** `k/3`,`k%3` in the fold body → non-affine in raw k →
    refused today. Extending the walker over derived vars tiles the conv class.
    Gate: measured demand.
-6. **fn-strip wiring — the Call wall (Sapir, S26 review; gates item 7):** the mechanism EXISTS
+8. **fn-strip wiring — the Call wall (Sapir, S26 review; gates item 9):** the mechanism EXISTS
    (`flow-rewrite/src/inline.rs` — "functions are a human modularity construct; the optimizer's
    unit is the flattened primitive dataflow graph", Sapir's rule verbatim, tested) but is PARKED
    (not in default `rewrite()` — region-pipeline pre-pass only) and CAPPED (`INLINE_MAX_BODY=64`).
    So a user `fn` call stays an opaque wall in production today (`tile_trap_free` refuses map
    bodies with Calls). Wire `PassId::Inline` into the default pipeline (or ahead of
    tile_plan/path_plan), pin call-in-map-body stripping, revisit the cap. 1280-run gate holds.
-7. **loop→map lifting — the matmul4 gap (Sapir call):** `examples/matmul4.flow`
+9. **loop→map lifting — the matmul4 gap (Sapir call):** `examples/matmul4.flow`
    (mut/Update/cross-fn Call) does NOT tile — verified byte-identical emission, zero
    tile-nest markers; its cap-form twin `benches/matmul/matmul4_cap.flow` tiles
    automatically. The detector is graph-shape-based, not math-based; lifting the loop
    form to a map is a rewrite-level equivalence proof (canonical-loop SCC: carried =
    counter+output only, disjoint affine writes, no cross-iteration reads) — future rung
    candidate, Sapir's "write it naively, it optimizes" unlock.
-8. **P2 standing:** llvm heap lowering (the 1024 ulimit dance + N≥2048 CPU legs), `time`
+10. **P2 standing:** llvm heap lowering (the 1024 ulimit dance + N≥2048 CPU legs —
+   candidate enabler for item 4), `time`
    builtin (Sapir), P7 Verilog, ADR-0029/0031 `flow-as-implemented` rows ("on ledger
    close"). Region emission v2 (S17 directive; plan exists).
 
