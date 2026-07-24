@@ -18,7 +18,13 @@ fn fib(n: i32) -> i32 {
     mut i: i32 <- 0;
     loop {
         (i < n) -> {
-            -true-> { a + b -> t; b -> a; t -> b; i + 1 -> i; -> loop; }
+            -true-> {
+              a + b -> t;
+              b -> a;
+              t -> b;
+              i + 1 -> i;
+              -> loop;
+            }
             -false-> a -> out;
         }
     }
