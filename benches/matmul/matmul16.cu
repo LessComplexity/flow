@@ -58,308 +58,184 @@ static void trap_init() {
     }
 }
 
-struct FlowProd_floatp_floatp_int32_t_int32_t {
+struct FlowProd_floatp_floatp_int32_t_int32_t_float_int32_t {
     float* f0;
     float* f1;
     int32_t f2;
     int32_t f3;
+    float f4;
+    int32_t f5;
 };
-static_assert(sizeof(FlowProd_floatp_floatp_int32_t_int32_t) == 24, "FlowProd_floatp_floatp_int32_t_int32_t: abi_sizeof drift (plan-smart-arenas)");
-struct FlowProd_floatp_floatp {
+static_assert(sizeof(FlowProd_floatp_floatp_int32_t_int32_t_float_int32_t) == 32, "FlowProd_floatp_floatp_int32_t_int32_t_float_int32_t: abi_sizeof drift (plan-smart-arenas)");
+struct FlowProd_floatp_floatp_int32_t {
     float* f0;
     float* f1;
+    int32_t f2;
 };
-static_assert(sizeof(FlowProd_floatp_floatp) == 16, "FlowProd_floatp_floatp: abi_sizeof drift (plan-smart-arenas)");
-struct FlowProd_int32_t_float {
-    int32_t f0;
-    float f1;
+static_assert(sizeof(FlowProd_floatp_floatp_int32_t) == 24, "FlowProd_floatp_floatp_int32_t: abi_sizeof drift (plan-smart-arenas)");
+struct FlowProd_floatp_floatp_int32_tp {
+    float* f0;
+    float* f1;
+    int32_t* f2;
 };
-static_assert(sizeof(FlowProd_int32_t_float) == 8, "FlowProd_int32_t_float: abi_sizeof drift (plan-smart-arenas)");
-struct FlowProd_int32_t_int32_t {
-    int32_t f0;
-    int32_t f1;
-};
-static_assert(sizeof(FlowProd_int32_t_int32_t) == 8, "FlowProd_int32_t_int32_t: abi_sizeof drift (plan-smart-arenas)");
+static_assert(sizeof(FlowProd_floatp_floatp_int32_tp) == 24, "FlowProd_floatp_floatp_int32_tp: abi_sizeof drift (plan-smart-arenas)");
 struct FlowProd_floatp_int32_t {
     float* f0;
     int32_t f1;
 };
 static_assert(sizeof(FlowProd_floatp_int32_t) == 16, "FlowProd_floatp_int32_t: abi_sizeof drift (plan-smart-arenas)");
+struct FlowProd_int32_t_int32_t {
+    int32_t f0;
+    int32_t f1;
+};
+static_assert(sizeof(FlowProd_int32_t_int32_t) == 8, "FlowProd_int32_t_int32_t: abi_sizeof drift (plan-smart-arenas)");
 struct FlowProd_float_float {
     float f0;
     float f1;
 };
 static_assert(sizeof(FlowProd_float_float) == 8, "FlowProd_float_float: abi_sizeof drift (plan-smart-arenas)");
-struct FlowProd_FlowProd_int32_t_float_bool {
-    FlowProd_int32_t_float f0;
-    bool f1;
-};
-static_assert(sizeof(FlowProd_FlowProd_int32_t_float_bool) == 12, "FlowProd_FlowProd_int32_t_float_bool: abi_sizeof drift (plan-smart-arenas)");
-struct FlowProd_float_bool {
-    float f0;
-    bool f1;
-};
-static_assert(sizeof(FlowProd_float_bool) == 8, "FlowProd_float_bool: abi_sizeof drift (plan-smart-arenas)");
-struct FlowProd_floatp_int32_t_float {
+struct FlowProd_floatp_floatp_int32_t_int32_t_float_int32_tp {
     float* f0;
-    int32_t f1;
-    float f2;
+    float* f1;
+    int32_t f2;
+    int32_t f3;
+    float f4;
+    int32_t* f5;
 };
-static_assert(sizeof(FlowProd_floatp_int32_t_float) == 16, "FlowProd_floatp_int32_t_float: abi_sizeof drift (plan-smart-arenas)");
-struct FlowProd_FlowProd_floatp_int32_t_bool {
-    FlowProd_floatp_int32_t f0;
-    bool f1;
-};
-static_assert(sizeof(FlowProd_FlowProd_floatp_int32_t_bool) == 24, "FlowProd_FlowProd_floatp_int32_t_bool: abi_sizeof drift (plan-smart-arenas)");
-struct FlowProd_floatp_bool {
-    float* f0;
-    bool f1;
-};
-static_assert(sizeof(FlowProd_floatp_bool) == 16, "FlowProd_floatp_bool: abi_sizeof drift (plan-smart-arenas)");
+static_assert(sizeof(FlowProd_floatp_floatp_int32_t_int32_t_float_int32_tp) == 40, "FlowProd_floatp_floatp_int32_t_int32_t_float_int32_tp: abi_sizeof drift (plan-smart-arenas)");
 
-static __host__ __device__ float fn3(int32_t in);
-static __host__ __device__ float fn4(int32_t in);
+static __host__ __device__ float fn1(int32_t in);
+static __host__ __device__ float fn2(int32_t in);
+static __device__ float d_fn3(FlowProd_floatp_floatp_int32_t_int32_t_float_int32_t in);
+static __device__ float d_fn4(FlowProd_floatp_floatp_int32_t in);
 
-static __host__ __device__ float fn3(int32_t in) {
+static __host__ __device__ float fn1(int32_t in) {
   float o1;
   o1 = (float)(((int32_t)((uint32_t)(((int32_t)((uint32_t)((int32_t)((uint32_t)in * (uint32_t)7)) + (uint32_t)13)) % 101) - (uint32_t)50)));
   return o1;
 }
-static __host__ __device__ float fn4(int32_t in) {
+static __host__ __device__ float fn2(int32_t in) {
   float o1;
   o1 = (float)(((int32_t)((uint32_t)(((int32_t)((uint32_t)((int32_t)((uint32_t)in * (uint32_t)7)) + (uint32_t)57)) % 101) - (uint32_t)50)));
   return o1;
 }
-
-__global__ void k0_0(float* result, float* arr, int64_t idx, unsigned int* trap) {
-  if (idx < 0 || idx >= (int64_t)256) { *trap = 2u; return; }
-  *result = arr[(unsigned long long)idx];
+static __device__ float d_fn3(FlowProd_floatp_floatp_int32_t_int32_t_float_int32_t in) {
+  float o1;
+  float* o2;
+  float* o3;
+  int32_t o7;
+  o2 = in.f0;
+  o3 = in.f1;
+  o7 = in.f5;
+  int64_t t0 = (int64_t)((int32_t)((uint32_t)((int32_t)((uint32_t)in.f2 * (uint32_t)16)) + (uint32_t)o7));
+  int64_t t1 = (int64_t)((int32_t)((uint32_t)((int32_t)((uint32_t)o7 * (uint32_t)16)) + (uint32_t)in.f3));
+  o1 = in.f4 + ((o2[(unsigned long long)t0]) * (o3[(unsigned long long)t1]));
+  return o1;
 }
-__global__ void k1_0(float* out, float* src, int64_t idx, float val, unsigned int* trap) {
-  if (idx < 0 || idx >= (int64_t)256) { *trap = 2u; return; }
-  unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < 256ULL) {
-    out[i] = ((int64_t)i == idx) ? val : src[i];
+static __device__ float d_fn4(FlowProd_floatp_floatp_int32_t in) {
+  float o1;
+  float* o2;
+  float* o3;
+  int32_t o4;
+  int32_t o5[16];
+  FlowProd_floatp_floatp_int32_t_int32_t_float_int32_tp o10;
+  o2 = in.f0;
+  o3 = in.f1;
+  o4 = in.f2;
+  o10.f4 = 0e0f;
+  for (unsigned long long t0 = 0; t0 < 16ULL; t0++) {
+    o5[t0] = (int32_t)t0;
   }
+  o10.f0 = o2;
+  o10.f1 = o3;
+  o10.f5 = o5;
+  o10.f2 = (o4 / 16);
+  o10.f3 = (o4 % 16);
+  float t1 = o10.f4;
+  FlowProd_floatp_floatp_int32_t_int32_t_float_int32_t pair;
+  pair.f0 = o10.f0;
+  pair.f1 = o10.f1;
+  pair.f2 = o10.f2;
+  pair.f3 = o10.f3;
+  for (unsigned long long t2 = 0; t2 < 16ULL; t2++) {
+    pair.f4 = t1;
+    pair.f5 = o5[t2];
+    t1 = d_fn3(pair);
+  }
+  o1 = t1;
+  return o1;
 }
-__global__ void k2_0(int32_t* out, long long n) {
+
+__global__ void k0_0(int32_t* out, long long n) {
   long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) out[i] = (int32_t)i;
 }
-__global__ void k2_1(float* out, int32_t* in) {
+__global__ void k0_2(float* out, int32_t* in) {
   unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
   if (i < 256ULL) {
-    out[i] = fn3(in[i]);
+    out[i] = fn1(in[i]);
   }
 }
-__global__ void k2_2(float* out, int32_t* in) {
+__global__ void k0_3(float* out, int32_t* in) {
   unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
   if (i < 256ULL) {
-    out[i] = fn4(in[i]);
+    out[i] = fn2(in[i]);
   }
 }
-__global__ void k2_3(float* result, float* arr, int64_t idx) {
+__global__ void k0_4(float* out, int32_t* in, float* cap0, float* cap1) {
+  unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < 256ULL) {
+    FlowProd_floatp_floatp_int32_t pair;
+    pair.f0 = cap0;
+    pair.f1 = cap1;
+    pair.f2 = in[i];
+    out[i] = d_fn4(pair);
+  }
+}
+__global__ void k0_5(float* result, float* arr, int64_t idx) {
   *result = arr[(unsigned long long)idx];
 }
 
-static float fn0(FlowProd_floatp_floatp_int32_t_int32_t in);
-static float* fn1(FlowProd_floatp_floatp in);
 static void flow_main();
-
-static float fn0(FlowProd_floatp_floatp_int32_t_int32_t in) {
-  float o1;
-  float* o2 = nullptr;
-  float* o3 = nullptr;
-  int32_t o5;
-  FlowProd_int32_t_float o6;
-  FlowProd_int32_t_float o7;
-  int32_t o8;
-  float o9;
-  FlowProd_int32_t_int32_t o10;
-  bool o11;
-  int32_t o13;
-  FlowProd_int32_t_int32_t o14;
-  int32_t o15;
-  FlowProd_floatp_int32_t o16;
-  float o17;
-  FlowProd_int32_t_int32_t o18;
-  int32_t o19;
-  FlowProd_int32_t_int32_t o20;
-  int32_t o21;
-  FlowProd_floatp_int32_t o22;
-  float o23;
-  FlowProd_float_float o24;
-  float o25;
-  FlowProd_float_float o26;
-  float o27;
-  FlowProd_int32_t_int32_t o28;
-  int32_t o29;
-  FlowProd_int32_t_float o30;
-  FlowProd_FlowProd_int32_t_float_bool o31;
-  FlowProd_float_bool o32;
-  float* t0 = nullptr;
-  float* t1 = nullptr;
-  o2 = in.f0;
-  o3 = in.f1;
-  o5 = in.f3;
-  o6.f0 = 0;
-  o6.f1 = 0e0f;
-  o13 = (int32_t)((uint32_t)in.f2 * (uint32_t)16);
-  o7 = o6;
-  while (true) {
-    o10.f1 = 16;
-    o8 = o7.f0;
-    o9 = o7.f1;
-    o10.f0 = o8;
-    o32.f0 = o9;
-    o11 = o10.f0 < o10.f1;
-    o32.f1 = o11;
-    if (!o32.f1) { break; }
-    o18.f1 = 16;
-    o28.f1 = 1;
-    o16.f0 = o2;
-    o22.f0 = o3;
-    o20.f1 = o5;
-    o14.f0 = o13;
-    o14.f1 = o8;
-    o18.f0 = o8;
-    o28.f0 = o8;
-    o26.f0 = o9;
-    o15 = (int32_t)((uint32_t)o14.f0 + (uint32_t)o14.f1);
-    o19 = (int32_t)((uint32_t)o18.f0 * (uint32_t)o18.f1);
-    o29 = (int32_t)((uint32_t)o28.f0 + (uint32_t)o28.f1);
-    o31.f1 = o11;
-    o16.f1 = o15;
-    o20.f0 = o19;
-    o30.f0 = o29;
-    cu_check(cudaMalloc((void**)&t0, sizeof(float) * 1ULL), "cudaMalloc(t0)");
-    k0_0<<<1, 1>>>(t0, o2, (int64_t)o15, d_trap);
-    trap_check_after_launch();
-    cu_check(cudaMemcpy(&o17, t0, sizeof(float), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
-    o21 = (int32_t)((uint32_t)o20.f0 + (uint32_t)o20.f1);
-    o24.f0 = o17;
-    o22.f1 = o21;
-    cu_check(cudaMalloc((void**)&t1, sizeof(float) * 1ULL), "cudaMalloc(t1)");
-    k0_0<<<1, 1>>>(t1, o3, (int64_t)o21, d_trap);
-    trap_check_after_launch();
-    cu_check(cudaMemcpy(&o23, t1, sizeof(float), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
-    o24.f1 = o23;
-    o25 = o24.f0 * o24.f1;
-    o26.f1 = o25;
-    o27 = o26.f0 + o26.f1;
-    o30.f1 = o27;
-    o31.f0 = o30;
-    o7 = o31.f0;
-  }
-  o1 = o32.f0;
-  cu_check(cudaFree(t0), "cudaFree(t0)");
-  cu_check(cudaFree(t1), "cudaFree(t1)");
-  return o1;
-}
-
-static float* fn1(FlowProd_floatp_floatp in) {
-  float* o1 = nullptr;
-  float* o2 = nullptr;
-  float* o3 = nullptr;
-  FlowProd_floatp_int32_t o4;
-  FlowProd_floatp_int32_t o5;
-  float* o6 = nullptr;
-  int32_t o7;
-  FlowProd_int32_t_int32_t o8;
-  bool o9;
-  FlowProd_int32_t_int32_t o10;
-  int32_t o11;
-  FlowProd_int32_t_int32_t o12;
-  int32_t o13;
-  FlowProd_floatp_floatp_int32_t_int32_t o14;
-  float o15;
-  FlowProd_floatp_int32_t_float o16;
-  float* o17 = nullptr;
-  FlowProd_int32_t_int32_t o18;
-  int32_t o19;
-  FlowProd_floatp_int32_t o20;
-  FlowProd_FlowProd_floatp_int32_t_bool o21;
-  FlowProd_floatp_bool o22;
-  o2 = in.f0;
-  o3 = in.f1;
-  o4.f1 = 0;
-  o4.f0 = o3;
-  o5 = o4;
-  while (true) {
-    o8.f1 = 256;
-    o6 = o5.f0;
-    o7 = o5.f1;
-    o22.f0 = o6;
-    o8.f0 = o7;
-    o9 = o8.f0 < o8.f1;
-    o22.f1 = o9;
-    if (!o22.f1) { break; }
-    o10.f1 = 16;
-    o12.f1 = 16;
-    o18.f1 = 1;
-    o14.f0 = o2;
-    o14.f1 = o3;
-    o16.f0 = o6;
-    o10.f0 = o7;
-    o12.f0 = o7;
-    o16.f1 = o7;
-    o18.f0 = o7;
-    o11 = o10.f0 / o10.f1;
-    o13 = o12.f0 % o12.f1;
-    o19 = (int32_t)((uint32_t)o18.f0 + (uint32_t)o18.f1);
-    o21.f1 = o9;
-    o14.f2 = o11;
-    o14.f3 = o13;
-    o20.f1 = o19;
-    o15 = fn0(o14);
-    o16.f2 = o15;
-    cu_check(cudaMalloc((void**)&o17, sizeof(float) * 256ULL), "cudaMalloc(o17)");
-    k1_0<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o17, o6, (int64_t)o7, o15, d_trap);
-    trap_check_after_launch();
-    o20.f0 = o17;
-    o21.f0 = o20;
-    o5 = o21.f0;
-  }
-  o1 = o22.f0;
-  if (o17 != o1) {
-    cu_check(cudaFree(o17), "cudaFree(o17)");
-  }
-  return o1;
-}
 
 static void flow_main() {
   int32_t* o2 = nullptr;
-  float* o3 = nullptr;
+  int32_t* o3 = nullptr;
   float* o4 = nullptr;
-  FlowProd_floatp_floatp o5;
-  float* o6 = nullptr;
-  float o8;
+  float* o5 = nullptr;
+  FlowProd_floatp_floatp_int32_tp o6;
+  float* o7 = nullptr;
   float o9;
+  float o11;
   float o12;
-  float o13;
+  float o14;
   char* arena0 = nullptr;
   float* t0 = nullptr;
   float* t1 = nullptr;
-  cu_check(cudaMalloc((void**)&arena0, 3584ULL), "cudaMalloc(arena0)");
+  cu_check(cudaMalloc((void**)&arena0, 5632ULL), "cudaMalloc(arena0)");
   o2 = (int32_t*)(arena0 + 0ULL);
-  k2_0<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o2, 256);
-  o3 = (float*)(arena0 + 1024ULL);
-  k2_1<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o3, o2);
+  k0_0<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o2, 256);
+  o3 = (int32_t*)(arena0 + 1024ULL);
+  k0_0<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o3, 256);
   o4 = (float*)(arena0 + 2048ULL);
-  k2_2<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o4, o2);
-  o5.f0 = o3;
-  o5.f1 = o4;
-  o6 = fn1(o5);
-  t0 = (float*)(arena0 + 3072ULL);
-  k2_3<<<1, 1>>>(t0, o6, (int64_t)0);
-  cu_check(cudaMemcpy(&o8, t0, sizeof(float), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
-  t1 = (float*)(arena0 + 3328ULL);
-  k2_3<<<1, 1>>>(t1, o6, (int64_t)255);
-  cu_check(cudaMemcpy(&o12, t1, sizeof(float), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
-  o9 = o8;
-  o13 = o12;
-  flow_print_f32(o9, true);
-  flow_print_f32(o13, true);
+  k0_2<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o4, o2);
+  o5 = (float*)(arena0 + 3072ULL);
+  k0_3<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o5, o2);
+  o6.f2 = o3;
+  o6.f0 = o4;
+  o6.f1 = o5;
+  o7 = (float*)(arena0 + 4096ULL);
+  k0_4<<<(unsigned int)((256ULL + 255ULL) / 256ULL), 256>>>(o7, o3, o4, o5);
+  t0 = (float*)(arena0 + 5120ULL);
+  k0_5<<<1, 1>>>(t0, o7, (int64_t)0);
+  cu_check(cudaMemcpy(&o9, t0, sizeof(float), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
+  t1 = (float*)(arena0 + 5376ULL);
+  k0_5<<<1, 1>>>(t1, o7, (int64_t)255);
+  cu_check(cudaMemcpy(&o11, t1, sizeof(float), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
+  o12 = o9;
+  o14 = o11;
+  flow_print_f32(o12, true);
+  flow_print_f32(o14, true);
   cu_check(cudaFree(arena0), "cudaFree(arena0)");
   return;
 }

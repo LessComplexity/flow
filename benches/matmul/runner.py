@@ -23,6 +23,11 @@ def _probe_cpu():
         m = re.search(r"model name\s*:\s*(.+)", open("/proc/cpuinfo").read())
         return m.group(1).strip() if m else "unknown"
     except Exception:
+        pass
+    try:  # macOS (S27 local runs)
+        return subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                              capture_output=True, text=True, timeout=10).stdout.strip() or "unknown"
+    except Exception:
         return "unknown"
 
 def _probe_quota():
@@ -42,6 +47,12 @@ def _probe_ram_gb():
     try:
         m = re.search(r"MemTotal:\s*(\d+) kB", open("/proc/meminfo").read())
         return f"{int(m.group(1)) / 2**20:.0f}" if m else "unknown"
+    except Exception:
+        pass
+    try:  # macOS (S27 local runs)
+        b = subprocess.run(["sysctl", "-n", "hw.memsize"],
+                           capture_output=True, text=True, timeout=10).stdout.strip()
+        return f"{int(b) / 2**30:.0f}"
     except Exception:
         return "unknown"
 
@@ -67,6 +78,13 @@ def run(cmd, timeout=None, cap=None, env=None):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
 
 ONLY = set(sys.argv[1:])  # optional leg filter (S26b trimmed box runs)
+
+# S27: optional size ceiling for local runs (macOS stack caps the llvm legs;
+# naive 4096 baselines cost ~8 min each). Unset = every leg's full size list.
+MAX_N = int(os.environ.get("FLOW_BENCH_MAX_N", "0")) or None
+
+def clamp(sizes):
+    return tuple(n for n in sizes if MAX_N is None or (n if isinstance(n, int) else n[0]) <= MAX_N)
 
 def wanted(leg):
     return not ONLY or leg in ONLY
@@ -116,14 +134,22 @@ for leg, fmt, sizes, cap_at, cap_ms in (
     # S24: the plain legs run the parallel orchestrator (FLOW_PAR unset = all
     # cores); the -1t rows pin the same binaries to one thread at the
     # comparison sizes — the single-thread baseline in the same table.
-    ("flow-llvm-cap-f64", "./mm_ll_cap_{}", (16, 64, 128, 256, 512, 1024), 256, 60_000),
-    ("flow-llvm-cap-f32", "./mm_ll_cap_f32_{}", (16, 64, 128, 256, 512, 1024), 256, 60_000),
-    ("flow-llvm-cap-f64-1t", "FLOW_PAR=1 ./mm_ll_cap_{}", (512, 1024), 1024, 3_600_000),
-    ("flow-llvm-cap-f32-1t", "FLOW_PAR=1 ./mm_ll_cap_f32_{}", (512, 1024), 1024, 3_600_000),
+    # S27: sizes run to 4096 (the S26c 4096-minimum directive; the ulimit
+    # wrapper below is what makes the 2048/4096 alloca stacks viable), and the
+    # -fma legs are the product face (contract flags in the .ll — outputs are
+    # numerically-equal-not-byte-equal to the conformance legs by design).
+    ("flow-llvm-cap-f64", "./mm_ll_cap_{}", (16, 64, 128, 256, 512, 1024, 2048, 4096), 256, 120_000),
+    ("flow-llvm-cap-f32", "./mm_ll_cap_f32_{}", (16, 64, 128, 256, 512, 1024, 2048, 4096), 256, 120_000),
+    ("flow-llvm-cap-f64-1t", "FLOW_PAR=1 ./mm_ll_cap_{}", (512, 1024, 2048, 4096), 4096, 3_600_000),
+    ("flow-llvm-cap-f32-1t", "FLOW_PAR=1 ./mm_ll_cap_f32_{}", (512, 1024, 2048, 4096), 4096, 3_600_000),
+    ("flow-llvm-cap-f64-fma", "./mm_ll_fma_cap_{}", (256, 512, 1024, 2048, 4096), 256, 120_000),
+    ("flow-llvm-cap-f32-fma", "./mm_ll_fma_cap_f32_{}", (256, 512, 1024, 2048, 4096), 256, 120_000),
+    ("flow-llvm-cap-f64-fma-1t", "FLOW_PAR=1 ./mm_ll_fma_cap_{}", (512, 1024, 2048, 4096), 4096, 3_600_000),
+    ("flow-llvm-cap-f32-fma-1t", "FLOW_PAR=1 ./mm_ll_fma_cap_f32_{}", (512, 1024, 2048, 4096), 4096, 3_600_000),
 ):
     if not wanted(leg):
         continue
-    for n in sizes:
+    for n in clamp(sizes):
         try:
             best, out = float("inf"), ""
             cmd = [fmt.format(n)]
@@ -165,7 +191,7 @@ for leg, fmt in (
 ):
     if not wanted(leg):
         continue
-    for n in (16, 64, 128, 256, 512, 1024, 2048, 4096):
+    for n in clamp((16, 64, 128, 256, 512, 1024, 2048, 4096)):
         try:
             best, note = float("inf"), ""
             for _ in range(3):
@@ -195,13 +221,16 @@ for leg, fmt in (
             break
 
 # --- flow-llvm-cap-compute-{f64,f32} (flow_main timer, min of 3) ---
+# S27: -fma-compute twins are the product face; sizes run to 4096 (S26c).
 for leg, fmt in (
     ("flow-llvm-cap-compute-f64", "./mm_ll_perf_cap_{}"),
     ("flow-llvm-cap-compute-f32", "./mm_ll_perf_cap_f32_{}"),
+    ("flow-llvm-cap-fma-compute-f64", "./mm_ll_fma_perf_cap_{}"),
+    ("flow-llvm-cap-fma-compute-f32", "./mm_ll_fma_perf_cap_f32_{}"),
 ):
     if not wanted(leg):
         continue
-    for n in (16, 64, 128, 256, 512, 1024):
+    for n in (16, 64, 128, 256, 512, 1024, 2048, 4096):
         try:
             best, note = float("inf"), ""
             cmd = [
@@ -241,22 +270,24 @@ SCHED = {
     "hip-naive":  [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
     "cublas":     [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
     "numpy":      [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
-    "rust-naive": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
-    "cpp-naive-f32": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
-    "cpp-naive-f64": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
-    "chapel-f32": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
-    "chapel-f64": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
+    # S27/S26c: 2048/4096 on every CPU baseline. The 1t naive legs run ONE rep
+    # at 4096 (~8 min each — min-of-1, labeled); par legs stay multi-rep.
+    "rust-naive": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2), (2048, 1), (4096, 1)],
+    "cpp-naive-f32": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2), (2048, 1), (4096, 1)],
+    "cpp-naive-f64": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2), (2048, 1), (4096, 1)],
+    "chapel-f32": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2), (2048, 2), (4096, 1)],
+    "chapel-f64": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2), (2048, 2), (4096, 1)],
     "chapel-gpu-f32": [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
     "chapel-gpu-f64": [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
     # S26b framing directive (Sapir): par-on-par + 1t-on-1t only. The mt legs
     # are the quota-aware threaded twins (cpp_mt/rust_mt); the -1t legs pin
     # the threaded runtimes to one worker via env (same binary, same recipe).
-    "cpp-mt-f32": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
-    "cpp-mt-f64": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
-    "rust-mt":    [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
+    "cpp-mt-f32": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2), (2048, 3), (4096, 2)],
+    "cpp-mt-f64": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2), (2048, 3), (4096, 2)],
+    "rust-mt":    [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2), (2048, 3), (4096, 2)],
     "numpy-1t":   [(64, 200), (128, 200), (256, 100), (512, 50), (1024, 20), (2048, 5), (4096, 3)],
-    "chapel-1t-f32": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
-    "chapel-1t-f64": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2)],
+    "chapel-1t-f32": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2), (2048, 1), (4096, 1)],
+    "chapel-1t-f64": [(64, 50), (128, 20), (256, 10), (512, 5), (1024, 2), (2048, 1), (4096, 1)],
 }
 BINS = {"naive-cuda": "./naive_cuda", "naive-cuda-f64": "./naive_cuda",
         "hip-naive": "./hip_naive", "cublas": "./cublas_gemm",
@@ -275,7 +306,7 @@ ENV = {"numpy-1t": {"OPENBLAS_NUM_THREADS": "1"},
 for leg, sizes in SCHED.items():
     if not wanted(leg):
         continue
-    for n, iters in sizes:
+    for n, iters in clamp(sizes):
         if leg.startswith("chapel-"):
             # Chapel config consts take --name=value (no positional args).
             cmd = [BINS[leg], f"--n={n}", f"--iters={iters}", f"--width={leg.split(chr(45))[-1]}"]

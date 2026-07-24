@@ -10,11 +10,35 @@ cd "$(dirname "$0")/../.."
 
 cargo build -q --release -p flow-backend-llvm -p flow-backend-cuda --examples
 
+# S27: llvm artifacts at 2048/4096 (the S26c 4096-minimum directive) — first
+# generation; afterwards the keyed loop below maintains them like every stem.
+for n in 2048 4096; do
+  for v in cap cap_f32; do
+    src="benches/matmul/matmul${n}_${v}.flow"
+    stem="${src%.flow}"
+    if [ -f "$src" ] && [ ! -f "$stem.ll" ]; then
+      cargo run -q --release -p flow-backend-llvm --example emit -- "$src" - --rewrite > "$stem.ll"
+      cargo run -q --release -p flow-backend-llvm --example emit -- "$src" - --rewrite --perf > "${stem}_perf.ll"
+    fi
+  done
+done
+
 for f in benches/matmul/*.flow; do
   stem="${f%.flow}"
   if [ -f "$stem.ll" ]; then
     cargo run -q --release -p flow-backend-llvm --example emit -- "$f" --rewrite
   fi
+  # S27: product-face FMA twins (--contract) for every cap stem with an .ll —
+  # the conformance artifacts above stay contraction-free (the differential
+  # face); _fma.ll/_fma_perf.ll are the bench/product face (plan-s27).
+  case "$stem" in
+    *_cap|*_cap_f32)
+      if [ -f "$stem.ll" ]; then
+        cargo run -q --release -p flow-backend-llvm --example emit -- "$f" - --rewrite --contract > "${stem}_fma.ll"
+        cargo run -q --release -p flow-backend-llvm --example emit -- "$f" - --rewrite --contract --perf > "${stem}_fma_perf.ll"
+      fi
+      ;;
+  esac
   if [ -f "$stem.ll" ] && [ -f "${stem}_perf.cu" ]; then
     cargo run -q --release -p flow-backend-llvm --example emit -- "$f" --rewrite --perf
   fi

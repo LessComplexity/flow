@@ -46,6 +46,16 @@ if command -v clang >/dev/null; then
         clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}_perf.ll" libflow_rt.a -o "mm_ll_perf_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_perf_${v}_$n" &
         pids+=($!)
       fi
+      # S27 product-face FMA twins (contract flags live IN the .ll — same
+      # clang flags; the conformance builds above stay contraction-free).
+      if [ -f "matmul${n}_${v}_fma.ll" ] && [ ! -f "mm_ll_fma_${v}_$n" ]; then
+        clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}_fma.ll" libflow_rt.a -o "mm_ll_fma_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_fma_${v}_$n" &
+        pids+=($!)
+      fi
+      if [ -f "matmul${n}_${v}_fma_perf.ll" ] && [ ! -f "mm_ll_fma_perf_${v}_$n" ]; then
+        clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}_fma_perf.ll" libflow_rt.a -o "mm_ll_fma_perf_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_fma_perf_${v}_$n" &
+        pids+=($!)
+      fi
     done
   done
   rc=0

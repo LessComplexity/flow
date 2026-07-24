@@ -1,0 +1,101 @@
+# utc: 2026-07-24T10:49:33+00:00
+# cpu: Apple M4 Pro
+# threads: 14
+# core_quota: unknown
+# ram_gb: 48
+# clang: Homebrew clang version 22.1.8
+leg,N,ms,gflops,note
+flow-llvm,4,7.7650,0.00,out=-275/3748
+flow-llvm,16,7.1982,0.00,out=1815/6944
+flow-llvm,32,8.2609,0.01,out=-1219/4392
+flow-llvm,64,8.9204,0.06,out=1047/2107
+flow-llvm,128,8.1548,0.51,out=-7312/-933
+flow-llvm-cap-f64,256,8.5671,3.92,out=-3694/10946
+flow-llvm-cap-f64,512,11.4094,23.53,out=-22592/-38634
+flow-llvm-cap-f64,1024,20.0698,107.00,out=11107/91690
+flow-llvm-cap-f32,256,9.1553,3.67,out=-3694/10946
+flow-llvm-cap-f32,512,9.3980,28.56,out=-22592/-38634
+flow-llvm-cap-f32,1024,12.4880,171.96,out=11107/91690
+flow-llvm-cap-f64-1t,512,16.0498,16.73,out=-22592/-38634
+flow-llvm-cap-f64-1t,1024,72.0468,29.81,out=11107/91690
+flow-llvm-cap-f32-1t,512,8.7147,30.80,out=-22592/-38634
+flow-llvm-cap-f32-1t,1024,38.6534,55.56,out=11107/91690
+flow-llvm-cap-f64-fma,256,8.5719,3.91,out=-3694/10946
+flow-llvm-cap-f64-fma,512,10.5500,25.44,out=-22592/-38634
+flow-llvm-cap-f64-fma,1024,18.1474,118.34,out=11107/91690
+flow-llvm-cap-f32-fma,256,5.5299,6.07,out=-3694/10946
+flow-llvm-cap-f32-fma,512,8.8786,30.23,out=-22592/-38634
+flow-llvm-cap-f32-fma,1024,11.7228,183.19,out=11107/91690
+flow-llvm-cap-f64-fma-1t,512,12.7165,21.11,out=-22592/-38634
+flow-llvm-cap-f64-fma-1t,1024,44.8118,47.92,out=11107/91690
+flow-llvm-cap-f32-fma-1t,512,7.0740,37.95,out=-22592/-38634
+flow-llvm-cap-f32-fma-1t,1024,24.6913,86.97,out=11107/91690
+flow-llvm-cap-compute-f64,256,0.7781,43.12,out=-3694/10946 total:0.7781
+flow-llvm-cap-compute-f64,512,3.1939,84.05,out=-22592/-38634 total:3.1939
+flow-llvm-cap-compute-f64,1024,12.6725,169.46,out=11107/91690 total:12.6725
+flow-llvm-cap-compute-f32,256,0.5880,57.07,out=-3694/10946 total:0.6045
+flow-llvm-cap-compute-f32,512,2.1412,125.37,out=-22592/-38634 total:2.1412
+flow-llvm-cap-compute-f32,1024,7.5525,284.34,out=11107/91690 total:7.5525
+flow-llvm-cap-fma-compute-f64,256,0.7826,42.88,out=-3694/10946 total:0.7826
+flow-llvm-cap-fma-compute-f64,512,3.0810,87.13,out=-22592/-38634 total:3.0810
+flow-llvm-cap-fma-compute-f64,1024,10.8402,198.10,out=11107/91690 total:10.8402
+flow-llvm-cap-fma-compute-f32,256,0.4344,77.24,out=-3694/10946 total:0.4344
+flow-llvm-cap-fma-compute-f32,512,1.8625,144.13,out=-22592/-38634 total:1.8625
+flow-llvm-cap-fma-compute-f32,1024,6.7544,317.94,out=11107/91690 total:6.7544
+numpy,64,0.0017,308.40,1047.0 clast=2107.0
+numpy,128,0.0047,892.41,-7312.0 clast=-933.0
+numpy,256,0.0212,1582.76,-3694.0 clast=10946.0
+numpy,512,0.0987,2719.71,-22592.0 clast=-38634.0
+numpy,1024,0.6647,3230.76,11107.0 clast=91690.0
+numpy,2048,5.5129,3116.30,-1045.0 clast=51275.0
+rust-naive,64,0.2096,2.50,1047.0 clast=2107.0
+rust-naive,128,1.2581,3.33,-7312.0 clast=-933.0
+rust-naive,256,9.8634,3.40,-3694.0 clast=10946.0
+rust-naive,512,81.1728,3.31,-22592.0 clast=-38634.0
+rust-naive,1024,851.7450,2.52,11107.0 clast=91690.0
+rust-naive,2048,11004.0887,1.56,-1045.0 clast=51275.0
+cpp-naive-f32,64,0.1212,4.33,1047.0 clast=2107.0
+cpp-naive-f32,128,1.4060,2.98,-7312.0 clast=-933.0
+cpp-naive-f32,256,9.4887,3.54,-3694.0 clast=10946.0
+cpp-naive-f32,512,87.9940,3.05,-22592.0 clast=-38634.0
+cpp-naive-f32,1024,842.5502,2.55,11107.0 clast=91690.0
+cpp-naive-f32,2048,9987.7180,1.72,-1045.0 clast=51275.0
+cpp-naive-f64,64,0.0827,6.34,1047.0 clast=2107.0
+cpp-naive-f64,128,0.9904,4.23,-7312.0 clast=-933.0
+cpp-naive-f64,256,9.9025,3.39,-3694.0 clast=10946.0
+cpp-naive-f64,512,103.2106,2.60,-22592.0 clast=-38634.0
+cpp-naive-f64,1024,871.3895,2.46,11107.0 clast=91690.0
+cpp-naive-f64,2048,16836.0698,1.02,-1045.0 clast=51275.0
+cpp-mt-f32,64,0.0169,31.02,1047.0 clast=2107.0 T=14
+cpp-mt-f32,128,0.1768,23.72,-7312.0 clast=-933.0 T=14
+cpp-mt-f32,256,1.1877,28.25,-3694.0 clast=10946.0 T=14
+cpp-mt-f32,512,9.9358,27.02,-22592.0 clast=-38634.0 T=14
+cpp-mt-f32,1024,132.4073,16.22,11107.0 clast=91690.0 T=14
+cpp-mt-f32,2048,1337.7540,12.84,-1045.0 clast=51275.0 T=14
+cpp-mt-f64,64,0.0076,68.99,1047.0 clast=2107.0 T=14
+cpp-mt-f64,128,0.0907,46.24,-7312.0 clast=-933.0 T=14
+cpp-mt-f64,256,0.9267,36.21,-3694.0 clast=10946.0 T=14
+cpp-mt-f64,512,13.2712,20.23,-22592.0 clast=-38634.0 T=14
+cpp-mt-f64,1024,128.1065,16.76,11107.0 clast=91690.0 T=14
+cpp-mt-f64,2048,3216.6846,5.34,-1045.0 clast=51275.0 T=14
+rust-mt,64,0.0310,16.91,1047.0 clast=2107.0 T=14
+rust-mt,128,0.1637,25.62,-7312.0 clast=-933.0 T=14
+rust-mt,256,1.1823,28.38,-3694.0 clast=10946.0 T=14
+rust-mt,512,7.2409,37.07,-22592.0 clast=-38634.0 T=14
+rust-mt,1024,131.3085,16.35,11107.0 clast=91690.0 T=14
+rust-mt,2048,1386.1707,12.39,-1045.0 clast=51275.0 T=14
+numpy-1t,64,0.0016,327.68,1047.0 clast=2107.0
+numpy-1t,128,0.0047,892.41,-7312.0 clast=-933.0
+numpy-1t,256,0.0213,1575.33,-3694.0 clast=10946.0
+numpy-1t,512,0.0920,2917.78,-22592.0 clast=-38634.0
+numpy-1t,1024,0.6574,3266.63,11107.0 clast=91690.0
+numpy-1t,2048,5.3036,3239.28,-1045.0 clast=51275.0
+# 1t-compute rows (manual min-of-3, ulimit -s hard, FLOW_PAR=1 — the fair 1t-on-1t basis; S27c measurement-fairness fix)
+flow-llvm-cap-compute-f32-1t,512,5.2124,51.50,out=-22592/-38634
+flow-llvm-cap-compute-f32-1t,1024,35.3613,60.73,out=11107/91690
+flow-llvm-cap-compute-f64-1t,512,8.8339,30.39,out=-22592/-38634
+flow-llvm-cap-compute-f64-1t,1024,67.3952,31.86,out=11107/91690
+flow-llvm-cap-fma-compute-f32-1t,512,2.5155,106.72,out=-22592/-38634
+flow-llvm-cap-fma-compute-f32-1t,1024,19.7126,108.93,out=11107/91690
+flow-llvm-cap-fma-compute-f64-1t,512,5.0018,53.67,out=-22592/-38634
+flow-llvm-cap-fma-compute-f64-1t,1024,39.2243,54.75,out=11107/91690

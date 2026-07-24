@@ -8,6 +8,7 @@ declare void @flow_print_f64(double, i1 zeroext)
 declare void @flow_print_str(ptr, i64, i1 zeroext)
 declare void @flow_trap(i32) noreturn
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
+declare void @llvm.prefetch.p0(ptr, i32 immarg, i32 immarg, i32 immarg)
 declare void @flow_perf_begin()
 declare void @flow_perf_end()
 declare ptr @flow_par_begin(i32)
@@ -22,7 +23,7 @@ declare void @flow_par_watermark(i64)
 declare void @flow_par_run_pinned(ptr, i32)
 declare void @flow_par_finish(ptr)
 
-%Frame = type { [256 x i32], [16 x i32], [256 x float], [256 x float], { ptr, ptr, ptr, ptr }, [256 x float], { ptr, i32 }, float, { ptr, i32 }, float, float, float }
+%Frame = type { [256 x i32], [16 x i32], [256 x float], [256 x float], { ptr, ptr, ptr, ptr }, [256 x float], { ptr, i32 }, float, { ptr, i32 }, float, float, float, ptr }
 
 @ckpt0_entries = private unnamed_addr constant [4 x i64] [i64 12884901887, i64 12884901893, i64 17179869190, i64 25769803787]
 @ckpt1_entries = private unnamed_addr constant [4 x i64] [i64 12884901887, i64 12884901893, i64 17179869190, i64 25769803787]
@@ -165,13 +166,15 @@ entry:
   ret void
 }
 
-define internal void @task6(i64 %lo, i64 %hi, ptr %frame) {
+define internal void @task6_slice(i64 %lo, i64 %hi, ptr %frame) {
 entry:
   %s0 = alloca [64 x float]
   %s1 = alloca i64
   %s2 = alloca i64
   %s3 = alloca i64
   %s4 = alloca i64
+  %pack_field0 = getelementptr %Frame, ptr %frame, i32 0, i32 12
+  %packed0 = load ptr, ptr %pack_field0
   %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
   %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
   %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
@@ -181,692 +184,648 @@ entry:
   %t8 = add i64 %lo, 15
   %t9 = udiv i64 %t8, 16
   %t10 = udiv i64 %hi, 16
-  store i64 %t5, ptr %s1
+  store i64 0, ptr %s2
   br label %bb11
 bb11:
-  %t14 = load i64, ptr %s1
-  %t15 = icmp uge i64 %t14, %t9
-  br i1 %t15, label %bb13, label %bb12
+  %t16 = load i64, ptr %s2
+  %t17 = add i64 %t16, 16
+  %t18 = icmp ule i64 %t17, 16
+  br i1 %t18, label %bb12, label %bb13
 bb12:
-  %t16 = mul i64 %t14, 16
-  %t17 = sub i64 %lo, %t16
-  %t18 = icmp slt i64 %t17, 0
-  %t19 = select i1 %t18, i64 0, i64 %t17
-  %t20 = sub i64 %hi, %t16
-  %t21 = icmp sgt i64 %t20, 16
-  %t22 = select i1 %t21, i64 16, i64 %t20
-  %t23 = mul i64 %t14, 16
-  store i64 %t19, ptr %s2
-  br label %bb24
-bb24:
-  %t29 = load i64, ptr %s2
-  %t30 = add i64 %t29, 16
-  %t31 = icmp ule i64 %t30, %t22
-  br i1 %t31, label %bb25, label %bb26
-bb25:
-  store i64 0, ptr %s4
-  br label %bb32
-bb32:
-  %t35 = load i64, ptr %s4
-  %t36 = icmp uge i64 %t35, 16
-  br i1 %t36, label %bb34, label %bb33
-bb33:
-  %t37 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t35
-  store float 0x0000000000000000, ptr %t37
-  %t38 = add i64 %t35, 1
-  store i64 %t38, ptr %s4
-  br label %bb32
-bb34:
-  store i64 0, ptr %s3
-  br label %bb39
+  %t19 = udiv i64 %t16, 16
+  %t20 = mul i64 %t19, 256
+  store i64 %t5, ptr %s1
+  br label %bb21
+bb21:
+  %t24 = load i64, ptr %s1
+  %t25 = icmp uge i64 %t24, %t9
+  br i1 %t25, label %bb23, label %bb22
+bb22:
+  %t26 = mul i64 %t24, 16
+  %t27 = sub i64 %lo, %t26
+  %t28 = icmp slt i64 %t27, 0
+  %t29 = select i1 %t28, i64 0, i64 %t27
+  %t30 = sub i64 %hi, %t26
+  %t31 = icmp sgt i64 %t30, 16
+  %t32 = select i1 %t31, i64 16, i64 %t30
+  %t33 = add i64 %t16, 16
+  %t34 = icmp ult i64 %t29, %t16
+  %t35 = select i1 %t34, i64 %t16, i64 %t29
+  %t36 = icmp ugt i64 %t32, %t33
+  %t37 = select i1 %t36, i64 %t33, i64 %t32
+  %t38 = icmp ult i64 %t35, %t37
+  br i1 %t38, label %bb39, label %bb40
 bb39:
-  %t45 = load i64, ptr %s3
-  %t46 = icmp uge i64 %t45, 16
-  br i1 %t46, label %bb41, label %bb40
-bb40:
-  %t47 = add i64 %t23, %t45
-  %t48 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t47
-  %t49 = load float, ptr %t48
-  %t50 = mul i64 %t45, 16
-  %t51 = add i64 %t50, %t29
+  %t41 = sub i64 %t37, %t35
+  %t42 = sub i64 %t35, %t16
+  %t43 = mul i64 %t24, 16
   store i64 0, ptr %s4
-  br label %bb42
-bb42:
-  %t52 = load i64, ptr %s4
-  %t53 = icmp uge i64 %t52, 16
-  br i1 %t53, label %bb44, label %bb43
-bb43:
-  %t54 = add i64 %t51, %t52
-  %t55 = getelementptr [256 x float], ptr %o5, i64 0, i64 %t54
-  %t56 = load float, ptr %t55
-  %t57 = fmul float %t49, %t56
-  %t58 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t52
-  %t59 = load float, ptr %t58
-  %t60 = fadd float %t59, %t57
-  store float %t60, ptr %t58
-  %t61 = add i64 %t52, 1
-  store i64 %t61, ptr %s4
-  br label %bb42
+  br label %bb44
 bb44:
-  %t62 = add i64 %t45, 1
-  store i64 %t62, ptr %s3
-  br label %bb39
-bb41:
-  %t63 = add i64 %t16, %t29
+  %t47 = load i64, ptr %s4
+  %t48 = icmp uge i64 %t47, %t41
+  br i1 %t48, label %bb46, label %bb45
+bb45:
+  %t49 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t47
+  store float 0x0000000000000000, ptr %t49
+  %t50 = add i64 %t47, 1
+  store i64 %t50, ptr %s4
+  br label %bb44
+bb46:
+  store i64 0, ptr %s3
+  br label %bb51
+bb51:
+  %t54 = load i64, ptr %s3
+  %t55 = icmp uge i64 %t54, 16
+  br i1 %t55, label %bb53, label %bb52
+bb52:
+  %t56 = add i64 %t43, %t54
+  %t57 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t56
+  %t58 = load float, ptr %t57
   store i64 0, ptr %s4
-  br label %bb64
-bb64:
-  %t67 = load i64, ptr %s4
-  %t68 = icmp uge i64 %t67, 16
-  br i1 %t68, label %bb66, label %bb65
-bb65:
-  %t69 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t67
-  %t70 = load float, ptr %t69
-  %t71 = add i64 %t63, %t67
-  %t72 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t71
-  store float %t70, ptr %t72
-  %t73 = add i64 %t67, 1
-  store i64 %t73, ptr %s4
-  br label %bb64
-bb66:
-  %t74 = add i64 %t29, 16
-  store i64 %t74, ptr %s2
-  br label %bb24
-bb26:
-  %t75 = icmp ult i64 %t29, %t22
-  br i1 %t75, label %bb27, label %bb28
-bb27:
-  %t76 = sub i64 %t22, %t29
-  %t77 = icmp ult i64 %t76, 16
-  %t78 = select i1 %t77, i64 %t76, i64 16
+  br label %bb59
+bb59:
+  %t62 = load i64, ptr %s4
+  %t63 = icmp uge i64 %t62, %t41
+  br i1 %t63, label %bb61, label %bb60
+bb60:
+  %t64 = mul i64 %t54, 16
+  %t65 = add i64 %t20, %t64
+  %t66 = add i64 %t42, %t62
+  %t67 = add i64 %t65, %t66
+  %t68 = getelementptr [256 x float], ptr %packed0, i64 0, i64 %t67
+  %t69 = load float, ptr %t68
+  %t70 = fmul float %t58, %t69
+  %t71 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t62
+  %t72 = load float, ptr %t71
+  %t73 = fadd float %t72, %t70
+  store float %t73, ptr %t71
+  %t74 = add i64 %t62, 1
+  store i64 %t74, ptr %s4
+  br label %bb59
+bb61:
+  %t75 = add i64 %t54, 1
+  store i64 %t75, ptr %s3
+  br label %bb51
+bb53:
+  %t76 = add i64 %t26, %t35
   store i64 0, ptr %s4
-  br label %bb79
+  br label %bb77
+bb77:
+  %t80 = load i64, ptr %s4
+  %t81 = icmp uge i64 %t80, %t41
+  br i1 %t81, label %bb79, label %bb78
+bb78:
+  %t82 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t80
+  %t83 = load float, ptr %t82
+  %t84 = add i64 %t76, %t80
+  %t85 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t84
+  store float %t83, ptr %t85
+  %t86 = add i64 %t80, 1
+  store i64 %t86, ptr %s4
+  br label %bb77
 bb79:
-  %t82 = load i64, ptr %s4
-  %t83 = icmp uge i64 %t82, %t78
-  br i1 %t83, label %bb81, label %bb80
-bb80:
-  %t84 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t82
-  store float 0x0000000000000000, ptr %t84
-  %t85 = add i64 %t82, 1
-  store i64 %t85, ptr %s4
-  br label %bb79
-bb81:
-  store i64 0, ptr %s3
-  br label %bb86
-bb86:
-  %t92 = load i64, ptr %s3
-  %t93 = icmp uge i64 %t92, 16
-  br i1 %t93, label %bb88, label %bb87
-bb87:
-  %t94 = add i64 %t23, %t92
-  %t95 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t94
-  %t96 = load float, ptr %t95
-  %t97 = mul i64 %t92, 16
-  %t98 = add i64 %t97, %t29
-  store i64 0, ptr %s4
-  br label %bb89
-bb89:
-  %t99 = load i64, ptr %s4
-  %t100 = icmp uge i64 %t99, %t78
-  br i1 %t100, label %bb91, label %bb90
-bb90:
-  %t101 = add i64 %t98, %t99
-  %t102 = getelementptr [256 x float], ptr %o5, i64 0, i64 %t101
-  %t103 = load float, ptr %t102
-  %t104 = fmul float %t96, %t103
-  %t105 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t99
-  %t106 = load float, ptr %t105
-  %t107 = fadd float %t106, %t104
-  store float %t107, ptr %t105
-  %t108 = add i64 %t99, 1
-  store i64 %t108, ptr %s4
-  br label %bb89
-bb91:
-  %t109 = add i64 %t92, 1
-  store i64 %t109, ptr %s3
-  br label %bb86
-bb88:
-  %t110 = add i64 %t16, %t29
-  store i64 0, ptr %s4
-  br label %bb111
-bb111:
-  %t114 = load i64, ptr %s4
-  %t115 = icmp uge i64 %t114, %t78
-  br i1 %t115, label %bb113, label %bb112
-bb112:
-  %t116 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t114
-  %t117 = load float, ptr %t116
-  %t118 = add i64 %t110, %t114
-  %t119 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t118
-  store float %t117, ptr %t119
-  %t120 = add i64 %t114, 1
-  store i64 %t120, ptr %s4
-  br label %bb111
-bb113:
-  br label %bb28
-bb28:
-  %t121 = add i64 %t14, 1
-  store i64 %t121, ptr %s1
-  br label %bb11
-bb13:
+  br label %bb40
+bb40:
+  %t87 = add i64 %t24, 1
+  store i64 %t87, ptr %s1
+  br label %bb21
+bb23:
   store i64 %t9, ptr %s1
-  br label %bb122
-bb122:
-  %t125 = load i64, ptr %s1
-  %t126 = add i64 %t125, 4
-  %t127 = icmp ule i64 %t126, %t10
-  br i1 %t127, label %bb123, label %bb124
-bb123:
-  %t128 = mul i64 %t125, 16
-  %t129 = mul i64 %t125, 16
-  %t130 = mul i64 %t125, 16
-  %t131 = add i64 16, %t130
-  %t132 = mul i64 %t125, 16
-  %t133 = add i64 32, %t132
-  %t134 = mul i64 %t125, 16
-  %t135 = add i64 48, %t134
-  store i64 0, ptr %s2
-  br label %bb136
-bb136:
-  %t141 = load i64, ptr %s2
-  %t142 = add i64 %t141, 16
-  %t143 = icmp ule i64 %t142, 16
-  br i1 %t143, label %bb137, label %bb138
-bb137:
+  br label %bb88
+bb88:
+  %t91 = load i64, ptr %s1
+  %t92 = add i64 %t91, 4
+  %t93 = icmp ule i64 %t92, %t10
+  br i1 %t93, label %bb89, label %bb90
+bb89:
+  %t94 = mul i64 %t91, 16
+  %t95 = mul i64 %t91, 16
+  %t96 = mul i64 %t91, 16
+  %t97 = add i64 16, %t96
+  %t98 = mul i64 %t91, 16
+  %t99 = add i64 32, %t98
+  %t100 = mul i64 %t91, 16
+  %t101 = add i64 48, %t100
   store i64 0, ptr %s4
-  br label %bb144
-bb144:
-  %t147 = load i64, ptr %s4
-  %t148 = icmp uge i64 %t147, 16
-  br i1 %t148, label %bb146, label %bb145
-bb145:
-  %t149 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t147
-  store float 0x0000000000000000, ptr %t149
-  %t150 = add i64 %t147, 1
-  store i64 %t150, ptr %s4
-  br label %bb144
-bb146:
+  br label %bb102
+bb102:
+  %t105 = load i64, ptr %s4
+  %t106 = icmp uge i64 %t105, 16
+  br i1 %t106, label %bb104, label %bb103
+bb103:
+  %t107 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t105
+  store float 0x0000000000000000, ptr %t107
+  %t108 = add i64 %t105, 1
+  store i64 %t108, ptr %s4
+  br label %bb102
+bb104:
   store i64 0, ptr %s4
-  br label %bb151
-bb151:
-  %t154 = load i64, ptr %s4
-  %t155 = icmp uge i64 %t154, 16
-  br i1 %t155, label %bb153, label %bb152
-bb152:
-  %t156 = add i64 %t154, 16
-  %t157 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t156
-  store float 0x0000000000000000, ptr %t157
-  %t158 = add i64 %t154, 1
-  store i64 %t158, ptr %s4
-  br label %bb151
-bb153:
+  br label %bb109
+bb109:
+  %t112 = load i64, ptr %s4
+  %t113 = icmp uge i64 %t112, 16
+  br i1 %t113, label %bb111, label %bb110
+bb110:
+  %t114 = add i64 %t112, 16
+  %t115 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t114
+  store float 0x0000000000000000, ptr %t115
+  %t116 = add i64 %t112, 1
+  store i64 %t116, ptr %s4
+  br label %bb109
+bb111:
   store i64 0, ptr %s4
-  br label %bb159
-bb159:
-  %t162 = load i64, ptr %s4
-  %t163 = icmp uge i64 %t162, 16
-  br i1 %t163, label %bb161, label %bb160
-bb160:
-  %t164 = add i64 %t162, 32
-  %t165 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t164
-  store float 0x0000000000000000, ptr %t165
-  %t166 = add i64 %t162, 1
-  store i64 %t166, ptr %s4
-  br label %bb159
-bb161:
+  br label %bb117
+bb117:
+  %t120 = load i64, ptr %s4
+  %t121 = icmp uge i64 %t120, 16
+  br i1 %t121, label %bb119, label %bb118
+bb118:
+  %t122 = add i64 %t120, 32
+  %t123 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t122
+  store float 0x0000000000000000, ptr %t123
+  %t124 = add i64 %t120, 1
+  store i64 %t124, ptr %s4
+  br label %bb117
+bb119:
   store i64 0, ptr %s4
-  br label %bb167
-bb167:
-  %t170 = load i64, ptr %s4
-  %t171 = icmp uge i64 %t170, 16
-  br i1 %t171, label %bb169, label %bb168
-bb168:
-  %t172 = add i64 %t170, 48
-  %t173 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t172
-  store float 0x0000000000000000, ptr %t173
-  %t174 = add i64 %t170, 1
-  store i64 %t174, ptr %s4
-  br label %bb167
-bb169:
+  br label %bb125
+bb125:
+  %t128 = load i64, ptr %s4
+  %t129 = icmp uge i64 %t128, 16
+  br i1 %t129, label %bb127, label %bb126
+bb126:
+  %t130 = add i64 %t128, 48
+  %t131 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t130
+  store float 0x0000000000000000, ptr %t131
+  %t132 = add i64 %t128, 1
+  store i64 %t132, ptr %s4
+  br label %bb125
+bb127:
   store i64 0, ptr %s3
-  br label %bb175
-bb175:
-  %t181 = load i64, ptr %s3
-  %t182 = icmp uge i64 %t181, 16
-  br i1 %t182, label %bb177, label %bb176
-bb176:
-  %t183 = add i64 %t129, %t181
-  %t184 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t183
-  %t185 = load float, ptr %t184
-  %t186 = add i64 %t131, %t181
-  %t187 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t186
-  %t188 = load float, ptr %t187
-  %t189 = add i64 %t133, %t181
-  %t190 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t189
+  br label %bb133
+bb133:
+  %t136 = load i64, ptr %s3
+  %t139 = add i64 %t136, 1
+  %t140 = icmp ult i64 %t139, 16
+  br i1 %t140, label %bb134, label %bb137
+bb134:
+  %t141 = add i64 %t95, %t136
+  %t142 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t141
+  %t143 = load float, ptr %t142
+  %t144 = add i64 %t97, %t136
+  %t145 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t144
+  %t146 = load float, ptr %t145
+  %t147 = add i64 %t99, %t136
+  %t148 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t147
+  %t149 = load float, ptr %t148
+  %t150 = add i64 %t101, %t136
+  %t151 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t150
+  %t152 = load float, ptr %t151
+  %t153 = add i64 %t95, %t139
+  %t154 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t153
+  %t155 = load float, ptr %t154
+  %t156 = add i64 %t97, %t139
+  %t157 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t156
+  %t158 = load float, ptr %t157
+  %t159 = add i64 %t99, %t139
+  %t160 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t159
+  %t161 = load float, ptr %t160
+  %t162 = add i64 %t101, %t139
+  %t163 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t162
+  %t164 = load float, ptr %t163
+  %t165 = add i64 %t136, 2
+  %t166 = mul i64 %t165, 16
+  %t167 = add i64 %t20, %t166
+  %t168 = getelementptr [256 x float], ptr %packed0, i64 0, i64 %t167
+  call void @llvm.prefetch.p0(ptr %t168, i32 0, i32 3, i32 1)
+  store i64 0, ptr %s4
+  br label %bb169
+bb169:
+  %t172 = load i64, ptr %s4
+  %t173 = icmp uge i64 %t172, 16
+  br i1 %t173, label %bb171, label %bb170
+bb170:
+  %t174 = mul i64 %t136, 16
+  %t175 = add i64 %t20, %t174
+  %t176 = add i64 %t175, %t172
+  %t177 = getelementptr [256 x float], ptr %packed0, i64 0, i64 %t176
+  %t178 = load float, ptr %t177
+  %t179 = fmul float %t143, %t178
+  %t180 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t172
+  %t181 = load float, ptr %t180
+  %t182 = fadd float %t181, %t179
+  store float %t182, ptr %t180
+  %t183 = fmul float %t146, %t178
+  %t184 = add i64 %t172, 16
+  %t185 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t184
+  %t186 = load float, ptr %t185
+  %t187 = fadd float %t186, %t183
+  store float %t187, ptr %t185
+  %t188 = fmul float %t149, %t178
+  %t189 = add i64 %t172, 32
+  %t190 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t189
   %t191 = load float, ptr %t190
-  %t192 = add i64 %t135, %t181
-  %t193 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t192
-  %t194 = load float, ptr %t193
-  %t195 = mul i64 %t181, 16
-  %t196 = add i64 %t195, %t141
-  store i64 0, ptr %s4
-  br label %bb178
-bb178:
-  %t197 = load i64, ptr %s4
-  %t198 = icmp uge i64 %t197, 16
-  br i1 %t198, label %bb180, label %bb179
-bb179:
-  %t199 = add i64 %t196, %t197
-  %t200 = getelementptr [256 x float], ptr %o5, i64 0, i64 %t199
-  %t201 = load float, ptr %t200
-  %t202 = fmul float %t185, %t201
-  %t203 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t197
-  %t204 = load float, ptr %t203
-  %t205 = fadd float %t204, %t202
-  store float %t205, ptr %t203
-  %t206 = fmul float %t188, %t201
-  %t207 = add i64 %t197, 16
-  %t208 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t207
-  %t209 = load float, ptr %t208
-  %t210 = fadd float %t209, %t206
-  store float %t210, ptr %t208
-  %t211 = fmul float %t191, %t201
-  %t212 = add i64 %t197, 32
-  %t213 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t212
-  %t214 = load float, ptr %t213
-  %t215 = fadd float %t214, %t211
-  store float %t215, ptr %t213
-  %t216 = fmul float %t194, %t201
-  %t217 = add i64 %t197, 48
-  %t218 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t217
-  %t219 = load float, ptr %t218
-  %t220 = fadd float %t219, %t216
-  store float %t220, ptr %t218
-  %t221 = add i64 %t197, 1
-  store i64 %t221, ptr %s4
-  br label %bb178
-bb180:
-  %t222 = add i64 %t181, 1
-  store i64 %t222, ptr %s3
-  br label %bb175
-bb177:
-  %t223 = add i64 %t128, %t141
-  store i64 0, ptr %s4
-  br label %bb224
-bb224:
-  %t227 = load i64, ptr %s4
-  %t228 = icmp uge i64 %t227, 16
-  br i1 %t228, label %bb226, label %bb225
-bb225:
-  %t229 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t227
+  %t192 = fadd float %t191, %t188
+  store float %t192, ptr %t190
+  %t193 = fmul float %t152, %t178
+  %t194 = add i64 %t172, 48
+  %t195 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t194
+  %t196 = load float, ptr %t195
+  %t197 = fadd float %t196, %t193
+  store float %t197, ptr %t195
+  %t198 = mul i64 %t139, 16
+  %t199 = add i64 %t20, %t198
+  %t200 = add i64 %t199, %t172
+  %t201 = getelementptr [256 x float], ptr %packed0, i64 0, i64 %t200
+  %t202 = load float, ptr %t201
+  %t203 = fmul float %t155, %t202
+  %t204 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t172
+  %t205 = load float, ptr %t204
+  %t206 = fadd float %t205, %t203
+  store float %t206, ptr %t204
+  %t207 = fmul float %t158, %t202
+  %t208 = add i64 %t172, 16
+  %t209 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t208
+  %t210 = load float, ptr %t209
+  %t211 = fadd float %t210, %t207
+  store float %t211, ptr %t209
+  %t212 = fmul float %t161, %t202
+  %t213 = add i64 %t172, 32
+  %t214 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t213
+  %t215 = load float, ptr %t214
+  %t216 = fadd float %t215, %t212
+  store float %t216, ptr %t214
+  %t217 = fmul float %t164, %t202
+  %t218 = add i64 %t172, 48
+  %t219 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t218
+  %t220 = load float, ptr %t219
+  %t221 = fadd float %t220, %t217
+  store float %t221, ptr %t219
+  %t222 = add i64 %t172, 1
+  store i64 %t222, ptr %s4
+  br label %bb169
+bb171:
+  %t223 = add i64 %t136, 2
+  store i64 %t223, ptr %s3
+  br label %bb133
+bb137:
+  %t224 = icmp ult i64 %t136, 16
+  br i1 %t224, label %bb138, label %bb135
+bb138:
+  %t225 = add i64 %t95, %t136
+  %t226 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t225
+  %t227 = load float, ptr %t226
+  %t228 = add i64 %t97, %t136
+  %t229 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t228
   %t230 = load float, ptr %t229
-  %t231 = add i64 %t223, %t227
-  %t232 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t231
-  store float %t230, ptr %t232
-  %t233 = add i64 %t227, 1
-  store i64 %t233, ptr %s4
-  br label %bb224
-bb226:
-  %t234 = add i64 %t223, 16
+  %t231 = add i64 %t99, %t136
+  %t232 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t231
+  %t233 = load float, ptr %t232
+  %t234 = add i64 %t101, %t136
+  %t235 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t234
+  %t236 = load float, ptr %t235
   store i64 0, ptr %s4
-  br label %bb235
-bb235:
-  %t238 = load i64, ptr %s4
-  %t239 = icmp uge i64 %t238, 16
-  br i1 %t239, label %bb237, label %bb236
-bb236:
-  %t240 = add i64 %t238, 16
-  %t241 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t240
-  %t242 = load float, ptr %t241
-  %t243 = add i64 %t234, %t238
-  %t244 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t243
-  store float %t242, ptr %t244
-  %t245 = add i64 %t238, 1
-  store i64 %t245, ptr %s4
-  br label %bb235
+  br label %bb237
 bb237:
-  %t246 = add i64 %t223, 32
-  store i64 0, ptr %s4
-  br label %bb247
-bb247:
-  %t250 = load i64, ptr %s4
-  %t251 = icmp uge i64 %t250, 16
-  br i1 %t251, label %bb249, label %bb248
-bb248:
-  %t252 = add i64 %t250, 32
+  %t240 = load i64, ptr %s4
+  %t241 = icmp uge i64 %t240, 16
+  br i1 %t241, label %bb239, label %bb238
+bb238:
+  %t242 = mul i64 %t136, 16
+  %t243 = add i64 %t20, %t242
+  %t244 = add i64 %t243, %t240
+  %t245 = getelementptr [256 x float], ptr %packed0, i64 0, i64 %t244
+  %t246 = load float, ptr %t245
+  %t247 = fmul float %t227, %t246
+  %t248 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t240
+  %t249 = load float, ptr %t248
+  %t250 = fadd float %t249, %t247
+  store float %t250, ptr %t248
+  %t251 = fmul float %t230, %t246
+  %t252 = add i64 %t240, 16
   %t253 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t252
   %t254 = load float, ptr %t253
-  %t255 = add i64 %t246, %t250
-  %t256 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t255
-  store float %t254, ptr %t256
-  %t257 = add i64 %t250, 1
-  store i64 %t257, ptr %s4
-  br label %bb247
-bb249:
-  %t258 = add i64 %t223, 48
+  %t255 = fadd float %t254, %t251
+  store float %t255, ptr %t253
+  %t256 = fmul float %t233, %t246
+  %t257 = add i64 %t240, 32
+  %t258 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t257
+  %t259 = load float, ptr %t258
+  %t260 = fadd float %t259, %t256
+  store float %t260, ptr %t258
+  %t261 = fmul float %t236, %t246
+  %t262 = add i64 %t240, 48
+  %t263 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t262
+  %t264 = load float, ptr %t263
+  %t265 = fadd float %t264, %t261
+  store float %t265, ptr %t263
+  %t266 = add i64 %t240, 1
+  store i64 %t266, ptr %s4
+  br label %bb237
+bb239:
+  br label %bb135
+bb135:
+  %t267 = add i64 %t94, %t16
   store i64 0, ptr %s4
-  br label %bb259
-bb259:
-  %t262 = load i64, ptr %s4
-  %t263 = icmp uge i64 %t262, 16
-  br i1 %t263, label %bb261, label %bb260
-bb260:
-  %t264 = add i64 %t262, 48
-  %t265 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t264
-  %t266 = load float, ptr %t265
-  %t267 = add i64 %t258, %t262
-  %t268 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t267
-  store float %t266, ptr %t268
-  %t269 = add i64 %t262, 1
-  store i64 %t269, ptr %s4
-  br label %bb259
-bb261:
-  %t270 = add i64 %t141, 16
-  store i64 %t270, ptr %s2
-  br label %bb136
-bb138:
-  %t271 = icmp ult i64 %t141, 16
-  br i1 %t271, label %bb139, label %bb140
-bb139:
-  %t272 = sub i64 16, %t141
-  %t273 = icmp ult i64 %t272, 16
-  %t274 = select i1 %t273, i64 %t272, i64 16
+  br label %bb268
+bb268:
+  %t271 = load i64, ptr %s4
+  %t272 = icmp uge i64 %t271, 16
+  br i1 %t272, label %bb270, label %bb269
+bb269:
+  %t273 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t271
+  %t274 = load float, ptr %t273
+  %t275 = add i64 %t267, %t271
+  %t276 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t275
+  store float %t274, ptr %t276
+  %t277 = add i64 %t271, 1
+  store i64 %t277, ptr %s4
+  br label %bb268
+bb270:
+  %t278 = add i64 %t267, 16
   store i64 0, ptr %s4
-  br label %bb275
-bb275:
-  %t278 = load i64, ptr %s4
-  %t279 = icmp uge i64 %t278, %t274
-  br i1 %t279, label %bb277, label %bb276
-bb276:
-  %t280 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t278
-  store float 0x0000000000000000, ptr %t280
-  %t281 = add i64 %t278, 1
-  store i64 %t281, ptr %s4
-  br label %bb275
-bb277:
-  store i64 0, ptr %s4
-  br label %bb282
-bb282:
-  %t285 = load i64, ptr %s4
-  %t286 = icmp uge i64 %t285, %t274
-  br i1 %t286, label %bb284, label %bb283
-bb283:
-  %t287 = add i64 %t285, 16
-  %t288 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t287
-  store float 0x0000000000000000, ptr %t288
-  %t289 = add i64 %t285, 1
+  br label %bb279
+bb279:
+  %t282 = load i64, ptr %s4
+  %t283 = icmp uge i64 %t282, 16
+  br i1 %t283, label %bb281, label %bb280
+bb280:
+  %t284 = add i64 %t282, 16
+  %t285 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t284
+  %t286 = load float, ptr %t285
+  %t287 = add i64 %t278, %t282
+  %t288 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t287
+  store float %t286, ptr %t288
+  %t289 = add i64 %t282, 1
   store i64 %t289, ptr %s4
-  br label %bb282
-bb284:
+  br label %bb279
+bb281:
+  %t290 = add i64 %t267, 32
   store i64 0, ptr %s4
-  br label %bb290
-bb290:
-  %t293 = load i64, ptr %s4
-  %t294 = icmp uge i64 %t293, %t274
-  br i1 %t294, label %bb292, label %bb291
+  br label %bb291
 bb291:
-  %t295 = add i64 %t293, 32
-  %t296 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t295
-  store float 0x0000000000000000, ptr %t296
-  %t297 = add i64 %t293, 1
-  store i64 %t297, ptr %s4
-  br label %bb290
+  %t294 = load i64, ptr %s4
+  %t295 = icmp uge i64 %t294, 16
+  br i1 %t295, label %bb293, label %bb292
 bb292:
+  %t296 = add i64 %t294, 32
+  %t297 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t296
+  %t298 = load float, ptr %t297
+  %t299 = add i64 %t290, %t294
+  %t300 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t299
+  store float %t298, ptr %t300
+  %t301 = add i64 %t294, 1
+  store i64 %t301, ptr %s4
+  br label %bb291
+bb293:
+  %t302 = add i64 %t267, 48
   store i64 0, ptr %s4
-  br label %bb298
-bb298:
-  %t301 = load i64, ptr %s4
-  %t302 = icmp uge i64 %t301, %t274
-  br i1 %t302, label %bb300, label %bb299
-bb299:
-  %t303 = add i64 %t301, 48
-  %t304 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t303
-  store float 0x0000000000000000, ptr %t304
-  %t305 = add i64 %t301, 1
-  store i64 %t305, ptr %s4
-  br label %bb298
-bb300:
+  br label %bb303
+bb303:
+  %t306 = load i64, ptr %s4
+  %t307 = icmp uge i64 %t306, 16
+  br i1 %t307, label %bb305, label %bb304
+bb304:
+  %t308 = add i64 %t306, 48
+  %t309 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t308
+  %t310 = load float, ptr %t309
+  %t311 = add i64 %t302, %t306
+  %t312 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t311
+  store float %t310, ptr %t312
+  %t313 = add i64 %t306, 1
+  store i64 %t313, ptr %s4
+  br label %bb303
+bb305:
+  store i64 %t92, ptr %s1
+  br label %bb88
+bb90:
+  br label %bb314
+bb314:
+  %t317 = load i64, ptr %s1
+  %t318 = icmp uge i64 %t317, %t7
+  br i1 %t318, label %bb316, label %bb315
+bb315:
+  %t319 = mul i64 %t317, 16
+  %t320 = sub i64 %lo, %t319
+  %t321 = icmp slt i64 %t320, 0
+  %t322 = select i1 %t321, i64 0, i64 %t320
+  %t323 = sub i64 %hi, %t319
+  %t324 = icmp sgt i64 %t323, 16
+  %t325 = select i1 %t324, i64 16, i64 %t323
+  %t326 = add i64 %t16, 16
+  %t327 = icmp ult i64 %t322, %t16
+  %t328 = select i1 %t327, i64 %t16, i64 %t322
+  %t329 = icmp ugt i64 %t325, %t326
+  %t330 = select i1 %t329, i64 %t326, i64 %t325
+  %t331 = icmp ult i64 %t328, %t330
+  br i1 %t331, label %bb332, label %bb333
+bb332:
+  %t334 = sub i64 %t330, %t328
+  %t335 = sub i64 %t328, %t16
+  %t336 = mul i64 %t317, 16
+  store i64 0, ptr %s4
+  br label %bb337
+bb337:
+  %t340 = load i64, ptr %s4
+  %t341 = icmp uge i64 %t340, %t334
+  br i1 %t341, label %bb339, label %bb338
+bb338:
+  %t342 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t340
+  store float 0x0000000000000000, ptr %t342
+  %t343 = add i64 %t340, 1
+  store i64 %t343, ptr %s4
+  br label %bb337
+bb339:
   store i64 0, ptr %s3
-  br label %bb306
-bb306:
-  %t312 = load i64, ptr %s3
-  %t313 = icmp uge i64 %t312, 16
-  br i1 %t313, label %bb308, label %bb307
-bb307:
-  %t314 = add i64 %t129, %t312
-  %t315 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t314
-  %t316 = load float, ptr %t315
-  %t317 = add i64 %t131, %t312
-  %t318 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t317
-  %t319 = load float, ptr %t318
-  %t320 = add i64 %t133, %t312
-  %t321 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t320
-  %t322 = load float, ptr %t321
-  %t323 = add i64 %t135, %t312
-  %t324 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t323
-  %t325 = load float, ptr %t324
-  %t326 = mul i64 %t312, 16
-  %t327 = add i64 %t326, %t141
+  br label %bb344
+bb344:
+  %t347 = load i64, ptr %s3
+  %t348 = icmp uge i64 %t347, 16
+  br i1 %t348, label %bb346, label %bb345
+bb345:
+  %t349 = add i64 %t336, %t347
+  %t350 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t349
+  %t351 = load float, ptr %t350
   store i64 0, ptr %s4
-  br label %bb309
-bb309:
-  %t328 = load i64, ptr %s4
-  %t329 = icmp uge i64 %t328, %t274
-  br i1 %t329, label %bb311, label %bb310
-bb310:
-  %t330 = add i64 %t327, %t328
-  %t331 = getelementptr [256 x float], ptr %o5, i64 0, i64 %t330
-  %t332 = load float, ptr %t331
-  %t333 = fmul float %t316, %t332
-  %t334 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t328
-  %t335 = load float, ptr %t334
-  %t336 = fadd float %t335, %t333
-  store float %t336, ptr %t334
-  %t337 = fmul float %t319, %t332
-  %t338 = add i64 %t328, 16
-  %t339 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t338
-  %t340 = load float, ptr %t339
-  %t341 = fadd float %t340, %t337
-  store float %t341, ptr %t339
-  %t342 = fmul float %t322, %t332
-  %t343 = add i64 %t328, 32
-  %t344 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t343
-  %t345 = load float, ptr %t344
-  %t346 = fadd float %t345, %t342
-  store float %t346, ptr %t344
-  %t347 = fmul float %t325, %t332
-  %t348 = add i64 %t328, 48
-  %t349 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t348
-  %t350 = load float, ptr %t349
-  %t351 = fadd float %t350, %t347
-  store float %t351, ptr %t349
-  %t352 = add i64 %t328, 1
-  store i64 %t352, ptr %s4
-  br label %bb309
-bb311:
-  %t353 = add i64 %t312, 1
-  store i64 %t353, ptr %s3
-  br label %bb306
-bb308:
-  %t354 = add i64 %t128, %t141
+  br label %bb352
+bb352:
+  %t355 = load i64, ptr %s4
+  %t356 = icmp uge i64 %t355, %t334
+  br i1 %t356, label %bb354, label %bb353
+bb353:
+  %t357 = mul i64 %t347, 16
+  %t358 = add i64 %t20, %t357
+  %t359 = add i64 %t335, %t355
+  %t360 = add i64 %t358, %t359
+  %t361 = getelementptr [256 x float], ptr %packed0, i64 0, i64 %t360
+  %t362 = load float, ptr %t361
+  %t363 = fmul float %t351, %t362
+  %t364 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t355
+  %t365 = load float, ptr %t364
+  %t366 = fadd float %t365, %t363
+  store float %t366, ptr %t364
+  %t367 = add i64 %t355, 1
+  store i64 %t367, ptr %s4
+  br label %bb352
+bb354:
+  %t368 = add i64 %t347, 1
+  store i64 %t368, ptr %s3
+  br label %bb344
+bb346:
+  %t369 = add i64 %t319, %t328
   store i64 0, ptr %s4
-  br label %bb355
-bb355:
-  %t358 = load i64, ptr %s4
-  %t359 = icmp uge i64 %t358, %t274
-  br i1 %t359, label %bb357, label %bb356
-bb356:
-  %t360 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t358
-  %t361 = load float, ptr %t360
-  %t362 = add i64 %t354, %t358
-  %t363 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t362
-  store float %t361, ptr %t363
-  %t364 = add i64 %t358, 1
-  store i64 %t364, ptr %s4
-  br label %bb355
-bb357:
-  %t365 = add i64 %t354, 16
+  br label %bb370
+bb370:
+  %t373 = load i64, ptr %s4
+  %t374 = icmp uge i64 %t373, %t334
+  br i1 %t374, label %bb372, label %bb371
+bb371:
+  %t375 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t373
+  %t376 = load float, ptr %t375
+  %t377 = add i64 %t369, %t373
+  %t378 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t377
+  store float %t376, ptr %t378
+  %t379 = add i64 %t373, 1
+  store i64 %t379, ptr %s4
+  br label %bb370
+bb372:
+  br label %bb333
+bb333:
+  %t380 = add i64 %t317, 1
+  store i64 %t380, ptr %s1
+  br label %bb314
+bb316:
+  %t381 = add i64 %t16, 16
+  store i64 %t381, ptr %s2
+  br label %bb11
+bb13:
+  %t382 = icmp ult i64 %t16, 16
+  br i1 %t382, label %bb14, label %bb15
+bb14:
+  %t383 = sub i64 16, %t16
+  %t384 = icmp ult i64 %t383, 16
+  %t385 = select i1 %t384, i64 %t383, i64 16
+  %t386 = udiv i64 %t16, 16
+  %t387 = mul i64 %t386, 256
+  store i64 %t5, ptr %s1
+  br label %bb388
+bb388:
+  %t391 = load i64, ptr %s1
+  %t392 = icmp uge i64 %t391, %t9
+  br i1 %t392, label %bb390, label %bb389
+bb389:
+  %t393 = mul i64 %t391, 16
+  %t394 = sub i64 %lo, %t393
+  %t395 = icmp slt i64 %t394, 0
+  %t396 = select i1 %t395, i64 0, i64 %t394
+  %t397 = sub i64 %hi, %t393
+  %t398 = icmp sgt i64 %t397, 16
+  %t399 = select i1 %t398, i64 16, i64 %t397
+  %t400 = add i64 %t16, %t385
+  %t401 = icmp ult i64 %t396, %t16
+  %t402 = select i1 %t401, i64 %t16, i64 %t396
+  %t403 = icmp ugt i64 %t399, %t400
+  %t404 = select i1 %t403, i64 %t400, i64 %t399
+  %t405 = icmp ult i64 %t402, %t404
+  br i1 %t405, label %bb406, label %bb407
+bb406:
+  %t408 = sub i64 %t404, %t402
+  %t409 = sub i64 %t402, %t16
+  %t410 = mul i64 %t391, 16
   store i64 0, ptr %s4
-  br label %bb366
-bb366:
-  %t369 = load i64, ptr %s4
-  %t370 = icmp uge i64 %t369, %t274
-  br i1 %t370, label %bb368, label %bb367
-bb367:
-  %t371 = add i64 %t369, 16
-  %t372 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t371
-  %t373 = load float, ptr %t372
-  %t374 = add i64 %t365, %t369
-  %t375 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t374
-  store float %t373, ptr %t375
-  %t376 = add i64 %t369, 1
-  store i64 %t376, ptr %s4
-  br label %bb366
-bb368:
-  %t377 = add i64 %t354, 32
-  store i64 0, ptr %s4
-  br label %bb378
-bb378:
-  %t381 = load i64, ptr %s4
-  %t382 = icmp uge i64 %t381, %t274
-  br i1 %t382, label %bb380, label %bb379
-bb379:
-  %t383 = add i64 %t381, 32
-  %t384 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t383
-  %t385 = load float, ptr %t384
-  %t386 = add i64 %t377, %t381
-  %t387 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t386
-  store float %t385, ptr %t387
-  %t388 = add i64 %t381, 1
-  store i64 %t388, ptr %s4
-  br label %bb378
-bb380:
-  %t389 = add i64 %t354, 48
-  store i64 0, ptr %s4
-  br label %bb390
-bb390:
-  %t393 = load i64, ptr %s4
-  %t394 = icmp uge i64 %t393, %t274
-  br i1 %t394, label %bb392, label %bb391
-bb391:
-  %t395 = add i64 %t393, 48
-  %t396 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t395
-  %t397 = load float, ptr %t396
-  %t398 = add i64 %t389, %t393
-  %t399 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t398
-  store float %t397, ptr %t399
-  %t400 = add i64 %t393, 1
-  store i64 %t400, ptr %s4
-  br label %bb390
-bb392:
-  br label %bb140
-bb140:
-  store i64 %t126, ptr %s1
-  br label %bb122
-bb124:
-  br label %bb401
-bb401:
-  %t404 = load i64, ptr %s1
-  %t405 = icmp uge i64 %t404, %t7
-  br i1 %t405, label %bb403, label %bb402
-bb402:
-  %t406 = mul i64 %t404, 16
-  %t407 = sub i64 %lo, %t406
-  %t408 = icmp slt i64 %t407, 0
-  %t409 = select i1 %t408, i64 0, i64 %t407
-  %t410 = sub i64 %hi, %t406
-  %t411 = icmp sgt i64 %t410, 16
-  %t412 = select i1 %t411, i64 16, i64 %t410
-  %t413 = mul i64 %t404, 16
-  store i64 %t409, ptr %s2
-  br label %bb414
-bb414:
-  %t419 = load i64, ptr %s2
-  %t420 = add i64 %t419, 16
-  %t421 = icmp ule i64 %t420, %t412
-  br i1 %t421, label %bb415, label %bb416
-bb415:
-  store i64 0, ptr %s4
-  br label %bb422
-bb422:
-  %t425 = load i64, ptr %s4
-  %t426 = icmp uge i64 %t425, 16
-  br i1 %t426, label %bb424, label %bb423
-bb423:
-  %t427 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t425
-  store float 0x0000000000000000, ptr %t427
-  %t428 = add i64 %t425, 1
-  store i64 %t428, ptr %s4
-  br label %bb422
-bb424:
+  br label %bb411
+bb411:
+  %t414 = load i64, ptr %s4
+  %t415 = icmp uge i64 %t414, %t408
+  br i1 %t415, label %bb413, label %bb412
+bb412:
+  %t416 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t414
+  store float 0x0000000000000000, ptr %t416
+  %t417 = add i64 %t414, 1
+  store i64 %t417, ptr %s4
+  br label %bb411
+bb413:
   store i64 0, ptr %s3
-  br label %bb429
-bb429:
-  %t435 = load i64, ptr %s3
-  %t436 = icmp uge i64 %t435, 16
-  br i1 %t436, label %bb431, label %bb430
-bb430:
-  %t437 = add i64 %t413, %t435
-  %t438 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t437
+  br label %bb418
+bb418:
+  %t421 = load i64, ptr %s3
+  %t422 = icmp uge i64 %t421, 16
+  br i1 %t422, label %bb420, label %bb419
+bb419:
+  %t423 = add i64 %t410, %t421
+  %t424 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t423
+  %t425 = load float, ptr %t424
+  store i64 0, ptr %s4
+  br label %bb426
+bb426:
+  %t429 = load i64, ptr %s4
+  %t430 = icmp uge i64 %t429, %t408
+  br i1 %t430, label %bb428, label %bb427
+bb427:
+  %t431 = mul i64 %t421, 16
+  %t432 = add i64 %t387, %t431
+  %t433 = add i64 %t409, %t429
+  %t434 = add i64 %t432, %t433
+  %t435 = getelementptr [256 x float], ptr %packed0, i64 0, i64 %t434
+  %t436 = load float, ptr %t435
+  %t437 = fmul float %t425, %t436
+  %t438 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t429
   %t439 = load float, ptr %t438
-  %t440 = mul i64 %t435, 16
-  %t441 = add i64 %t440, %t419
+  %t440 = fadd float %t439, %t437
+  store float %t440, ptr %t438
+  %t441 = add i64 %t429, 1
+  store i64 %t441, ptr %s4
+  br label %bb426
+bb428:
+  %t442 = add i64 %t421, 1
+  store i64 %t442, ptr %s3
+  br label %bb418
+bb420:
+  %t443 = add i64 %t393, %t402
   store i64 0, ptr %s4
-  br label %bb432
-bb432:
-  %t442 = load i64, ptr %s4
-  %t443 = icmp uge i64 %t442, 16
-  br i1 %t443, label %bb434, label %bb433
-bb433:
-  %t444 = add i64 %t441, %t442
-  %t445 = getelementptr [256 x float], ptr %o5, i64 0, i64 %t444
-  %t446 = load float, ptr %t445
-  %t447 = fmul float %t439, %t446
-  %t448 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t442
-  %t449 = load float, ptr %t448
-  %t450 = fadd float %t449, %t447
-  store float %t450, ptr %t448
-  %t451 = add i64 %t442, 1
-  store i64 %t451, ptr %s4
-  br label %bb432
-bb434:
-  %t452 = add i64 %t435, 1
-  store i64 %t452, ptr %s3
-  br label %bb429
-bb431:
-  %t453 = add i64 %t406, %t419
-  store i64 0, ptr %s4
-  br label %bb454
-bb454:
-  %t457 = load i64, ptr %s4
-  %t458 = icmp uge i64 %t457, 16
-  br i1 %t458, label %bb456, label %bb455
+  br label %bb444
+bb444:
+  %t447 = load i64, ptr %s4
+  %t448 = icmp uge i64 %t447, %t408
+  br i1 %t448, label %bb446, label %bb445
+bb445:
+  %t449 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t447
+  %t450 = load float, ptr %t449
+  %t451 = add i64 %t443, %t447
+  %t452 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t451
+  store float %t450, ptr %t452
+  %t453 = add i64 %t447, 1
+  store i64 %t453, ptr %s4
+  br label %bb444
+bb446:
+  br label %bb407
+bb407:
+  %t454 = add i64 %t391, 1
+  store i64 %t454, ptr %s1
+  br label %bb388
+bb390:
+  store i64 %t9, ptr %s1
+  br label %bb455
 bb455:
-  %t459 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t457
-  %t460 = load float, ptr %t459
-  %t461 = add i64 %t453, %t457
-  %t462 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t461
-  store float %t460, ptr %t462
-  %t463 = add i64 %t457, 1
-  store i64 %t463, ptr %s4
-  br label %bb454
+  %t458 = load i64, ptr %s1
+  %t459 = add i64 %t458, 4
+  %t460 = icmp ule i64 %t459, %t10
+  br i1 %t460, label %bb456, label %bb457
 bb456:
-  %t464 = add i64 %t419, 16
-  store i64 %t464, ptr %s2
-  br label %bb414
-bb416:
-  %t465 = icmp ult i64 %t419, %t412
-  br i1 %t465, label %bb417, label %bb418
-bb417:
-  %t466 = sub i64 %t412, %t419
-  %t467 = icmp ult i64 %t466, 16
-  %t468 = select i1 %t467, i64 %t466, i64 16
+  %t461 = mul i64 %t458, 16
+  %t462 = mul i64 %t458, 16
+  %t463 = mul i64 %t458, 16
+  %t464 = add i64 16, %t463
+  %t465 = mul i64 %t458, 16
+  %t466 = add i64 32, %t465
+  %t467 = mul i64 %t458, 16
+  %t468 = add i64 48, %t467
   store i64 0, ptr %s4
   br label %bb469
 bb469:
   %t472 = load i64, ptr %s4
-  %t473 = icmp uge i64 %t472, %t468
+  %t473 = icmp uge i64 %t472, %t385
   br i1 %t473, label %bb471, label %bb470
 bb470:
   %t474 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t472
@@ -875,64 +834,350 @@ bb470:
   store i64 %t475, ptr %s4
   br label %bb469
 bb471:
-  store i64 0, ptr %s3
+  store i64 0, ptr %s4
   br label %bb476
 bb476:
-  %t482 = load i64, ptr %s3
-  %t483 = icmp uge i64 %t482, 16
-  br i1 %t483, label %bb478, label %bb477
+  %t479 = load i64, ptr %s4
+  %t480 = icmp uge i64 %t479, %t385
+  br i1 %t480, label %bb478, label %bb477
 bb477:
-  %t484 = add i64 %t413, %t482
-  %t485 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t484
-  %t486 = load float, ptr %t485
-  %t487 = mul i64 %t482, 16
-  %t488 = add i64 %t487, %t419
-  store i64 0, ptr %s4
-  br label %bb479
-bb479:
-  %t489 = load i64, ptr %s4
-  %t490 = icmp uge i64 %t489, %t468
-  br i1 %t490, label %bb481, label %bb480
-bb480:
-  %t491 = add i64 %t488, %t489
-  %t492 = getelementptr [256 x float], ptr %o5, i64 0, i64 %t491
-  %t493 = load float, ptr %t492
-  %t494 = fmul float %t486, %t493
-  %t495 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t489
-  %t496 = load float, ptr %t495
-  %t497 = fadd float %t496, %t494
-  store float %t497, ptr %t495
-  %t498 = add i64 %t489, 1
-  store i64 %t498, ptr %s4
-  br label %bb479
-bb481:
-  %t499 = add i64 %t482, 1
-  store i64 %t499, ptr %s3
+  %t481 = add i64 %t479, 16
+  %t482 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t481
+  store float 0x0000000000000000, ptr %t482
+  %t483 = add i64 %t479, 1
+  store i64 %t483, ptr %s4
   br label %bb476
 bb478:
-  %t500 = add i64 %t406, %t419
   store i64 0, ptr %s4
-  br label %bb501
+  br label %bb484
+bb484:
+  %t487 = load i64, ptr %s4
+  %t488 = icmp uge i64 %t487, %t385
+  br i1 %t488, label %bb486, label %bb485
+bb485:
+  %t489 = add i64 %t487, 32
+  %t490 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t489
+  store float 0x0000000000000000, ptr %t490
+  %t491 = add i64 %t487, 1
+  store i64 %t491, ptr %s4
+  br label %bb484
+bb486:
+  store i64 0, ptr %s4
+  br label %bb492
+bb492:
+  %t495 = load i64, ptr %s4
+  %t496 = icmp uge i64 %t495, %t385
+  br i1 %t496, label %bb494, label %bb493
+bb493:
+  %t497 = add i64 %t495, 48
+  %t498 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t497
+  store float 0x0000000000000000, ptr %t498
+  %t499 = add i64 %t495, 1
+  store i64 %t499, ptr %s4
+  br label %bb492
+bb494:
+  store i64 0, ptr %s3
+  br label %bb500
+bb500:
+  %t503 = load i64, ptr %s3
+  %t504 = icmp uge i64 %t503, 16
+  br i1 %t504, label %bb502, label %bb501
 bb501:
-  %t504 = load i64, ptr %s4
-  %t505 = icmp uge i64 %t504, %t468
-  br i1 %t505, label %bb503, label %bb502
-bb502:
-  %t506 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t504
+  %t505 = add i64 %t462, %t503
+  %t506 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t505
   %t507 = load float, ptr %t506
-  %t508 = add i64 %t500, %t504
-  %t509 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t508
-  store float %t507, ptr %t509
-  %t510 = add i64 %t504, 1
-  store i64 %t510, ptr %s4
-  br label %bb501
-bb503:
-  br label %bb418
-bb418:
-  %t511 = add i64 %t404, 1
-  store i64 %t511, ptr %s1
-  br label %bb401
-bb403:
+  %t508 = add i64 %t464, %t503
+  %t509 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t508
+  %t510 = load float, ptr %t509
+  %t511 = add i64 %t466, %t503
+  %t512 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t511
+  %t513 = load float, ptr %t512
+  %t514 = add i64 %t468, %t503
+  %t515 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t514
+  %t516 = load float, ptr %t515
+  store i64 0, ptr %s4
+  br label %bb517
+bb517:
+  %t520 = load i64, ptr %s4
+  %t521 = icmp uge i64 %t520, %t385
+  br i1 %t521, label %bb519, label %bb518
+bb518:
+  %t522 = mul i64 %t503, 16
+  %t523 = add i64 %t387, %t522
+  %t524 = add i64 %t523, %t520
+  %t525 = getelementptr [256 x float], ptr %packed0, i64 0, i64 %t524
+  %t526 = load float, ptr %t525
+  %t527 = fmul float %t507, %t526
+  %t528 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t520
+  %t529 = load float, ptr %t528
+  %t530 = fadd float %t529, %t527
+  store float %t530, ptr %t528
+  %t531 = fmul float %t510, %t526
+  %t532 = add i64 %t520, 16
+  %t533 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t532
+  %t534 = load float, ptr %t533
+  %t535 = fadd float %t534, %t531
+  store float %t535, ptr %t533
+  %t536 = fmul float %t513, %t526
+  %t537 = add i64 %t520, 32
+  %t538 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t537
+  %t539 = load float, ptr %t538
+  %t540 = fadd float %t539, %t536
+  store float %t540, ptr %t538
+  %t541 = fmul float %t516, %t526
+  %t542 = add i64 %t520, 48
+  %t543 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t542
+  %t544 = load float, ptr %t543
+  %t545 = fadd float %t544, %t541
+  store float %t545, ptr %t543
+  %t546 = add i64 %t520, 1
+  store i64 %t546, ptr %s4
+  br label %bb517
+bb519:
+  %t547 = add i64 %t503, 1
+  store i64 %t547, ptr %s3
+  br label %bb500
+bb502:
+  %t548 = add i64 %t461, %t16
+  store i64 0, ptr %s4
+  br label %bb549
+bb549:
+  %t552 = load i64, ptr %s4
+  %t553 = icmp uge i64 %t552, %t385
+  br i1 %t553, label %bb551, label %bb550
+bb550:
+  %t554 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t552
+  %t555 = load float, ptr %t554
+  %t556 = add i64 %t548, %t552
+  %t557 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t556
+  store float %t555, ptr %t557
+  %t558 = add i64 %t552, 1
+  store i64 %t558, ptr %s4
+  br label %bb549
+bb551:
+  %t559 = add i64 %t548, 16
+  store i64 0, ptr %s4
+  br label %bb560
+bb560:
+  %t563 = load i64, ptr %s4
+  %t564 = icmp uge i64 %t563, %t385
+  br i1 %t564, label %bb562, label %bb561
+bb561:
+  %t565 = add i64 %t563, 16
+  %t566 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t565
+  %t567 = load float, ptr %t566
+  %t568 = add i64 %t559, %t563
+  %t569 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t568
+  store float %t567, ptr %t569
+  %t570 = add i64 %t563, 1
+  store i64 %t570, ptr %s4
+  br label %bb560
+bb562:
+  %t571 = add i64 %t548, 32
+  store i64 0, ptr %s4
+  br label %bb572
+bb572:
+  %t575 = load i64, ptr %s4
+  %t576 = icmp uge i64 %t575, %t385
+  br i1 %t576, label %bb574, label %bb573
+bb573:
+  %t577 = add i64 %t575, 32
+  %t578 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t577
+  %t579 = load float, ptr %t578
+  %t580 = add i64 %t571, %t575
+  %t581 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t580
+  store float %t579, ptr %t581
+  %t582 = add i64 %t575, 1
+  store i64 %t582, ptr %s4
+  br label %bb572
+bb574:
+  %t583 = add i64 %t548, 48
+  store i64 0, ptr %s4
+  br label %bb584
+bb584:
+  %t587 = load i64, ptr %s4
+  %t588 = icmp uge i64 %t587, %t385
+  br i1 %t588, label %bb586, label %bb585
+bb585:
+  %t589 = add i64 %t587, 48
+  %t590 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t589
+  %t591 = load float, ptr %t590
+  %t592 = add i64 %t583, %t587
+  %t593 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t592
+  store float %t591, ptr %t593
+  %t594 = add i64 %t587, 1
+  store i64 %t594, ptr %s4
+  br label %bb584
+bb586:
+  store i64 %t459, ptr %s1
+  br label %bb455
+bb457:
+  br label %bb595
+bb595:
+  %t598 = load i64, ptr %s1
+  %t599 = icmp uge i64 %t598, %t7
+  br i1 %t599, label %bb597, label %bb596
+bb596:
+  %t600 = mul i64 %t598, 16
+  %t601 = sub i64 %lo, %t600
+  %t602 = icmp slt i64 %t601, 0
+  %t603 = select i1 %t602, i64 0, i64 %t601
+  %t604 = sub i64 %hi, %t600
+  %t605 = icmp sgt i64 %t604, 16
+  %t606 = select i1 %t605, i64 16, i64 %t604
+  %t607 = add i64 %t16, %t385
+  %t608 = icmp ult i64 %t603, %t16
+  %t609 = select i1 %t608, i64 %t16, i64 %t603
+  %t610 = icmp ugt i64 %t606, %t607
+  %t611 = select i1 %t610, i64 %t607, i64 %t606
+  %t612 = icmp ult i64 %t609, %t611
+  br i1 %t612, label %bb613, label %bb614
+bb613:
+  %t615 = sub i64 %t611, %t609
+  %t616 = sub i64 %t609, %t16
+  %t617 = mul i64 %t598, 16
+  store i64 0, ptr %s4
+  br label %bb618
+bb618:
+  %t621 = load i64, ptr %s4
+  %t622 = icmp uge i64 %t621, %t615
+  br i1 %t622, label %bb620, label %bb619
+bb619:
+  %t623 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t621
+  store float 0x0000000000000000, ptr %t623
+  %t624 = add i64 %t621, 1
+  store i64 %t624, ptr %s4
+  br label %bb618
+bb620:
+  store i64 0, ptr %s3
+  br label %bb625
+bb625:
+  %t628 = load i64, ptr %s3
+  %t629 = icmp uge i64 %t628, 16
+  br i1 %t629, label %bb627, label %bb626
+bb626:
+  %t630 = add i64 %t617, %t628
+  %t631 = getelementptr [256 x float], ptr %o4, i64 0, i64 %t630
+  %t632 = load float, ptr %t631
+  store i64 0, ptr %s4
+  br label %bb633
+bb633:
+  %t636 = load i64, ptr %s4
+  %t637 = icmp uge i64 %t636, %t615
+  br i1 %t637, label %bb635, label %bb634
+bb634:
+  %t638 = mul i64 %t628, 16
+  %t639 = add i64 %t387, %t638
+  %t640 = add i64 %t616, %t636
+  %t641 = add i64 %t639, %t640
+  %t642 = getelementptr [256 x float], ptr %packed0, i64 0, i64 %t641
+  %t643 = load float, ptr %t642
+  %t644 = fmul float %t632, %t643
+  %t645 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t636
+  %t646 = load float, ptr %t645
+  %t647 = fadd float %t646, %t644
+  store float %t647, ptr %t645
+  %t648 = add i64 %t636, 1
+  store i64 %t648, ptr %s4
+  br label %bb633
+bb635:
+  %t649 = add i64 %t628, 1
+  store i64 %t649, ptr %s3
+  br label %bb625
+bb627:
+  %t650 = add i64 %t600, %t609
+  store i64 0, ptr %s4
+  br label %bb651
+bb651:
+  %t654 = load i64, ptr %s4
+  %t655 = icmp uge i64 %t654, %t615
+  br i1 %t655, label %bb653, label %bb652
+bb652:
+  %t656 = getelementptr [64 x float], ptr %s0, i64 0, i64 %t654
+  %t657 = load float, ptr %t656
+  %t658 = add i64 %t650, %t654
+  %t659 = getelementptr [256 x float], ptr %o7, i64 0, i64 %t658
+  store float %t657, ptr %t659
+  %t660 = add i64 %t654, 1
+  store i64 %t660, ptr %s4
+  br label %bb651
+bb653:
+  br label %bb614
+bb614:
+  %t661 = add i64 %t598, 1
+  store i64 %t661, ptr %s1
+  br label %bb595
+bb597:
+  br label %bb15
+bb15:
+  ret void
+}
+
+define internal void @task6(i64 %lo, i64 %hi, ptr %frame) {
+entry:
+  %s0 = alloca i64
+  %s1 = alloca i64
+  %s2 = alloca i64
+  %pack_field0 = getelementptr %Frame, ptr %frame, i32 0, i32 12
+  %packed0 = load ptr, ptr %pack_field0
+  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
+  store i64 0, ptr %s0
+  br label %bb3
+bb3:
+  %t15 = load i64, ptr %s0
+  %t16 = icmp uge i64 %t15, 1
+  br i1 %t16, label %bb5, label %bb4
+bb4:
+  %t17 = mul i64 %t15, 16
+  %t18 = mul i64 %t15, 256
+  store i64 0, ptr %s1
+  br label %bb6
+bb6:
+  %t19 = load i64, ptr %s1
+  %t20 = icmp uge i64 %t19, 16
+  br i1 %t20, label %bb8, label %bb7
+bb7:
+  %t21 = mul i64 %t19, 16
+  %t22 = add i64 %t18, %t21
+  store i64 0, ptr %s2
+  br label %bb9
+bb9:
+  %t23 = load i64, ptr %s2
+  %t24 = icmp uge i64 %t23, 16
+  br i1 %t24, label %bb11, label %bb10
+bb10:
+  %t25 = add i64 %t17, %t23
+  %t26 = add i64 %t22, %t23
+  %t27 = getelementptr [256 x float], ptr %packed0, i64 0, i64 %t26
+  %t28 = icmp ult i64 %t25, 16
+  br i1 %t28, label %bb12, label %bb13
+bb12:
+  %t29 = mul i64 %t19, 16
+  %t30 = add i64 %t29, %t25
+  %t31 = getelementptr [256 x float], ptr %o5, i64 0, i64 %t30
+  %t32 = load float, ptr %t31
+  store float %t32, ptr %t27
+  br label %bb14
+bb13:
+  store float zeroinitializer, ptr %t27
+  br label %bb14
+bb14:
+  %t33 = add i64 %t23, 1
+  store i64 %t33, ptr %s2
+  br label %bb9
+bb11:
+  %t34 = add i64 %t19, 1
+  store i64 %t34, ptr %s1
+  br label %bb6
+bb8:
+  %t35 = add i64 %t15, 1
+  store i64 %t35, ptr %s0
+  br label %bb3
+bb5:
+  %t36 = call ptr @flow_par_begin(i32 1)
+  call void @flow_par_task(ptr %t36, i32 0, i32 1, ptr @task6_slice, i64 256, i32 257)
+  call void @flow_par_launch(ptr %t36, ptr %frame)
+  call void @flow_par_finish(ptr %t36)
   ret void
 }
 
@@ -940,6 +1185,7 @@ define internal void @flow_main() {
 entry:
   call void @flow_perf_begin()
   %frame = alloca %Frame
+  %pack0 = alloca [256 x float], align 64
   %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
   %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
   %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
@@ -952,6 +1198,8 @@ entry:
   %o11 = getelementptr %Frame, ptr %frame, i32 0, i32 9
   %o12 = getelementptr %Frame, ptr %frame, i32 0, i32 10
   %o14 = getelementptr %Frame, ptr %frame, i32 0, i32 11
+  %pack_field0 = getelementptr %Frame, ptr %frame, i32 0, i32 12
+  store ptr %pack0, ptr %pack_field0
   %h = call ptr @flow_par_begin(i32 7)
   call void @flow_par_task(ptr %h, i32 0, i32 1, ptr @task0, i64 256, i32 770)
   call void @flow_par_task(ptr %h, i32 1, i32 1, ptr @task1, i64 16, i32 274)
@@ -959,7 +1207,7 @@ entry:
   call void @flow_par_task(ptr %h, i32 3, i32 1, ptr @task3, i64 256, i32 514)
   call void @flow_par_task(ptr %h, i32 4, i32 1, ptr @task4, i64 256, i32 514)
   call void @flow_par_task(ptr %h, i32 5, i32 0, ptr @task5, i64 4, i32 258)
-  call void @flow_par_task(ptr %h, i32 6, i32 1, ptr @task6, i64 256, i32 257)
+  call void @flow_par_task(ptr %h, i32 6, i32 0, ptr @task6, i64 256, i32 257)
   call void @flow_par_dep(ptr %h, i32 6, i32 2)
   call void @flow_par_dep(ptr %h, i32 0, i32 3)
   call void @flow_par_dep(ptr %h, i32 0, i32 4)
