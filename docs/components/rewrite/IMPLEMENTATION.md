@@ -1,7 +1,7 @@
 # rewrite — implementation map
 
 > The functor DESIGN.md ("Categorical model") → code (ADR-0017). Rows updated WITH
-> the model and the code, in the same change (FRAMEWORK §6.3). Last: 2026-07-24 · S27b (`LiftLoops` shipped after Inline; R-LF/R-LM plan+replay; matmul4 reaches `tile_plan`). Previously S27 (Inline default-first; loop-bearing-callee guard; cap 256; body Call stripping).
+> the model and the code, in the same change (FRAMEWORK §6.3). Last: 2026-07-25 · S29 (`TimeMs` replay arm — identity only, no pass plans it). Previously 2026-07-24 · S27b (`LiftLoops` shipped after Inline; R-LF/R-LM plan+replay; matmul4 reaches `tile_plan`). Previously S27 (Inline default-first; loop-bearing-callee guard; cap 256; body Call stripping).
 
 ## Objects (Dat) → code
 
@@ -27,7 +27,7 @@
 | `analyze_map_fusion` | `&CategoryIr → RewritePlan` (layer 1: out-degree-1 Map∘Map with loop-free + single-full-writer bodies (P3); map(id) → alias under P1/P2) | `src/functor_laws.rs:analyze_map_fusion` | built |
 | `analyze_inline` | `&CategoryIr → RewritePlan` (mark a `Call` site iff callee morphisms ≤ `INLINE_MAX_BODY` ∧ callee ≠ entry ∧ **callee loop-free** (`loop_structure(g).is_empty()` — nested-SCC prevention, S27) ∧ no `Call` cycle; Calls inside Map/Fold body fns ARE planned (graph-wide walk); the Map/Fold morphisms themselves never elaborated. **S27: in the default `rewrite()` list, first**) | `src/inline.rs:analyze_inline` | built |
 | `analyze_lift` | `&CategoryIr → RewritePlan` (consume `loop_plan`; R-LF/R-LM exact two-component state, const `K >= 1`, 0/+1 counter, pure/token-free cone, exact exit; map additionally one identity `Update`, c-free value, `n == K`; `covers_loop_body` rejects unselected decide/advance work before whole-SCC replacement; key `lift` by merge) | `src/lift.rs:analyze_lift` | built |
-| `replay` | `(&CategoryIr, &RewritePlan) ⇀ CategoryIr` (recipe classification §1.1; loop quartet facts delegated to `flow_ir::CategoryIr::loop_plan`; fused and lifted body synthesis; lift replay mints count object + `Iota`, captured Map/Fold, marks old SCC/routes complete; call substitution via `inline_call`/`inline_return`; fn-level DCE via post-plan reference liveness) | `src/replay.rs:replay` (+ `synthesize_lifted_body`, `reconstruct_lifted_loop`, `emit_lifted_return`) | built |
+| `replay` | `(&CategoryIr, &RewritePlan) ⇀ CategoryIr` (recipe classification §1.1; **S29: `TimeMs` rebuilt via `fb.time_ms(feed(src))` — the bare token source, `dest` unused, exactly the `Print` shape**; loop quartet facts delegated to `flow_ir::CategoryIr::loop_plan`; fused and lifted body synthesis; lift replay mints count object + `Iota`, captured Map/Fold, marks old SCC/routes complete; call substitution via `inline_call`/`inline_return`; fn-level DCE via post-plan reference liveness) | `src/replay.rs:replay` (+ `synthesize_lifted_body`, `reconstruct_lifted_loop`, `emit_lifted_return`) | built |
 | `rewrite` / `rewrite_with` | `CategoryIr → RewriteResult` (by-value; default fixpoint `Inline→LiftLoops→ConstFold→Cse→Dce→MapFusion`, `MAX_ROUNDS=32`; non-canonical ⇒ whole-graph identity; validate debug-asserted per replay) | `src/driver.rs:rewrite{,_with}` | built |
 
 ## Test / harness → code
@@ -45,5 +45,22 @@
 | bench | `benches/rewrite_scale.rs` |
 
 ## Notes / divergences
+
+**S29 — `TimeMs` needed one line of code and no rule.** The clock read is excluded from every
+pass by predicates that already existed: `graph_rewrites.rs:is_pure` is an allow-list (`TimeMs`
+falls to `false`, so its target is a DCE keep-root), `ty_contains_token` on the `(IoToken, f64)`
+target stops CSE (`graph_rewrites.rs:analyze_cse`), forwarding (`equations.rs:forward`) and
+lifting (`lift.rs:analyze_loop` rejects any token-bearing SCC object), and
+`graph_rewrites.rs:reads_packed_source` returns `false` for it, matching replay's bare-token
+feed. So the only new code is `replay.rs:emit_op`'s `TimeMs` arm — without it a rewritten
+clock-bearing program would hit the `unreachable!` fallthrough. Coverage gap, recorded not
+papered over: testgen emits no clock read, and both S29 `time` fixtures
+(`differential_time_bracket` in `crates/backends/llvm/tests/differential.rs`,
+`time_bracket_fences_the_tasks_it_brackets` in `crates/backends/llvm/tests/golden_ll.rs`)
+emit from `lower_src` **without** `rewrite` — so **no test replays a `TimeMs` today**; the arm
+is reachable only through `emit --rewrite` on a timed program.
+Cheapest close when it matters: one `identity.rs` case asserting a bracketed program survives
+`rewrite` byte-identically. A testgen `Step::Time` is only worth it if a rule ever wants to
+reason about token order.
 
 DESIGN as-built deltas are recorded in DESIGN §3.1/§3.2/§4.1/§5/§11 and the shipped plan. S12: conservative DCE, no constant dedup, Debug-only `RewriteResult`, cumulative report, per-merge exit attribution. S27 made Inline default-first. S27b adds LiftLoops immediately after it; fixpoint interleaving is load-bearing for matmul4.

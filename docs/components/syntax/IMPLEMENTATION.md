@@ -70,7 +70,7 @@ category.
 | J1 — `parse` total: never panics, never hangs | `crates/flow-syntax/src/parser.rs:parse` (`DEPTH_LIMIT`=128 + progress lemma) | `tests/proptest_parser.rs::arbitrary_strings_total`, `::flow_soup_total` |
 | J2 — span sanity: child ⊆ parent, siblings ordered non-overlapping | `crates/flow-syntax/src/parser.rs` (debug-asserts in node constructors) | `tests/proptest_parser.rs::flow_soup_total` (`check_program`) |
 | J3 — zero diagnostics ⇒ no `Error`/rejected-but-kept nodes | `crates/flow-syntax/src/parser.rs` (clean-tree discipline) | `tests/proptest_parser.rs` (`has_error_or_rejected`), `tests/golden_trees.rs` |
-| J4 — eight `examples/*.flow` parse with zero diagnostics (+zip_demo, +vector_add per ADR-0018) | `crates/flow-syntax/src/parser.rs:parse` | `tests/golden_trees.rs::tree_abs` … `::tree_vector_add` |
+| J4 — eight `examples/*.flow` parse with zero diagnostics (+zip_demo, +vector_add per ADR-0018) | `crates/flow-syntax/src/parser.rs:parse` | `tests/golden_trees.rs::tree_abs` … `::tree_seq_demo` (the nine example goldens; `::tree_unit_time_head` is the S29 inline-source golden, not an example) |
 | J5 — presentation-free: no `Display` anywhere in crate | `crates/flow-syntax/src/ast.rs`, `diag.rs` (only `Debug`) | grep/review |
 | J6 — `parse(s).diagnostics ⊇ lex(s).diagnostics` (same values) | `crates/flow-syntax/src/parser.rs:parse` (seeds `Parser` with lex diags, then stable-sorts) | `tests/proptest_parser.rs::flow_soup_total` |
 | Pipe-weld — `t_to(lex) = t_from(parse_program) = Token*` (Coherence Law 1, specialised) | `crates/flow-syntax/src/parser.rs:parse` (`lex` → `Parser::new(&lexed.tokens)`) | `tests/golden_trees.rs` (end-to-end), `tests/out_of_core.rs::full_surface_exact_pcode_multiset` |
@@ -110,6 +110,17 @@ vice versa.
   (now `void`-only) for each dropped non-chain statement — a diagnostic, not a model
   morphism (like the other P-codes, off the `Dat`/`Trn` tables). `SeqBlock` is a block form
   in `stage_is_block_form` and widened in `stage_kind_extent` (both `parser.rs`).
+- **Unit literal `()` (S29, `time` builtin).** `crates/flow-syntax/src/ast.rs:ExprKind::Unit`
+  is a new `Expr` variant, built by `crates/flow-syntax/src/parser.rs:Parser::parse_paren_or_tuple`
+  (the `at(RParen)` arm, which used to emit **P0001** "empty parentheses `()` are not an
+  expression" and return `error_expr()`). Like every other `ExprKind` variant it gets no row
+  of its own above — the `Expr` object row covers it (see the §15 sub-node-zoo note) — but the
+  *diagnostic* change is recorded here: `()` is now a zero-diagnostic parse. It denotes no
+  value; the wire-less-head reading and the rejection of every other position live in lower
+  (`crates/flow-lower/src/emit.rs` — `ExprKind::Unit` in the `emit_chain` head seed → `None`,
+  and in `emit_expr_dest` → **L1301**), per
+  `docs/components/lower/plans/plan-time-builtin.md`. Rendered as `Unit` by
+  `crates/flow-syntax/tests/support/mod.rs:TreeWriter::expr`.
 - **Element-update bind `c[i] <- x` (ADR-0021).** `BindStmt` gained an optional
   `index: Option<Expr>` field (`crates/flow-syntax/src/ast.rs:BindStmt`): `Some` = the indexed
   form, parsed in `crates/flow-syntax/src/parser.rs:parse_bind_stmt` (the optional `[' expr ']`

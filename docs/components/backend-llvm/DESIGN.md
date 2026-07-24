@@ -31,7 +31,7 @@ Three payoffs. (1) **§8.5 piecewise correctness is the code shape**: `emit` wal
 | `emit_morphism` | per `topo_order` step | §2 op table; the piecewise functor application |
 | `emit_loop` | per canonical quartet | §3; ADR-0016 CFG |
 
-### Tile ladder — strategy rungs at recorded sites (TrnLoc, §4.4; S25–S28)
+### Tile ladder — strategy rungs at recorded sites (TrnLoc, §4.4; S25–S29)
 
 A recognized `TileSite` (flow-ir's record: geometry + per-read coefficients +
 the S28 `ksplit` decomposition) carries ONE `t_from→t_to` contract — per-cell
@@ -48,6 +48,7 @@ per-backend width ownership: `docs/notes/tile-ladder-direction.md`.
 | 3 — packing (S27) | `packing_site` = rung-2 gate ∧ `b.ksplit.is_none()` | `emit_pack_copy` + packed reads | b repacked j-tile-major (a `DataLoc` sibling); per-width TJ, k ×2-unroll + prefetch |
 | B — 1-D window (S28) | `window1d_site` = `rows == 1 && b.ck == 1 && b.ksplit.is_none()` | `emit_tiled_map_blocked_1d` (+ `emit_tile_window_block`/`emit_tile_window_step`) | **the rung-2 DUAL** — TI blocks over the LANE axis; ONE scalar `a` load per k shared across the TI subrows (a invariant, b slides: matmul shares b across rows, FIR shares a across lane-blocks); `acc [TI·TJ x elem]`; k ×2-unrolled iff `K % 2 == 0`; full blocks unmasked; the `[lo,hi)` window needs no `[0,C)` clip (`rows == 1` collapses the row loop); remainder = the TI=1 `emit_tile_j_split` discipline (constant-TJ main + one runtime-`tj` tile). Non-window 1-D sites keep the rung-1 nest byte-for-byte (the negative control) |
 | A3 — conv micro-kernel (S28) | `conv_site` = `a.ksplit.is_none() && b.ksplit.is_some() && b.ck == 0 && a.clane == 0 && b.clane == 1` | `emit_tiled_map_conv` (+ `emit_tile_conv_tile`, `ConvTileCtx`) | **the k-split decomposition constant-folded** — per (row, j-tile) the `(kq, kr)` tap nest fully unrolls (`kq in 0..K/div` outer, `kr in 0..div` inner IS k-ascending); per tap a constant-index `a` load and a `b` vector load at `b_row + (cq·kq + cr·kr) + j0 + lane`, the tap offset compile-time — div/mod vanish from the emission (zero `sdiv`/`srem`); rung-1 row idiom (slice row range + signed per-row jw clip), constant-TJ main + one runtime-`tj` remainder; TI=1 (row blocking a recorded ceiling) |
+| KC — k-panel split (S29) · **BUILT, TESTED, DEFAULT OFF** | `EmitOpts::kc_nest` (opt-in) ∧ `packing_site` ∧ `site.k > TILE_KC` | `emit_tile_packed_kc` (replacing `emit_tile_packed_j_outer`; + `emit_tile_kc_{i_regions, boundary_row, boundary_tile, j_split, apack, trio, acc_lane, a_values}`) | the OpenBLAS **(jc, kc, ic)** order: j-blocks of `NC` lanes (`tile_nc_for` = TJ×32) outer → k-panels of `TILE_KC` = 128 (peeled `kc == 0`, then a loop whose last panel is runtime-short) → the rung-2 head/interior/tail i regions innermost; a's rows packed contiguous per (i-block, kc) into a `[TI·KC x elem]` 64-aligned scratch. **acc stays ONE j-tile wide** (`[TI·TJ x elem]`, the same as the j-outer nest): with `kc` outside `ib`, other i-blocks run between two panels of the same block, so nothing survives in scratch — **partial sums park in `out`**, spilled at every panel end and reloaded at the next (the peeled panel seeds instead). Value-preserving and per-cell k still ascending ⇒ bit-exact vs the j-outer nest (R1, differential-enforced). **Honest status:** the lever was sized on A-re-read traffic alone (C/TJ → C/NC) and priced no counterweight; measured on M4 Pro it is a **3× LOSS at 1024 f32**, so it ships default-OFF — a pure performance tailor in ADR-0032's sense, kept because it was designed against box-scale traffic (4096 on zen3) where it is still unmeasured. Numbers and the reasoning: `docs/performance/matmul/s29.md` §1; the open leg + the parking-free alternative: suggestions #16 |
 
 Composition rules for the S28 branches (plan-s28 numbering kept):
 
@@ -60,6 +61,19 @@ Composition rules for the S28 branches (plan-s28 numbering kept):
    bit-exactness invariant.
 5. Never mask dead lanes/subrows: constant-TJ main tiles, runtime-`tj` only on
    remainder tiles; par split-range clipping unchanged.
+
+The KC rung adds two of its own (plan-s29 numbering kept); rules 4 and 5 above
+hold for it unchanged:
+
+1. Only packed sites with `site.k > TILE_KC` take the jb/kc nest — shallower K,
+   unpacked (`--no-pack`) sites, rung 1, window1d and conv are byte-for-byte
+   unchanged (the negative controls), and the whole rung is behind an opt-in
+   flag, so the default emission is byte-identical to S28's.
+3. acc discipline: seeded in the peeled `kc == 0` panel, reloaded from `out` in
+   every later panel, and stored back at EVERY panel end — j-remainder tiles
+   inside a jb block included. (Amended from the plan's "stored at the last kc"
+   when the nest order fixed it: the (jc, kc, ic) order cannot keep a partial
+   sum resident, which is also why acc is one j-tile wide and not `TI×NC`.)
 
 ### Composition rules
 
@@ -94,6 +108,13 @@ flow_print_i32(i32, bool)   flow_print_i64(i64, bool)   flow_print_u8(u8, bool)
 flow_print_bool(bool, bool) flow_print_f32(f32, bool)   flow_print_f64(f64, bool)
 flow_print_str(*const u8, usize, bool)                  // bool = newline
 flow_trap(u32) -> !          // 0 = div_zero, 1 = index_oob; stderr "flow trap: …"; exit(101)
+
+// S29 additions
+flow_time_ms() -> f64        // the `time` builtin's clock read: ms since one process-lifetime
+                             // monotonic epoch (`OnceLock<Instant>`), so two reads are
+                             // non-decreasing and their difference is real elapsed ms
+flow_rt_alloc(i64 bytes, i64 align) -> *mut u8   // the heap-lowering arena (BL9); uninitialised,
+flow_rt_free_all()                               // like the `alloca` it replaces
 ```
 
 Bodies: `print!("{v}")` / `println!` — Rust shortest-round-trip `Display` = interp `render` **by definition** (both call the same formatter; interp value.rs `render` is the reference; a unit test in flow-rt pins a table of values incl. `4080.0 → "4080"`, `5.375`, `-0.0`, `NaN`, `inf` against `flow_interp`-rendered strings). Stdout flushed on every call (differential reads pipes).
@@ -107,6 +128,8 @@ Bodies: `print!("{v}")` / `println!` — Rust shortest-round-trip `Display` = in
 **Erased representation rule (S13 review — position-agnostic; token may be packed first or last).** A product's *residual* is its component list minus `IoToken`/`Unit` components. Residual arity ≥ 2 ⇒ `{…}` struct, `Pair`/`Proj` = GEP store/load through the **remapped** index (skip erased components when counting). Residual arity 1 ⇒ the object materializes as the **bare** component type; `Pair` into it / `Proj` out of it = plain store/load (no GEP — a `{i32}` GEP against a bare `i32` slot is invalid LLVM). Residual arity 0 ⇒ no slot at all (token-only objects). The component→erased-index remap is **derived on demand from `object(id).ty`** (deduce-don't-store); `FnCtx` holds only the slot map.
 
 **Slot scheme (mem2reg-friendly classic).** Every materialized object gets one `alloca` in the function's entry block; a morphism emission loads its operand slots, computes, stores its target slot. Products assemble in place: `Pair{slot k}` = GEP into the aggregate alloca + store (the staging buffer, made of memory); `Proj{k}` = GEP + load; `Index` = bounds-check then dynamic GEP + load. This makes every §5.1 row a local template and leaves optimization to LLVM (`-O0` for differentials; the perf baseline may also record `-O2`).
+
+**(S29) Heap lowering — one placement swap under the slot scheme (BL9).** In the **entry** function only, an entry-block block of at least `HEAP_MIN_BYTES` (256 KB) is emitted as `call ptr @flow_rt_alloc(bytes, align)` instead of `alloca`, released by a single `flow_rt_free_all()` immediately before that function's `ret`. Everything above is unchanged: an `alloca` result and an arena block are both a `ptr`, so every `getelementptr`/load/store consumer is byte-identical, and the swap is invisible below the one seam (`func.rs:entry_alloc`). This is a `DataLoc` move, not a semantic one — the same `Dat` placed in the arena instead of the frame. The parallel flavor's block is the whole `%Frame` (`build_frame_layout` already packs every array into it, so the frame IS what blows the stack); the sequential flavor's are the per-object slots and the packed panel. Sizing is the emitter's own LLVM `StructLayout` walk over the closed emitted-type grammar (`func.rs:llt_bytes`), checked against `ptrtoint (ptr getelementptr (%Frame, ptr null, i32 1) to i64)`. The single teardown point sits past `flow_par_finish` and past the return value's load, so "free after every reader" holds in both flavors; and because only the entry fn registers blocks, "free everything" is exactly "free mine".
 
 **Op table** (the functor's morphism map; source = the operand aggregate per §5.1):
 
@@ -129,6 +152,7 @@ Bodies: `print!("{v}")` / `println!` — Rust shortest-round-trip `Display` = in
 | `Call(g)` | direct `call` to the internal fn (aggregates by value — internal ABI, private linkage) |
 | `Map/Fold{body}` | counted loop calling the body fn per element / with the accumulator threaded |
 | `Print{newline}` | call the ty-matched `flow_rt` extern at the edge's topo position (L4) |
+| `TimeMs` **(S29, plan-time-builtin)** | `call double @flow_time_ms()` + store. The source `IoToken` erases and the `(IoToken, f64)` target's residual has arity 1, so it materializes as the **bare** `double` (the §2 erased-representation rule) — the call result IS the target's value, no pair is built. Emission position in the block IS the ordering the token models (L4). The op is effectful: it is never rewritten, and a fn containing it stays attribute-free through the existing token rule |
 | `Output` | load + store (the identity move) |
 
 **Functions.** Every `FuncDef` → `define internal` with the lowered signature minus erased components; `main : IoToken → IoToken` → `define internal void @flow_main()`. The public wrapper: `define i32 @main() { call void @flow_main(); ret i32 0 }`. **(as-built S13)** Trap blocks are emitted **per-site inline**, not as one shared `trap_bb` per function per kind: `func.rs:trap_if` mints a fresh `trap`/`cont` label pair at each guard, the trap block calling `flow_trap` + `unreachable`. Two extra blocks per guard, no shared join — simpler emission, `-O0` cleans it up; a shared block is unclaimed headroom, not a correctness point.
@@ -180,7 +204,7 @@ Deps: `flow-ir`; dev-deps: `flow-syntax`, `flow-lower`, `flow-interp`, `flow-rew
 5. `Unsupported` on the hand-built nested-loop graph (L3 pin).
 6. Perf baseline recorded in STATUS (§4).
 
-## 7. Decision ledger (BL1–BL6)
+## 7. Decision ledger (BL1–BL9)
 
 | id | decision | why |
 |---|---|---|
@@ -192,6 +216,7 @@ Deps: `flow-ir`; dev-deps: `flow-syntax`, `flow-lower`, `flow-interp`, `flow-rew
 | BL6 | Nested loops `Unsupported` (with interp M1 + rewrite RW8 as one scope boundary) | one honest ceiling across the toolchain; lifted together or not at all |
 | BL7 | Loop exit/body attribution predicate exported from `flow-ir`, consumed here (interp/rewrite migrated if mechanical) | the per-merge-SCC rule regressed twice in S12 precisely because it lived in two hand-maintained copies; a third copy is how the next P0 ships (one-source-of-truth, FRAMEWORK §5) |
 | BL8 | Differential sweep is closed-mode only; `Unit → i32` entry gets a result-printing wrapper; native runs time-boxed | open-mode has no native observable; a constant exit-0 wrapper would compare nothing; a hung native run must fail loudly, not hang the suite (S13 review) |
+| BL9 **(S29)** | Heap lowering is **entry-function only**, threshold-gated at 256 KB, with ONE free-everything teardown before that fn's `ret` — not per-allocation lifetimes | the stack ceiling is a target fact (macOS caps the main thread at 64 MB hard), so the threshold is a backend emission constant beside `TILE_I`/`TILE_KC`, not a language one. Entry-only is what makes the arena sound without a free analysis: the entry prologue allocates a handful of times and never in a loop, whereas a Named fn or a Map/Fold body runs an unbounded number of times and would grow the arena without a last-use point the emitter does not compute. Consequence, recorded: a `matmul2048` with its kernel in a named fn still hits the stack wall; the all-in-`main` capture form does not. Upgrade path: `flow_rt_free(ptr)` + `LastUsePlan`-driven free points |
 
 ## 8. Open questions (→ ADR candidates / later)
 

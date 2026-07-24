@@ -36,6 +36,7 @@ describes a Flow *program* as a category (that lives in `docs/architecture/categ
 | `binop` | `Binary → Pair*-then-op` (product formation) | `crates/flow-lower/src/emit.rs:Emitter::binop` | built |
 | `zip` (builtin, ADR-0018) | `Tuple[A^n,B^n] → Zip` (proj + re-pair; L1606/L1607/L1608) | `crates/flow-lower/src/emit.rs:Emitter::emit_zip` (routed in `emit_expr_stage`; `lib.rs:is_collection_builtin`) | built |
 | `enumerate` (builtin, ADR-0018) | `A^n → Enumerate` (single-source; L1609/L1610) | `crates/flow-lower/src/emit.rs:Emitter::emit_enumerate` (routed in `emit_expr_stage`) | built |
+| `time` (builtin, effectful; plan-time-builtin) | `IoToken → (IoToken × f64)` — the wire-LESS stage: `() -> time` only; token in, `(token, ms)` out, split by two Projs | `crates/flow-lower/src/emit.rs:Emitter::emit_time` (routed in `emit.rs:Emitter::emit_expr_stage`; the `()` head seeds `cur = None` in `emit.rs:Emitter::emit_chain`; `lib.rs:is_time_builtin`) | built |
 | `iota`/`fill` (builtins, ADR-0029) | `i32 n → Iota`; `(T×i32 n) → Fill` via the internal pair (count = positive literal ≤ i32::MAX; L1612/L1613) | `crates/flow-lower/src/emit.rs:Emitter::{emit_iota, emit_fill, static_count_arg}` (routed at `ExprKind::Call` in `emit_expr_dest`; typing's Call arm synthesizes `WTy::Array`) | built |
 | `guard` | `Guard → Phi` (bool / right-folded value-match) | `crates/flow-lower/src/emit.rs:Emitter::emit_phi_guard` → `emit_bool_guard` / `emit_value_match` | built |
 | `loop` | `Loop → inline cycle` (LoopEnter/Back/Exit) | `crates/flow-lower/src/emit.rs:Emitter::emit_loop` (+ `emit_routing_guard`, `emit_exit_arm`) | built |
@@ -58,6 +59,7 @@ describes a Flow *program* as a category (that lives in `docs/architecture/categ
 | Partiality: `dom(lower) = Flow-Core`; rejection = functor undefined | each L-code `Err` arm | `tests/rejection.rs` (one test per L-code) |
 | Collection builtins pure (LD26): no token ⇒ fanout/body-legal; emit owns L1606–L1610, builder re-derives | `crates/flow-lower/src/lib.rs:is_collection_builtin` / `emit.rs:Emitter::emit_zip`,`emit_enumerate` | `tests/rejection.rs::l1606_*..l1610_*` / `tests/golden.rs::golden_zip_builtin`,`golden_enumerate_builtin`,`fanout_pure_collection_ops_lower_clean` |
 | `seq` (ADR-0019 §8.10): no IR footprint — token thread orders statements; enclosing scope (bindings escape); tail = value; L1611 continues-no-tail; effectful seq in a `Plain` fanout → L1305 parity (no effect escape); sub-passes gating on unconditional execution descend into fanout **and** seq (phi-arm L1404/L1405/L1408, loop carried-set, map/fold L1108 capture) | `crates/flow-lower/src/emit.rs:Emitter::emit_seq_block`, `scan_chain`, `collect_assigns_chain`, `typing.rs:capture_chain` | `tests/golden.rs::golden_seq_two_printlns`,`golden_seq_mid_chain`,`golden_seq_return_tail`,`golden_seq_explicit_ret` / `tests/rejection.rs::l1611_seq_continues_no_tail`,`l1611_seq_return_position_no_tail`,`l1611_effectful_seq_return_position_no_tail`,`seq_return_position_valued_effectful_lowers_clean`,`l1404_effectful_seq_in_phi_arm`,`l1404_effectful_fanout_in_phi_arm`,`l1108_capture_in_seq_in_map_body`,`effectful_seq_in_fanout_join_rejected`,`empty_seq_lowers_clean`,`seq_bindings_escape_to_enclosing_scope`,`seq_headless_statements_seed_from_input` / `flow-interp/tests/acceptance.rs::sum_to_n_seq_wrapped_reassign_value_contract` |
+| `time` is an effect site (plan-time-builtin rule 1): it threads the IO token exactly like `print`, so the same four seams classify it — reserved name (L1009), direct effect in the call-graph walk, typing row `→ f64`, banned in map/fold bodies (L1605). `()` is not a value (L1301) and `time` takes no wire (L1302) — no new L-code | `crates/flow-lower/src/lib.rs:is_time_builtin` (one predicate, LD25's rule) at `lib.rs:is_reserved`, `effects.rs:NameWalk::chain`, `typing.rs:stage` (f64) / `typing.rs:body_effect_span` (L1605) / `typing.rs:capture_chain`, `emit.rs:Emitter::{emit_expr_stage, emit_time, stage_writes_value}`, `emit.rs:Emitter::emit_expr_dest` (`ExprKind::Unit` → L1301) | `tests/structural.rs::time_bracket_types_f64`,`time_reads_thread_the_io_token` / `tests/rejection.rs::l1009_reserved_time`,`l1301_unit_as_value`,`l1302_time_with_a_wire`,`l1605_body_time` |
 | I1 one-source/one-target: arity reified as product `Object` (Pair-then-op) | `crates/flow-lower/src/emit.rs:Emitter::binop` / `pack` | `tests/proptests.rs` (Ok ⇒ `validate` empty) |
 | Call-graph acyclicity (I6): cycle → L1008 before declare | `crates/flow-lower/src/effects.rs:analyze` / `find_cycle` | `tests/rejection.rs::l1008_recursive_call` |
 | Determinism (§11): `BTreeMap`/`Vec` throughout; no `HashMap` in emission order | all modules (structural discipline) | `tests/golden.rs` (insta snapshots stable) |
@@ -82,6 +84,21 @@ Per FRAMEWORK §6.6 — code and model differences and their resolution.
   not expose object tys for branch decisions. Per FRAMEWORK §5 this is a justified store
   (forward navigation the builder does not provide) and the code says so at the field; no
   action, recorded here for completeness.
+- **All four effect detectors learn `time` (S29 — found in reconcile, fixed in the same
+  session).** `time` is an effect by construction (it consumes/produces the IO token —
+  plan-time-builtin rule 1), and four seams ask "is this stage an effect?":
+  `effects.rs:NameWalk::chain`, `typing.rs:body_effect_span` (L1605),
+  `emit.rs:scan_phi_arm` (L1404) and `emit.rs:effect_chain` (the `loop_body_has_effect`
+  predicate). The builtin first landed in two of them; the other two still tested
+  `is_print_builtin` alone, which lowered a Phi-arm clock read clean (where `print` is
+  L1404) and — the real defect — left the token out of a loop's carried set `U`, hoisting
+  a loop-body `TimeMs` **out of the cycle**: one timestamp instead of one per iteration,
+  with `validate` empty (the ATK-02 failure mode `effect_chain`'s own doc comment names).
+  All four now call the shared predicate; pinned by
+  `llvm/tests/golden_ll.rs:time_inside_a_loop_stays_inside_the_loop`, which asserts the
+  emitted call sits between the loop header and the back edge. The structural fix — one
+  `stage_is_effect` helper so a fifth effect builtin cannot miss a seam — stays open as
+  suggestions.md #3.
 - **Stale doc comment in `scope.rs`.** The module doc of `crates/flow-lower/src/scope.rs`
   describes the payload as `Binding { obj, ty, mutable, kind }`; the real `Binding`
   (`emit.rs:29`) has `decl_seq`, not `kind`. Cosmetic — the scope stack is generic

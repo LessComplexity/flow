@@ -136,6 +136,7 @@ each is realized in code at the cited seam.
 | `binop` | `Binary → Pair*-then-op` | Partial | product formation: k `Pair` edges → one op-edge `(A×B)→T` (I1 total) |
 | `zip` (builtin) | `Tuple[A^n,B^n] → Zip` | Partial | proj the 2-tuple wire, re-pair, `Zip` → `(A×B)^n`; L1606/L1607/L1608 (§8.9; ADR-0018) |
 | `enumerate` (builtin) | `A^n → Enumerate` | Partial | single-source `Enumerate` → `(i32×A)^n`; L1609/L1610 (§8.9; ADR-0018) |
+| `time` (builtin, effectful) | `IoToken → (IoToken × f64)` | Partial | plan-time-builtin: `() -> time` is the **wire-LESS** stage — consume the token register, `TimeMs`, split the pair (slot 0 = new token, slot 1 = ms). An effect like `print` (never folded/reordered/dropped: the token says so); `()` elsewhere → L1301, a wire fed to `time` → L1302 (§8.3) |
 | `guard` | `Guard → Phi` | Partial | pure arms → right-folded `Phi` over `Tuple[T,T,Bool]`; routing arms → loop route |
 | `loop` | `Loop → inline cycle` | Partial | `LoopMerge` + `LoopEnter`/`LoopBack`/`LoopExit`; no stored `Trace` (D3) |
 | `seq` | `SeqBlock → statement thread` | Partial | ADR-0019: **no IR footprint** — statements lower in-scope in source order, tail = value; ordering *is* the token thread (§8.10); L1611 if it continues with no tail |
@@ -358,7 +359,7 @@ available (§10). Catalogue (each gets ≥1 rejection test, §14):
 | L1006 | DuplicateParam | duplicate parameter name |
 | L1007 | RecursiveType | `type` reference cycle (Ty is a tree; cycles are unrepresentable) |
 | L1008 | RecursiveCall | call-graph cycle (recursion is Core+1) |
-| L1009 | ReservedName | `fn print` / shadowing a builtin scalar type name |
+| L1009 | ReservedName | `fn print` / `fn time` / shadowing a builtin scalar type name (every stage builtin name is reserved) |
 | L1010 | EmptyType | zero-field `type` declaration (its literal would mint an in-edge-less Temporary — review TY-1; see also the flow-ir fix note in §16) |
 | L1101 | UnknownName | unresolved identifier (expression or stage position) |
 | L1102 | UnknownType | unresolved type name |
@@ -377,8 +378,8 @@ available (§10). Catalogue (each gets ≥1 rejection test, §14):
 | L1207 | Unprintable | `print` of a non-(numeric/bool/str) value |
 | L1208 | EmptyArray | array literal/type of size 0 |
 | L1209 | TypeTooDeep | any ty (declared or synthesized) nested deeper than flow-ir's `MAX_TY_DEPTH = 64` — the parser guards only at 128, so depths 65–128 are parse-clean user input, not lower bugs (review SF-8) |
-| L1301 | HeadlessChain | statement-level headless chain other than `-> ret;` (`-> loop;` is legal only as a jump-arm terminal — L1304) |
-| L1302 | ExprStage | stage expression that does not consume the piped value (general E4 stages, tuple stages; OQ2) |
+| L1301 | HeadlessChain | statement-level headless chain other than `-> ret;` (`-> loop;` is legal only as a jump-arm terminal — L1304); **or `()` in a value position** — `()` produces no object, its only use is the wire-less head of `() -> time` (plan-time-builtin; the message names that one use) |
+| L1302 | ExprStage | stage expression that does not consume the piped value (general E4 stages, tuple stages; OQ2); **or a wire fed to `time`** (`5 -> time`) — the one stage that takes no value |
 | L1303 | RetMidChain | stages after `-> ret` in one chain |
 | L1304 | JumpMisplaced | `-> loop` outside a loop body, in a headed chain, in non-terminal position, or as an unconditional statement (a `LoopBack` needs a Bool cond; the only legal position is a routing-guard jump-arm terminal — review CP-8) |
 | L1305 | FanoutNoValue | chain continues after a fanout but some branch produces no value |
@@ -401,7 +402,7 @@ available (§10). Catalogue (each gets ≥1 rejection test, §14):
 | L1602 | MapNonArray | map applied to a non-array wire |
 | L1603 | FoldShape | fold wire not a 2-tuple `(init, array)` |
 | L1604 | BodyNoValue | map/fold body block has no tail value |
-| L1605 | BodyEffectful | `print`/effectful call inside a map/fold body |
+| L1605 | BodyEffectful | `print`/`time`/effectful call inside a map/fold body |
 | L1606 | ZipNonTuple | `zip` source is not a 2-tuple (scalar, or arity ≠ 2) — ADR-0018 |
 | L1607 | ZipNonArray | a `zip` tuple component is not an array (ADR-0018) |
 | L1608 | ZipSizeMismatch | the two `zip` arrays differ in length (ADR-0018) |
@@ -436,8 +437,8 @@ available (§10). Catalogue (each gets ≥1 rejection test, §14):
 
 Per fn, one lexically-scoped AST walk (a thin precursor of §7's walk, sharing the scope
 machinery but tracking only *names*, not tys): a stage-position bare name resolving past
-locals to a fn name is a **call edge**; resolving to `print` marks the fn **directly
-effectful**. Calls made inside the owner's map/fold blocks are **owner→callee edges of
+locals to a fn name is a **call edge**; resolving to `print` or to `time` marks the fn
+**directly effectful** (both thread the IO token — plan-time-builtin). Calls made inside the owner's map/fold blocks are **owner→callee edges of
 the same reference graph** — Pass B's L1008 cycle check runs over exactly the graph
 seal's I6 checks (Call edges + body refs), so owner-via-body recursion is L1008, never
 seal `RecursiveCall`/L1901 (review SF-9/IR-3). Effect *attribution* for block-internal
@@ -590,6 +591,7 @@ flagship shape).
 | --- | --- |
 | `Int`/`Float`/`Bool`/`Str` | `constant(value, loc)` with the §7-resolved ty; `Str` only when the consumer is `print` (else L1206) |
 | `Var` | symbol lookup (L1101); function name → L1105 |
+| `Unit` (`()`) | **no object**: the wire-LESS chain head — `emit_chain` seeds `cur = None` before any expression is emitted (plan-time-builtin), so only `() -> time` consumes it and every other stage then reports L1301 ("no wire"). Reaching the expression recipe at all means `()` was used as a *value* → L1301 |
 | `Hole` | the substituted wire value (§8.3 OpShorthand) |
 | `Unary(Neg, lit)` | **fold** (pin 3): one negated `Constant`; `Unary(Neg, e)` otherwise → `unop(Neg, e')` ; `Not` → `unop(Not, …)` |
 | `Binary(op, l, r)` | lower l, lower r, `binop(op, l', r', dest, loc)` — Pair-then-primitive is the builder's atomic shape (DF-4); operand order preserved (non-commutative ops) |
@@ -607,6 +609,7 @@ flagship shape).
 | `Expr(Var)` → local | mut → rebind (fresh object via the producing primitive's Dest, §8.1); non-mut existing → L1104; unbound → bind `cur` (aliasing or Dest-naming) |
 | `Expr(Var)` → fn | call per §6.3 |
 | `Expr(Var)` → `print` | `tok := print(tok, cur, loc)`; `cur` unchanged? No — the chain **ends**: `print` is a sink stage; further stages → L1303-style L1302. Value must be printable (L1207) |
+| `Expr(Var)` → `time` | the one **wire-LESS** stage (plan-time-builtin): a wire is L1302. `pair := time_ms(tok, loc)`; `tok := proj(pair, 0)` (the effect ordering, exactly as `print` rebinds the register), `cur := proj(pair, 1) : f64` taking the §8.1 lookahead Dest — so `() -> time -> t0` names it and `() -> time -> ret` writes Return. Effectful, so it is a direct effect in Pass B (§6.1) and L1605 in a map/fold body |
 | `Expr(Member)` | fn.param → L1106; anything else → L1302 (a member expr in stage position does not consume the wire) |
 | `Expr(_)` general / `Tuple` | L1302 (OQ2 — E4 defines only the parse, not a wire-discarding semantics) |
 | `OpShorthand{expr}` | lower `expr` per §8.2 with `Hole` ↦ `cur`; the outermost operator's primitive takes the chain's §8.1 lookahead Dest; result becomes `cur` (golden b / §9 pipeline — review SF-10/CP-4) |
@@ -974,7 +977,7 @@ clean tree + bounded recursion + fail-fast emission ⇒ never panics/hangs.
 6. **Bench (criterion)** — `lower_scale`: synthetic N-stage pipeline + N-arm value
    match; record build numbers in STATUS (HANDOFF §7.2 step 6).
 
-## 15. Decision ledger (LD1–LD25)
+## 15. Decision ledger (LD1–LD28)
 
 | # | Decision | Why |
 | --- | --- | --- |
@@ -1005,6 +1008,7 @@ clean tree + bounded recursion + fail-fast emission ⇒ never panics/hangs.
 | LD25 | `print`/`println` are one builtin family behind `is_print_builtin` (ADR-0015); `println` lowers to `Print{newline:true}`, `print` to `Print{newline:false}` | `print` was special-cased in 9 effect/typing/emit sites — a single predicate stops them drifting (FRAMEWORK §5); `println` regressed an un-updated site, which is why the helper exists |
 | LD26 | `zip`/`enumerate` are the **pure** collection builtins behind `is_collection_builtin` (ADR-0018); routed at call-shaped stages (§8.9), emit owns L1606–L1610, builder re-derives defensively (LD12); no token ⇒ legal in fanout/bodies | mirrors LD25's one-predicate rule for the emit dispatch + two bare-name-binding lookahead sites; pure-ness (no effects-walk entry) is what makes them fanout-legal, the property the fanout golden guards |
 | LD27 | `c[i] <- x` (indexed `BindStmt`, ADR-0021) is a **rebind**, not a fresh shadow: emit's `index.is_some()` path emits `Update(cur,i,x)` then `rebind()` (never `bind_new`); the three sub-passes each recognize it — `collect_assigns_stmt` (carried set), `scan_stmt` (L1408 in Phi arms); typing unifies `x` with `array_elem_wty(c)` and `capture_stmt` reads target/index/value without a body-local binding | reuses LD4/LD23 rebind machinery + LD26 emit-dispatch precedent; the pure (token-free) `Update` keeps it fanout/body-legal like the collection builtins |
+| LD28 | `time` (plan-time-builtin) is the **effectful, wire-LESS** builtin behind `is_time_builtin`: `() -> time` only, source = the IO token, target = `(IoToken, f64)` ms. It reuses existing codes rather than minting new ones — `()` as a value is L1301 (no wire), a wired `time` is L1302 (a stage not consuming the piped value), `fn time` is L1009, `time` in a map/fold body is L1605 | LD25's one-predicate rule again (four effect/typing/emit sites ask "is this an effect?"); the wire-less head is a *new stage class* but not a new failure class — both misuses are exactly what L1301/L1302 already mean, and the messages carry the teaching (`` `()` is not a value: its only use is the head of `() -> time` ``) |
 
 ## 16. Open questions (→ next-session / ADR candidates)
 

@@ -42,17 +42,69 @@ factors; Verilog its own). The fixed-width split (compile-time-constant inner
 loop + scalar tail) is about *known* length — compilers fully vectorize known
 lengths — whatever the number is.
 
+**The backend-genericity contract (Sapir, S29).** Every optimization rung lands
+as either (a) a generic graph fact in a flow-ir query (e.g. `TileRead.ksplit` —
+no machine constants) or (b) emitter-local cashing with zero flow-ir change
+(gates, emission, backend-owned constants). flow-ir never learns machine facts;
+backends never re-derive graph analysis. CUDA/Verilog consume the SAME record:
+smem tiles = the pack `DataLoc` at another location, `mma` = another parallel
+`TrnLoc` (tf32 parity split = the one policy item, S24b precedent).
+
+**Amendment 2026-07-25 — the two halves of "schedule", and the one unmeasured
+claim** (review record: `docs/notes/2026-07-25-thesis-review.md`; decisions:
+ADR-0033, ADR-0034).
+
+*Geometry vs constants.* What this note calls the schedule is two things with
+different portability, and conflating them is what makes the ladder read as
+"matmul tuning" to an outside reader:
+
+- **Geometry** — which reads broadcast vs. stride, which axes split, the nest
+  order, what is legally interleavable. **Deduced**, exact, backend-independent.
+  **Proven portable across shapes**: one affine rule, no matrix concept, and S28
+  carried the matmul ladder to a FIR window rung (zero flow-ir change) and a
+  conv2d micro-kernel in a single session, both winning.
+- **Constants** — TJ/TI/KC/NC, unroll depth, prefetch distance, `GRAIN`. Facts
+  about a cache hierarchy and a register file, **not** about the program. Today
+  hand-set literals swept on one machine and applied on every target (local M4
+  Pro NEON/14T and the EPYC box zen3/AVX2/61T run identical numbers).
+
+Therefore the residual OpenBLAS gap is **not** evidence the geometry is wrong —
+it is substantially evidence the constants are untuned for the target, and
+tuning them is a *search*, which is itself backend-generic (ADR-0034). Standing
+phrasing: **the geometry is deduced and portable; the constants are measured per
+target.** Never describe this work as "matmul performance" — it is geometry
+recognition validated on matmul, and BLAS is the oracle for whether the geometry
+is right, not the product.
+
+*The unmeasured claim.* Verified 2026-07-25: `tile_plan` has exactly one consumer
+(`backends/llvm/{lib,func}.rs`; zero hits in `backends/cuda/src/`). "CUDA/Verilog
+consume the SAME record" above is a design intent that has never been executed —
+every rung since S25 was written against a single `Loc`. Sapir's sequencing
+(2026-07-25) is CPU to full advantage first, then GPU, so the CUDA leg is the
+**named exit condition of the CPU phase** (ADR-0033 D1), with a per-rung paper
+guard in the meantime: each rung's plan doc states which record fields it
+consumes, its CUDA realization named against the record — or `cpu-local` if it
+has none — and any machine fact the record does not carry (ADR-0033 D2).
+
 ## The ladders per target (each rung measurable, R1-licensed unless said)
 
 **CPU:** ✅ SIMD lanes (2.5–4.6×, S25) → TI register blocking (~2–4×) → packing +
-k-panels (~1.5–3×) → numpy-class. Gap today 10–14× (f64, box).
+k-panels (~1.5–3×) → **tuned constants (ADR-0034 — the rung that is currently
+missing entirely: every factor above is a literal swept on one machine)** →
+numpy-class. Gap today 10–14× (f64, box). This ladder's completion is what
+"full advantage on CPU" should mean (ADR-0033 Q1 — the bar is still unwritten).
 
 **CUDA:** cuda consumes the SAME `tile_plan` → shared-memory tiles → **`mma`
-(tensor cores)**. Two honest caveats: (1) tensor cores reorder accumulation and
-f32 mma computes in tf32 — **breaks oracle bit-parity; fmad-class decision, bigger:
-product recipe uses them, conformance gate doesn't** (precedent: Sapir's S24b fmad
-split; ratify when reached). (2) cuBLAS = mma + memory choreography (smem
-staging, swizzles, double-buffering) — the GPU siblings of register blocking and
+(tensor cores)**. Precision is arch-specific: **tf32 mma exists on Ampere+
+only** (sm_80/86/89/90; 8-exp/10-mantissa inputs, f32 accumulate) — consumer
+cards have tf32 but **no f64 tensor cores** (f64 = CUDA cores, 1/64 rate);
+**f64 DMMA is datacenter-only** (A100/H100). Either way the fragment summation
+order is hardware-fixed, so mma breaks oracle bit-parity by construction and
+lands **product-face only** (rel-tol gated, the S24b fmad precedent) while the
+conformance face keeps the SIMT path. This mirrors the industry contract:
+cuBLAS/cuDNN default to tf32 for f32 gemm/conv on Ampere+ (exact fp32 is
+opt-out). Second caveat: cuBLAS = mma + memory choreography (smem staging,
+swizzles, double-buffering) — the GPU siblings of register blocking and
 packing; rungs, not one jump.
 
 **conv2d / cuDNN:** refused today only because the walker is affine-in-raw-k; the

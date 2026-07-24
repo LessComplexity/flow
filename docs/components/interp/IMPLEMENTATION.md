@@ -48,6 +48,7 @@ one `eval` pass. Flow programs are *not* modeled as categories here.
 | `Iota`/`Fill` (ADR-0029, stage 1) | `n → [i32;n]` of `0..n-1` (count = `Constant` source); `(x,n) → [x;n]` (count = internal pair's slot-1 `Constant`) | `crates/flow-interp/src/eval.rs:eval_morphism` (`Iota`/`Fill` arms) | built (oracle contracts `tests/iota_fill.rs`) |
 | `Update` (§3; ADR-0021) | `(Array{T,n}, I, T) → Array{T,n}` (slot `i` replaced; OOB ⇒ `Trapped(IndexOob)`; pure) | `crates/flow-interp/src/eval.rs:eval_morphism` (`Update` arm) · `eval.rs:update` | built |
 | `Print{newline}` (§3/§5) | `(IoToken, P) → IoToken` | `crates/flow-interp/src/eval.rs:print_op` | built |
+| `TimeMs` (§3/§5; plan-time-builtin) | `IoToken → (IoToken, f64)` — token through slot 0, ms against the process epoch in slot 1 | `crates/flow-interp/src/eval.rs:eval_morphism` (`TimeMs` arm) · `crates/flow-interp/src/eval.rs:time_epoch` | built |
 | product assembly (§2) | `arity × Pair{slot} → Tuple/Struct/Array` | `crates/flow-interp/src/eval.rs:stage_pair` · `finalize_product` | built |
 | `run_loop` (§4 driver) | `LoopMerge → env(exit objects)` | `crates/flow-interp/src/loops.rs:run_loop` | built |
 | loop-layout derivation (§4; BL7) | `merge → LoopPlan` (decide/advance split) — **delegated to flow-ir** (S13: the local `derive_plan`/`LoopPlan` were deleted, one source of truth) | `flow_ir::CategoryIr::loop_plan` (called in `crates/flow-interp/src/loops.rs:run_loop`) | built |
@@ -72,6 +73,7 @@ one `eval` pass. Flow programs are *not* modeled as categories here.
 | Determinism (E2 / §10) — no `HashMap`; `SecondaryMap`+`Vec` only | `crates/flow-interp/src/eval.rs:EvalCtx` (env/staging are `SecondaryMap`) | `tests/determinism.rs::deterministic_*` |
 | Entry protocol (§7) — IoToken ⇒ seed `Token("")`; Unit ⇒ `RValue::Unit`, output "" | `crates/flow-interp/src/lib.rs:run` | `tests/acceptance.rs::golden_*` (all six) |
 | Newline (ADR-0015) — `print` raw, `println` appends `\n` | `crates/flow-interp/src/eval.rs:print_op` (`if newline`) | `tests/acceptance.rs::golden_pipeline` · `tests/acceptance.rs::golden_fanout` |
+| Clock (§5, S29) — one process-lifetime epoch ⇒ two reads finite and non-decreasing; the bracketed work still computes | `crates/flow-interp/src/eval.rs:time_epoch` (`OnceLock<Instant>`, same clock as flow-rt's `flow_time_ms`) | `tests/acceptance.rs::time_brackets_are_monotone_and_finite` |
 | Float render (IN4) — Rust shortest round-trip Display | `crates/flow-interp/src/value.rs:render` | `tests/acceptance.rs::golden_fir` · `tests/acceptance.rs::golden_sepia` |
 | Out-of-M1 loop shapes error, not miscompute (§4) | `flow_ir::CategoryIr::loop_plan` returns `None` for non-canonical shapes; `crates/flow-interp/src/loops.rs:run_loop` unwraps (M1-guaranteed) | — (no fixture; `loop_plan` encodes the single merge / one LoopBack / one LoopExit predicate, lower OQ7 never generates a non-canonical one) |
 | Zip/Enumerate denotation (ADR-0018) — elementwise pairs; `(i as i32, x)`; total/pure, legal under fanout | `crates/flow-interp/src/eval.rs:eval_morphism` (`Zip`/`Enumerate` arms) | `tests/zip_enumerate.rs::zip_add_value_contract` (c[0]=100, c[15]=115) · `::enumerate_indices_contract` · `::enumerate_under_fanout` |
@@ -96,6 +98,7 @@ Resolution per FRAMEWORK §6.6 (the model is a specification, not a transcript).
   the more efficient shape the model intends. Recorded as a **deduce-don't-store seam**, see
   `suggestions.md` S1. Resolution: code is correct, model shape is the target — no invariant
   violated.
+- **The clock epoch is process state, not run state (S29).** Every other value the evaluator reads lives in `EvalCtx`; `eval.rs:time_epoch` is a `OnceLock<Instant>` static, i.e. one `DataLoc` outside the `run` boundary — deliberate, and the same choice flow-rt's `flow_time_ms` makes, so interp and the LLVM backend measure against the same kind of epoch. Consequence, recorded once: two `run`s in one process share it, so a clock reading is comparable only *within* a run (§5 contracts only monotonicity + finiteness) and `tests/determinism.rs`' byte-identical rule does not extend to a `time`-bearing program. **Consistent** with DESIGN §5 / C-interp-3 as amended.
 - **`num_le` uses native `<=`, not `!num_lt`.** Deliberate (IEEE NaN ordering: `Le(NaN,x)`
   must be false); documented in `crates/flow-interp/src/eval.rs:compare`. **Consistent** with
   DESIGN §3 "IEEE ordering for floats."

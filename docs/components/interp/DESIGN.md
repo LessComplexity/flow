@@ -62,7 +62,7 @@ graph TB
 
 - **C-interp-1 (totality / E1).** `eval` is total into `Outcome`: every run halts with `Done`, `Diverged` (budget exhausted), or `Trapped`. No Rust panic, no hang. (cf. §6.)
 - **C-interp-2 (oracle equivalence).** For every backend functor `F` and rewrite `r`, `eval ∘ r ≅ eval` and `run_target ∘ F ≅ eval` on equal inputs (the differential-test law, discharged by `rewrite`/`backend`, not here).
-- **C-interp-3 (effect order = dataflow).** The observable output is `token?` of the final `main` token; because the token threads as data through the §8 token chain, the output is a function of the graph alone, independent of evaluation order (E2).
+- **C-interp-3 (effect order = dataflow).** The observable output is `token?` of the final `main` token; because the token threads as data through the §8 token chain, the output is a function of the graph alone, independent of evaluation order (E2). **`TimeMs` (S29) is order-deterministic but value-nondeterministic** — its position in the chain is fixed by the token exactly like `Print`'s, but the *reading* is a fact about the machine, not the graph, so a `time`-bearing program has no byte-golden and no cross-run determinism pin (§5).
 
 ### Bridges
 
@@ -152,6 +152,7 @@ Return `env[fd.output]` (the `Return` object). The in-SCC object set is precompu
 | `Zip` | `([A;n], [B;n])` (2-tuple; sizes equal by ir typing) | `Array( (0..n).map(|i| Tuple[src@0[i], src@1[i]]) )` — elementwise pairing (ADR-0018) |
 | `Enumerate` | `[A;n]` (`n ≤ i32::MAX`, ir-guaranteed) | `Array( src.enumerate().map(|(i,x)| Tuple[I32(i as i32), x]) )` — index pinned `i32`, exact cast (ADR-0018) |
 | `Print {newline}` | `(IoToken, P)` | `Token( src@0.log + render(src@1) + (newline ? "\n" : "") )` (§5; ADR-0015) |
+| `TimeMs` | `IoToken` (the bare token — no packed source) | `Tuple[ src, F64(ms) ]` — `ms` = milliseconds elapsed against the process-lifetime epoch; the token passes through unchanged as slot 0 (§5; plan-time-builtin) |
 | `Output` | `T` | `src` (the bare `x -> ret` identity move, ir D6) |
 | `LoopEnter/Back/Exit` | — | not evaluated here — see §4 |
 
@@ -213,6 +214,7 @@ run_loop(m):
 - **Newline (ADR-0015, supersedes IN5).** `print` is raw; `println` appends `"\n"`. Examples use `println` for line-terminated output and `print` only for `pipeline`'s inline label. Acceptance set: `abs→"7\n"`, `sum_to_n→"55\n"`, `fanout→"36\n12\n"`, `fir→"5.375\n"`, `sepia→"4080\n"`, `pipeline→"f(10) = 25\n"` (label via `print`, value via `println` — one line). `pipeline.flow`'s header comment is now exactly correct.
 - **Float formatting (IN-4, pinned).** `F32`/`F64` render via Rust shortest round-trip `Display` — drops trailing `.0`, so `4080.0 → "4080"` and `5.375 → "5.375"`, matching the contract exactly.
 - **String values** appear only as a `Print` argument (ir I9s); `render(Str(s)) = s` (already unescaped at lex; `"f(10) = "` renders with its trailing space).
+- **The clock (`TimeMs`, S29 — plan-time-builtin).** `TimeMs : IoToken → (IoToken, f64)` is Core's second effect: it consumes the token and re-mints it beside the reading, so it rides the §8 chain's ordering with no new machinery (never const-folded, CSE'd, reordered or DCE'd — the token dependency delivers all four). The reading is `elapsed` against **one process-lifetime `Instant` epoch** shared by every read (`eval.rs:time_epoch`), so two reads in a run are non-decreasing and their difference is real elapsed milliseconds — that pair (monotone + finite) is the whole denotation. An absolute duration is never contracted (C-interp-3), so the fixture asserts the bracketed work computed and `t1 >= t0 >= 0`, nothing more.
 
 ## 6. Fuel, divergence, traps
 

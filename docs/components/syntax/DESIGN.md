@@ -8,6 +8,7 @@ Increment map:
 - **§1–§11 (Session 02): the lexer.** Token model, lexical grammar, diagnostics, API, tests.
 - **§13–§21 (Session 03): the parser.** Two-tier grammar (ADR-0005), parse-tree data structures, P-code diagnostics + recovery (ADR-0008), `Ident {` law (ADR-0011), tests + bench. §12's pre-collected questions are resolved here.
 - **ADR-0019 (Session 11): `seq` is a statement block.** `StageKind::SeqBlock(Block)` replaces the `FanoutKind::Seq` summand; the `KwSeq` parser arm parses the ordinary block production; new **P0117** flags non-chain statements dropped from a fanout (`void`) block. Touches §14.3/§14.4 (seq out of the fanout classifier), §15 (shapes), §16 (P0117).
+- **S29 (`time` builtin): `()` is the Unit literal.** `ExprKind::Unit` replaces the P0001 empty-paren rejection in `parse_paren_or_tuple` — `()` is the **wire-less chain head** whose one sanctioned use is `() -> time`. It carries no value, so every other position is rejected downstream (lower's **L1301**, the no-wire code), where the chain context is known; the parser only records the shape. Touches §14.6 (primary), §15 (`ExprKind`), §16 (P0001 no longer covers `()`).
 
 ## Categorical model (Dat + Trn)
 
@@ -695,6 +696,10 @@ postfix  := primary ( '.' IDENT                      -- member access (level 2)
 primary  := INT | FLOAT | STR | 'true' | 'false'
           | IDENT
           | IDENT '{' field-inits? '}'               -- struct literal
+          | '(' ')'                                  -- Unit literal (S29): the wire-less chain head,
+                                                     --   sole sanctioned use `() -> time`. NOT a
+                                                     --   value — every other position is lower's
+                                                     --   L1301 (§15 note)
           | '(' expr ')'                             -- grouping (no Paren node; nesting carries it;
                                                      --   the inner expr's SPAN widens to include the
                                                      --   parens, so J2 child⊆parent holds)
@@ -802,6 +807,7 @@ pub enum ExprKind {
     Float,                             // value is type-directed (f32 vs f64) — parsed later from span
     Str,                               // unescaping is the consumer's job (unescape_string)
     Bool(bool),
+    Unit,                              // `()` (S29) — the wire-less chain head, `() -> time`
     Var(Name),
     Hole,                              // the piped value inside an OpShorthand rhs — never
                                        //   constructible from ordinary expression syntax
@@ -838,6 +844,17 @@ Design notes:
 - `Call`/`Question`/`Dynamic`/`StmtBlock`/`LoopLabel::Custom`/`GuardDiscr::OutOfCore` are
   *rejected-but-kept* forms: the P-code is in `diagnostics`, the structure stays for
   span-precise downstream messages (C13).
+- **`Unit`** (S29, `time` builtin) is a **clean Core** form, not rejected-but-kept: `()` was
+  the P0001 "empty parentheses" rejection and now parses to `ExprKind::Unit` with zero
+  diagnostics. It is the **wire-less chain head** — it denotes *no value*, so `() -> time`
+  reaches the `time` stage with no source, matching `TimeMs : IoToken → (IoToken, f64)`.
+  **The parser does not police its position** (W-style call, made once): `()` in a value
+  position (`() + 1`, a bare `();`) and `()` heading anything but `time` are chain-context
+  questions the parser cannot answer locally — both are lower's **L1301** (no wire), and the
+  mirror error (`5 -> time`, a wire *into* `time`) is its **L1302**; see the lower component
+  and `docs/components/lower/plans/plan-time-builtin.md`. So a tree containing
+  `Unit` outside a `time` head is legal *syntax*, and J3 (zero diagnostics ⇒ no
+  rejected-but-kept forms) is untouched: `Unit` is never a rejected-kept node.
 - **`SeqBlock(Block)`** (ADR-0019) is a **clean Core** form, not rejected-but-kept: the
   `seq` keyword marks an ordered statement block in stage position. Its body is the
   ordinary block production (`parse_block`, `guard_ok=false`) — statements (headed/headless
@@ -857,7 +874,7 @@ end with the horizon, e.g. "out of Flow-Core (HANDOFF §4); planned for Core+1".
 
 | Code | Trigger | Recovery / fix |
 |---|---|---|
-| P0001 | expected X, found Y (generic: missing `;`, `(e,)`, `[]`, non-INT array length, ascription on non-name, `ret`/`loop` as chain head, empty statement, …) | sync per §16.1 |
+| P0001 | expected X, found Y (generic: missing `;`, `(e,)`, `[]`, non-INT array length, ascription on non-name, `ret`/`loop` as chain head, empty statement, …). **Not** `()` — since S29 that is the `Unit` literal (§14.6/§15), rejected downstream by lower's **L1301** when it is not a `time` head | sync per §16.1 |
 | P0002 | unclosed delimiter at EOF | span = the open token |
 | P0003 | bare expression used as a `;`-terminated statement | hint: flow it (`-> target`) or make it the block tail; tree keeps the chain |
 | P0004 | stray guard arrow outside a guard block (W1) | message: `-7-> x` is a guard arm; **fix**: built by *slicing the source lexeme* — `&source[span]` minus the trailing `->`, plus `" ->"` (never re-rendered from the clamped `GuardKind::Int`, which would rewrite an over-`u64` literal); recover: Int discr ⇒ chain head `Unary(Neg, Int)` + implicit arrow; other discrs ⇒ `Expr::Error` head |

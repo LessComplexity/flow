@@ -1,15 +1,15 @@
 # Component: check
 
 Status: tested
-Last updated: 2026-07-17 · ADR-0019 WP3
+Last updated: 2026-07-25 · S29 — the `time` builtin joins the effectful-builtin set (`effects.rs:is_time_builtin`), so a clock read in a parallel branch is a T0201 exactly like a `print`; one new pin, 30 tests. Previous: 2026-07-17 · ADR-0019 WP3
 Spec references: user-guide.md §5 (E2, ADR-0003), §6 (E3, ADR-0004), §7 (error values); category-ir.md §2.6 (Kleisli effects) + §10 (lifetime); architecture.md §2.2.4 (type checker) + §2.2.5 (lifetime/escape).
 Depends on: ir, syntax (lower as dev-dep for fixtures) Depended on by: interp (IN3, by assumption), rewrite, backends, cli
 
 ## What works
 
-- `check(source, program, ir) -> Vec<Diagnostic>` — the two owed passes, **28 tests green**:
+- `check(source, program, ir) -> Vec<Diagnostic>` — the two owed passes, **30 tests green**:
   - **T0101 Return exclusivity** (DESIGN §3): >1 full-value writer per Return rejected (strict CK3); discharges interp IN3 / ir §17.
-  - **T0201 E2 effect legality** (DESIGN §4): effectful morphism inside a parallel `StageKind::Fanout` branch rejected, message names `seq` (ADR-0003 mandate); **node-kind-keyed** sticky context (ADR-0019) — a `Fanout` opens the context unconditionally, a `SeqBlock` recurses sticky (inner `seq` does not legalize, CK5 now a theorem); scope-aware call resolution; `effectful?` deduced from lowered token signatures.
+  - **T0201 E2 effect legality** (DESIGN §4): effectful morphism inside a parallel `StageKind::Fanout` branch rejected, message names `seq` (ADR-0003 mandate); the effect sites are the builtins `print`/`println`/**`time`** (S29 — the clock read threads the IO token, so it is an effect by the same rule) plus any call whose signature is `effectful?`; **node-kind-keyed** sticky context (ADR-0019) — a `Fanout` opens the context unconditionally, a `SeqBlock` recurses sticky (inner `seq` does not legalize, CK5 now a theorem); scope-aware call resolution; `effectful?` deduced from lowered token signatures.
 - All nine in-Core examples (incl. **calc**, first time through the pipeline — clean) pass with zero diagnostics; cross-pass order + determinism pinned by fixture.
 - Typing obligation discharged **by construction** at the validate boundary (DESIGN §0; lower §12 amended in step).
 
@@ -27,7 +27,7 @@ Depends on: ir, syntax (lower as dev-dep for fixtures) Depended on by: interp (I
 
 ## Test coverage (golden / property / differential / skipped+why)
 
-- 28 tests: 11 acceptance (9 examples, determinism, cross-pass order) · 6 exclusivity (hand-built IrBuilder multi-writer shapes, slot form, loops incl. token-bearing) · 11 effects (all DESIGN §7.3 cases incl. node-kind seq discrimination, both fanout/seq nesting directions, loop/rebind statement forms in a seq body, pure-seq-in-branch clean, and T0201 span pins).
+- 30 tests: 12 acceptance (9 examples, determinism, cross-pass order) · 6 exclusivity (hand-built IrBuilder multi-writer shapes, slot form, loops incl. token-bearing) · 12 effects (all DESIGN §7.3 cases incl. node-kind seq discrimination, both fanout/seq nesting directions, loop/rebind statement forms in a seq body, pure-seq-in-branch clean, T0201 span pins, and **S29 `time_in_plain_branch_is_t0201`** — `() -> time` inside a branch `seq`, asserting the message names the builtin; the bare `-> time` branch stage is unreachable here, lower rejects it as L1302).
 - E3: **zero tests by design** — vacuous for Core (DESIGN §5 proof: no heap ops, no ref types; violating graph unconstructible). Reopen trigger pinned.
 - No proptest yet: input domain is lower-clean programs; the acceptance set + hand-built IR covers every constructible rejection shape. Revisit if rewrite adds IR producers.
 

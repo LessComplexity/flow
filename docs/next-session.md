@@ -1,96 +1,88 @@
-# Next Session (S29)
+# Next Session (S30)
 
-Written: 2026-07-24 · close of Session 28 · by: Kimi (orchestrator; category-architect skill)
+Written: 2026-07-25 · end of Session 29 · by: Claude (orchestrator; category-architect skill)
+S29 CLOSED clean: workspace green, docs reconciled, nothing half-built.
 
-## Where things stand (≤5 lines)
+## Where things stand (≤6 lines)
 
-**S28 shipped the shapes ladder (Sapir's focus): the FIR 1-D window rung + the conv2d
-k-split micro-kernel, and paid the S27 box debt.** fir: both tables WON local AND box.
-conv2d: kernel 3× over cpp-mt, box par table won; the M4 par leg is OPEN on the gen
-measurement boundary (untiled img-gen inside the FLOW_PERF bracket — the S28 finding).
-OpenBLAS frontier now measured on the box (threaded 9.7×/5.9× @1024/@4096; 1t 2.7×).
-Gate green; commits pending Sapir. Log: `sessions/2026-07-24-s28-shapes-ladder.md`.
+S28 is committed (`0e15bd0`/`aeed236`/`4bac6dd`). **S29 is complete in the working tree**: the
+mid-flight KC nest finished + measured (**a 3× LOSS locally — shipped default-OFF behind
+`EmitOpts::kc_nest`**), the `time` builtin end to end (with three defects found and fixed:
+a clock read racing the tasks it brackets, a clock value consumed by a task, a loop-body read
+hoisted out of the cycle), heap lowering (**matmul2048 runs locally for the first time**), and
+the first honest kernel-only shape numbers (**fir wins every column; conv2d loses 3.4× at 1024**).
+Everything is local-only — **the box leg was not run**.
 
-## Test state
+## FIRST commands (resume checks, in order)
 
-`cargo test --workspace --release` green 2026-07-24 (69 suites, orchestrator-run): ir 180 ·
-llvm 53 (28 differential incl. conv2d 16/20/92 + fir remainder/split · 25 golden incl. the
-re-pinned structural 1-D snap + the conv pin) · rewrite 68 · rt 16; fmt clean. matmul .ll
-artifacts byte-identical through S28 (regression-verified).
+```sh
+git log --oneline -4                      # S29 should be 3 commits: feat / bench / docs
+git status --short                        # see "Concurrent session" below before judging dirt
+cargo test --workspace --release 2>&1 | grep -c "test result: ok"   # expect 72, 0 failures
+cat docs/performance/matmul/s29.md        # the KC verdict + the shape tables
+```
 
-## Standing direction (unchanged: `docs/notes/tile-ladder-direction.md` + S26/S27c rules)
+## The S30 queue
 
-Same-machine comparisons, specs stamped on CSV. 1t-on-1t / par-on-par verdicts only.
-Perf tables to 4096 minimum. Product recipe contracts, conformance gate bit-exact.
-Every verdict table is compute-vs-compute (S27c rule) — and now: watch WHICH work the
-bracket covers (S28 gen-boundary rule — the legs must time the same work as the baselines).
+1. **The box leg — this is the one that decides the KC question.** Every S29 number is M4 Pro.
+   The KC k-panel nest was designed against box-scale traffic (16 GB of A re-reads at 4096 on
+   zen3) and measured a 3× loss at 1024 on a machine with a huge SLC. Run `matmul1024/2048/4096
+   × {f32,f64} × {kc on, kc off}` on an on-demand EPYC instance and either (a) turn `kc_nest` on
+   by default with the number that justifies it, (b) take the parking-free variant recorded in
+   plan-s29 Ceilings, or (c) delete the nest and keep the finding. Protocol in the S28 log §4:
+   on-demand (no `--bid_price`), incremental log pulls, destroy after (~$0.45). **`kc_nest` is an
+   API flag, not a CLI flag — the box driver must call `emit_with_opts`.**
+2. **conv2d row blocking** (backend-llvm suggestions #11, now MEASURED not predicted): conv2d
+   beats cpp-mt at 512 and loses 3.4× at 1024. TI over output rows (img-row reuse ×3), or #12
+   (im2col) which reaches the whole matmul ladder instead of one rung.
+3. **Finish the FLOW_PERF retirement.** `benches/shapes/` self-times; `benches/matmul/`
+   (`tile_ab.sh`, `runner.py`) does not, so its totals still include data generation. Migrating
+   it means the matmul legs become cross-language-comparable for the first time.
+4. **The effect-predicate refactor** (lower suggestions #3): "is this stage an effect?" is asked
+   at four independent sites. S29 taught all four about `time` after two of them silently
+   hoisted a loop-body clock read; the structural fix is one `stage_is_effect` helper so a fifth
+   effect builtin cannot miss a seam.
+5. **Heap lowering, second half** (backend-llvm BL9): entry function only today. A big array
+   local to a Named fn or a Map/Fold body still `alloca`s, so a matmul2048 written with its
+   kernel in a helper fn still hits the wall. Needs `flow_rt_free(ptr)` + `LastUsePlan` free
+   points.
+6. **Standing:** cuda consumes `tile_plan` (incl. ksplit/window/KC in the design); P7; ADR rows;
+   `exp`. ADR-0032 (precision contracts vs backend config) is accepted and unimplemented.
 
-## The S29 agenda
+## Standing direction (Sapir — unchanged)
 
-1. **The gen measurement boundary (the conv2d M4 leg's blocker; suggestion #14 — Sapir's
-   call on the fix shape).** The FLOW_PERF bracket spans untiled data-gen maps
-   (conv2d_512: ~0.38–0.47 ms gen vs ~0.04 kernel) that cpp/rust/numpy exclude.
-   Options: (a) gen-map fusion/inlining (map over iota feeding the conv map — the S27
-   fn-strip machinery's sibling), (b) a kernel-scoped perf bracket (`FLOW_PERF` regions
-   instead of whole-main), (c) restructure the shapes so gen is outside the timed main.
-   Done-when: conv2d_512 flow-par leg ≥ cpp-mt on the M4 too (box already won).
-2. **OpenBLAS levers (agenda-2, now with the box frontier):** KC k-panel split (4096
-   data decides), a-panel packing, f64 TJ/unroll refinement, alignment/prefetch tuning.
-   Target: numpy-1t 2.7× gap @1024 (fair basis), threaded 9.7×/5.9×.
-   **Heap lowering** rides here too (the 2048/4096 local wall; alloca → flow-rt arenas).
-3. **Conv ceilings, in order (suggestions #11/#12):** TI over output rows (img-row
-   reuse ×3, cashes `b.ci == cq`); im2col as a `DataLoc` sibling of `emit_pack_copy`
-   (record becomes matmul-shaped → rungs 2+3 unchanged).
-4. **GRAIN slicing policy (suggestion #15, measured):** fir box 61T 0.526 → 16T 0.287
-   (16 slices = 0.26 waves @61T). Slice-count-aware grain at sub-ms N — flow-rt policy,
-   not emitter.
-5. **cuda consumes `tile_plan`** (standing): smem tiles; ksplit/window sites included in
-   the consumption design; then the backend-generic `block_plan` (suggestions #10).
-6. **P2 standing:** `time` builtin (Sapir), P7 Verilog, ADR-0029/0031 `flow-as-implemented`
-   rows, region emission v2, loop-lift v2 rungs (tuple accs, non-identity index,
-   non-static bounds), attn legs once `exp` lands.
-
-## Open questions for Sapir
-
-- **Commits** — S28 work uncommitted at close (feat: ksplit record + window/conv rungs;
-  bench: results-s27.csv; docs: reconciliation + this rewrite). Your confirm splits them.
-- **Gen-boundary fix shape** (agenda 1): fusion vs perf-bracket vs bench restructure.
-- **Box #1 (45692618) vanish** — was that you, or did it die on its own? It was on-demand
-  class; if vast preempted it, that changes the trust model (S28's answer: on-demand +
-  incremental log pulls). Box lifecycle: S28 destroyed after use per project norm (~$0.45).
-- **numpy pairing flag (standing from S26b):** fp32-like-for-like or keep the f64
-  convention labeled.
-- `exp`/transcendentals in Core; non-const fold seeds (T6); ADR-0023/24/25 in-file Qs (standing).
+- **Compute-only legs; numpy in every verdict table; scale everything up** (fir 1M+, conv2d
+  1024+, matmul 4096 minimum). State the basis once, no fairness narration.
+- **Backend-genericity contract (ADR-0032):** a rung is either a generic graph fact in a flow-ir
+  query or emitter-local cashing with zero flow-ir change. flow-ir never learns machine facts.
+  Note S29 put two *scheduling* rules in flow-ir (the clock fence, the host cone) — those are
+  graph facts (source order, placement legality), not machine facts, so the contract holds.
+- **Type system = precision/format/reassociation contracts; backend config = performance
+  tailors.** `EmitOpts::kc_nest` is the newest tailor and obeys the rule: bit-exact either way.
 
 ## Gotchas / warnings
 
-- **vast.ai: read `credit`, not `balance`** (`vastai show user --raw`); check
-  `vastai show instances` for already-running boxes BEFORE renting. Create on-demand
-  (omit `--bid_price`); pull logs incrementally (rsync every poll) — box #1's vanish
-  lost an hour of matrix because the CSV only exists at the end.
-- **Repo moved** (`/Users/lesscomplex/Personal/Flow` → `/Volumes/LessComplex/...`):
-  stale build fingerprints bake `env!("CARGO_MANIFEST_DIR")` with the OLD path —
-  example-reading tests fail with ENOENT. Fix: `cargo clean -p <path-baking pkgs>`
-  (flow-syntax, flow-check, flow-lower, flow-rewrite, flow-interp, flow-backend-cuda)
-  after any move. S28 hit this; gate v2 green after the clean.
-- macOS stack wall: flow 2048+ local needs the box (or heap lowering — agenda 2).
-  `shapes_ab.sh`/`tile_ab.sh` already `ulimit -s hard`.
-- The fma legs' `out=` fields are numerically-equal-not-byte-equal BY DESIGN (S27 rule:
-  conformance legs only for byte compares; fma by rel-error).
-- GRAIN quantization at sub-ms N: FLOW_PAR > slice count LOSES to a balanced count
-  (fir: 61T 0.53 vs 16T 0.29). For A/B legs at small N, sweep FLOW_PAR or pin it.
-- `matmul128.ll` znver stall + 16-core cuda pinning + `codex exec … </dev/null` +
-  one-box CSV rule: all standing (S23–S26 gotcha list unchanged).
+- **Concurrent session.** Another session edited this repo during S29 and its work is UNCOMMITTED
+  in the tree: `VISION.md`, `docs/decisions/ADR-0033…0036`, `docs/notes/2026-07-25-thesis-review.md`,
+  `docs/suggestions.md`. S29's three commits deliberately exclude those paths. `git status` will
+  look dirty — check whose work a file is before touching it.
+- **`kc_nest` defaults OFF.** A measurement that forgets to opt in is measuring the S27b nest.
+- **`time` is source-order-sensitive by design.** `t1 - t0` measures the work *written* between
+  the two reads. Moving a `() -> time` line changes what is measured — that is the semantic, not
+  a bug. A clock read inside a loop body runs per iteration (pinned).
+- **f64 prints via Rust `Display`**, so a small elapsed prints as a long plain decimal, never
+  scientific. `shapes_ab.sh` parses `iter ms=` with `sort -g`, which handles it.
+- vast.ai: read `credit` not `balance`; on-demand instances; pull logs incrementally; destroy after.
+- Repo lives on `/Volumes` — after any path move, `cargo clean -p` the CARGO_MANIFEST_DIR-baking
+  packages (flow-syntax, flow-check, flow-lower, flow-rewrite, flow-interp, flow-backend-cuda).
+- The fma legs are numerically-equal-not-byte-equal BY DESIGN.
+- GRAIN quantization at sub-ms N: FLOW_PAR > slice count loses — sweep/pin FLOW_PAR for small-N A/B.
 
-## Commands (currently working)
+## Live state at handoff
 
-```sh
-cargo test --workspace --release                 # full gate — green 2026-07-24
-benches/shapes/shapes_ab.sh                      # shapes A/B (par); FLOW_PAR=1 → 1t; FLOW_PAR=N → N threads
-benches/matmul/tile_ab.sh <f.flow> <label> [N]   # matmul A/B: tile / no-pack / no-tile / fma legs
-cargo run -q --release -p flow-backend-llvm --example emit -- <f.flow> - --rewrite [--perf|--no-tile|--no-pack|--contract]
-./benches/matmul/regen.sh                        # re-emit artifacts (matmul only; byte-stable through S28)
-# box (next time): on-demand instance + rsync repo/benches + benches/matmul/s27_box.sh driver
-#   (see the S28 log §4 for the exact sync/launch/poll/destroy protocol)
-# perf home: docs/performance/matmul.md · S27 report (local + box + S28 shapes): docs/performance/matmul/s27.md
-```
+| Type | Handle | State |
+| --- | --- | --- |
+| branch | `main` | S29 committed in 3 commits (feat/bench/docs); the concurrent session's files left uncommitted |
+| vast.ai | account | not touched this session; credit ~$14.5 as of S28, **0 instances** |
+| artifacts | `target/tmp/` (tile_ab, shapes_ab), scratchpad `.ll`/binaries | disposable — every number is in `docs/performance/matmul/s29.md` |
+| processes | none | — |

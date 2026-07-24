@@ -1,8 +1,9 @@
 # Component: lower
 
 Status: tested
-Last updated: 2026-07-22 · **S22 ADR-0031**: `iota`/`fill` leave the `ExprKind::Call` path and join the `is_pure_builtin` stage family — `n -> iota` / `(x, n) -> fill` via `emit_iota_stage`/`emit_fill_stage` over the builder's `iota`/`fill_from` (the S21 replay entry doubles as the surface spine); static-n is builder-owned (`NonStaticCount`→ reworded L1612/L1613 teaching diagnostics; oversize literals are width-owned, L1202); a name bound to a literal is the SAME `Constant` object, so `4 -> n; n -> iota` is legal — strictly more expressive than the old AST check (positive pin `iota_bound_literal_count_lowers`); typing threads the previous stage expr (`prev`) for `WTy::Array` size synthesis; `FnBuilder::ty_of` made pub (lower reads builder-owned result types, never re-derives). S21 ADR-0029 amendment: the `widen_i64`/`widen_f32`/`widen_f64` builtin family as bare pipeline stages (`is_collection_builtin` generalized to `is_pure_builtin` + `widen_target` — one predicate across all four routing sites; typing synthesizes the target; `emit_widen` owns **L1614** with the teaching lattice message; L1009 reserves the three names). S20: iota/fill surface (L1612/L1613). S13: ADR-0021 element-update `c[i] <- x`
-Spec references: category-ir.md §4 (lowering rules, as corrected by ERRATA LC-4) + §11.1; ERRATA LC-2 (map/fold law); ADR-0013 (realization: edges-only, inline-cycle loops, IO token laws); ADR-0015 (print/println builtins); ADR-0018 (zip/enumerate pure collection builtins); ADR-0019 (`seq` statement block — no IR footprint); ADR-0021 (array element update — `c[i] <- x` desugars to `Update`-then-rebind); user-guide §3/§5; lower/DESIGN.md §0.1 pins 1–5 (binding).
+Last updated: 2026-07-25 · **S29 plan-time-builtin**: the `time` builtin — `() -> time` is the first **wire-LESS** stage (the `()` head seeds no wire; syntax now parses it to `ExprKind::Unit` instead of P0001), effectful like `print` (`IoToken → (IoToken, f64)` ms, token rebound from slot 0, the f64 taking the §8.1 lookahead Dest — `emit.rs:Emitter::emit_time` behind `lib.rs:is_time_builtin`, LD28). **No new L-code**: `()` in a value position reuses L1301, a wired `time` reuses L1302, `fn time` is L1009, `time` in a map/fold body is L1605. A 2-of-4 effect-detector gap found while reconciling was closed in the same session (`emit.rs:scan_phi_arm`, `emit.rs:effect_chain` now test `time` too) — see *known issues*. S22 ADR-0031: `iota`/`fill` leave the `ExprKind::Call` path and join the `is_pure_builtin` stage family — `n -> iota` / `(x, n) -> fill` via `emit_iota_stage`/`emit_fill_stage` over the builder's `iota`/`fill_from` (the S21 replay entry doubles as the surface spine); static-n is builder-owned (`NonStaticCount`→ reworded L1612/L1613 teaching diagnostics; oversize literals are width-owned, L1202); a name bound to a literal is the SAME `Constant` object, so `4 -> n; n -> iota` is legal — strictly more expressive than the old AST check (positive pin `iota_bound_literal_count_lowers`); typing threads the previous stage expr (`prev`) for `WTy::Array` size synthesis; `FnBuilder::ty_of` made pub (lower reads builder-owned result types, never re-derives). S21 ADR-0029 amendment: the `widen_i64`/`widen_f32`/`widen_f64` builtin family as bare pipeline stages (`is_collection_builtin` generalized to `is_pure_builtin` + `widen_target` — one predicate across all four routing sites; typing synthesizes the target; `emit_widen` owns **L1614** with the teaching lattice message; L1009 reserves the three names). S20: iota/fill surface (L1612/L1613). S13: ADR-0021 element-update `c[i] <- x`
+Spec references: category-ir.md §4 (lowering rules, as corrected by ERRATA LC-4) + §11.1; ERRATA LC-2 (map/fold law); ADR-0013 (realization: edges-only, inline-cycle loops, IO token laws); ADR-0015 (print/println builtins); ADR-0018 (zip/enumerate pure collection builtins); ADR-0019 (`seq` statement block — no IR footprint); ADR-0021 (array element update — `c[i] <- x` desugars to `Update`-then-rebind);
+plans/plan-time-builtin.md (the `time` stage builtin — model, composition rules, work items); user-guide §3/§5; lower/DESIGN.md §0.1 pins 1–5 (binding).
 Depends on: syntax, ir Depended on by: check, interp, rewrite, backend-llvm, backend-cuda, backend-verilog, cli
 
 ## What works
@@ -15,8 +16,8 @@ abs folds `-1` with no `Neg`; sepia's `0.0` fold seed resolves f32 via literal-w
 unification; countdown reproduces ir golden h; effectful calls thread the token with
 the degenerate `tok := r` when B is absent). Five passes per DESIGN §2 (type table →
 effects/call-graph → declare → per-fn typing walk + body emission + outer emission →
-seal). 54 L-codes (L1000–L1901) with ≥1 rejection test each (except L1901, internal by
-construction). The pure collection builtins `zip`/`enumerate` (ADR-0018) route at
+seal). 63 L-codes (L1000–L1901) with ≥1 rejection test each (except L1901, internal by
+construction); S29 added none — the `time` builtin's two misuses reuse L1301/L1302. The pure collection builtins `zip`/`enumerate` (ADR-0018) route at
 call-shaped stages like `print` (`is_collection_builtin`) but carry no token — legal in
 parallel fanout and map/fold bodies; emit owns L1606–L1610, the flow-ir builder re-derives
 the shapes/bound defensively (LD12/LD26). **The array-construction builtins `iota(n)` /
@@ -38,7 +39,20 @@ indexed-bind branch capture-checks the target/index/value as reads without regis
 target as a fresh body-local — so a target/index that captures an enclosing local draws
 L1108, not a misleading L1101. Golden: `array_update_straightline` + loop-carried
 `mut c` element writes (`array_update_loop_carried_rides_merge` /
-`array_update_emits_no_token_edges`); pure (no token).
+`array_update_emits_no_token_edges`); pure (no token). **The `time` builtin
+(plan-time-builtin, S29):** `() -> time` — the one stage that takes **no wire**
+(`emit_chain` seeds `cur = None` for an `ExprKind::Unit` head; feeding it a value is
+L1302, and `()` anywhere else is L1301 with a message naming the one legal use). It is
+an effect like `print` — `emit_time` consumes the token register, emits `TimeMs`, then
+splits the `(IoToken, f64)` pair (slot 0 → the new token, slot 1 → the milliseconds the
+chain carries on, taking the §8.1 lookahead Dest, so `() -> time -> t0` names it and
+`-> ret` writes Return). One predicate (`lib.rs:is_time_builtin`, LD25's rule) drives
+the reserved-name check (L1009), Pass B's direct-effect walk, D1's `→ f64` row and the
+L1605 body check. Two clock reads therefore ride one token chain and can never be
+reordered against each other or against the prints between them
+(`structural.rs::time_reads_thread_the_io_token`), which is what makes `t1 - t0` an
+honest elapsed —
+the bench shapes' `iter ms=` line.
 
 ## What does not / known issues
 
@@ -49,6 +63,13 @@ L1108, not a misleading L1101. Golden: `array_update_straightline` + loop-carrie
   inner-exits-via-ret shape (L1504); no general-expression stages (L1302); no
   infinite loops (L1501, the E1 tension); ≤1 surface return site in effectful fns
   (L1307).
+- **`time` is an effect at all four of its seams (S29 — the 2-of-4 gap was found in
+  reconcile and closed in the same session).** `emit.rs:scan_phi_arm` (L1404) and
+  `emit.rs:effect_chain` (`loop_body_has_effect`) had kept testing `print` alone, which
+  hoisted a loop-body `() -> time` out of the cycle (one timestamp, not one per iteration,
+  `validate` empty — the ATK-02 failure mode). Pinned by
+  `time_inside_a_loop_stays_inside_the_loop` (llvm golden). The one-predicate refactor
+  remains open as suggestions.md #3.
 - D1 is deliberately not a full type checker: the builder is the second-line type
   authority and user-diagnosable `IrError`s map to L-codes (TypeMismatch→L1201 etc.);
   emission keeps a `BTreeMap<ObjectId, Ty>` side table only for recipe dispatch.
@@ -69,7 +90,13 @@ L1108, not a misleading L1101. Golden: `array_update_straightline` + loop-carrie
 
 ## Test coverage (golden / property / differential / skipped+why)
 
-154 tests (the inventory below is the S13 base; S20 added the iota/fill surface rows, S21 added `golden_widen_builtins` — the four lattice edges as named, direct `Widen` morphisms, incl. the 2^24+1 f32-rounding value — plus `l1614_invalid_widen_sources_reject` (i64 source / array source / f64→f32 narrowing) and `l1614_message_names_the_legal_lattice`, and the L1009 rows for the three widen names): 18 golden Mermaid snaps (8 examples incl. zip_demo + vector_add,
+161 tests (`cargo test -p flow-lower --release`, 2026-07-25: 120 rejection + 20 golden +
+12 structural + 6 capture + 2 proptest + 1 unit; the inventory below is the S13 base;
+S29 added the six `time` rows — `structural.rs::time_bracket_types_f64` (two `TimeMs`,
+each `IoToken → (IoToken, f64)`, and the bracketed `t1 - t0` types f64) and
+`time_reads_thread_the_io_token` (the second read's token is `Proj 0` of the first read's
+pair), plus `rejection.rs::{l1009_reserved_time, l1301_unit_as_value, l1302_time_with_a_wire,
+l1605_body_time}`; S20 added the iota/fill surface rows, S21 added `golden_widen_builtins` — the four lattice edges as named, direct `Widen` morphisms, incl. the 2^24+1 f32-rounding value — plus `l1614_invalid_widen_sources_reject` (i64 source / array source / f64→f32 narrowing) and `l1614_message_names_the_legal_lattice`, and the L1009 rows for the three widen names): 18 golden Mermaid snaps (8 examples incl. zip_demo + vector_add,
 ADR-0018 zip form; + countdown + effectful-call + zip_builtin + enumerate_builtin +
 4 seq: two-printlns/mid-chain/return-tail/explicit-ret, ADR-0019 — the two-printlns snap shows the
 token thread alone ordering the prints with no seq node; explicit-ret pins that a seq
