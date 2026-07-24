@@ -5,6 +5,7 @@
 
 | # | Rule (§) | Smell found | Proposed change | Payoff |
 | --- | --- | --- | --- | --- |
+| 2 | §3 (a partial morphism's refused domain) + plan-s28-shapes-ladder §Ceilings | rule-1 refusal (S28): a read affine in raw `k` AND in the derived `(k÷div, k%div)` axes refuses — `TileRead.ksplit?` covers XOR forms only | general ksplit (`ck ≠ 0 ∧ ksplit.is_some()`): widen the walker's coefficient space (6-wide) to record mixed reads | mixed-form k-split sites become recordable; **no measured demand** — the rule-1 refusal is documented and pinned (`tile_refuses_conv2d_mixed_raw_and_derived_k`) |
 
 _(Suggestion 1 — the §5.1 typing-table golden oracle — applied Session 09: `src/validate.rs::typing_table_golden::edge_type_ok_matches_design_5_1`.)_
 
@@ -35,6 +36,7 @@ _(Suggestion 1 — the §5.1 typing-table golden oracle — applied Session 09: 
   variants are all live; JSON, mutation API, and bifunctor tagging are explicitly deferred with no
   code (DESIGN §0). Nothing to delete.
 
-Net: one modest, non-ledgered suggestion (a test oracle for the §5.1 table). Every larger
-consolidation the model invites has already been run and adversarially verified in the D1–D10 /
-I-invariant ledger and categorical-model.md §7.
+Net: one modest, non-ledgered suggestion from this audit (a test oracle for the §5.1 table — applied
+Session 09). Every larger consolidation the model invites has already been run and adversarially
+verified in the D1–D10 / I-invariant ledger and categorical-model.md §7. (#2 arrived later — the
+S28 k-split ceiling, carried over from plan-s28-shapes-ladder §Ceilings, not a finding of this audit.)

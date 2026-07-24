@@ -194,6 +194,18 @@ the recognition pipeline is `tile_site` → `tile_fold_shape` → `tile_affine`,
    - anything else → **refuse**.
    Exactly one read must be the broadcast and the other the unit-stride load
    (`a[i*4+k]` moves 0 with the lane; `b[k*4+j]` moves 1).
+
+   **Fold-body derived axes (S28).** The fold's counted axis `k` gets the same
+   derived-var move the map body got in step 2: a `Div`/`Mod` pair on the fold
+   element (`k / div`, `k % div`, one shared literal divisor, `depth % div == 0`)
+   binds two more walker axes `kq`/`kr`, and the coefficient space widens by
+   `cq·(k÷div) + cr·(k%div)` — recorded as the partial morphism
+   `TileRead.ksplit? : TileRead → TileKSplit` (§3 consolidation: the same
+   `TileRead`, one more morphism, not a new site type). conv2d's
+   `img[(i + k/3)*18 + j + k%3]` records `ci=18, clane=1, ck=0,
+   ksplit={div:3, cq:18, cr:1}`. Rules: a read is affine in raw `k` XOR in the
+   derived pair (`ksplit ⇒ ck == 0`; mixed refuses), and a bound-but-unused pair
+   records `ksplit: None` — pre-S28 sites stay bit-identical.
 5. **Prove nothing skippable can trap.** The micro-kernel emits only the
    recognized chain, so anything it would skip must be provably unobservable.
    `tile_trap_free` requires every `Index` proven in-bounds by `bounds_proof`,
@@ -201,8 +213,8 @@ the recognition pipeline is `tile_site` → `tile_fold_shape` → `tile_affine`,
    `Map`/`Fold` the kernel can't see into. A skipped trap would be a wrong
    answer, not a missed optimization — so this gate is absolute.
 6. **Record the site.** A `TileSite`: `rows`, `c`, `k`, both reads' coefficient
-   tuples, the seed value, the element type. Geometry only — the backend owns
-   tile factors (lane width, register blocking).
+   tuples (with the optional `ksplit`), the seed value, the element type.
+   Geometry only — the backend owns tile factors (lane width, register blocking).
 
 ```mermaid
 graph TD
@@ -216,7 +228,7 @@ graph TD
     E -- "no" --> R2["refuse"]
     E -- "yes" --> F{"x and y are Index reads of captured arrays?"}
     F -- "no" --> R3["refuse"]
-    F -- "yes" --> G["tile_affine — address = base + ci*i + clane*lane + ck*k"]
+    F -- "yes" --> G["tile_affine — address = base + ci*i + clane*lane + ck*k (+ ksplit: cq*(k/div) + cr*(k%div), S28)"]
     G --> H{"lane stride clane of the two reads?"}
     H -- "one 0 = broadcast, one 1 = vector load" --> I{"tile_trap_free — nothing skippable can trap?"}
     H -- "anything else" --> R4["refuse"]
@@ -231,7 +243,9 @@ and the plan never reassociates: different cells' chains interleaved, each cell'
 own chain untouched. Per-cell order preserved ⇒ byte-identical output.
 
 **Who consumes the answer:** the llvm emitter's tiled micro-kernel
-(`crates/backends/llvm/src/func.rs:355` — computed only when tiling is enabled).
+(`crates/backends/llvm/src/func.rs:FnEmit::new` — computed only when tiling is
+enabled). Emission dispatch (S28): a k-split site takes the conv micro-kernel
+branch (`conv_site`) or the untiled fallback — never the affine tile path.
 Sites absent from the `TilePlan` are emitted as ordinary maps. The
 `docs/notes/tile-ladder-direction.md` note is the standing direction: this one
 rule is the CPU SIMD rung today and is designed to be the same record a CUDA or

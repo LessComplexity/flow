@@ -31,6 +31,36 @@ Three payoffs. (1) **§8.5 piecewise correctness is the code shape**: `emit` wal
 | `emit_morphism` | per `topo_order` step | §2 op table; the piecewise functor application |
 | `emit_loop` | per canonical quartet | §3; ADR-0016 CFG |
 
+### Tile ladder — strategy rungs at recorded sites (TrnLoc, §4.4; S25–S28)
+
+A recognized `TileSite` (flow-ir's record: geometry + per-read coefficients +
+the S28 `ksplit` decomposition) carries ONE `t_from→t_to` contract — per-cell
+op/operand/k-order exact (R1). Each rung is a parallel `TrnLoc` realisation of
+that contract, selected by an **emitter-local predicate** cashing facts the
+record already holds (the standing rung doctrine: rungs 2/3/B needed zero
+flow-ir change; A3 cashes the new `ksplit` morphism). Ladder direction and
+per-backend width ownership: `docs/notes/tile-ladder-direction.md`.
+
+| Rung | Gate (emitter-local) | Strategy (`TrnLoc`) | Placement / shape |
+| --- | --- | --- | --- |
+| 1 — SIMD lanes (S25) | site recognized | `emit_tiled_map` | TJ-wide lane micro-kernel, one acc vector, runtime-`tj` select per tile |
+| 2 — TI register blocking (S26) | `site.rows > 1 && site.b.ci == 0` | `emit_tiled_map_blocked` | `acc [TI·TJ x elem]` (TI=4); ONE b load per (k, lane) shared across the TI rows — b is the invariant read |
+| 3 — packing (S27) | `packing_site` = rung-2 gate ∧ `b.ksplit.is_none()` | `emit_pack_copy` + packed reads | b repacked j-tile-major (a `DataLoc` sibling); per-width TJ, k ×2-unroll + prefetch |
+| B — 1-D window (S28) | `window1d_site` = `rows == 1 && b.ck == 1 && b.ksplit.is_none()` | `emit_tiled_map_blocked_1d` (+ `emit_tile_window_block`/`emit_tile_window_step`) | **the rung-2 DUAL** — TI blocks over the LANE axis; ONE scalar `a` load per k shared across the TI subrows (a invariant, b slides: matmul shares b across rows, FIR shares a across lane-blocks); `acc [TI·TJ x elem]`; k ×2-unrolled iff `K % 2 == 0`; full blocks unmasked; the `[lo,hi)` window needs no `[0,C)` clip (`rows == 1` collapses the row loop); remainder = the TI=1 `emit_tile_j_split` discipline (constant-TJ main + one runtime-`tj` tile). Non-window 1-D sites keep the rung-1 nest byte-for-byte (the negative control) |
+| A3 — conv micro-kernel (S28) | `conv_site` = `a.ksplit.is_none() && b.ksplit.is_some() && b.ck == 0 && a.clane == 0 && b.clane == 1` | `emit_tiled_map_conv` (+ `emit_tile_conv_tile`, `ConvTileCtx`) | **the k-split decomposition constant-folded** — per (row, j-tile) the `(kq, kr)` tap nest fully unrolls (`kq in 0..K/div` outer, `kr in 0..div` inner IS k-ascending); per tap a constant-index `a` load and a `b` vector load at `b_row + (cq·kq + cr·kr) + j0 + lane`, the tap offset compile-time — div/mod vanish from the emission (zero `sdiv`/`srem`); rung-1 row idiom (slice row range + signed per-row jw clip), constant-TJ main + one runtime-`tj` remainder; TI=1 (row blocking a recorded ceiling) |
+
+Composition rules for the S28 branches (plan-s28 numbering kept):
+
+3. A `ksplit.is_some()` site takes the conv branch or the untiled fallback —
+   NEVER the affine tile path (the affine emission ignores `ksplit` and would
+   compute wrong addresses; the `emit_map` site filter retargets accordingly,
+   and `packing_site` refuses k-split sites — the panel layout has no encoding
+   for `(k÷div, k%div)`).
+4. Every new branch keeps the per-cell fold chain **k-ascending** — the R1
+   bit-exactness invariant.
+5. Never mask dead lanes/subrows: constant-TJ main tiles, runtime-`tj` only on
+   remainder tiles; par split-range clipping unchanged.
+
 ### Composition rules
 
 - **L1 — oracle parity (ADR-0020 §3).** For every program the harness runs: `Done` ⟺ exit 0 ∧ stdout byte-equal to `RunResult.output`; `Trapped(_)` ⟺ exit 101 (⊥-identified per rewrite R1); classes never cross. Integer `Add/Sub/Mul/Neg` wrap (**no `nsw`** — the spec §8.1 `nsw` is illustrative; ADR-0020); `Div/Mod` zero-guard → `flow_trap(div_zero)`, and signed `MIN / -1` guard → **Div result `MIN`, Mod result `0`** (parity with `wrapping_div` and `wrapping_rem` respectively — `x.wrapping_rem(-1)` is always 0; S13 review blocker); `Index`/`Update` bounds-guard → `flow_trap(index_oob)` with **type-directed index extension** (u8 `zext`+`ult`, signed `sext`+two-sided — §2); floats IEEE at width; all text via `flow-rt`.
