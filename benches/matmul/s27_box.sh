@@ -1,8 +1,8 @@
 #!/bin/bash
 # S27 box driver (trimmed, CPU-only): FMA contraction (product face) + BLAS
-# rung 3 packing, measured at the S26c 4096-minimum sizes. Legs: flow cap
-# f32/f64 par+1t (wall + compute) with their _fma twins, cpp naive+mt, rust
-# naive+mt, chapel mc+1t, numpy threaded+1t. No cuda legs (=> any minimal
+# rung 3 packing, measured at the S26c 4096-minimum sizes. Legs (compute-timed
+# only — S28 rule): flow cap f32/f64 par+1t + their _fma twins, cpp naive+mt,
+# rust naive+mt, chapel mc+1t, numpy threaded+1t. No cuda legs (=> any minimal
 # ubuntu:22.04 image; the S27 .cu artifacts are byte-identical to S26's).
 # Protocol as s26b_box.sh: rsync benches/matmul -> /root/bench, flow-rt
 # lib.rs -> /root/bench/flow_rt.rs; runner.py stamps machine specs on the CSV.
@@ -70,10 +70,10 @@ echo "conformance vfmadd=$CONF_FUSED (expect 0) | fma vfmadd=$FMA_FUSED (expect 
 objdump -d mm_ll_fma_cap_f32_512 | grep -m1 -oE "%[yz]mm[0-9]+" | head -1 || true
 echo "== runs (leg filter — CPU tables only) =="
 python3 runner.py \
-  flow-llvm-cap-f64 flow-llvm-cap-f32 flow-llvm-cap-compute-f64 flow-llvm-cap-compute-f32 \
-  flow-llvm-cap-f64-1t flow-llvm-cap-f32-1t \
-  flow-llvm-cap-f64-fma flow-llvm-cap-f32-fma flow-llvm-cap-f64-fma-1t flow-llvm-cap-f32-fma-1t \
+  flow-llvm-cap-compute-f64 flow-llvm-cap-compute-f32 \
+  flow-llvm-cap-compute-f64-1t flow-llvm-cap-compute-f32-1t \
   flow-llvm-cap-fma-compute-f64 flow-llvm-cap-fma-compute-f32 \
+  flow-llvm-cap-fma-compute-f64-1t flow-llvm-cap-fma-compute-f32-1t \
   cpp-naive-f32 cpp-naive-f64 cpp-mt-f32 cpp-mt-f64 rust-naive rust-mt \
   chapel-f32 chapel-f64 chapel-1t-f32 chapel-1t-f64 numpy numpy-1t 2>&1 | tee /root/runner.log
 echo "S27 BOX DONE"

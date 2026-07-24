@@ -220,13 +220,18 @@ for leg, fmt in (
             print(f"{leg} N={n} TIMEOUT — stopping leg", flush=True)
             break
 
-# --- flow-llvm-cap-compute-{f64,f32} (flow_main timer, min of 3) ---
-# S27: -fma-compute twins are the product face; sizes run to 4096 (S26c).
-for leg, fmt in (
-    ("flow-llvm-cap-compute-f64", "./mm_ll_perf_cap_{}"),
-    ("flow-llvm-cap-compute-f32", "./mm_ll_perf_cap_f32_{}"),
-    ("flow-llvm-cap-fma-compute-f64", "./mm_ll_fma_perf_cap_{}"),
-    ("flow-llvm-cap-fma-compute-f32", "./mm_ll_fma_perf_cap_f32_{}"),
+# --- flow-llvm-cap-compute-{f64,f32}[-1t] (flow_main timer, min of 3) ---
+# -fma-compute twins are the product face; sizes run to 4096. -1t twins pin
+# FLOW_PAR=1 (replaces the S27c manual 1t rows).
+for leg, fmt, par in (
+    ("flow-llvm-cap-compute-f64", "./mm_ll_perf_cap_{}", "par"),
+    ("flow-llvm-cap-compute-f32", "./mm_ll_perf_cap_f32_{}", "par"),
+    ("flow-llvm-cap-fma-compute-f64", "./mm_ll_fma_perf_cap_{}", "par"),
+    ("flow-llvm-cap-fma-compute-f32", "./mm_ll_fma_perf_cap_f32_{}", "par"),
+    ("flow-llvm-cap-compute-f64-1t", "./mm_ll_perf_cap_{}", "1"),
+    ("flow-llvm-cap-compute-f32-1t", "./mm_ll_perf_cap_f32_{}", "1"),
+    ("flow-llvm-cap-fma-compute-f64-1t", "./mm_ll_fma_perf_cap_{}", "1"),
+    ("flow-llvm-cap-fma-compute-f32-1t", "./mm_ll_fma_perf_cap_f32_{}", "1"),
 ):
     if not wanted(leg):
         continue
@@ -236,7 +241,7 @@ for leg, fmt in (
             cmd = [
                 "bash",
                 "-c",
-                f"unset FLOW_PAR; ulimit -s unlimited 2>/dev/null || ulimit -s hard; {fmt.format(n)}",
+                f"export FLOW_PAR={par}; ulimit -s unlimited 2>/dev/null || ulimit -s hard; {fmt.format(n)}",
             ]
             for _ in range(3):
                 r = run(cmd, timeout=3600)
