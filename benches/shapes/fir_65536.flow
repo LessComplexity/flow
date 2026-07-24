@@ -8,9 +8,13 @@ fn main() {
     64 -> iota -> kr;
     kr -> map { t -> (t * 5 + 3) % 31 - 15 -> widen_f32 } -> w;
     65536 -> iota -> ts;
+    () -> time -> t0;
     ts -> map { t ->
         (0.0, kr) -> fold { acc, k -> acc + w[k] * x[t + k] }
     } -> y;
+    () -> time -> t1;
     y[0] -> println;
     y[65535] -> println;
+    "iter ms=" -> print;
+    t1 - t0 -> println;
 }

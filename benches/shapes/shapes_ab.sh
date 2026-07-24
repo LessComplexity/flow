@@ -1,5 +1,9 @@
 #!/bin/bash
 # Local A/B for the FIR and conv2d Flow shapes plus C++, Rust, and NumPy baselines.
+# Every leg is COMPUTE-ONLY and self-timed: the Flow shapes bracket their kernel
+# with the `time` builtin (`() -> time`) and print `iter ms=` exactly like the
+# baselines, so data generation is outside every measurement. FLOW_PERF/--perf is
+# retired here (it timed all of flow_main — the S28 gen-boundary finding).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -7,6 +11,8 @@ TMP="$ROOT/target/tmp/shapes_ab"
 RUNS="${RUNS:-3}"
 PYTHON="${PYTHON:-python3}"
 FLOW_PAR="${FLOW_PAR:-par}"
+FIR_N="${FIR_N:-65536}"
+CONV_SIDE="${CONV_SIDE:-512}"
 RT="$ROOT/target/release/libflow_rt.a"
 
 case "$RUNS" in
@@ -24,7 +30,7 @@ echo "== shapes A/B =="
 echo "clang:   $(clang --version | head -1)"
 echo "rustc:   $(rustc --version)"
 echo "python:  $("$PYTHON" --version 2>&1)"
-echo "FLOW_PAR=$FLOW_PAR RUNS=$RUNS"
+echo "FLOW_PAR=$FLOW_PAR RUNS=$RUNS FIR_N=$FIR_N CONV_SIDE=$CONV_SIDE"
 echo "tmp:     $TMP"
 
 "$PYTHON" -c 'import numpy' >/dev/null
@@ -35,6 +41,9 @@ clang++ -std=c++17 -O3 -march=native -ffp-contract=fast \
     "$ROOT/benches/shapes/shapes_baseline.cpp" -o "$TMP/shapes_cpp" -pthread
 rustc -O -C target-cpu=native \
     "$ROOT/benches/shapes/shapes_baseline.rs" -o "$TMP/shapes_rust"
+
+size_of() { [ "$1" = fir ] && echo "$FIR_N" || echo "$CONV_SIDE"; }
+src_of() { echo "$ROOT/benches/shapes/$1_$(size_of "$1").flow"; }
 
 emit() { # <source.flow> <out.ll> [flags...]
     local source="$1" out="$2"
@@ -49,15 +58,11 @@ build_flow() { # <in.ll> <out>
 
 echo "-- emit + build Flow legs"
 for shape in fir conv2d; do
-    source="$ROOT/benches/shapes/${shape}_$([ "$shape" = fir ] && echo 65536 || echo 512).flow"
+    source="$(src_of "$shape")"
     emit "$source" "$TMP/${shape}_conf.ll"
     emit "$source" "$TMP/${shape}_fma.ll" --contract
-    emit "$source" "$TMP/${shape}_conf_perf.ll" --perf
-    emit "$source" "$TMP/${shape}_fma_perf.ll" --perf --contract
     build_flow "$TMP/${shape}_conf.ll" "$TMP/${shape}_conf"
     build_flow "$TMP/${shape}_fma.ll" "$TMP/${shape}_fma"
-    build_flow "$TMP/${shape}_conf_perf.ll" "$TMP/${shape}_conf_perf"
-    build_flow "$TMP/${shape}_fma_perf.ll" "$TMP/${shape}_fma_perf"
 done
 
 compare_numeric() { # <reference> <actual>
@@ -89,8 +94,8 @@ check_exact() { # <reference> <actual> <label>
 
 echo "-- verification references"
 for shape in fir conv2d; do
-    "$TMP/${shape}_conf" > "$TMP/${shape}_ref.out"
-    "$TMP/${shape}_fma" > "$TMP/${shape}_fma.out"
+    "$TMP/${shape}_conf" | grep -v '^iter ms=' > "$TMP/${shape}_ref.out"
+    "$TMP/${shape}_fma" | grep -v '^iter ms=' > "$TMP/${shape}_fma.out"
     compare_numeric "$TMP/${shape}_ref.out" "$TMP/${shape}_fma.out"
 done
 
@@ -98,18 +103,18 @@ time_flow() { # <shape> <conf|fma>
     local shape="$1" leg="$2" run out stripped ms count
     local values=()
     for ((run = 1; run <= RUNS; ++run)); do
-        out="$TMP/${shape}_${leg}_perf.run"
-        stripped="$TMP/${shape}_${leg}_perf.stripped"
-        "$TMP/${shape}_${leg}_perf" > "$out"
-        grep -v '^FLOW_PERF total ms=' "$out" > "$stripped"
+        out="$TMP/${shape}_${leg}.run"
+        stripped="$TMP/${shape}_${leg}.stripped"
+        "$TMP/${shape}_${leg}" > "$out"
+        grep -v '^iter ms=' "$out" > "$stripped"
         if [ "$leg" = fma ]; then
             compare_numeric "$TMP/${shape}_ref.out" "$stripped"
         else
             check_exact "$TMP/${shape}_ref.out" "$stripped" "$shape flow-$leg"
         fi
-        count="$(grep -c '^FLOW_PERF total ms=' "$out" || true)"
-        [ "$count" -eq 1 ] || { echo "FAIL: expected one FLOW_PERF line in $out" >&2; exit 1; }
-        ms="$(sed -n 's/^FLOW_PERF total ms=//p' "$out")"
+        count="$(grep -c '^iter ms=' "$out" || true)"
+        [ "$count" -eq 1 ] || { echo "FAIL: expected one 'iter ms=' line in $out" >&2; exit 1; }
+        ms="$(sed -n 's/^iter ms=//p' "$out")"
         values+=("$ms")
     done
     printf '%s\n' "${values[@]}" | sort -g | head -1
@@ -136,14 +141,15 @@ rows=()
 flow_mode="$FLOW_PAR"
 [ "$flow_mode" = 1 ] && flow_mode=1t
 for shape in fir conv2d; do
-    rows+=("$shape|flow-conf-$flow_mode|$(time_flow "$shape" conf)")
-    rows+=("$shape|flow-fma-$flow_mode|$(time_flow "$shape" fma)")
-    rows+=("$shape|cpp-1t|$(time_baseline "$shape" cpp_1t "$TMP/shapes_cpp" "$shape" 1t "$RUNS")")
-    rows+=("$shape|cpp-mt|$(time_baseline "$shape" cpp_mt "$TMP/shapes_cpp" "$shape" mt "$RUNS")")
-    rows+=("$shape|rust-1t|$(time_baseline "$shape" rust_1t "$TMP/shapes_rust" "$shape" 1t "$RUNS")")
-    rows+=("$shape|rust-mt|$(time_baseline "$shape" rust_mt "$TMP/shapes_rust" "$shape" mt "$RUNS")")
-    rows+=("$shape|numpy-1t|$(time_baseline "$shape" numpy_1t env PYTHONDONTWRITEBYTECODE=1 \
-        "$PYTHON" "$ROOT/benches/shapes/shapes_numpy.py" "$shape" --1t "$RUNS")")
+    n="$(size_of "$shape")"
+    rows+=("$shape:$n|flow-conf-$flow_mode|$(time_flow "$shape" conf)")
+    rows+=("$shape:$n|flow-fma-$flow_mode|$(time_flow "$shape" fma)")
+    rows+=("$shape:$n|cpp-1t|$(time_baseline "$shape" cpp_1t "$TMP/shapes_cpp" "$shape" 1t "$RUNS" "$n")")
+    rows+=("$shape:$n|cpp-mt|$(time_baseline "$shape" cpp_mt "$TMP/shapes_cpp" "$shape" mt "$RUNS" "$n")")
+    rows+=("$shape:$n|rust-1t|$(time_baseline "$shape" rust_1t "$TMP/shapes_rust" "$shape" 1t "$RUNS" "$n")")
+    rows+=("$shape:$n|rust-mt|$(time_baseline "$shape" rust_mt "$TMP/shapes_rust" "$shape" mt "$RUNS" "$n")")
+    rows+=("$shape:$n|numpy-1t|$(time_baseline "$shape" numpy_1t env PYTHONDONTWRITEBYTECODE=1 \
+        "$PYTHON" "$ROOT/benches/shapes/shapes_numpy.py" "$shape" --1t "$RUNS" "$n")")
 done
 
 echo

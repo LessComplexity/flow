@@ -1,4 +1,4 @@
-// CPU baselines for fir_65536.flow and conv2d_512.flow.
+// CPU baselines for the fir/conv2d Flow shapes, size-parameterized (S29 scale-up).
 // Build: clang++ -O3 -march=native -ffp-contract=fast -std=c++17 shapes_baseline.cpp -o shapes_baseline -pthread
 #include <algorithm>
 #include <chrono>
@@ -53,13 +53,14 @@ static void fir_range(const std::vector<float>& x, const std::vector<float>& w,
 }
 
 static void conv_range(const std::vector<float>& img, const std::vector<float>& w,
-                       std::vector<float>& out, size_t row_begin, size_t row_end) {
+                       std::vector<float>& out, size_t side, size_t row_begin, size_t row_end) {
+    const size_t stride = side + 2;
     for (size_t i = row_begin; i < row_end; ++i) {
-        for (size_t j = 0; j < 512; ++j) {
+        for (size_t j = 0; j < side; ++j) {
             float acc = 0.0f;
             for (size_t k = 0; k < 9; ++k)
-                acc += w[k] * img[(i + k / 3) * 514 + j + k % 3];
-            out[i * 512 + j] = acc;
+                acc += w[k] * img[(i + k / 3) * stride + j + k % 3];
+            out[i * side + j] = acc;
         }
     }
 }
@@ -76,8 +77,8 @@ static void run_iters(int iters, Work work) {
     }
 }
 
-static void run_fir(bool multithreaded, int iters) {
-    std::vector<float> x(65599), w(64), y(65536);
+static void run_fir(bool multithreaded, int iters, size_t n) {
+    std::vector<float> x(n + 63), w(64), y(n);
     for (size_t t = 0; t < x.size(); ++t)
         x[t] = static_cast<float>(static_cast<int>((t * 7 + 13) % 101) - 50);
     for (size_t k = 0; k < w.size(); ++k)
@@ -101,25 +102,26 @@ static void run_fir(bool multithreaded, int iters) {
     std::printf("%.9g\n%.9g\n", static_cast<double>(y.front()), static_cast<double>(y.back()));
 }
 
-static void run_conv(bool multithreaded, int iters) {
-    std::vector<float> img(514 * 514), w(9), out(512 * 512);
+static void run_conv(bool multithreaded, int iters, size_t side) {
+    const size_t stride = side + 2;
+    std::vector<float> img(stride * stride), w(9), out(side * side);
     for (size_t t = 0; t < img.size(); ++t)
         img[t] = static_cast<float>(static_cast<int>((t * 7 + 13) % 101) - 50);
     for (size_t k = 0; k < w.size(); ++k)
         w[k] = static_cast<float>(static_cast<int>((k * 5 + 3) % 31) - 15);
 
-    const unsigned threads = std::min<unsigned>(thread_width(), 512);
+    const unsigned threads = std::min<unsigned>(thread_width(), side);
     run_iters(iters, [&] {
         if (!multithreaded) {
-            conv_range(img, w, out, 0, 512);
+            conv_range(img, w, out, side, 0, side);
             return;
         }
         std::vector<std::thread> workers;
         workers.reserve(threads);
         for (unsigned lane = 0; lane < threads; ++lane) {
-            const size_t begin = lane * 512 / threads;
-            const size_t end = (lane + 1) * 512 / threads;
-            workers.emplace_back(conv_range, std::cref(img), std::cref(w), std::ref(out), begin, end);
+            const size_t begin = lane * side / threads;
+            const size_t end = (lane + 1) * side / threads;
+            workers.emplace_back(conv_range, std::cref(img), std::cref(w), std::ref(out), side, begin, end);
         }
         for (auto& worker : workers) worker.join();
     });
@@ -127,9 +129,9 @@ static void run_conv(bool multithreaded, int iters) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 4 || (std::strcmp(argv[1], "fir") != 0 && std::strcmp(argv[1], "conv2d") != 0) ||
+    if (argc < 4 || argc > 5 || (std::strcmp(argv[1], "fir") != 0 && std::strcmp(argv[1], "conv2d") != 0) ||
         (std::strcmp(argv[2], "1t") != 0 && std::strcmp(argv[2], "mt") != 0)) {
-        std::fprintf(stderr, "usage: %s <fir|conv2d> <1t|mt> <iters>\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <fir|conv2d> <1t|mt> <iters> [n|side]\n", argv[0]);
         return 2;
     }
     const int iters = std::atoi(argv[3]);
@@ -138,8 +140,11 @@ int main(int argc, char** argv) {
         return 2;
     }
     const bool multithreaded = std::strcmp(argv[2], "mt") == 0;
-    if (std::strcmp(argv[1], "fir") == 0)
-        run_fir(multithreaded, iters);
+    const bool fir = std::strcmp(argv[1], "fir") == 0;
+    const size_t default_n = fir ? 65536 : 512;
+    const size_t n = argc == 5 ? static_cast<size_t>(std::atoll(argv[4])) : default_n;
+    if (fir)
+        run_fir(multithreaded, iters, n);
     else
-        run_conv(multithreaded, iters);
+        run_conv(multithreaded, iters, n);
 }

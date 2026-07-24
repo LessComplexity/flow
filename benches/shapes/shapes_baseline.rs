@@ -1,4 +1,4 @@
-// CPU baselines for fir_65536.flow and conv2d_512.flow.
+// CPU baselines for the fir/conv2d Flow shapes, size-parameterized (S29 scale-up).
 // Build: rustc -O -C target-cpu=native shapes_baseline.rs -o shapes_baseline_rs
 use std::time::Instant;
 
@@ -55,27 +55,28 @@ fn fir_range(x: &[f32], w: &[f32], y: &mut [f32], begin: usize) {
     }
 }
 
-fn conv_rows(img: &[f32], w: &[f32], out: &mut [f32], row_begin: usize) {
-    for (row_offset, row) in out.chunks_exact_mut(512).enumerate() {
+fn conv_rows(img: &[f32], w: &[f32], out: &mut [f32], side: usize, row_begin: usize) {
+    let stride = side + 2;
+    for (row_offset, row) in out.chunks_exact_mut(side).enumerate() {
         let i = row_begin + row_offset;
         for (j, value) in row.iter_mut().enumerate() {
             let mut acc = 0.0f32;
             for k in 0..9 {
-                acc += w[k] * img[(i + k / 3) * 514 + j + k % 3];
+                acc += w[k] * img[(i + k / 3) * stride + j + k % 3];
             }
             *value = acc;
         }
     }
 }
 
-fn run_fir(multithreaded: bool, iters: usize) {
-    let x: Vec<f32> = (0..65599)
+fn run_fir(multithreaded: bool, iters: usize, n: usize) {
+    let x: Vec<f32> = (0..n + 63)
         .map(|t| (((t * 7 + 13) % 101) as i32 - 50) as f32)
         .collect();
     let w: Vec<f32> = (0..64)
         .map(|k| (((k * 5 + 3) % 31) as i32 - 15) as f32)
         .collect();
-    let mut y = vec![0.0f32; 65536];
+    let mut y = vec![0.0f32; n];
     let threads = thread_width().min(y.len());
     let chunk = y.len().div_ceil(threads);
 
@@ -94,20 +95,21 @@ fn run_fir(multithreaded: bool, iters: usize) {
         }
         println!("iter ms={:.6}", start.elapsed().as_secs_f64() * 1000.0);
     }
-    println!("{}\n{}", y[0], y[65535]);
+    println!("{}\n{}", y[0], y[n - 1]);
 }
 
-fn run_conv(multithreaded: bool, iters: usize) {
-    let img: Vec<f32> = (0..514 * 514)
+fn run_conv(multithreaded: bool, iters: usize, side: usize) {
+    let stride = side + 2;
+    let img: Vec<f32> = (0..stride * stride)
         .map(|t| (((t * 7 + 13) % 101) as i32 - 50) as f32)
         .collect();
     let w: Vec<f32> = (0..9)
         .map(|k| (((k * 5 + 3) % 31) as i32 - 15) as f32)
         .collect();
-    let mut out = vec![0.0f32; 512 * 512];
-    let threads = thread_width().min(512);
-    let rows_per_thread = 512usize.div_ceil(threads);
-    let chunk = rows_per_thread * 512;
+    let mut out = vec![0.0f32; side * side];
+    let threads = thread_width().min(side);
+    let rows_per_thread = side.div_ceil(threads);
+    let chunk = rows_per_thread * side;
 
     for _ in 0..iters {
         let start = Instant::now();
@@ -116,24 +118,24 @@ fn run_conv(multithreaded: bool, iters: usize) {
                 for (lane, slice) in out.chunks_mut(chunk).enumerate() {
                     let img = &img;
                     let w = &w;
-                    scope.spawn(move || conv_rows(img, w, slice, lane * rows_per_thread));
+                    scope.spawn(move || conv_rows(img, w, slice, side, lane * rows_per_thread));
                 }
             });
         } else {
-            conv_rows(&img, &w, &mut out, 0);
+            conv_rows(&img, &w, &mut out, side, 0);
         }
         println!("iter ms={:.6}", start.elapsed().as_secs_f64() * 1000.0);
     }
-    println!("{}\n{}", out[0], out[262143]);
+    println!("{}\n{}", out[0], out[side * side - 1]);
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 4
+    if !(4..=5).contains(&args.len())
         || !matches!(args[1].as_str(), "fir" | "conv2d")
         || !matches!(args[2].as_str(), "1t" | "mt")
     {
-        eprintln!("usage: {} <fir|conv2d> <1t|mt> <iters>", args[0]);
+        eprintln!("usage: {} <fir|conv2d> <1t|mt> <iters> [n|side]", args[0]);
         std::process::exit(2);
     }
     let iters = args[3]
@@ -144,9 +146,14 @@ fn main() {
             eprintln!("iters must be >= 1");
             std::process::exit(2);
         });
+    let default_n = if args[1] == "fir" { 65536 } else { 512 };
+    let n = args
+        .get(4)
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(default_n);
     if args[1] == "fir" {
-        run_fir(args[2] == "mt", iters);
+        run_fir(args[2] == "mt", iters, n);
     } else {
-        run_conv(args[2] == "mt", iters);
+        run_conv(args[2] == "mt", iters, n);
     }
 }
