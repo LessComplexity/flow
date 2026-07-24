@@ -10,6 +10,7 @@
 //! Stdout is flushed on every call — the differential harness reads pipes.
 
 use std::{
+    alloc::{self, Layout},
     cell::RefCell,
     collections::VecDeque,
     io::{self, Write},
@@ -266,6 +267,66 @@ pub extern "C" fn flow_perf_end() {
         .as_secs_f64()
         * 1000.0;
     emit(&format_args!("FLOW_PERF total ms={elapsed:.4}"), true);
+}
+
+/// The process-lifetime monotonic epoch for `flow_time_ms` (plan-time-builtin):
+/// one `Instant` shared by every call in the process, so two calls are
+/// non-decreasing and a difference is real elapsed milliseconds.
+static TIME_EPOCH: OnceLock<std::time::Instant> = OnceLock::new();
+
+/// The `time` builtin's runtime seam: milliseconds (f64) from the same
+/// monotonic clock (`std::time::Instant`) as `flow_perf_begin`/`flow_perf_end`,
+/// measured against the process-lifetime [`TIME_EPOCH`].
+#[unsafe(no_mangle)]
+pub extern "C" fn flow_time_ms() -> f64 {
+    TIME_EPOCH
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
+        * 1000.0
+}
+
+/// The heap-lowering arena (plan-s29 emission item 4): every block handed out
+/// by [`flow_rt_alloc`], kept as `(address, layout)` so [`flow_rt_free_all`]
+/// can release it. Addresses are stored as `usize` — a raw pointer is not
+/// `Send`, and the arena is shared across the worker pool.
+///
+/// ponytail: ONE global mutex and a free-everything teardown. The emitter's
+/// contract makes that enough — it only lowers the *entry* function's own
+/// big blocks, so allocation happens a handful of times in the program's
+/// prologue and never in a hot loop, and the single teardown sits after the
+/// last reader (`flow_par_finish` / fn end). Ceiling: a program that wanted
+/// per-allocation lifetimes, or heap-lowered a repeatedly-called fn, needs
+/// `flow_rt_free(ptr)` + an emitter-side last-use point instead.
+static ARENA: Mutex<Vec<(usize, Layout)>> = Mutex::new(Vec::new());
+
+/// Allocate one arena block of `bytes` at `align`, uninitialised — `alloca`
+/// storage is not zeroed either, and every emitted consumer writes before it
+/// reads. Aborts on allocation failure (the emitted program has no path to
+/// handle OOM; `flow_trap`'s exit-101 contract is for *language* traps).
+#[unsafe(no_mangle)]
+pub extern "C" fn flow_rt_alloc(bytes: i64, align: i64) -> *mut u8 {
+    let layout = Layout::from_size_align(bytes as usize, align as usize)
+        .expect("flow_rt_alloc: emitter passes a valid size/alignment pair");
+    // Zero-sized blocks would alias; the emitter never asks (the threshold is
+    // 256 KB) but `alloc` requires size > 0, so keep the guard honest.
+    assert!(layout.size() > 0, "flow_rt_alloc: zero-sized block");
+    let ptr = unsafe { alloc::alloc(layout) };
+    if ptr.is_null() {
+        alloc::handle_alloc_error(layout);
+    }
+    lock(&ARENA).push((ptr as usize, layout));
+    ptr
+}
+
+/// Release every arena block. Emitted once per entry function, after the last
+/// point that can read arena memory (post-`flow_par_finish` in the parallel
+/// flavor, immediately before `ret` otherwise).
+#[unsafe(no_mangle)]
+pub extern "C" fn flow_rt_free_all() {
+    for (addr, layout) in lock(&ARENA).drain(..) {
+        unsafe { alloc::dealloc(addr as *mut u8, layout) };
+    }
 }
 
 impl Pool {
@@ -895,6 +956,26 @@ mod tests {
         },
         time::{Duration, Instant},
     };
+
+    /// The arena hands out usable, distinct storage and releases it. Writing
+    /// the whole block is the point: a short allocation would corrupt the heap
+    /// silently, which is exactly what the emitter's size arithmetic risks.
+    #[test]
+    fn arena_alloc_is_usable_and_freed() {
+        let a = flow_rt_alloc(4096, 64);
+        let b = flow_rt_alloc(4096, 64);
+        assert!(!a.is_null() && !b.is_null() && a != b);
+        assert_eq!(a as usize % 64, 0, "requested alignment honoured");
+        unsafe {
+            ptr::write_bytes(a, 0xAB, 4096);
+            ptr::write_bytes(b, 0xCD, 4096);
+            assert_eq!(*a.add(4095), 0xAB);
+            assert_eq!(*b.add(4095), 0xCD);
+        }
+        assert!(lock(&ARENA).len() >= 2);
+        flow_rt_free_all();
+        assert!(lock(&ARENA).is_empty());
+    }
 
     #[test]
     fn parse_cpu_max_cases() {

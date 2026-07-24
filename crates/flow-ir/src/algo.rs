@@ -1070,7 +1070,8 @@ impl CategoryIr {
     /// The per-function parallel path query. Tasks are emitted in first topo
     /// occurrence order, so their vector indices are deterministic task ids.
     /// Token-bearing morphisms and every morphism in an effectful loop region
-    /// remain on the host spine; Print morphisms still contribute checkpoints.
+    /// remain on the host spine; Print/TimeMs morphisms still contribute
+    /// checkpoints.
     /// Trap capability follows Call/Map/Fold function closures and is attributed
     /// to each reference site's topo position. A task containing a pure Call to
     /// a trap-capable named function is pinned; Map/Fold sites never pin.
@@ -1142,7 +1143,30 @@ impl CategoryIr {
             }
         }
 
-        let is_host = |m: MorphismId| is_token(m) || host_loop_member.contains_key(m);
+        // plan-time-builtin: `TimeMs` is the first host-spine op producing a
+        // VALUE (milliseconds) rather than only a token. A task cannot read it
+        // — tasks are dispatched at launch and the host writes that frame slot
+        // later, on the spine — so a task consuming it races the write (§4.5
+        // Law 1: no transformation reads data not present at its location; the
+        // symptom is a NEGATIVE elapsed). Its whole consumer cone therefore
+        // stays on the spine. The cone is scalar arithmetic in practice, so
+        // this costs nothing; a bulk op fed by a clock read would be pinned
+        // sequential, which is correct before it is fast.
+        let mut host_value: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+        let mut host_cone: SecondaryMap<MorphismId, ()> = SecondaryMap::new();
+        for &m in &topo {
+            let morph = &self.morphisms[m];
+            if matches!(morph.op, Operation::TimeMs) {
+                host_value.insert(morph.target, ());
+            } else if host_value.contains_key(morph.source) {
+                host_cone.insert(m, ());
+                host_value.insert(morph.target, ());
+            }
+        }
+
+        let is_host = |m: MorphismId| {
+            is_token(m) || host_loop_member.contains_key(m) || host_cone.contains_key(m)
+        };
         let is_scalar = |m: MorphismId| {
             !is_host(m)
                 && !loop_of.contains_key(m)
@@ -1253,6 +1277,26 @@ impl CategoryIr {
             topo_pos.insert(m, i.min(u32::MAX as usize) as u32);
         }
         let mut trap_sites = vec![Vec::new(); tasks.len()];
+        // The last SOURCE position each task occupies. `TimeMs` fences on it
+        // (plan-time-builtin; see the checkpoint loop). Source position, not
+        // topo position: pure work has no ordering relation to a clock read,
+        // so topo order is free to schedule the whole program before or after
+        // it — and does. What the programmer means by bracketing is the work
+        // WRITTEN between the two reads, which is exactly this key.
+        let task_max_loc: Vec<u32> = tasks
+            .iter()
+            .map(|task| {
+                let members: &[MorphismId] = match &task.kind {
+                    TaskKind::Split { site, .. } => std::slice::from_ref(site),
+                    TaskKind::Seq { morphisms } => morphisms,
+                };
+                members
+                    .iter()
+                    .map(|&m| self.morphisms[m].loc.start)
+                    .max()
+                    .unwrap_or(0)
+            })
+            .collect();
 
         // A task produces every target written by one of its morphisms. Product
         // slot writers are in the same scalar component, hence the same task.
@@ -1337,7 +1381,7 @@ impl CategoryIr {
         let mut checkpoints = Vec::new();
         for (i, &m) in topo.iter().enumerate() {
             let morph = &self.morphisms[m];
-            let checkpoint = matches!(morph.op, Operation::Print { .. })
+            let checkpoint = matches!(morph.op, Operation::Print { .. } | Operation::TimeMs)
                 || matches!(morph.op, Operation::Call(_)) && is_token(m);
             if !checkpoint {
                 continue;
@@ -1382,6 +1426,33 @@ impl CategoryIr {
                 }
                 for &incoming in self.in_edges(o) {
                     stack.push(self.morphisms[incoming].source);
+                }
+            }
+            // plan-time-builtin composition rule 1: a clock read must not be
+            // reordered across the work it brackets. Under the parallel
+            // orchestrator that reordering is the default — a `TimeMs` on the
+            // host spine consumes only the token, so it has NO value producer
+            // to wait for and would read the clock while the tasks it is meant
+            // to measure are still in flight. So `TimeMs` FENCES: every task
+            // written entirely BEFORE it in the source must have completed.
+            // Source order is the right key precisely because the dataflow
+            // graph gives none — pure work is unordered against a clock read,
+            // so topo order legally puts all of it on either side. `t1 - t0`
+            // therefore measures the work written between the two reads, which
+            // is what a bracket means in any normal language, and what lets one
+            // opened after the data generation exclude it (the S28 finding).
+            if matches!(morph.op, Operation::TimeMs) {
+                for (task, &last) in task_max_loc.iter().enumerate() {
+                    if last >= morph.loc.start {
+                        continue;
+                    }
+                    match wait.iter_mut().find(|entry| entry.task == task) {
+                        Some(entry) => entry.threshold = None,
+                        None => wait.push(WaitEntry {
+                            task,
+                            threshold: None,
+                        }),
+                    }
                 }
             }
             wait.sort_unstable_by_key(|entry| entry.task);
@@ -2084,9 +2155,9 @@ impl CategoryIr {
     /// field), `Call` (the call boundary may return an alias of its borrowed
     /// argument), and an array-typed `Index` (the sub-buffer alias).
     /// Everything else — arithmetic, comparisons, `Update`/`Map`/`Fold`/
-    /// `Zip`/`Enumerate` (fresh buffers/results), `Print`, `Neg`, `Not` —
-    /// consumes and produces anew: no escape flows through it. Worklist BFS,
-    /// deterministic (in-edge insertion order), no HashMap (L2).
+    /// `Zip`/`Enumerate` (fresh buffers/results), `Print`, `TimeMs`, `Neg`,
+    /// `Not` — consumes and produces anew: no escape flows through it.
+    /// Worklist BFS, deterministic (in-edge insertion order), no HashMap (L2).
     fn escape_reach(
         &self,
         f: FuncId,

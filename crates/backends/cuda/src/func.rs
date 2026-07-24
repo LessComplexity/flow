@@ -741,6 +741,7 @@ impl<'a> FnEmit<'a> {
         let op = morph.op;
         let source = morph.source;
         let target = morph.target;
+        let loc = morph.loc;
 
         match op {
             Operation::Pair { slot, .. } => {
@@ -822,6 +823,15 @@ impl<'a> FnEmit<'a> {
             }
             Operation::Call(g) => self.emit_call(source, target, g),
             Operation::Print { newline } => self.emit_print(source, newline),
+            // plan-time-builtin: the clock read has no CUDA seam yet (the llvm
+            // backend owns `flow_time_ms`). The ✋ cell, not a silent host-clock
+            // substitute — a device-side timing story is its own design.
+            Operation::TimeMs => {
+                return Err(EmitError::Unsupported {
+                    feature: "the `time` builtin (no CUDA clock seam)".into(),
+                    loc,
+                });
+            }
             Operation::Output => {
                 if let Some((_, val)) = self.load_whole(source) {
                     self.store_obj(target, &val);

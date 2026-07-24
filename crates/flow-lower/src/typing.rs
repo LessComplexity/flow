@@ -435,6 +435,11 @@ impl Walk<'_> {
                     } else if crate::is_print_builtin(text) {
                         // print sink; result is "no value".
                         WTy::Unknown
+                    } else if crate::is_time_builtin(text) {
+                        // `() -> time` (plan-time-builtin): no source, f64
+                        // milliseconds out. `cur` is whatever the wire-less
+                        // head left (Unknown) and is deliberately not unified.
+                        WTy::Known(Ty::f64())
                     } else if text == "zip" {
                         // zip: cur is a 2-tuple `([A;n], [B;n])`; result `[(A,B);n]`.
                         // Synthesize when resolvable so a downstream map sees the
@@ -1306,7 +1311,7 @@ fn body_effect_span(
         {
             let text = name_text(source, *n);
             let effectful = fn_sigs.get(text).map(|s| s.effectful).unwrap_or(false);
-            if crate::is_print_builtin(text) || effectful {
+            if crate::is_print_builtin(text) || crate::is_time_builtin(text) || effectful {
                 found = Some(stage.span);
             }
         }
@@ -1511,6 +1516,7 @@ fn capture_chain(
                     if !local.contains(text)
                         && fn_sigs.get(text).is_none()
                         && !crate::is_print_builtin(text)
+                        && !crate::is_time_builtin(text)
                     {
                         if acc.seen.contains(text) {
                             acc.record_write(text, e.span);

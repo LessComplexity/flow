@@ -71,6 +71,13 @@ fn l1009_reserved_collection_builtins() {
 }
 
 #[test]
+fn l1009_reserved_time() {
+    // plan-time-builtin: `time` is a reserved stage name like `print`/`iota`,
+    // so a user fn of that name collides — L1009.
+    assert_rejects("fn time() {}\nfn main() {}\n", "L1009");
+}
+
+#[test]
 fn l1010_empty_type() {
     assert_rejects("type Empty {}\nfn main() {}\n", "L1010");
 }
@@ -271,6 +278,33 @@ fn l1302_expr_stage() {
         "fn f(x: i32, y: i32) -> i32 { x -> y + 1 -> ret; }\nfn main() {}\n",
         "L1302",
     );
+}
+
+#[test]
+fn l1301_unit_as_value() {
+    // plan-time-builtin: `()` produces no object — its only use is the
+    // wire-LESS head of `() -> time`. In a value position (an operand, a
+    // block tail) it is L1301, and the message teaches the one legal use.
+    assert_rejects("fn main() { () + 1 -> println; }\n", "L1301");
+    let src = "fn f() -> i32 { () }\nfn main() {}\n";
+    assert_rejects(src, "L1301");
+    let po = flow_syntax::parse(src);
+    let ds = flow_lower::lower(src, &po.program).expect_err("`()` tail is not a value");
+    let d = ds
+        .iter()
+        .find(|d| d.code.0 == "L1301")
+        .unwrap_or_else(|| panic!("expected L1301, got {ds:?}"));
+    assert!(
+        d.message.contains("() -> time"),
+        "the Unit arm's message names the one legal use: {d:?}"
+    );
+}
+
+#[test]
+fn l1302_time_with_a_wire() {
+    // plan-time-builtin: `time` is the one stage that takes no wire; feeding it
+    // one is L1302 ("`time` takes no value: write `() -> time`").
+    assert_rejects("fn main() { 5 -> time -> t; t -> println; }\n", "L1302");
 }
 
 #[test]
@@ -628,6 +662,16 @@ fn l1605_body_effectful() {
     // a print inside a map body.
     assert_rejects(
         "fn main() { [1, 2] -> map { x -> x -> print; x } -> ys: [i32; 2]; }\n",
+        "L1605",
+    );
+}
+
+#[test]
+fn l1605_body_time() {
+    // plan-time-builtin: `time` is an effect site exactly like `print`, so a
+    // clock read inside a map body is the same L1605 (bodies are token-free).
+    assert_rejects(
+        "fn main() { [1, 2] -> map { x -> () -> time -> t; x } -> ys: [i32; 2]; }\n",
         "L1605",
     );
 }

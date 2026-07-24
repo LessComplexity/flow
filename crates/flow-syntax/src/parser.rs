@@ -2778,15 +2778,16 @@ impl<'a> Parser<'a> {
     fn parse_paren_or_tuple(&mut self) -> Expr {
         let start = self.cur_span().start;
         self.bump(); // `(`
-        // Empty `()` is not valid; report and recover.
+        // `()` is the Unit literal (plan-time-builtin): the wire-less chain
+        // head, whose one sanctioned use is `() -> time`. It carries no value,
+        // so every other position rejects it in lower (L1301), where the chain
+        // context is known — the parser only records the shape.
         if self.at(TokenKind::RParen) {
             self.bump();
-            self.diag(
-                "P0001",
-                self.span(start, self.prev_end()),
-                "empty parentheses `()` are not an expression",
-            );
-            return self.error_expr();
+            return Expr {
+                kind: ExprKind::Unit,
+                span: self.span(start, self.prev_end()),
+            };
         }
         // Inside parens: a `<-` is the W2/P0009 expression defect (gated below).
         self.paren_depth += 1;

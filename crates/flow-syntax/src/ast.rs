@@ -300,6 +300,9 @@ pub enum ExprKind {
     /// Unescaping is the consumer's job (`unescape_string`).
     Str,
     Bool(bool),
+    /// The Unit literal `()` (plan-time-builtin): the only legal empty-paren
+    /// form; its one sanctioned use is the `() -> time` chain head.
+    Unit,
     Var(Name),
     /// The piped value inside an `OpShorthand` rhs — never constructible from
     /// ordinary expression syntax.

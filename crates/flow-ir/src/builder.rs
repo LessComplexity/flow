@@ -2270,6 +2270,29 @@ impl FnBuilder<'_> {
         Ok(out)
     }
 
+    /// `time` (plan-time-builtin): `IoToken → (IoToken × f64)`. The source is
+    /// the bare token (no internal pair — unlike `print`, there is no value
+    /// operand); the target is a fresh `(IoToken, f64)` pair the caller projs
+    /// apart (token rebind, milliseconds value).
+    pub fn time_ms(&mut self, token: ObjectId, loc: SourceLoc) -> Result<ObjectId, IrError> {
+        self.check_obj(token)?;
+        let tty = self.ty_of(token);
+        if tty != Ty::IoToken {
+            return Err(IrError::TypeMismatch {
+                expected: Ty::IoToken,
+                found: tty,
+                loc,
+            });
+        }
+        let pair_ty = Ty::Tuple(vec![Ty::IoToken, Ty::f64()]);
+        self.b.intake_ty(&pair_ty)?;
+        let out = self
+            .b
+            .mint_object(self.f, pair_ty, None, ObjectKind::Temporary, None, loc);
+        self.b.add_edge(self.f, token, out, Operation::TimeMs, loc);
+        Ok(out)
+    }
+
     /// Bare `x -> ret` / `x -> ret.k` for an EXISTING object (DESIGN §10, D6):
     /// `Output` (full) or a `Pair` slot edge.
     pub fn output(

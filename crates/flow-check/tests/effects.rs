@@ -48,6 +48,36 @@ fn main() {
     assert_eq!((diags[1].span.start, diags[1].span.end), (p2, p2 + 7));
 }
 
+/// A `time` in a `Plain` fanout branch → T0201, the twin of the `print` case:
+/// the clock read is token-threaded (plan-time-builtin), so it is an effect
+/// site and a parallel branch is not a legal position for one. The clock read
+/// is wire-LESS (`() -> time`), so the reachable shape is a statement inside a
+/// branch `seq` — a bare `-> time` branch stage never reaches check (lower
+/// rejects it with L1302, `time` takes no value). The sticky context of
+/// `seq_inside_plain_branch_still_t0201` is what carries the branch context in.
+#[test]
+fn time_in_plain_branch_is_t0201() {
+    let src = r#"
+fn square(x: i32) -> i32 { x * x -> ret; }
+fn main() {
+    6 -> {
+        -> seq { () -> time -> t0; -> square -> a; };
+        -> square -> b;
+    }
+    t0 -> println;
+    a -> println;
+    b -> println;
+}
+"#;
+    let diags = check_src(src);
+    assert_eq!(codes(&diags), ["T0201"]);
+    assert!(
+        diags[0].message.contains("time"),
+        "message must name the builtin: {:?}",
+        diags[0]
+    );
+}
+
 /// An effectful *call* (a fn that prints) in a `Plain` branch → T0201 (the
 /// closure case: `effectful?` is read off the lowered signature, CK4).
 #[test]

@@ -196,14 +196,20 @@ struct FrameLayout {
 }
 
 impl FrameLayout {
-    fn definition(&self) -> String {
+    /// The literal-struct spelling of `%Frame` — the named-type definition's
+    /// body, and the text `llt_bytes` sizes for the heap-lowering gate.
+    fn struct_llt(&self) -> String {
         let mut fields = self
             .order
             .iter()
             .map(|o| self.fields[*o].llt.clone())
             .collect::<Vec<_>>();
         fields.extend((0..self.packed.len()).map(|_| "ptr".to_owned()));
-        format!("%Frame = type {{ {} }}\n", fields.join(", "))
+        format!("{{ {} }}", fields.join(", "))
+    }
+
+    fn definition(&self) -> String {
+        format!("%Frame = type {}\n", self.struct_llt())
     }
 }
 
@@ -303,6 +309,20 @@ pub(crate) struct FnEmit<'a> {
     packing: bool,
     /// Product-face FMA contraction, used only by the tiled per-cell chain.
     contract: bool,
+    /// Split deep packed sites into k-panels (the KC nest). Default OFF — a
+    /// measured 3x loss locally at 1024 f32 (S29); see `EmitOpts::kc_nest`.
+    kc_nest: bool,
+    /// This emitter's entry block runs **exactly once per program**, so a block
+    /// it allocates may live in the `flow_rt_alloc` arena and be released by
+    /// one `flow_rt_free_all` before its `ret` (plan-s29 composition rule 4).
+    /// True only for the entry function's own emitter — the sequential
+    /// `flow_main` and the parallel host. Task/slice/body/named functions run
+    /// an unbounded number of times and keep their `alloca`s, which is also why
+    /// the teardown can free everything: nobody else registers a block.
+    heap_ok: bool,
+    /// This emitter lowered at least one block to the arena ⟹ it owes a
+    /// teardown.
+    heap_used: bool,
 }
 
 /// Register micro-kernel tile factors: per-width j lanes and four rows per
@@ -312,6 +332,13 @@ fn tile_j_for(elem: &Ty) -> u64 {
         Ty::Float { bits: 64 } => 8,
         _ => 16,
     }
+}
+
+/// The KC rung's j-block width in lanes (NC): 32 j-tiles per block — f32 512 /
+/// f64 256. A kc×jb packed-b window is TILE_KC×NC×elem = 256 KB (the L2 budget
+/// that keeps the panel resident across the i sweep).
+fn tile_nc_for(elem: &Ty) -> u64 {
+    tile_j_for(elem) * 32
 }
 
 pub(crate) fn packing_site(site: &TileSite) -> bool {
@@ -341,6 +368,98 @@ pub(crate) fn conv_site(site: &TileSite) -> bool {
 }
 
 const TILE_I: u64 = 4;
+
+/// Heap-lowering threshold (plan-s29 emission item 4): an entry-block block of
+/// at least this many bytes is placed in the `flow_rt_alloc` arena instead of
+/// the stack. A backend emission constant like `TILE_J`/`TILE_KC` — the stack
+/// ceiling is a target fact, not a language one (macOS caps the main thread at
+/// 64 MB hard, so 2048² f32 ×3 plus the packed panel cannot live there).
+///
+/// 256 KB sits far above every tile scratch the emitter mints (the largest is
+/// the TI×KC a-panel pack at 2 KB) and far below anything that threatens a
+/// stack, so no program that fits today changes a byte.
+const HEAP_MIN_BYTES: u64 = 256 * 1024;
+
+/// The size in bytes of an emitted LLVM type text, under the LLVM data layout
+/// (`StructLayout`: each field at its own ABI alignment, tail-padded to the
+/// widest). The grammar is closed — `ty.rs` emits only `ptr`, `float`,
+/// `double`, `iN`, `[n x T]` and `{ T, … }` — and anything unrecognised sizes
+/// to `0`, which keeps it on the stack (the conservative direction).
+fn llt_bytes(llt: &str) -> u64 {
+    let llt = llt.trim();
+    if let Some(inner) = llt.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        let Some((n, elem)) = inner.split_once(" x ") else {
+            return 0;
+        };
+        return n.trim().parse::<u64>().unwrap_or(0) * llt_bytes(elem);
+    }
+    if let Some(inner) = llt.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+        let mut size = 0u64;
+        let mut align = 1u64;
+        for field in llt_fields(inner) {
+            let a = llt_align(field);
+            size = size.next_multiple_of(a) + llt_bytes(field);
+            align = align.max(a);
+        }
+        return size.next_multiple_of(align);
+    }
+    match llt {
+        "ptr" | "double" => 8,
+        "float" => 4,
+        _ => llt
+            .strip_prefix('i')
+            .and_then(|bits| bits.parse::<u64>().ok())
+            .map_or(0, |bits| bits.div_ceil(8)),
+    }
+}
+
+/// The ABI alignment of an emitted LLVM type text: scalars at width, an array
+/// at its element's, a struct at its widest field's.
+fn llt_align(llt: &str) -> u64 {
+    let llt = llt.trim();
+    if let Some(inner) = llt.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        return inner
+            .split_once(" x ")
+            .map_or(1, |(_, elem)| llt_align(elem));
+    }
+    if let Some(inner) = llt.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+        return llt_fields(inner)
+            .into_iter()
+            .map(llt_align)
+            .max()
+            .unwrap_or(1);
+    }
+    llt_bytes(llt).max(1)
+}
+
+/// Split a literal struct's body on its top-level commas (a field may itself be
+/// an array or a struct, whose commas do not separate).
+fn llt_fields(inner: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let (mut depth, mut start) = (0i32, 0usize);
+    for (i, c) in inner.char_indices() {
+        match c {
+            '{' | '[' => depth += 1,
+            '}' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(inner[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let tail = inner[start..].trim();
+    if !tail.is_empty() {
+        out.push(tail);
+    }
+    out
+}
+
+/// The KC rung's k-panel width: packed sites deeper than this split the fold
+/// into [kc, kc+TILE_KC) panels so the per-panel b slice (TILE_KC×TJ lanes)
+/// and the packed a block stay L1-resident. Shallower sites keep the j-outer
+/// nest byte-for-byte (the negative control).
+const TILE_KC: u64 = 128;
 
 #[derive(Clone)]
 struct PackedBuffer {
@@ -400,6 +519,7 @@ impl<'a> FnEmit<'a> {
         tiling: bool,
         packing: bool,
         contract: bool,
+        kc_nest: bool,
     ) -> Self {
         FnEmit {
             ir,
@@ -428,6 +548,9 @@ impl<'a> FnEmit<'a> {
             tile_plan: tiling.then(|| ir.tile_plan(f)),
             packing,
             contract,
+            kc_nest,
+            heap_ok: false,
+            heap_used: false,
         }
     }
 
@@ -620,6 +743,41 @@ impl<'a> FnEmit<'a> {
         name
     }
 
+    /// Does a block of `bytes` belong in the arena rather than the stack
+    /// (plan-s29 emission item 4)? Records the teardown debt when it does.
+    fn heap_block(&mut self, bytes: u64) -> bool {
+        let heap = self.heap_ok && bytes >= HEAP_MIN_BYTES;
+        self.heap_used |= heap;
+        heap
+    }
+
+    /// One named entry-block allocation of `llt`: today's `alloca` (with the
+    /// explicit `align` when the site wants one), or an arena block once it
+    /// crosses [`HEAP_MIN_BYTES`]. An `alloca` and a `flow_rt_alloc` result are
+    /// both just a `ptr`, so every `getelementptr {llt}, ptr …` consumer is
+    /// unchanged — the swap is invisible below this line.
+    fn entry_alloc(&mut self, name: &str, llt: &str, align: Option<u64>) {
+        let bytes = llt_bytes(llt);
+        let text = if self.heap_block(bytes) {
+            let align = align.unwrap_or_else(|| llt_align(llt));
+            format!("  {name} = call ptr @flow_rt_alloc(i64 {bytes}, i64 {align})\n")
+        } else {
+            match align {
+                Some(align) => format!("  {name} = alloca {llt}, align {align}\n"),
+                None => format!("  {name} = alloca {llt}\n"),
+            }
+        };
+        self.allocas.push_str(&text);
+    }
+
+    /// Release the arena, if this emitter filled any of it. Emitted once, at
+    /// the last point that can read arena memory (plan-s29 composition rule 4).
+    fn heap_teardown(&mut self) {
+        if self.heap_used {
+            self.line("call void @flow_rt_free_all()");
+        }
+    }
+
     fn packed_type(site: &TileSite) -> String {
         let tile_j = tile_j_for(&site.elem);
         let tiles = site.c.div_ceil(tile_j);
@@ -651,8 +809,7 @@ impl<'a> FnEmit<'a> {
             PackedBuffer { ptr, llt }
         } else {
             let ptr = format!("%s{}", self.fresh());
-            self.allocas
-                .push_str(&format!("  {ptr} = alloca {llt}, align 64\n"));
+            self.entry_alloc(&ptr, &llt, Some(64));
             PackedBuffer { ptr, llt }
         }
     }
@@ -673,8 +830,7 @@ impl<'a> FnEmit<'a> {
             let llt = Self::packed_type(&site);
             let ptr = format!("%pack{}", field.ordinal);
             let slot = format!("%pack_field{}", field.ordinal);
-            self.allocas
-                .push_str(&format!("  {ptr} = alloca {llt}, align 64\n"));
+            self.entry_alloc(&ptr, &llt, Some(64));
             self.frame_geps.push_str(&format!(
                 "  {slot} = getelementptr %Frame, ptr %frame, i32 0, i32 {}\n  store ptr {ptr}, ptr {slot}\n",
                 field.index
@@ -1082,7 +1238,7 @@ impl<'a> FnEmit<'a> {
             if let Some(llt) = self.slot_type(id, &ty, in_llt) {
                 let name = format!("%o{ord}");
                 self.slots.insert(id, name.clone());
-                self.allocas.push_str(&format!("  {name} = alloca {llt}\n"));
+                self.entry_alloc(&name, &llt, None);
             }
             ord += 1;
         }
@@ -1165,6 +1321,11 @@ impl<'a> FnEmit<'a> {
         let ret_ty = self.obj_ty(fd.output);
         let fname = self.fnames[self.f].clone();
 
+        // Only the entry function's frame is once-per-program (plan-s29
+        // composition rule 4); the parallel entry goes through `emit_parallel`,
+        // so reaching here as the entry IS the sequential flavor.
+        self.heap_ok = self.f == self.ir.entry();
+
         let in_llt = self.prepare_storage();
         self.allocate_local_slots(&in_llt);
 
@@ -1187,6 +1348,7 @@ impl<'a> FnEmit<'a> {
                 if self.perf_timing {
                     self.line("call void @flow_perf_end()");
                 }
+                self.heap_teardown();
                 self.line(format!("ret {t} {v}"));
                 t
             }
@@ -1194,6 +1356,7 @@ impl<'a> FnEmit<'a> {
                 if self.perf_timing {
                     self.line("call void @flow_perf_end()");
                 }
+                self.heap_teardown();
                 self.line("ret void");
                 "void".to_string()
             }
@@ -1244,14 +1407,31 @@ impl<'a> FnEmit<'a> {
         tiling: bool,
         packing: bool,
         contract: bool,
+        kc_nest: bool,
     ) -> String {
-        let mut host = FnEmit::new(ir, f, fnames, strings, attrs, tiling, packing, contract);
+        let mut host = FnEmit::new(
+            ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest,
+        );
         host.perf_timing = perf_timing;
+        // The host runs once per program, so its blocks may go to the arena.
+        host.heap_ok = true;
         let fd = ir.func(f).expect("func resolves");
         let in_llt = host.prepare_storage();
         let frame = host.build_frame_layout(&in_llt, plan);
         host.frame = Some(frame.clone());
-        host.allocas.push_str("  %frame = alloca %Frame\n");
+        // The parallel flavor packs every array into ONE `%Frame`, so THAT is
+        // the block that blows the stack — heap-lower it as a unit. Tasks take
+        // `ptr %frame` either way, and every field access is a `getelementptr
+        // %Frame, ptr %frame, …`, so nothing below this line changes.
+        let frame_bytes = llt_bytes(&frame.struct_llt());
+        if host.heap_block(frame_bytes) {
+            let align = llt_align(&frame.struct_llt());
+            host.allocas.push_str(&format!(
+                "  %frame = call ptr @flow_rt_alloc(i64 {frame_bytes}, i64 {align})\n"
+            ));
+        } else {
+            host.allocas.push_str("  %frame = alloca %Frame\n");
+        }
         host.materialize_frame_slots();
         host.allocate_frame_packs();
 
@@ -1418,6 +1598,7 @@ impl<'a> FnEmit<'a> {
                 if host.perf_timing {
                     host.line("call void @flow_perf_end()");
                 }
+                host.heap_teardown();
                 host.line(format!("ret {t} {value}"));
                 t
             }
@@ -1425,6 +1606,7 @@ impl<'a> FnEmit<'a> {
                 if host.perf_timing {
                     host.line("call void @flow_perf_end()");
                 }
+                host.heap_teardown();
                 host.line("ret void");
                 "void".into()
             }
@@ -1472,6 +1654,7 @@ impl<'a> FnEmit<'a> {
         for (task_id, task) in plan.tasks.iter().enumerate() {
             out.push_str(&Self::emit_task(
                 ir, f, fnames, strings, attrs, &frame, task_id, task, tiling, packing, contract,
+                kc_nest,
             ));
             out.push('\n');
         }
@@ -1500,6 +1683,7 @@ impl<'a> FnEmit<'a> {
         tiling: bool,
         packing: bool,
         contract: bool,
+        kc_nest: bool,
     ) -> String {
         if let TaskKind::Split { site: m, n } = &task.kind
             && let Some(site) = tiling
@@ -1508,7 +1692,9 @@ impl<'a> FnEmit<'a> {
             && packing
             && packing_site(&site)
         {
-            let mut slice = FnEmit::new(ir, f, fnames, strings, attrs, tiling, packing, contract);
+            let mut slice = FnEmit::new(
+                ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest,
+            );
             slice.guard_flavor = GuardFlavor::Task;
             slice.split_range = true;
             slice.prepare_storage();
@@ -1522,7 +1708,9 @@ impl<'a> FnEmit<'a> {
                 slice.allocas, slice.frame_geps, slice.body
             );
 
-            let mut emit = FnEmit::new(ir, f, fnames, strings, attrs, tiling, packing, contract);
+            let mut emit = FnEmit::new(
+                ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest,
+            );
             emit.guard_flavor = GuardFlavor::Task;
             emit.prepare_storage();
             emit.frame = Some(frame.clone());
@@ -1547,7 +1735,9 @@ impl<'a> FnEmit<'a> {
             return format!("{slice_fn}\n{wrapper_fn}");
         }
 
-        let mut emit = FnEmit::new(ir, f, fnames, strings, attrs, tiling, packing, contract);
+        let mut emit = FnEmit::new(
+            ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest,
+        );
         emit.guard_flavor = GuardFlavor::Task;
         emit.split_range = matches!(task.kind, TaskKind::Split { .. });
         emit.watermark = match &task.kind {
@@ -1860,6 +2050,7 @@ impl<'a> FnEmit<'a> {
             Operation::Iota => self.emit_iota(source, target),
             Operation::Fill => self.emit_fill(source, target),
             Operation::Print { newline } => self.emit_print(source, newline),
+            Operation::TimeMs => self.emit_time_ms(target),
             Operation::Output => {
                 if matches!(self.obj_ty(source), Ty::Array { .. }) {
                     let src = self
@@ -2160,6 +2351,18 @@ impl<'a> FnEmit<'a> {
         self.line(format!(
             "call void @{func}({tystr} {ze}{val}, i1 zeroext {nl})"
         ));
+    }
+
+    /// `time` (plan-time-builtin): the monotonic clock read. The source token
+    /// is ordering-only and erases, and the `(IoToken, f64)` target residual-
+    /// lowers to the bare `double` (ty.rs `lower_ty`: a one-component residual
+    /// IS its component) — so the call result is the target object's value and
+    /// no pair is materialized. Emission position in the block IS the ordering
+    /// the token models.
+    fn emit_time_ms(&mut self, target: ObjectId) {
+        let r = self.tmp();
+        self.line(format!("{r} = call double @flow_time_ms()"));
+        self.store_obj(target, "double", &r);
     }
 
     /// The source object of the `Pair{slot==k}` edge feeding aggregate `agg`.
@@ -2795,8 +2998,25 @@ impl<'a> FnEmit<'a> {
             .array_operand_ptr(source, Some(site.b.slot))
             .expect("tile b ptr");
         let out_ptr = self.slot(target).expect("tile output slot");
-        let acc_llt = format!("[{} x {elem_llt}]", TILE_I * tile_j);
+        // One j-tile of accumulators (TI subrows × TJ lanes), for BOTH nests.
+        // The KC rung parks its partial sums in `out` at every panel end (the
+        // (jc, kc, ic) order runs other i-blocks between two panels of the same
+        // block, so nothing survives in scratch across a panel) — so only the
+        // j-tile currently being computed is ever live, exactly as in the
+        // j-outer nest. A TI×NC block would be 32× dead space.
+        let kc_nest = self.kc_nest && packed.is_some() && site.k > TILE_KC;
+        let acc_lanes = TILE_I * tile_j;
+        let acc_llt = format!("[{acc_lanes} x {elem_llt}]");
         let acc = self.scratch(&acc_llt);
+        // The a-panel pack scratch: TI strided source rows × one k-panel,
+        // copied contiguous (align 64) per (i-block, kc) visit.
+        let apack = kc_nest.then(|| {
+            let llt = format!("[{} x {elem_llt}]", TILE_I * TILE_KC);
+            let ptr = format!("%s{}", self.fresh());
+            self.allocas
+                .push_str(&format!("  {ptr} = alloca {llt}, align 64\n"));
+            PackedBuffer { ptr, llt }
+        });
         let i_ctr = self.scratch("i64");
         let j_ctr = self.scratch("i64");
         let k_ctr = self.scratch("i64");
@@ -2842,9 +3062,15 @@ impl<'a> FnEmit<'a> {
         self.line(format!("{i_fw_hi} = udiv i64 {hi}, {}", site.c));
 
         if ctx.packed.is_some() {
-            self.emit_tile_packed_j_outer(
-                site, &ctx, &i_ctr, &j_ctr, &lo, &hi, &i_lo, &i_hi, &i_fw_lo, &i_fw_hi,
-            );
+            if let Some(apack) = &apack {
+                self.emit_tile_packed_kc(
+                    site, &ctx, &i_ctr, &j_ctr, &lo, &hi, &i_lo, &i_hi, &i_fw_lo, &i_fw_hi, apack,
+                );
+            } else {
+                self.emit_tile_packed_j_outer(
+                    site, &ctx, &i_ctr, &j_ctr, &lo, &hi, &i_lo, &i_hi, &i_fw_lo, &i_fw_hi,
+                );
+            }
             return;
         }
         self.emit_tile_i_regions(
@@ -3673,6 +3899,843 @@ impl<'a> FnEmit<'a> {
         panel_base
     }
 
+    /// The KC nest (packed sites with K > TILE_KC): j-blocks of NC lanes
+    /// outer, k-panels of TILE_KC next, the existing head/interior/tail i
+    /// regions innermost — the OpenBLAS (jc, kc, ic) order. Per (i-block, kc)
+    /// the block's a rows are packed into the contiguous apack scratch, then
+    /// the block's j-tiles run the kernel acc[r*TJ + lane] += apack[r][k-kc] *
+    /// packed[jt][k][lane]. The leverage: a is re-read once per jb block
+    /// (C/NC per element vs the j-outer nest's C/TJ — ÷NC/TJ = 32×, e.g. 16 GB
+    /// → 512 MB @4096 f32); the (kc, jb) b window is TILE_KC×NC×elem = 256 KB
+    /// (L2-resident across the i sweep), each (kc, jt) slice 8 KB (L1).
+    /// Partial sums are **parked in `out`**: every j-tile spills its acc at
+    /// the panel end and reloads it at the next panel (the kc==0 panel seeds
+    /// instead — the peeled first panel; the gate guarantees ≥2 panels).
+    /// Parking is what the (jc, kc, ic) order costs: other i-blocks run
+    /// between two panels of the same block, so nothing can stay resident in
+    /// scratch — which is also why acc is one j-tile wide, not NC. The
+    /// spill/reload is value-preserving and each cell's chain stays
+    /// k-ascending, so per-cell the nest is bit-exact vs the j-outer order (R1).
+    #[allow(clippy::too_many_arguments)]
+    fn emit_tile_packed_kc(
+        &mut self,
+        site: &TileSite,
+        ctx: &TileCtx,
+        i_ctr: &str,
+        j_ctr: &str,
+        lo: &str,
+        hi: &str,
+        i_lo: &str,
+        i_hi: &str,
+        i_fw_lo: &str,
+        i_fw_hi: &str,
+        apack: &PackedBuffer,
+    ) {
+        let nc = tile_nc_for(&site.elem);
+        let jb_ctr = self.scratch("i64");
+        let kc_ctr = self.scratch("i64");
+        let (jb_head, jb_body, jb_done) = (self.label(), self.label(), self.label());
+        let (kc_head, kc_body, kc_done) = (self.label(), self.label(), self.label());
+
+        self.line(format!("store i64 0, ptr {jb_ctr}"));
+        self.line(format!("br label %{jb_head}"));
+        self.label_line(&jb_head);
+        let jb0 = self.tmp();
+        self.line(format!("{jb0} = load i64, ptr {jb_ctr}"));
+        let jb_all = self.tmp();
+        self.line(format!("{jb_all} = icmp uge i64 {jb0}, {}", site.c));
+        self.line(format!(
+            "br i1 {jb_all}, label %{jb_done}, label %{jb_body}"
+        ));
+        self.label_line(&jb_body);
+        // The block's lane window [jb0, jb_end): NC wide, runtime-short on the
+        // last block (min select, the jt-outer remainder discipline).
+        let jb_plus = self.tmp();
+        self.line(format!("{jb_plus} = add i64 {jb0}, {nc}"));
+        let jb_over = self.tmp();
+        self.line(format!("{jb_over} = icmp ugt i64 {jb_plus}, {}", site.c));
+        let jb_end = self.tmp();
+        self.line(format!(
+            "{jb_end} = select i1 {jb_over}, i64 {}, i64 {jb_plus}",
+            site.c
+        ));
+
+        // The peeled kc == 0 panel: seed splat + compute + spill.
+        let k_hi0 = TILE_KC.to_string();
+        self.emit_tile_kc_i_regions(
+            site, ctx, i_ctr, j_ctr, lo, hi, i_lo, i_hi, i_fw_lo, i_fw_hi, apack, &jb0, &jb_end,
+            "0", &k_hi0, true,
+        );
+
+        // Panels [TILE_KC, K): reload + compute + spill; the last panel is
+        // runtime-short (k_hi = min(kc + TILE_KC, K)).
+        self.line(format!("store i64 {TILE_KC}, ptr {kc_ctr}"));
+        self.line(format!("br label %{kc_head}"));
+        self.label_line(&kc_head);
+        let kc = self.tmp();
+        self.line(format!("{kc} = load i64, ptr {kc_ctr}"));
+        let kc_all = self.tmp();
+        self.line(format!("{kc_all} = icmp uge i64 {kc}, {}", site.k));
+        self.line(format!(
+            "br i1 {kc_all}, label %{kc_done}, label %{kc_body}"
+        ));
+        self.label_line(&kc_body);
+        let kc_plus = self.tmp();
+        self.line(format!("{kc_plus} = add i64 {kc}, {TILE_KC}"));
+        let kc_over = self.tmp();
+        self.line(format!("{kc_over} = icmp ugt i64 {kc_plus}, {}", site.k));
+        let k_hi = self.tmp();
+        self.line(format!(
+            "{k_hi} = select i1 {kc_over}, i64 {}, i64 {kc_plus}",
+            site.k
+        ));
+        self.emit_tile_kc_i_regions(
+            site, ctx, i_ctr, j_ctr, lo, hi, i_lo, i_hi, i_fw_lo, i_fw_hi, apack, &jb0, &jb_end,
+            &kc, &k_hi, false,
+        );
+        let kc_next = self.tmp();
+        self.line(format!("{kc_next} = add i64 {kc}, {TILE_KC}"));
+        self.line(format!("store i64 {kc_next}, ptr {kc_ctr}"));
+        self.line(format!("br label %{kc_head}"));
+        self.label_line(&kc_done);
+
+        let jb_next = self.tmp();
+        self.line(format!("{jb_next} = add i64 {jb0}, {nc}"));
+        self.line(format!("store i64 {jb_next}, ptr {jb_ctr}"));
+        self.line(format!("br label %{jb_head}"));
+        self.label_line(&jb_done);
+    }
+
+    /// One kc panel's i sweep for the KC nest: the same head/interior/tail
+    /// row regions as the j-outer nest, each (i-block, panel) visit packing
+    /// its a rows and running the jb block's j-tiles. `first` selects the
+    /// trio's seed (kc == 0) vs reload (later panels) first phase.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_tile_kc_i_regions(
+        &mut self,
+        site: &TileSite,
+        ctx: &TileCtx,
+        i_ctr: &str,
+        j_ctr: &str,
+        lo: &str,
+        hi: &str,
+        i_lo: &str,
+        i_hi: &str,
+        i_fw_lo: &str,
+        i_fw_hi: &str,
+        apack: &PackedBuffer,
+        jb0: &str,
+        jb_end: &str,
+        k_lo: &str,
+        k_hi: &str,
+        first: bool,
+    ) {
+        // Head boundary rows (a task range's clipped first row), TI=1.
+        let (head_i_head, head_i_body, head_i_done) = (self.label(), self.label(), self.label());
+        self.line(format!("store i64 {i_lo}, ptr {i_ctr}"));
+        self.line(format!("br label %{head_i_head}"));
+        self.label_line(&head_i_head);
+        let i = self.tmp();
+        self.line(format!("{i} = load i64, ptr {i_ctr}"));
+        let head_done = self.tmp();
+        self.line(format!("{head_done} = icmp uge i64 {i}, {i_fw_lo}"));
+        self.line(format!(
+            "br i1 {head_done}, label %{head_i_done}, label %{head_i_body}"
+        ));
+        self.label_line(&head_i_body);
+        self.emit_tile_kc_boundary_row(
+            site, ctx, lo, hi, &i, j_ctr, apack, jb0, jb_end, k_lo, k_hi, first,
+        );
+        let i_next = self.tmp();
+        self.line(format!("{i_next} = add i64 {i}, 1"));
+        self.line(format!("store i64 {i_next}, ptr {i_ctr}"));
+        self.line(format!("br label %{head_i_head}"));
+        self.label_line(&head_i_done);
+
+        // TI-blocked main over interior full-window rows: pack the block's
+        // four a rows for this panel, then run the jb block's j-tiles with
+        // acc[r*TJ + lane] (b.ci == 0 — the cashed row-invariance — keeps one
+        // packed-b load per (k, lane) shared across the subrows).
+        let (blk_i_head, blk_i_body, blk_i_done) = (self.label(), self.label(), self.label());
+        self.line(format!("store i64 {i_fw_lo}, ptr {i_ctr}"));
+        self.line(format!("br label %{blk_i_head}"));
+        self.label_line(&blk_i_head);
+        let i_blk = self.tmp();
+        self.line(format!("{i_blk} = load i64, ptr {i_ctr}"));
+        let i_blk_end = self.tmp();
+        self.line(format!("{i_blk_end} = add i64 {i_blk}, {TILE_I}"));
+        let block_fits = self.tmp();
+        self.line(format!(
+            "{block_fits} = icmp ule i64 {i_blk_end}, {i_fw_hi}"
+        ));
+        self.line(format!(
+            "br i1 {block_fits}, label %{blk_i_body}, label %{blk_i_done}"
+        ));
+        self.label_line(&blk_i_body);
+        let row0 = self.tmp();
+        self.line(format!("{row0} = mul i64 {i_blk}, {}", site.c));
+        let mut a_rows = Vec::with_capacity(TILE_I as usize);
+        for r in 0..TILE_I {
+            let base_r = site.a.base + site.a.ci * r;
+            a_rows.push(self.emit_tile_index(
+                (base_r != 0).then(|| base_r.to_string()),
+                &[(site.a.ci, i_blk.as_str())],
+            ));
+        }
+        self.emit_tile_kc_apack(site, ctx, apack, &a_rows, k_lo, k_hi);
+        self.emit_tile_kc_j_split(
+            site, ctx, j_ctr, jb0, jb_end, &row0, TILE_I, apack, k_lo, k_hi, first,
+        );
+        self.line(format!("store i64 {i_blk_end}, ptr {i_ctr}"));
+        self.line(format!("br label %{blk_i_head}"));
+        self.label_line(&blk_i_done);
+
+        // Tail rows (rows % TILE_I) plus a task range's clipped last row, TI=1.
+        let (tail_i_head, tail_i_body, tail_i_done) = (self.label(), self.label(), self.label());
+        self.line(format!("br label %{tail_i_head}"));
+        self.label_line(&tail_i_head);
+        let i = self.tmp();
+        self.line(format!("{i} = load i64, ptr {i_ctr}"));
+        let tail_done = self.tmp();
+        self.line(format!("{tail_done} = icmp uge i64 {i}, {i_hi}"));
+        self.line(format!(
+            "br i1 {tail_done}, label %{tail_i_done}, label %{tail_i_body}"
+        ));
+        self.label_line(&tail_i_body);
+        self.emit_tile_kc_boundary_row(
+            site, ctx, lo, hi, &i, j_ctr, apack, jb0, jb_end, k_lo, k_hi, first,
+        );
+        let i_next = self.tmp();
+        self.line(format!("{i_next} = add i64 {i}, 1"));
+        self.line(format!("store i64 {i_next}, ptr {i_ctr}"));
+        self.line(format!("br label %{tail_i_head}"));
+        self.label_line(&tail_i_done);
+    }
+
+    /// One TI=1 boundary row for the KC nest: the rung-1 signed jw clip, the
+    /// one-row a-panel pack, then the jb block's j-tiles — each tile clipped
+    /// against the row's window and skipped when empty (the jt-outer
+    /// boundary discipline, one level in).
+    #[allow(clippy::too_many_arguments)]
+    fn emit_tile_kc_boundary_row(
+        &mut self,
+        site: &TileSite,
+        ctx: &TileCtx,
+        lo: &str,
+        hi: &str,
+        i: &str,
+        j_ctr: &str,
+        apack: &PackedBuffer,
+        jb0: &str,
+        jb_end: &str,
+        k_lo: &str,
+        k_hi: &str,
+        first: bool,
+    ) {
+        let row0 = self.tmp();
+        self.line(format!("{row0} = mul i64 {i}, {}", site.c));
+        let jw_lo_raw = self.tmp();
+        self.line(format!("{jw_lo_raw} = sub i64 {lo}, {row0}"));
+        let jw_lo_negative = self.tmp();
+        self.line(format!("{jw_lo_negative} = icmp slt i64 {jw_lo_raw}, 0"));
+        let jw_lo = self.tmp();
+        self.line(format!(
+            "{jw_lo} = select i1 {jw_lo_negative}, i64 0, i64 {jw_lo_raw}"
+        ));
+        let jw_hi_raw = self.tmp();
+        self.line(format!("{jw_hi_raw} = sub i64 {hi}, {row0}"));
+        let jw_hi_past_c = self.tmp();
+        self.line(format!(
+            "{jw_hi_past_c} = icmp sgt i64 {jw_hi_raw}, {}",
+            site.c
+        ));
+        let jw_hi = self.tmp();
+        self.line(format!(
+            "{jw_hi} = select i1 {jw_hi_past_c}, i64 {}, i64 {jw_hi_raw}",
+            site.c
+        ));
+        let a_row = self.emit_tile_index(
+            (site.a.base != 0).then(|| site.a.base.to_string()),
+            &[(site.a.ci, i)],
+        );
+        self.emit_tile_kc_apack(site, ctx, apack, &[a_row], k_lo, k_hi);
+
+        let (j_head, j_main, j_rem_check, j_rem, j_done) = (
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+        );
+        self.line(format!("store i64 {jb0}, ptr {j_ctr}"));
+        self.line(format!("br label %{j_head}"));
+        self.label_line(&j_head);
+        let j0 = self.tmp();
+        self.line(format!("{j0} = load i64, ptr {j_ctr}"));
+        let j0_full = self.tmp();
+        self.line(format!("{j0_full} = add i64 {j0}, {}", ctx.tile_j));
+        let full_tile = self.tmp();
+        self.line(format!("{full_tile} = icmp ule i64 {j0_full}, {jb_end}"));
+        self.line(format!(
+            "br i1 {full_tile}, label %{j_main}, label %{j_rem_check}"
+        ));
+        self.label_line(&j_main);
+        let lane_full = ctx.tile_j.to_string();
+        self.emit_tile_kc_boundary_tile(
+            site, ctx, &row0, &jw_lo, &jw_hi, &j0, &lane_full, true, apack, k_lo, k_hi, first,
+        );
+        let j0_next = self.tmp();
+        self.line(format!("{j0_next} = add i64 {j0}, {}", ctx.tile_j));
+        self.line(format!("store i64 {j0_next}, ptr {j_ctr}"));
+        self.line(format!("br label %{j_head}"));
+
+        self.label_line(&j_rem_check);
+        let rem_exists = self.tmp();
+        self.line(format!("{rem_exists} = icmp ult i64 {j0}, {jb_end}"));
+        self.line(format!(
+            "br i1 {rem_exists}, label %{j_rem}, label %{j_done}"
+        ));
+        self.label_line(&j_rem);
+        let tj = self.tmp();
+        self.line(format!("{tj} = sub i64 {jb_end}, {j0}"));
+        self.emit_tile_kc_boundary_tile(
+            site, ctx, &row0, &jw_lo, &jw_hi, &j0, &tj, false, apack, k_lo, k_hi, first,
+        );
+        self.line(format!("br label %{j_done}"));
+        self.label_line(&j_done);
+    }
+
+    /// One window-clipped j-tile of a boundary row: the clip [tile_lo,
+    /// clipped_hi) of the tile against the row's jw window, the empty-tile
+    /// skip, then the trio over the live lanes (out/acc addressed from
+    /// tile_lo, the packed-b lane from panel_lane0 — the jt-outer boundary
+    /// trio unchanged).
+    #[allow(clippy::too_many_arguments)]
+    fn emit_tile_kc_boundary_tile(
+        &mut self,
+        site: &TileSite,
+        ctx: &TileCtx,
+        row0: &str,
+        jw_lo: &str,
+        jw_hi: &str,
+        j0: &str,
+        bound: &str,
+        main: bool,
+        apack: &PackedBuffer,
+        k_lo: &str,
+        k_hi: &str,
+        first: bool,
+    ) {
+        let panel_base = self.emit_tile_panel_base(site, ctx, j0);
+        let tile_hi = self.tmp();
+        self.line(format!("{tile_hi} = add i64 {j0}, {bound}"));
+        let starts_before_tile = self.tmp();
+        self.line(format!("{starts_before_tile} = icmp ult i64 {jw_lo}, {j0}"));
+        let tile_lo = self.tmp();
+        self.line(format!(
+            "{tile_lo} = select i1 {starts_before_tile}, i64 {j0}, i64 {jw_lo}"
+        ));
+        let ends_after_tile = self.tmp();
+        self.line(format!(
+            "{ends_after_tile} = icmp ugt i64 {jw_hi}, {tile_hi}"
+        ));
+        let clipped_hi = self.tmp();
+        self.line(format!(
+            "{clipped_hi} = select i1 {ends_after_tile}, i64 {tile_hi}, i64 {jw_hi}"
+        ));
+        let has_lanes = self.tmp();
+        self.line(format!(
+            "{has_lanes} = icmp ult i64 {tile_lo}, {clipped_hi}"
+        ));
+        let (body, next) = (self.label(), self.label());
+        self.line(format!("br i1 {has_lanes}, label %{body}, label %{next}"));
+        self.label_line(&body);
+        let lanes = self.tmp();
+        self.line(format!("{lanes} = sub i64 {clipped_hi}, {tile_lo}"));
+        let panel_lane0 = self.tmp();
+        self.line(format!("{panel_lane0} = sub i64 {tile_lo}, {j0}"));
+        // The acc block is one j-tile wide and the tile's partial sums are
+        // parked in `out` at each panel end, so every tile computes at base 0.
+        let acc_base = "0".to_owned();
+        self.emit_tile_kc_trio(
+            site,
+            ctx,
+            apack,
+            &tile_lo,
+            &acc_base,
+            row0,
+            1,
+            &lanes,
+            main,
+            &panel_base,
+            Some(&panel_lane0),
+            k_lo,
+            k_hi,
+            first,
+        );
+        self.line(format!("br label %{next}"));
+        self.label_line(&next);
+    }
+
+    /// The jb block's j-tiles for one interior TI-block at one kc panel:
+    /// constant-TJ main tiles while `j0 + TILE_J <= jb_end`, then one
+    /// remainder tile at the runtime `tj = jb_end - j0` (only the last,
+    /// runtime-short jb block can have one) — the jt-outer split with the
+    /// block end for the row end.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_tile_kc_j_split(
+        &mut self,
+        site: &TileSite,
+        ctx: &TileCtx,
+        j_ctr: &str,
+        jb0: &str,
+        jb_end: &str,
+        row0: &str,
+        rows: u64,
+        apack: &PackedBuffer,
+        k_lo: &str,
+        k_hi: &str,
+        first: bool,
+    ) {
+        let (j_head, j_main, j_rem_check, j_rem, j_done) = (
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+        );
+        self.line(format!("store i64 {jb0}, ptr {j_ctr}"));
+        self.line(format!("br label %{j_head}"));
+        self.label_line(&j_head);
+        let j0 = self.tmp();
+        self.line(format!("{j0} = load i64, ptr {j_ctr}"));
+        let j0_full = self.tmp();
+        self.line(format!("{j0_full} = add i64 {j0}, {}", ctx.tile_j));
+        let full_tile = self.tmp();
+        self.line(format!("{full_tile} = icmp ule i64 {j0_full}, {jb_end}"));
+        self.line(format!(
+            "br i1 {full_tile}, label %{j_main}, label %{j_rem_check}"
+        ));
+        self.label_line(&j_main);
+        let panel_base = self.emit_tile_panel_base(site, ctx, &j0);
+        // The acc block is one j-tile wide and the tile's partial sums are
+        // parked in `out` at each panel end, so every tile computes at base 0.
+        let acc_base = "0".to_owned();
+        let lane_full = ctx.tile_j.to_string();
+        self.emit_tile_kc_trio(
+            site,
+            ctx,
+            apack,
+            &j0,
+            &acc_base,
+            row0,
+            rows,
+            &lane_full,
+            true,
+            &panel_base,
+            None,
+            k_lo,
+            k_hi,
+            first,
+        );
+        let j0_next = self.tmp();
+        self.line(format!("{j0_next} = add i64 {j0}, {}", ctx.tile_j));
+        self.line(format!("store i64 {j0_next}, ptr {j_ctr}"));
+        self.line(format!("br label %{j_head}"));
+
+        self.label_line(&j_rem_check);
+        let rem_exists = self.tmp();
+        self.line(format!("{rem_exists} = icmp ult i64 {j0}, {jb_end}"));
+        self.line(format!(
+            "br i1 {rem_exists}, label %{j_rem}, label %{j_done}"
+        ));
+        self.label_line(&j_rem);
+        let tj = self.tmp();
+        self.line(format!("{tj} = sub i64 {jb_end}, {j0}"));
+        let panel_base = self.emit_tile_panel_base(site, ctx, &j0);
+        // The acc block is one j-tile wide and the tile's partial sums are
+        // parked in `out` at each panel end, so every tile computes at base 0.
+        let acc_base = "0".to_owned();
+        self.emit_tile_kc_trio(
+            site,
+            ctx,
+            apack,
+            &j0,
+            &acc_base,
+            row0,
+            rows,
+            &tj,
+            false,
+            &panel_base,
+            None,
+            k_lo,
+            k_hi,
+            first,
+        );
+        self.line(format!("br label %{j_done}"));
+        self.label_line(&j_done);
+    }
+
+    /// The a-panel pack for one i-block at one kc panel: subrow r's source
+    /// row (`a.base + a.ci·(i+r)`, hoisted in `a_rows`) is copied over
+    /// [k_lo, k_hi) into apack[r*TILE_KC + (k - k_lo)] — strided source rows
+    /// made contiguous and 64-aligned, so the kernel's a loads walk L1 lines
+    /// sequentially instead of re-reading the strided rows once per j-tile.
+    fn emit_tile_kc_apack(
+        &mut self,
+        site: &TileSite,
+        ctx: &TileCtx,
+        apack: &PackedBuffer,
+        a_rows: &[Option<String>],
+        k_lo: &str,
+        k_hi: &str,
+    ) {
+        for (r, a_row) in a_rows.iter().enumerate() {
+            let (head, body, done) = (self.label(), self.label(), self.label());
+            self.line(format!("store i64 {k_lo}, ptr {}", ctx.k_ctr));
+            self.line(format!("br label %{head}"));
+            self.label_line(&head);
+            let kk = self.tmp();
+            self.line(format!("{kk} = load i64, ptr {}", ctx.k_ctr));
+            let all_k = self.tmp();
+            self.line(format!("{all_k} = icmp uge i64 {kk}, {k_hi}"));
+            self.line(format!("br i1 {all_k}, label %{done}, label %{body}"));
+            self.label_line(&body);
+            let a_index = self
+                .emit_tile_index(a_row.clone(), &[(site.a.ck, kk.as_str())])
+                .unwrap_or_else(|| "0".to_owned());
+            let a_elem_ptr = self.tmp();
+            self.line(format!(
+                "{a_elem_ptr} = getelementptr {}, ptr {}, i64 0, i64 {a_index}",
+                ctx.a_llt, ctx.a_ptr
+            ));
+            let value = self.tmp();
+            self.line(format!("{value} = load {}, ptr {a_elem_ptr}", ctx.elem_llt));
+            let koff = self.tmp();
+            self.line(format!("{koff} = sub i64 {kk}, {k_lo}"));
+            let apack_index = if r == 0 {
+                koff
+            } else {
+                let index = self.tmp();
+                self.line(format!("{index} = add i64 {koff}, {}", r as u64 * TILE_KC));
+                index
+            };
+            let apack_ptr = self.tmp();
+            self.line(format!(
+                "{apack_ptr} = getelementptr {}, ptr {}, i64 0, i64 {apack_index}",
+                apack.llt, apack.ptr
+            ));
+            self.line(format!("store {} {value}, ptr {apack_ptr}", ctx.elem_llt));
+            let kk_next = self.tmp();
+            self.line(format!("{kk_next} = add i64 {kk}, 1"));
+            self.line(format!("store i64 {kk_next}, ptr {}", ctx.k_ctr));
+            self.line(format!("br label %{head}"));
+            self.label_line(&done);
+        }
+    }
+
+    /// The seed-or-reload / k-loop / spill-store trio for one j-tile of a
+    /// `rows`-row i-block at one kc panel. Subrow r's lanes sit at acc
+    /// offset `acc_base + r*NC + lane` (`acc_base` = the tile's lane start
+    /// within the jb block). The first phase seeds acc (kc == 0) or reloads
+    /// the spilled partial sums from `out` (later panels); the k loop runs
+    /// the panel [k_lo, k_hi) with a reads from the packed a panel (one
+    /// scalar apack load per (k, subrow)) and the shared packed-b load per
+    /// (k, lane), ×2-unrolled on the full TI constant-width main path; the
+    /// store phase ALWAYS spills acc back to `out` — the last panel's spill
+    /// is the result store.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_tile_kc_trio(
+        &mut self,
+        site: &TileSite,
+        ctx: &TileCtx,
+        apack: &PackedBuffer,
+        j0: &str,
+        acc_base: &str,
+        row0: &str,
+        rows: u64,
+        bound: &str,
+        main: bool,
+        panel_base: &str,
+        panel_lane0: Option<&str>,
+        k_lo: &str,
+        k_hi: &str,
+        first: bool,
+    ) {
+        // The acc row stride: one j-tile per subrow (see the acc allocation —
+        // partial sums park in `out`, so acc is never NC-wide).
+        let nc = ctx.tile_j;
+        let no_b_row = None;
+        let out_start = self.tmp();
+        self.line(format!("{out_start} = add i64 {row0}, {j0}"));
+
+        // Seed (kc == 0) or reload (later panels): one lane loop per subrow,
+        // same flat-offset discipline as the j-outer seed splat.
+        for r in 0..rows {
+            let out_start_r = if first || r == 0 {
+                out_start.clone()
+            } else {
+                let shifted = self.tmp();
+                self.line(format!("{shifted} = add i64 {out_start}, {}", r * site.c));
+                shifted
+            };
+            let (seed_head, seed_body, seed_done) = (self.label(), self.label(), self.label());
+            self.line(format!("store i64 0, ptr {}", ctx.lane_ctr));
+            self.line(format!("br label %{seed_head}"));
+            self.label_line(&seed_head);
+            let seed_lane = self.tmp();
+            self.line(format!("{seed_lane} = load i64, ptr {}", ctx.lane_ctr));
+            let seed_done_cond = self.tmp();
+            self.line(format!(
+                "{seed_done_cond} = icmp uge i64 {seed_lane}, {bound}"
+            ));
+            self.line(format!(
+                "br i1 {seed_done_cond}, label %{seed_done}, label %{seed_body}"
+            ));
+            self.label_line(&seed_body);
+            let acc_lane = self.emit_tile_kc_acc_lane(&seed_lane, acc_base, r, nc);
+            let acc_ptr = self.tmp();
+            self.line(format!(
+                "{acc_ptr} = getelementptr {}, ptr {}, i64 0, i64 {acc_lane}",
+                ctx.acc_llt, ctx.acc
+            ));
+            if first {
+                self.line(format!(
+                    "store {} {}, ptr {acc_ptr}",
+                    ctx.elem_llt, ctx.seed
+                ));
+            } else {
+                let out_index = self.tmp();
+                self.line(format!("{out_index} = add i64 {out_start_r}, {seed_lane}"));
+                let out_elem_ptr = self.tmp();
+                self.line(format!(
+                    "{out_elem_ptr} = getelementptr {}, ptr {}, i64 0, i64 {out_index}",
+                    ctx.out_llt, ctx.out_ptr
+                ));
+                let spilled = self.tmp();
+                self.line(format!(
+                    "{spilled} = load {}, ptr {out_elem_ptr}",
+                    ctx.elem_llt
+                ));
+                self.line(format!("store {} {spilled}, ptr {acc_ptr}", ctx.elem_llt));
+            }
+            let seed_lane_next = self.tmp();
+            self.line(format!("{seed_lane_next} = add i64 {seed_lane}, 1"));
+            self.line(format!("store i64 {seed_lane_next}, ptr {}", ctx.lane_ctr));
+            self.line(format!("br label %{seed_head}"));
+            self.label_line(&seed_done);
+        }
+
+        // Only the full TI-blocked, constant-width body unrolls k. Boundary,
+        // tail-row, and remainder bodies retain the single-k loop.
+        let unroll = main && rows == TILE_I;
+        let (k_head, k_body, k_done) = (self.label(), self.label(), self.label());
+        self.line(format!("store i64 {k_lo}, ptr {}", ctx.k_ctr));
+        self.line(format!("br label %{k_head}"));
+        self.label_line(&k_head);
+        let kk = self.tmp();
+        self.line(format!("{kk} = load i64, ptr {}", ctx.k_ctr));
+        if unroll {
+            let (k_tail_check, k_tail) = (self.label(), self.label());
+            let kk1 = self.tmp();
+            self.line(format!("{kk1} = add i64 {kk}, 1"));
+            let pair = self.tmp();
+            self.line(format!("{pair} = icmp ult i64 {kk1}, {k_hi}"));
+            self.line(format!(
+                "br i1 {pair}, label %{k_body}, label %{k_tail_check}"
+            ));
+            self.label_line(&k_body);
+            let koff0 = self.tmp();
+            self.line(format!("{koff0} = sub i64 {kk}, {k_lo}"));
+            let koff1 = self.tmp();
+            self.line(format!("{koff1} = sub i64 {kk1}, {k_lo}"));
+            let a0 = self.emit_tile_kc_a_values(ctx, apack, rows, &koff0);
+            let a1 = self.emit_tile_kc_a_values(ctx, apack, rows, &koff1);
+            if let Some(packed) = &ctx.packed {
+                let next_k = self.tmp();
+                self.line(format!("{next_k} = add i64 {kk}, 2"));
+                let next_offset = self.tmp();
+                self.line(format!("{next_offset} = mul i64 {next_k}, {}", ctx.tile_j));
+                let next_index = self.tmp();
+                self.line(format!(
+                    "{next_index} = add i64 {panel_base}, {next_offset}"
+                ));
+                let next_ptr = self.tmp();
+                self.line(format!(
+                    "{next_ptr} = getelementptr {}, ptr {}, i64 0, i64 {next_index}",
+                    packed.llt, packed.ptr
+                ));
+                self.line(format!(
+                    "call void @llvm.prefetch.p0(ptr {next_ptr}, i32 0, i32 3, i32 1)"
+                ));
+            }
+            self.emit_tile_lane_loop(
+                site,
+                ctx,
+                j0,
+                &no_b_row,
+                bound,
+                Some(panel_base),
+                panel_lane0,
+                Some(acc_base),
+                nc,
+                &[(&kk, a0), (&kk1, a1)],
+            );
+            let kk2 = self.tmp();
+            self.line(format!("{kk2} = add i64 {kk}, 2"));
+            self.line(format!("store i64 {kk2}, ptr {}", ctx.k_ctr));
+            self.line(format!("br label %{k_head}"));
+
+            self.label_line(&k_tail_check);
+            let tail = self.tmp();
+            self.line(format!("{tail} = icmp ult i64 {kk}, {k_hi}"));
+            self.line(format!("br i1 {tail}, label %{k_tail}, label %{k_done}"));
+            self.label_line(&k_tail);
+            let koff = self.tmp();
+            self.line(format!("{koff} = sub i64 {kk}, {k_lo}"));
+            let a = self.emit_tile_kc_a_values(ctx, apack, rows, &koff);
+            self.emit_tile_lane_loop(
+                site,
+                ctx,
+                j0,
+                &no_b_row,
+                bound,
+                Some(panel_base),
+                panel_lane0,
+                Some(acc_base),
+                nc,
+                &[(&kk, a)],
+            );
+            self.line(format!("br label %{k_done}"));
+        } else {
+            let depth_done = self.tmp();
+            self.line(format!("{depth_done} = icmp uge i64 {kk}, {k_hi}"));
+            self.line(format!(
+                "br i1 {depth_done}, label %{k_done}, label %{k_body}"
+            ));
+            self.label_line(&k_body);
+            let koff = self.tmp();
+            self.line(format!("{koff} = sub i64 {kk}, {k_lo}"));
+            let a = self.emit_tile_kc_a_values(ctx, apack, rows, &koff);
+            self.emit_tile_lane_loop(
+                site,
+                ctx,
+                j0,
+                &no_b_row,
+                bound,
+                Some(panel_base),
+                panel_lane0,
+                Some(acc_base),
+                nc,
+                &[(&kk, a)],
+            );
+            let kk_next = self.tmp();
+            self.line(format!("{kk_next} = add i64 {kk}, 1"));
+            self.line(format!("store i64 {kk_next}, ptr {}", ctx.k_ctr));
+            self.line(format!("br label %{k_head}"));
+        }
+        self.label_line(&k_done);
+
+        // Spill: one lane loop per subrow at out[(i+r)*C + j0 + lane] — every
+        // panel (the acc parking across kc); the last panel's is the result.
+        for r in 0..rows {
+            let out_start_r = if r == 0 {
+                out_start.clone()
+            } else {
+                let shifted = self.tmp();
+                self.line(format!("{shifted} = add i64 {out_start}, {}", r * site.c));
+                shifted
+            };
+            let (store_head, store_body, store_done) = (self.label(), self.label(), self.label());
+            self.line(format!("store i64 0, ptr {}", ctx.lane_ctr));
+            self.line(format!("br label %{store_head}"));
+            self.label_line(&store_head);
+            let store_lane = self.tmp();
+            self.line(format!("{store_lane} = load i64, ptr {}", ctx.lane_ctr));
+            let stores_done = self.tmp();
+            self.line(format!(
+                "{stores_done} = icmp uge i64 {store_lane}, {bound}"
+            ));
+            self.line(format!(
+                "br i1 {stores_done}, label %{store_done}, label %{store_body}"
+            ));
+            self.label_line(&store_body);
+            let acc_lane = self.emit_tile_kc_acc_lane(&store_lane, acc_base, r, nc);
+            let final_acc_ptr = self.tmp();
+            self.line(format!(
+                "{final_acc_ptr} = getelementptr {}, ptr {}, i64 0, i64 {acc_lane}",
+                ctx.acc_llt, ctx.acc
+            ));
+            let final_value = self.tmp();
+            self.line(format!(
+                "{final_value} = load {}, ptr {final_acc_ptr}",
+                ctx.elem_llt
+            ));
+            let out_index = self.tmp();
+            self.line(format!("{out_index} = add i64 {out_start_r}, {store_lane}"));
+            let out_elem_ptr = self.tmp();
+            self.line(format!(
+                "{out_elem_ptr} = getelementptr {}, ptr {}, i64 0, i64 {out_index}",
+                ctx.out_llt, ctx.out_ptr
+            ));
+            self.line(format!(
+                "store {} {final_value}, ptr {out_elem_ptr}",
+                ctx.elem_llt
+            ));
+            let store_lane_next = self.tmp();
+            self.line(format!("{store_lane_next} = add i64 {store_lane}, 1"));
+            self.line(format!("store i64 {store_lane_next}, ptr {}", ctx.lane_ctr));
+            self.line(format!("br label %{store_head}"));
+            self.label_line(&store_done);
+        }
+    }
+
+    /// The acc flat offset `acc_base + r*NC + lane` for one (subrow, lane) of
+    /// a KC trio.
+    fn emit_tile_kc_acc_lane(&mut self, lane: &str, acc_base: &str, r: u64, nc: u64) -> String {
+        if r == 0 {
+            let offset = self.tmp();
+            self.line(format!("{offset} = add i64 {lane}, {acc_base}"));
+            offset
+        } else {
+            let based = self.tmp();
+            self.line(format!("{based} = add i64 {acc_base}, {}", r * nc));
+            let offset = self.tmp();
+            self.line(format!("{offset} = add i64 {lane}, {based}"));
+            offset
+        }
+    }
+
+    /// The kernel's a reads from the packed panel: subrow r's value for the
+    /// current k is apack[r*TILE_KC + koff] with koff = k - k_lo.
+    fn emit_tile_kc_a_values(
+        &mut self,
+        ctx: &TileCtx,
+        apack: &PackedBuffer,
+        rows: u64,
+        koff: &str,
+    ) -> Vec<String> {
+        (0..rows)
+            .map(|r| {
+                let index = if r == 0 {
+                    koff.to_owned()
+                } else {
+                    let offset = self.tmp();
+                    self.line(format!("{offset} = add i64 {koff}, {}", r * TILE_KC));
+                    offset
+                };
+                let ptr = self.tmp();
+                self.line(format!(
+                    "{ptr} = getelementptr {}, ptr {}, i64 0, i64 {index}",
+                    apack.llt, apack.ptr
+                ));
+                let value = self.tmp();
+                self.line(format!("{value} = load {}, ptr {ptr}", ctx.elem_llt));
+                value
+            })
+            .collect()
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn emit_tile_i_regions(
         &mut self,
@@ -4109,6 +5172,8 @@ impl<'a> FnEmit<'a> {
                 bound,
                 panel_base,
                 panel_lane0,
+                None,
+                ctx.tile_j,
                 &[(&kk, a0), (&kk1, a1)],
             );
             let kk2 = self.tmp();
@@ -4130,6 +5195,8 @@ impl<'a> FnEmit<'a> {
                 bound,
                 panel_base,
                 panel_lane0,
+                None,
+                ctx.tile_j,
                 &[(&kk, a)],
             );
             self.line(format!("br label %{k_done}"));
@@ -4149,6 +5216,8 @@ impl<'a> FnEmit<'a> {
                 bound,
                 panel_base,
                 panel_lane0,
+                None,
+                ctx.tile_j,
                 &[(&kk, a)],
             );
             let kk_next = self.tmp();
@@ -4257,6 +5326,8 @@ impl<'a> FnEmit<'a> {
         bound: &str,
         panel_base: Option<&str>,
         panel_lane0: Option<&str>,
+        acc_base: Option<&str>,
+        acc_row_stride: u64,
         steps: &[(&str, Vec<String>)],
     ) {
         let (head, body, done) = (self.label(), self.label(), self.label());
@@ -4283,15 +5354,31 @@ impl<'a> FnEmit<'a> {
                     "{product} = {}{} {} {mul_lhs}, {mul_rhs}",
                     ctx.mul_op, ctx.contract_flag, ctx.elem_llt
                 ));
-                let acc_lane = if r == 0 {
-                    lane.clone()
-                } else {
-                    let offset = self.tmp();
-                    self.line(format!(
-                        "{offset} = add i64 {lane}, {}",
-                        r as u64 * ctx.tile_j
-                    ));
-                    offset
+                let acc_lane = match (acc_base, r) {
+                    (None, 0) => lane.clone(),
+                    (None, _) => {
+                        let offset = self.tmp();
+                        self.line(format!(
+                            "{offset} = add i64 {lane}, {}",
+                            r as u64 * acc_row_stride
+                        ));
+                        offset
+                    }
+                    (Some(base), 0) => {
+                        let offset = self.tmp();
+                        self.line(format!("{offset} = add i64 {lane}, {base}"));
+                        offset
+                    }
+                    (Some(base), _) => {
+                        let based = self.tmp();
+                        self.line(format!(
+                            "{based} = add i64 {base}, {}",
+                            r as u64 * acc_row_stride
+                        ));
+                        let offset = self.tmp();
+                        self.line(format!("{offset} = add i64 {lane}, {based}"));
+                        offset
+                    }
                 };
                 let acc_ptr = self.tmp();
                 self.line(format!(

@@ -118,6 +118,41 @@ fn golden_seq_demo() {
     assert_eq!(run(&ir, BUDGET).output, "36\n12\n");
 }
 
+/// `time` (plan-time-builtin): the interpreter is the oracle for the clock —
+/// `Operation::TimeMs` reads a process-lifetime `Instant` epoch (eval.rs), so
+/// two reads bracketing real work are non-decreasing. The contract is
+/// monotonicity and finiteness only; an absolute duration is a property of the
+/// machine, never of the denotation.
+#[test]
+fn time_brackets_are_monotone_and_finite() {
+    let src = r#"
+fn main() {
+    () -> time -> t0;
+    64 -> iota -> a;
+    a -> map { x -> x * x } -> b;
+    () -> time -> t1;
+    b[63] -> println;
+    t0 -> println;
+    t1 -> println;
+}
+"#;
+    let ir = build(src);
+    let out = run(&ir, BUDGET).output;
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 3, "output: {out:?}");
+    // The bracketed work still computes: 63 * 63.
+    assert_eq!(lines[0], "3969");
+    let t0: f64 = lines[1]
+        .parse()
+        .unwrap_or_else(|e| panic!("t0 {e}: {out:?}"));
+    let t1: f64 = lines[2]
+        .parse()
+        .unwrap_or_else(|e| panic!("t1 {e}: {out:?}"));
+    assert!(t0.is_finite() && t1.is_finite(), "{t0} {t1}");
+    assert!(t0 >= 0.0, "epoch-relative ms are non-negative: {t0}");
+    assert!(t1 >= t0, "monotonic non-decreasing: {t0} then {t1}");
+}
+
 // --- by-execution value contracts (interp DESIGN §11.2) -------------------
 
 fn func_named(ir: &CategoryIr, name: &str) -> FuncId {

@@ -945,6 +945,30 @@ fn main() {{
     )
 }
 
+/// The KC-nest twin of [`emit_tiled_and_untiled`]: the k-panel nest is a
+/// default-OFF performance tailor (`EmitOpts::kc_nest` — a measured 3x loss
+/// locally at 1024 f32, S29), so its tests opt in explicitly. The untiled side
+/// is unchanged, which is the point: the nest must be bit-exact against it.
+fn emit_kc_and_untiled(ir: &CategoryIr) -> (String, String) {
+    let tiled = flow_backend_llvm::emit_with_opts(
+        ir,
+        &flow_backend_llvm::EmitOpts {
+            kc_nest: true,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    let untiled = flow_backend_llvm::emit_with_opts(
+        ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    (tiled, untiled)
+}
+
 fn emit_tiled_and_untiled(ir: &CategoryIr) -> (String, String) {
     let tiled = flow_backend_llvm::emit(ir).unwrap();
     let untiled = flow_backend_llvm::emit_with_opts(
@@ -1403,6 +1427,320 @@ fn main() {
     }
 }
 
+/// S29 KC rung: K=200 crosses TILE_KC=128 — the packed nest splits into the
+/// peeled kc==0 panel (seed) plus one runtime-short loop panel [128, 200)
+/// (K % KC = 72 ≠ 0). 32×32 keeps one runtime-short jb block (C=32 < NC=512,
+/// C % TJ = 0 so no j remainder). Byte-equal vs untiled + oracle at -O0/-O2.
+#[test]
+fn differential_tiled_matmul_kc_32x32x200() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn main() {
+    6400 -> iota -> ta;
+    ta -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    6400 -> iota -> tb;
+    tb -> map { t -> (t * 7 + 57) % 101 - 50 -> widen_f32 } -> b;
+    200 -> iota -> ks;
+    1024 -> iota -> cells;
+    cells -> map { cell ->
+        cell / 32 -> i;
+        cell % 32 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 200 + k] * b[k * 32 + j] }
+    } -> c;
+    c[0] -> println;
+    c[1023] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("kc 32x32x200 oracle completes") else {
+        panic!("kc 32x32x200 oracle must complete");
+    };
+    let tiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            kc_nest: true,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        tiled.contains(" = alloca [64 x float]")
+            && tiled.contains(" = alloca [512 x float], align 64"),
+        "K > TILE_KC must take the KC nest: TI×TJ acc (partials park in `out`) \
+         + TI×KC a-panel pack:\n{tiled}"
+    );
+    let untiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        untiled.contains(" = call float @fn"),
+        "untiled map must retain its body call:\n{untiled}"
+    );
+
+    assert_tiled_parity(&clang, &tiled, &untiled, &want, "tiled_matmul_kc_32x32x200");
+}
+
+/// S29 KC rung, multi-panel: K=300 gives the peeled kc==0 panel, one FULL
+/// middle panel [128, 256) through the kc loop, and the runtime-short last
+/// panel [256, 300) (K % KC = 44) — the reload/spill acc parking across
+/// three panels. Byte-equal vs untiled + oracle at -O0/-O2.
+#[test]
+fn differential_tiled_matmul_kc_middle_panel() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn main() {
+    2400 -> iota -> ta;
+    ta -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    9600 -> iota -> tb;
+    tb -> map { t -> (t * 7 + 57) % 101 - 50 -> widen_f32 } -> b;
+    300 -> iota -> ks;
+    256 -> iota -> cells;
+    cells -> map { cell ->
+        cell / 32 -> i;
+        cell % 32 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 300 + k] * b[k * 32 + j] }
+    } -> c;
+    c[0] -> println;
+    c[255] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("kc middle-panel oracle completes") else {
+        panic!("kc middle-panel oracle must complete");
+    };
+    let tiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            kc_nest: true,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        tiled.contains(" = alloca [64 x float]")
+            && tiled.contains(" = alloca [512 x float], align 64"),
+        "K=300 must take the KC nest:\n{tiled}"
+    );
+    let untiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+
+    assert_tiled_parity(
+        &clang,
+        &tiled,
+        &untiled,
+        &want,
+        "tiled_matmul_kc_middle_panel",
+    );
+}
+
+/// S29 KC rung, C % NC ≠ 0 (no split): rows=4, C=540, K=136 (K % KC = 8 —
+/// one peeled panel + one short loop panel). C = 512 + 28: jb block 0 is the
+/// full 512 lanes; block 1 runs one constant-TJ main tile [512, 528) plus the
+/// runtime `tj = 12` remainder — both tile kinds inside the runtime-short
+/// block. rows=4 = one TI interior block, single slice (n < GRAIN).
+#[test]
+fn differential_tiled_matmul_kc_c540() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn main() {
+    544 -> iota -> ta;
+    ta -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    73440 -> iota -> tb;
+    tb -> map { t -> (t * 7 + 57) % 101 - 50 -> widen_f32 } -> b;
+    136 -> iota -> ks;
+    2160 -> iota -> cells;
+    cells -> map { cell ->
+        cell / 540 -> i;
+        cell % 540 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 136 + k] * b[k * 540 + j] }
+    } -> c;
+    c[0] -> println;
+    c[1023] -> println;
+    c[2159] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("kc c540 oracle completes") else {
+        panic!("kc c540 oracle must complete");
+    };
+    let (tiled, untiled) = emit_kc_and_untiled(&ir);
+    assert!(
+        tiled.contains(" = alloca [64 x float]")
+            && tiled.contains(" = alloca [512 x float], align 64"),
+        "C % NC case must contain the KC nest:\n{tiled}"
+    );
+    assert_tiled_parity(&clang, &tiled, &untiled, &want, "tiled_matmul_kc_c540");
+}
+
+/// S29 KC rung, split coverage: rows=31, C=136, K=136 (K % KC = 8 ≠ 0 — one
+/// peeled panel + one short loop panel). n = 4216 > GRAIN ⇒ 2 slices at the
+/// default pool and FLOW_PAR=2; the boundary 2108 lands mid-row at j=68 —
+/// mid-jb-block (the single block spans [0, 136)), clipping a partial first
+/// tile (panel_lane0 = 4). rows % 4 = 3 keeps the TI=1 tail region live;
+/// FLOW_PAR=1 is the single full range. The gate is tiled == untiled native
+/// byte-parity (the tile_ab discipline): a 2-slice case needs n > GRAIN, so
+/// with K > TILE_KC the fold-step count necessarily exceeds the interp's
+/// 10M-step budget — the oracle leg is carried by the four smaller KC cases.
+#[test]
+fn differential_tiled_matmul_kc_split() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn main() {
+    4216 -> iota -> ta;
+    ta -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    18496 -> iota -> tb;
+    tb -> map { t -> (t * 7 + 57) % 101 - 50 -> widen_f32 } -> b;
+    136 -> iota -> ks;
+    4216 -> iota -> cells;
+    cells -> map { cell ->
+        cell / 136 -> i;
+        cell % 136 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 136 + k] * b[k * 136 + j] }
+    } -> c;
+    c[0] -> println;
+    c[2107] -> println;
+    c[2108] -> println;
+    c[4215] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let (tiled, untiled) = emit_kc_and_untiled(&ir);
+    assert!(
+        tiled.contains(" = alloca [64 x float]")
+            && tiled.contains(" = alloca [512 x float], align 64"),
+        "split case must contain the KC nest:\n{tiled}"
+    );
+    assert!(
+        untiled.contains(" = call float @fn"),
+        "untiled map must retain its body call:\n{untiled}"
+    );
+
+    for opt in ["-O0", "-O2"] {
+        let tag_o = format!("tiled_matmul_kc_split/{opt}");
+        let (_tiled_dir, tiled_exe) = compile_exe(&clang, &tiled, &format!("{tag_o}/tiled"), opt);
+        let (_untiled_dir, untiled_exe) =
+            compile_exe(&clang, &untiled, &format!("{tag_o}/untiled"), opt);
+        for par in [None, Some("1"), Some("2")] {
+            let tag_p = format!("{tag_o}/FLOW_PAR={}", par.unwrap_or("default"));
+            let tiled_run = run_exe(&tiled_exe, TIMEOUT_SECS, par)
+                .unwrap_or_else(|| panic!("{tag_p}: tiled run timed out"));
+            let untiled_run = run_exe(&untiled_exe, TIMEOUT_SECS, par)
+                .unwrap_or_else(|| panic!("{tag_p}: untiled run timed out"));
+            assert_eq!(tiled_run.1, 0, "{tag_p}: tiled exit code");
+            assert_eq!(untiled_run.1, 0, "{tag_p}: untiled exit code");
+            assert_eq!(tiled_run.0, untiled_run.0, "{tag_p}: tiled/untiled stdout");
+        }
+    }
+}
+
+/// S29 KC rung, f64 width: TJ=8 ⇒ NC=256; C=20 keeps one short jb block (two
+/// constant-TJ main tiles + the runtime `tj = 4` remainder), K=200 crosses
+/// TILE_KC (K % KC = 72), rows=6 keeps the two-row TI tail. Packed vs
+/// --no-pack byte parity (the R1 attribution control) plus the untiled +
+/// oracle legs at -O0/-O2.
+#[test]
+fn differential_tiled_matmul_kc_f64() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn main() {
+    1200 -> iota -> ta;
+    ta -> map { t -> (t * 5 + 7) % 67 - 33 -> widen_f64 } -> a;
+    4000 -> iota -> tb;
+    tb -> map { t -> (t * 7 + 11) % 101 - 50 -> widen_f64 } -> b;
+    200 -> iota -> ks;
+    120 -> iota -> cells;
+    cells -> map { cell ->
+        cell / 20 -> i;
+        cell % 20 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 200 + k] * b[k * 20 + j] }
+    } -> c;
+    c[0] -> println;
+    c[80] -> println;
+    c[119] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("kc f64 oracle completes") else {
+        panic!("kc f64 oracle must complete");
+    };
+    let tiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            kc_nest: true,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        tiled.contains(" = alloca [32 x double]")
+            && tiled.contains(" = alloca [512 x double], align 64"),
+        "f64 KC nest must use TI×TJ=32 acc + TI×KC=512 apack:\n{tiled}"
+    );
+    let untiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    let nopack = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            packing: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+
+    assert_tiled_parity(&clang, &tiled, &untiled, &want, "tiled_matmul_kc_f64");
+    for opt in ["-O0", "-O2"] {
+        let packed_run = compile_run(
+            &clang,
+            &tiled,
+            &format!("tiled_matmul_kc_f64/{opt}/packed"),
+            opt,
+        )
+        .unwrap_or_else(|| panic!("tiled_matmul_kc_f64/{opt}/packed: timed out"));
+        let nopack_run = compile_run(
+            &clang,
+            &nopack,
+            &format!("tiled_matmul_kc_f64/{opt}/nopack"),
+            opt,
+        )
+        .unwrap_or_else(|| panic!("tiled_matmul_kc_f64/{opt}/nopack: timed out"));
+        assert_eq!(
+            packed_run, nopack_run,
+            "tiled_matmul_kc_f64/{opt}: --no-pack parity"
+        );
+    }
+}
+
 /// loop building the result via a loop-carried `mut c` array and `c[t] <- v`
 /// (the U4 contract) — compiled and run through clang, oracle-equal ("8\n136\n").
 /// Covers the combined loop-carried + `Update` shape that testgen's disjoint
@@ -1686,6 +2024,45 @@ fn main() {
     assert_parity(&clang, &ir, &rr, "parallel_bign");
 }
 
+/// plan-s29 emission item 4 (heap lowering): an entry frame at or above the
+/// 256 KB threshold moves from `alloca` to the `flow_rt_alloc` arena — the
+/// change that lets 2048² f32 run at all on macOS (64 MB hard stack ceiling).
+/// The observable must not move: byte-equal to the interp oracle at -O0 AND
+/// -O2. The fold is load-bearing — it reads EVERY cell, so an arena block
+/// short by even one field corrupts or crashes instead of passing quietly.
+/// The n=64 twin below the threshold is the negative control: same program,
+/// still on the stack, same oracle discipline.
+#[test]
+fn differential_heap_lowered_arrays() {
+    let Some(clang) = clang() else {
+        eprintln!("SKIP differential_heap_lowered_arrays: clang not found");
+        return;
+    };
+    for (n, heap) in [(100_000u32, true), (64, false)] {
+        let src = format!(
+            "fn main() {{\n    {n} -> iota -> t;\n    \
+             t -> map {{ x -> (x * 7 + 13) % 101 - 50 }} -> a;\n    \
+             (0, a) -> fold {{ acc, x -> acc + x }} -> s;\n    \
+             s -> println;\n    a[{}] -> println;\n}}\n",
+            n - 1
+        );
+        let ir = lower_src(&src);
+        let rr = run(&ir, BUDGET);
+        let ll = flow_backend_llvm::emit(&ir).unwrap();
+        assert_eq!(
+            ll.contains("%frame = call ptr @flow_rt_alloc(i64 "),
+            heap,
+            "n={n}: the entry frame is arena-placed iff it crosses the threshold:\n{ll}"
+        );
+        assert_eq!(
+            ll.contains("call void @flow_rt_free_all()"),
+            heap,
+            "n={n}: the teardown pairs with the arena:\n{ll}"
+        );
+        assert_parity(&clang, &ir, &rr, &format!("heap_lowered_n{n}"));
+    }
+}
+
 #[test]
 fn differential_parallel_trap_order() {
     let Some(clang) = clang() else {
@@ -1761,6 +2138,78 @@ fn differential_parallel_env_matrix() {
                 String::from_utf8_lossy(&out),
                 want,
                 "parallel_env_matrix/{opt}/{flow_par:?}"
+            );
+        }
+    }
+}
+
+/// plan-time-builtin: a self-bracketing program. The bracketed work is
+/// byte-identical to its untimed twin (the clock changes no answer), and the
+/// printed `elapsed` is a finite f64 ≥ 0 at `-O0`/`-O2` under both the default
+/// pool and `FLOW_PAR=1`. The FLOW_PAR legs are the S29 regression pin: before
+/// `path_plan` fenced on `TimeMs` the second read fired while the bracketed
+/// tasks were still in flight, and before the result's consumer cone was held
+/// on the host spine the subtraction raced the host's write of the clock value
+/// — both surfaced as a NEGATIVE elapsed. No upper bound is ever asserted (a
+/// wall-clock bound is a flake, not a test).
+#[test]
+fn differential_time_bracket() {
+    let Some(clang) = clang() else {
+        eprintln!("SKIP differential_time_bracket: clang not found");
+        return;
+    };
+    let src = r#"
+fn main() {
+    8192 -> iota -> xs;
+    () -> time -> t0;
+    xs -> map { x -> (x * 7) % 13 } -> ys;
+    (0, ys) -> fold { acc, y -> acc + y } -> total;
+    () -> time -> t1;
+    total -> println;
+    t1 - t0 -> elapsed;
+    elapsed -> println;
+}
+"#;
+    // The same program with the bracket removed: its whole stdout is the
+    // checksum line the timed run must reproduce verbatim.
+    let untimed = run(
+        &lower_src(
+            r#"
+fn main() {
+    8192 -> iota -> xs;
+    xs -> map { x -> (x * 7) % 13 } -> ys;
+    (0, ys) -> fold { acc, y -> acc + y } -> total;
+    total -> println;
+}
+"#,
+        ),
+        BUDGET,
+    )
+    .output;
+    assert_eq!(untimed, "49147\n");
+    let ll = flow_backend_llvm::emit(&lower_src(src)).unwrap();
+    for opt in ["-O0", "-O2"] {
+        let (_dir, exe) = compile_exe(&clang, &ll, "time_bracket", opt);
+        for flow_par in [None, Some("1")] {
+            let tag = format!(
+                "time_bracket/{opt}/FLOW_PAR={}",
+                flow_par.unwrap_or("default")
+            );
+            let (out, code) =
+                run_exe(&exe, TIMEOUT_SECS, flow_par).unwrap_or_else(|| panic!("{tag}: timed out"));
+            assert_eq!(code, 0, "{tag}: exit code");
+            let out = String::from_utf8_lossy(&out);
+            let (checksum, elapsed) = out.split_at(untimed.len());
+            assert_eq!(checksum, untimed, "{tag}: the bracket changed the answer");
+            // `elapsed` is printed by Rust's `Display` — a plain decimal, never
+            // scientific notation.
+            let ms: f64 = elapsed
+                .trim_end()
+                .parse()
+                .unwrap_or_else(|e| panic!("{tag}: elapsed {elapsed:?} is not an f64: {e}"));
+            assert!(
+                ms.is_finite() && ms >= 0.0,
+                "{tag}: elapsed must be finite and non-negative, got {ms}"
             );
         }
     }

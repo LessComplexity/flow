@@ -1,5 +1,5 @@
 ---
-source: crates/flow-backend-llvm/tests/golden_ll.rs
+source: crates/backends/llvm/tests/golden_ll.rs
 expression: ll
 ---
 ; flow-backend-llvm emitted module
@@ -10,6 +10,7 @@ declare void @flow_print_bool(i1 zeroext, i1 zeroext)
 declare void @flow_print_f32(float, i1 zeroext)
 declare void @flow_print_f64(double, i1 zeroext)
 declare void @flow_print_str(ptr, i64, i1 zeroext)
+declare double @flow_time_ms()
 declare void @flow_trap(i32) noreturn
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
 

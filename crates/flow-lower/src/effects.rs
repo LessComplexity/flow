@@ -172,11 +172,12 @@ impl NameWalk<'_> {
             match &stage.kind {
                 StageKind::Expr(e) => {
                     // A bare Var in stage position resolving past locals to a fn
-                    // name is a call edge; to `print` is a direct effect.
+                    // name is a call edge; to `print`/`time` is a direct effect
+                    // (both thread the IO token — plan-time-builtin).
                     if let ExprKind::Var(n) = &e.kind {
                         let text = name_text(self.source, *n);
                         if !scope.contains(text) {
-                            if crate::is_print_builtin(text) {
+                            if crate::is_print_builtin(text) || crate::is_time_builtin(text) {
                                 self.direct_effect = true;
                             } else if self.fn_names.contains(text) {
                                 self.add_callee(text);

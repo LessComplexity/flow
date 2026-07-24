@@ -159,6 +159,14 @@ pub(crate) fn is_pure_builtin(name: &str) -> bool {
     matches!(name, "zip" | "enumerate" | "iota" | "fill") || widen_target(name).is_some()
 }
 
+/// The `time` stage builtin (plan-time-builtin): effectful like `print` (it
+/// threads the IO token, so it is never reordered, folded, or dropped), but
+/// value-producing and wire-LESS — `() -> time` is its only shape. Same
+/// one-predicate discipline as [`is_print_builtin`].
+pub(crate) fn is_time_builtin(name: &str) -> bool {
+    name == "time"
+}
+
 /// Target type selected by an ADR-0029 widening builtin name.
 pub(crate) fn widen_target(name: &str) -> Option<flow_ir::Ty> {
     match name {
@@ -173,5 +181,6 @@ pub(crate) fn widen_target(name: &str) -> Option<flow_ir::Ty> {
 fn is_reserved(name: &str) -> bool {
     is_print_builtin(name)
         || is_pure_builtin(name)
+        || is_time_builtin(name)
         || matches!(name, "i32" | "i64" | "u8" | "f32" | "f64" | "bool")
 }

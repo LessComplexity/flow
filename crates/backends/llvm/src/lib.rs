@@ -22,8 +22,8 @@ use slotmap::SecondaryMap;
 
 use crate::func::{FnAttrs, FnEmit, packing_site};
 use crate::module::{
-    PAR_DECLS, PERF_DECLS, PREFETCH_DECL, RT_DECLS, collect_str_globals, emit_main_wrapper,
-    emit_str_globals,
+    HEAP_DECLS, PAR_DECLS, PERF_DECLS, PREFETCH_DECL, RT_DECLS, collect_str_globals,
+    emit_main_wrapper, emit_str_globals,
 };
 
 /// A structured, renderer-free emission error (ADR-0020 §1; C3).
@@ -48,6 +48,17 @@ pub struct EmitOpts {
     /// Use single-rounding FMA contraction on the product face; the default
     /// conformance face stays bit-exact.
     pub contract: bool,
+    /// Split deep packed tile sites into k-panels — the OpenBLAS (jc, kc, ic)
+    /// nest with an A-panel pack and partial sums parked in `out`.
+    ///
+    /// **Default OFF: measured a 3× LOSS** on M4 Pro at 1024 f32 (S29 —
+    /// `fma` 59.8 ms on / 19.8 ms off; the parking traffic outweighs the A
+    /// re-read it removes at this size and cache hierarchy). Kept and tested
+    /// because the lever was designed against BOX-scale traffic (16 GB of A
+    /// re-reads at 4096 on zen3) where it has not yet been measured. A pure
+    /// performance tailor in ADR-0032's sense: bit-exact either way, which the
+    /// differential suite enforces.
+    pub kc_nest: bool,
 }
 
 impl Default for EmitOpts {
@@ -57,6 +68,7 @@ impl Default for EmitOpts {
             tiling: true,
             packing: true,
             contract: false,
+            kc_nest: false,
         }
     }
 }
@@ -130,6 +142,47 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
                 .any(|(_, site)| packing_site(site))
         });
 
+    // Functions first: the arena declarations are gated on the emitted text
+    // (below), so the bodies have to exist before the header is assembled.
+    let mut funcs = String::new();
+    for (id, _) in ir.funcs() {
+        if id == entry && parallel {
+            funcs.push_str(&FnEmit::emit_parallel(
+                ir,
+                id,
+                &fnames,
+                &strings,
+                &attrs,
+                path_plan.as_ref().expect("parallel plan"),
+                opts.perf_timing,
+                opts.tiling,
+                opts.packing,
+                opts.contract,
+                opts.kc_nest,
+            ));
+        } else {
+            let mut fe = FnEmit::new(
+                ir,
+                id,
+                &fnames,
+                &strings,
+                &attrs,
+                opts.tiling,
+                opts.packing,
+                opts.contract,
+                opts.kc_nest,
+            );
+            if id == entry {
+                fe.set_perf_timing(opts.perf_timing);
+            }
+            if let Some(&site) = body_sites.get(id) {
+                fe.set_task_body_site(site);
+            }
+            funcs.push_str(&fe.emit());
+        }
+        funcs.push('\n');
+    }
+
     let mut out = String::new();
     out.push_str("; flow-backend-llvm emitted module\n");
     out.push_str(RT_DECLS);
@@ -142,6 +195,13 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
     if parallel {
         out.push_str(PAR_DECLS);
     }
+    // ponytail: gate the arena declarations on the emitted call itself, not on
+    // a re-derived predicate — the call IS the requirement, so the two cannot
+    // drift the way a `prefetch`-style pre-pass could. (PAR/PERF must gate on a
+    // predicate: they are decided before any body exists.)
+    if funcs.contains("@flow_rt_alloc") {
+        out.push_str(HEAP_DECLS);
+    }
     out.push('\n');
 
     let sg = emit_str_globals(&strings);
@@ -150,42 +210,7 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
         out.push('\n');
     }
 
-    for (id, _) in ir.funcs() {
-        if id == entry && parallel {
-            out.push_str(&FnEmit::emit_parallel(
-                ir,
-                id,
-                &fnames,
-                &strings,
-                &attrs,
-                path_plan.as_ref().expect("parallel plan"),
-                opts.perf_timing,
-                opts.tiling,
-                opts.packing,
-                opts.contract,
-            ));
-        } else {
-            let mut fe = FnEmit::new(
-                ir,
-                id,
-                &fnames,
-                &strings,
-                &attrs,
-                opts.tiling,
-                opts.packing,
-                opts.contract,
-            );
-            if id == entry {
-                fe.set_perf_timing(opts.perf_timing);
-            }
-            if let Some(&site) = body_sites.get(id) {
-                fe.set_task_body_site(site);
-            }
-            out.push_str(&fe.emit());
-        }
-        out.push('\n');
-    }
-
+    out.push_str(&funcs);
     out.push_str(&emit_main_wrapper(ir));
     Ok(out)
 }

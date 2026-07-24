@@ -1,6 +1,5 @@
 ---
 source: crates/backends/llvm/tests/golden_ll.rs
-assertion_line: 745
 expression: main
 ---
 define internal void @flow_main() {

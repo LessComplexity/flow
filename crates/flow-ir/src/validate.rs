@@ -452,6 +452,13 @@ fn edge_type_ok(ir: &CategoryIr, m: &crate::graph::Morphism, sty: &Ty, tty: &Ty)
             }
             _ => false,
         },
+        // plan-time-builtin: IoToken -> (IoToken, f64).
+        Operation::TimeMs => match tty {
+            Ty::Tuple(ts) if ts.len() == 2 => {
+                *sty == Ty::IoToken && ts[0] == Ty::IoToken && ts[1] == Ty::f64()
+            }
+            _ => false,
+        },
         Operation::LoopEnter => {
             sty == tty && ir.object(m.target).map(|o| o.kind) == Some(ObjectKind::LoopMerge)
         }
@@ -2037,6 +2044,47 @@ mod typing_table_golden {
                 Print { newline: false },
                 tup(&[Ty::IoToken, tup(&[i32t.clone(), i32t.clone()])]),
                 Ty::IoToken,
+                p,
+                false,
+            ),
+            // TimeMs (plan-time-builtin): IoToken -> (IoToken, f64).
+            (
+                "TimeMs ok",
+                TimeMs,
+                Ty::IoToken,
+                tup(&[Ty::IoToken, Ty::f64()]),
+                p,
+                true,
+            ),
+            (
+                "TimeMs source not token",
+                TimeMs,
+                i32t.clone(),
+                tup(&[Ty::IoToken, Ty::f64()]),
+                p,
+                false,
+            ),
+            (
+                "TimeMs target not pair",
+                TimeMs,
+                Ty::IoToken,
+                Ty::IoToken,
+                p,
+                false,
+            ),
+            (
+                "TimeMs target first not token",
+                TimeMs,
+                Ty::IoToken,
+                tup(&[i32t.clone(), Ty::f64()]),
+                p,
+                false,
+            ),
+            (
+                "TimeMs target second not f64",
+                TimeMs,
+                Ty::IoToken,
+                tup(&[Ty::IoToken, f32t()]),
                 p,
                 false,
             ),

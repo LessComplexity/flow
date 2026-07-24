@@ -194,15 +194,15 @@ impl Walk<'_> {
         }
     }
 
-    /// A stage-position bare-`Var` call site. `print`/`println` are effectful
-    /// uses directly; a named function is effectful iff `effectful?`. Anything
-    /// else (pure fn, `zip`/`enumerate`, unknown) is legal. In `Plain`-branch
-    /// context an effect is a T0201 at `span`.
+    /// A stage-position bare-`Var` call site. `print`/`println`/`time` are
+    /// effectful uses directly; a named function is effectful iff `effectful?`.
+    /// Anything else (pure fn, `zip`/`enumerate`, unknown) is legal. In
+    /// `Plain`-branch context an effect is a T0201 at `span`.
     fn classify_stage_call(&mut self, text: &str, span: syn::SourceLoc, in_fanout: bool) {
         if !in_fanout {
             return;
         }
-        if is_print_builtin(text) {
+        if is_print_builtin(text) || is_time_builtin(text) {
             self.out.push(diag(
                 TCode::EffectInFanout,
                 span,
@@ -229,6 +229,12 @@ impl Walk<'_> {
 /// `is_print_builtin` (kept local — lower's is `pub(crate)`).
 fn is_print_builtin(name: &str) -> bool {
     matches!(name, "print" | "println")
+}
+
+/// The `time` stage builtin (plan-time-builtin) — effectful for the same
+/// reason `print` is: it threads the IO token. Same local-copy rule as above.
+fn is_time_builtin(name: &str) -> bool {
+    name == "time"
 }
 
 /// The text of a `Name` (a bare span into `source`), same as lower's helper.

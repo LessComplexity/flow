@@ -26,7 +26,9 @@ impl StrGlobal {
 /// `i8`/`i1` parameter carries `zeroext` — the S13 ABI rule, load-bearing for u8
 /// values > 127 on arm64 (sepia's channels) and the trailing-newline `i1`.
 /// `flow_trap` alone carries `noreturn` (flow-rt defines it `-> !`, exit 101);
-/// the print externs stay attribute-free.
+/// the print externs stay attribute-free, and so does `flow_time_ms` (the
+/// `time` builtin's clock read — declared unconditionally, NOT gated on
+/// `EmitOpts::perf_timing` like `PERF_DECLS`).
 pub(crate) const RT_DECLS: &str = "\
 declare void @flow_print_i32(i32, i1 zeroext)\n\
 declare void @flow_print_i64(i64, i1 zeroext)\n\
@@ -35,6 +37,7 @@ declare void @flow_print_bool(i1 zeroext, i1 zeroext)\n\
 declare void @flow_print_f32(float, i1 zeroext)\n\
 declare void @flow_print_f64(double, i1 zeroext)\n\
 declare void @flow_print_str(ptr, i64, i1 zeroext)\n\
+declare double @flow_time_ms()\n\
 declare void @flow_trap(i32) noreturn\n\
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n";
 
@@ -42,6 +45,14 @@ declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n";
 pub(crate) const PERF_DECLS: &str = "\
 declare void @flow_perf_begin()\n\
 declare void @flow_perf_end()\n";
+
+/// The heap-lowering arena ABI (plan-s29 emission item 4), emitted only for a
+/// module that actually lowers a block to it (`func.rs:HEAP_MIN_BYTES`) — a
+/// program whose every array still fits an `alloca` keeps today's declaration
+/// block byte-for-byte.
+pub(crate) const HEAP_DECLS: &str = "\
+declare ptr @flow_rt_alloc(i64, i64)\n\
+declare void @flow_rt_free_all()\n";
 
 /// Packed tiled kernels prefetch their next panel line.
 pub(crate) const PREFETCH_DECL: &str =

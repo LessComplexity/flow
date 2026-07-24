@@ -506,6 +506,7 @@ impl<'a> TreeWriter<'a> {
             ExprKind::Float => self.line(d, e.span, &format!("Float {}", self.quoted(e.span))),
             ExprKind::Str => self.line(d, e.span, &format!("Str {}", self.quoted(e.span))),
             ExprKind::Bool(b) => self.line(d, e.span, &format!("Bool {b}")),
+            ExprKind::Unit => self.line(d, e.span, "Unit"),
             ExprKind::Var(n) => self.line(d, e.span, &format!("Var {}", self.quoted(n.span))),
             ExprKind::Hole => self.line(d, e.span, "Hole"),
             ExprKind::Unary { op, operand, .. } => {

@@ -657,6 +657,14 @@ fn emit_op(
                 fb.print(tok, val, loc).expect("replay: print")
             }
         }
+        TimeMs => {
+            // `time` (plan-time-builtin) takes the bare token (no packed
+            // source) and mints the fresh `(IoToken, f64)` pair; `dest` is
+            // unused, exactly as for Print. No rule rewrites it — it is
+            // effectful, so replay only has to rebuild it faithfully.
+            fb.time_ms(feed(plan, remap, src), loc)
+                .expect("replay: time_ms")
+        }
         Pair { .. } | Output | LoopEnter | LoopBack | LoopExit => {
             unreachable!("emit_op: {op:?} is not an object-defining primitive")
         }

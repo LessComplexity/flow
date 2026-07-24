@@ -656,6 +656,144 @@ fn golden_tile_map_shapes() {
     insta::assert_snapshot!("tile_nest_shape_f64", f64_fn);
 }
 
+/// S29 KC rung golden: a packed site with K=300 > TILE_KC=128 takes the KC
+/// nest — jb blocks of NC=512 lanes outer, k-panels of 128 next (the peeled
+/// kc==0 panel, the [128, K) loop with the runtime-short `k_hi = min(kc+128,
+/// K)` last panel), the existing head/interior/tail i regions innermost, and
+/// the a-panel pack per (i-block, kc). The acc discipline pins: seed splat
+/// only in the kc==0 sweep (12 subrow seed loops: interior main+remainder
+/// trios ×4 subrows + head/tail boundary trios ×1), an `out` spill at EVERY
+/// panel end (2 sweeps × 12 stores) and a reload only in the post-kc0 sweep
+/// (12 loads). Sites with K ≤ TILE_KC keep the jt-outer nest byte-for-byte
+/// (the tile_nest_shape / tile_nest_shape_f64 goldens above are unmoved).
+#[test]
+fn golden_tile_map_shape_kc() {
+    let src = r#"
+fn matmul(a: [f32; 2400], b: [f32; 9600]) -> [f32; 256] {
+    256 -> iota -> cells;
+    300 -> iota -> ks;
+    cells -> map { cell ->
+        cell / 32 -> i;
+        cell % 32 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 300 + k] * b[k * 32 + j] }
+    } -> c;
+    c -> ret;
+}
+fn main() {
+    2400 -> iota -> ta;
+    ta -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    9600 -> iota -> tb;
+    tb -> map { t -> (t * 7 + 57) % 101 - 50 -> widen_f32 } -> b;
+    (a, b) -> matmul -> c;
+    c[0] -> println;
+    c[255] -> println;
+}
+"#;
+    let ir = flow_rewrite::rewrite(lower_src(src)).ir;
+    // The KC nest is a default-OFF performance tailor (EmitOpts::kc_nest —
+    // measured a 3x loss locally at 1024 f32, S29); opt in to pin its shape.
+    let tiled = emit_with_opts(
+        &ir,
+        &EmitOpts {
+            kc_nest: true,
+            ..EmitOpts::default()
+        },
+    )
+    .unwrap();
+    let tiled_fn = function_containing(&tiled, " = alloca [512 x float], align 64");
+    // The KC accumulator: one [TI=4 x TJ=16] entry-block scratch, the same
+    // width as the jt-outer nest's — partial sums park in `out` at every panel
+    // end (the (jc, kc, ic) order runs other i-blocks in between), so only the
+    // j-tile being computed is ever live.
+    assert!(
+        tiled_fn
+            .lines()
+            .any(|line| line.trim_start().starts_with("%s")
+                && line.contains(" = alloca [64 x float]")),
+        "KC acc must be one [TI=4 x TJ=16] entry-block scratch alloca:\n{tiled_fn}"
+    );
+    // The a-panel pack scratch: [TI=4 x TILE_KC=128], 64-aligned.
+    assert!(
+        tiled_fn
+            .lines()
+            .any(|line| line.trim_start().starts_with("%s")
+                && line.contains(" = alloca [512 x float], align 64")),
+        "KC a-panel pack must be an align-64 [TI=4 x KC=128] scratch alloca:\n{tiled_fn}"
+    );
+    assert!(
+        !tiled_fn.contains(" = call float @fn"),
+        "tiled map must not call its per-cell body:\n{tiled_fn}"
+    );
+    // The jb loop (NC=512 lane blocks): the block-end add and the loop step.
+    assert!(
+        tiled_fn
+            .lines()
+            .filter(|line| line.contains(" = add i64 ") && line.trim_end().ends_with(", 512"))
+            .count()
+            >= 2,
+        "the jb block must step NC=512 (block end + loop step):\n{tiled_fn}"
+    );
+    // The jb block end clips jb_end = min(jb0 + NC, C=32): 1 select, plus
+    // the four boundary-row jw_hi clips (head/tail × the two kc sweeps)
+    // sharing the C literal.
+    assert_eq!(
+        tiled_fn
+            .lines()
+            .filter(|line| {
+                let line = line.trim();
+                line.contains(" = select i1 ") && line.contains(", i64 32, i64 ")
+            })
+            .count(),
+        1 + 4,
+        "the jb block end must clip jb_end = min(jb0 + NC, C):\n{tiled_fn}"
+    );
+    // The kc loop init with the literal TILE_KC=128 and the runtime-short
+    // last panel's k_hi = min(kc + 128, K=300) select.
+    assert_eq!(
+        tiled_fn
+            .lines()
+            .filter(|line| line.trim_start().starts_with("store i64 128, ptr"))
+            .count(),
+        1,
+        "the kc loop must init at TILE_KC=128:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn
+            .lines()
+            .filter(|line| {
+                let line = line.trim();
+                line.contains(" = select i1 ") && line.contains(", i64 300, i64 ")
+            })
+            .count(),
+        1,
+        "the last kc panel must clip k_hi = min(kc + TILE_KC, K):\n{tiled_fn}"
+    );
+    // The acc discipline: seed splat only in the peeled kc==0 sweep (12
+    // subrow seed loops); an out spill at every panel end (2 panels × 12) and
+    // a reload only in the post-kc0 sweep (12) — 36 out-array GEPs total.
+    assert_eq!(
+        tiled_fn.matches("store float 0x0000000000000000").count(),
+        12,
+        "seed splat belongs to the kc==0 sweep only:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn.matches("getelementptr [256 x float]").count(),
+        36,
+        "2 spills + 1 reload per (i-block, j-tile) across the two sweeps:\n{tiled_fn}"
+    );
+    // The kernel keeps the packed-b panel addressing, the ×2 k unroll, and
+    // the next-k-line prefetch.
+    assert!(
+        tiled_fn.contains("call void @llvm.prefetch.p0(")
+            && tiled_fn
+                .lines()
+                .any(|line| line.contains(" = add i64 ") && line.ends_with(", 2"))
+            && tiled_fn.contains("getelementptr [9600 x float], ptr %packed"),
+        "KC kernel must keep the packed panel, k unroll, and prefetch:\n{tiled_fn}"
+    );
+    insta::assert_snapshot!("tile_nest_shape_kc", tiled_fn);
+}
+
 #[test]
 fn tile_contract_flags_are_opt_in() {
     let ir = flow_rewrite::rewrite(lower_src(TILE_MATMUL_SRC)).ir;
@@ -928,6 +1066,79 @@ fn main() {
     insta::assert_snapshot!("parallel_matmul_cap", ll);
 }
 
+/// A map over `n` cells: two `[n x i32]` frame fields, so `n` alone decides
+/// whether the entry frame crosses the heap-lowering threshold.
+fn heap_src(n: u32) -> String {
+    format!(
+        "\nfn main() {{\n    {n} -> iota -> t;\n    \
+         t -> map {{ x -> (x * 7 + 13) % 101 - 50 }} -> a;\n    \
+         a[{}] -> println;\n}}\n",
+        n - 1
+    )
+}
+
+/// plan-s29 emission item 4 (heap lowering). The parallel entry packs every
+/// array into ONE `%Frame`, so `%Frame` is the block that blows the stack —
+/// macOS caps the main thread at 64 MB hard, and 2048² f32 ×3 plus the packed
+/// panel is ~67 MB. At or above `func.rs:HEAP_MIN_BYTES` (256 KB) the frame
+/// becomes a `flow_rt_alloc` arena block; every field access stays the same
+/// `getelementptr %Frame, ptr %frame, …` because an `alloca` result and a
+/// `flow_rt_alloc` result are both just a `ptr`. `flow_main` then drops
+/// exactly one `flow_rt_free_all`, AFTER `flow_par_finish` — composition rule
+/// 4: no task can still be reading arena memory past the join.
+///
+/// The size operand is pinned deliberately. It is the emitter's own
+/// struct-layout arithmetic (`func.rs:llt_bytes`), verified against LLVM's
+/// `ptrtoint (ptr getelementptr (%Frame, ptr null, i32 1) to i64)`, and an
+/// under-count is a silent heap overflow rather than a loud failure.
+///
+/// The n=64 twin is the negative control: below the threshold NOTHING moves,
+/// down to the declaration block — which is what keeps every other golden in
+/// this file byte-identical.
+#[test]
+fn golden_heap_lowered_frame() {
+    let big = emit(&lower_src(&heap_src(100_000))).unwrap();
+    assert!(
+        big.contains("declare ptr @flow_rt_alloc(i64, i64)\ndeclare void @flow_rt_free_all()\n"),
+        "the arena ABI is declared:\n{big}"
+    );
+    assert!(
+        big.contains("%Frame = type { [100000 x i32], [100000 x i32], { ptr, i32 }, i32, i32 }"),
+        "both arrays are frame fields:\n{big}"
+    );
+    assert!(
+        !big.contains("alloca %Frame"),
+        "a 780 KB frame must not be a stack block:\n{big}"
+    );
+    assert!(
+        big.contains("  %frame = call ptr @flow_rt_alloc(i64 800024, i64 8)\n"),
+        "the frame is one arena block at LLVM's own sizeof(%Frame):\n{big}"
+    );
+    let host = flow_main(&big);
+    assert_eq!(
+        host.matches("call void @flow_rt_free_all()").count(),
+        1,
+        "exactly one teardown:\n{host}"
+    );
+    assert!(
+        host.find("call void @flow_par_finish").expect("host joins")
+            < host
+                .find("call void @flow_rt_free_all")
+                .expect("host tears down"),
+        "the teardown follows the join:\n{host}"
+    );
+
+    let small = emit(&lower_src(&heap_src(64))).unwrap();
+    assert!(
+        small.contains("  %frame = alloca %Frame\n"),
+        "below the threshold the frame stays on the stack:\n{small}"
+    );
+    assert!(
+        !small.contains("flow_rt_"),
+        "a program that heap-allocates nothing gains no declaration:\n{small}"
+    );
+}
+
 /// S24 review-find pin: a checkpoint INSIDE an effectful loop also fires
 /// BEFORE the loop is entered. The loop's seed/entry glue reads task-produced
 /// frame slots, so `flow_par_wait`+`flow_par_check` must precede the loop CFG
@@ -988,6 +1199,115 @@ fn main() {
     assert!(
         ll.contains("call void @flow_par_watermark(i64 "),
         "scalar guard publishes its decided watermark:\n{ll}"
+    );
+}
+
+/// plan-time-builtin: the `time` extern is declared, a bracketed program emits
+/// exactly two `flow_time_ms` calls on the host spine in chain order, and each
+/// carries its checkpoint. The S29 fence is the point of the pin: each read
+/// waits for every task written entirely BEFORE it in the source, so `t0`
+/// fences the generation above the bracket and `t1` fences that PLUS the
+/// bracketed kernel — `t1 - t0` is the work written between them, and the
+/// generation is excluded (the S28 gen-boundary finding). Keyed on source
+/// order because the dataflow graph gives none: pure work is unordered against
+/// a clock read, so topo order is free to put all of it on either side, and
+/// does. The `fsub` after the second read is the second fence: a `TimeMs`
+/// result's consumer cone stays on the host spine, so it can never race the
+/// host's write of the clock value.
+/// plan-time-builtin rule 1, the loop case: a clock read inside a loop body
+/// runs once per ITERATION. Four of lower's six effect detectors keyed on
+/// `print` alone when `time` landed, and the two that did not learn it —
+/// `emit.rs:effect_chain` (via `loop_body_has_effect`) and `scan_phi_arm` —
+/// classify a loop body as pure, which hoists the read out of the cycle: one
+/// timestamp for every iteration, silently. This pins the emitted position.
+#[test]
+fn time_inside_a_loop_stays_inside_the_loop() {
+    let src = r#"
+fn main() {
+    0 -> mut i;
+    loop {
+        () -> time -> t;
+        t -> println;
+        i + 1 -> i;
+        (i < 3) -> {
+            -true-> -> loop;
+            -false-> -> ret;
+        }
+    }
+}
+"#;
+    let ll = emit(&lower_src(src)).unwrap();
+    let host = flow_main(&ll);
+    let read = host
+        .find("call double @flow_time_ms()")
+        .expect("the clock read is emitted");
+    // The loop header is the block the back edge targets; the read must sit
+    // after that label and before the back edge that closes the cycle.
+    let header = host.find("br label %bb1").expect("loop entry branch");
+    let back = host.rfind("br label %bb1").expect("loop back edge");
+    assert!(
+        header < read && read < back,
+        "the clock read belongs inside the loop body, not hoisted above it:\n{host}"
+    );
+}
+
+#[test]
+fn time_bracket_fences_the_tasks_it_brackets() {
+    let src = r#"
+fn main() {
+    8192 -> iota -> xs;
+    () -> time -> t0;
+    xs -> map { x -> (x * 7) % 13 } -> ys;
+    (0, ys) -> fold { acc, y -> acc + y } -> total;
+    () -> time -> t1;
+    total -> println;
+    t1 - t0 -> elapsed;
+    elapsed -> println;
+}
+"#;
+    let ll = emit(&lower_src(src)).unwrap();
+    assert!(
+        ll.contains("declare double @flow_time_ms()"),
+        "the clock extern is declared:\n{ll}"
+    );
+    let host = flow_main(&ll);
+    let reads: Vec<usize> = host
+        .match_indices("call double @flow_time_ms()")
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(
+        reads.len(),
+        2,
+        "both clock reads land on the host spine, neither CSE'd nor DCE'd:\n{host}"
+    );
+    // The `i32 <len>` argument of the last `flow_par_wait` before `at`.
+    let wait_len = |at: usize| -> u32 {
+        let w = host[..at]
+            .rfind("call void @flow_par_wait(")
+            .expect("a checkpoint wait precedes each clock read");
+        host[w..]
+            .lines()
+            .next()
+            .unwrap()
+            .rsplit("i32 ")
+            .next()
+            .unwrap()
+            .trim_end_matches(')')
+            .parse()
+            .expect("wait entry count")
+    };
+    assert!(
+        wait_len(reads[0]) > 0,
+        "t0 fences the generation written above the bracket:\n{host}"
+    );
+    assert!(
+        wait_len(reads[1]) > wait_len(reads[0]),
+        "t1 fences that PLUS the bracketed kernel — strictly more than t0, \
+         which is what makes the interval the work written between them:\n{host}"
+    );
+    assert!(
+        host.find("fsub double").expect("the elapsed subtraction") > reads[1],
+        "the clock values' consumer cone stays on the host spine, after both reads:\n{host}"
     );
 }
 

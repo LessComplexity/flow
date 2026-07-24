@@ -800,6 +800,13 @@ impl Emitter<'_> {
 
         // Seed the wire.
         let mut cur: Option<ObjectId> = match &chain.head {
+            // `()` (plan-time-builtin) is the wire-LESS head: it emits nothing
+            // and seeds `None`, so `() -> time` reaches the `time` stage with
+            // no source, exactly as the op's `IoToken → (IoToken, f64)`
+            // signature wants. Any other stage then reports L1301 (no wire),
+            // and `()` in a value position hits the `ExprKind::Unit` arm of
+            // `emit_expr_dest`.
+            Some(h) if matches!(h.kind, ExprKind::Unit) => None,
             Some(h) => {
                 let r = self.emit_expr_dest(fb, h, head_dest.clone())?;
                 if head_to_dest {
@@ -876,7 +883,7 @@ impl Emitter<'_> {
             StageKind::Expr(e) => {
                 if let ExprKind::Var(n) = &e.kind {
                     let text = name_text(self.source, *n);
-                    if crate::is_pure_builtin(text) {
+                    if crate::is_pure_builtin(text) || crate::is_time_builtin(text) {
                         return true;
                     }
                     if let Some(sig) = self.fn_sigs.get(text) {
@@ -1054,6 +1061,19 @@ impl Emitter<'_> {
                         .ok_or_else(|| diag(LCode::HeadlessChain, e.span, "print with no value"))?;
                     self.emit_print(fb, wire, text == "println", e.span)?;
                     Ok(None) // print is a sink; chain ends.
+                } else if crate::is_time_builtin(&text) {
+                    // `() -> time` (plan-time-builtin): the ONE stage that
+                    // takes no wire — the source is the IO token, not a value.
+                    if wire.is_some() {
+                        return Err(diag(
+                            LCode::ExprStage,
+                            e.span,
+                            "`time` takes no value: write `() -> time`",
+                        ));
+                    }
+                    let r = self.emit_time(fb, next, ctx, e.span)?;
+                    self.maybe_bind_next(fb, next, r);
+                    Ok(Some(r))
                 } else if crate::is_pure_builtin(&text) {
                     let wire = wire.ok_or_else(|| {
                         diag(LCode::HeadlessChain, e.span, "builtin stage with no source")
@@ -1140,6 +1160,7 @@ impl Emitter<'_> {
                         // bare name binding (unbound or mut) → name it.
                         if !self.fn_ids.contains_key(text)
                             && !crate::is_print_builtin(text)
+                            && !crate::is_time_builtin(text)
                             && !crate::is_pure_builtin(text)
                         {
                             return Ok(Dest::Fresh(Some(text.to_string())));
@@ -1365,6 +1386,16 @@ impl Emitter<'_> {
                 self.constant(fb, val, sp)
             }
             ExprKind::Bool(b) => self.constant(fb, Value::Bool(*b), sp),
+            // `()` (plan-time-builtin) produces NO object: it is the wire-less
+            // chain head, and `emit_chain` seeds `cur = None` for it before any
+            // expression is emitted. Reaching here means it was used as a value
+            // (`() + 1`, `x -> f(())`, a bare `();`) — L1301, the same code as
+            // any other chain position with no wire.
+            ExprKind::Unit => Err(diag(
+                LCode::HeadlessChain,
+                sp,
+                "`()` is not a value: its only use is the head of `() -> time`",
+            )),
             ExprKind::Str => {
                 // A Str constant is a legal object; only a non-`print` *use*
                 // (pack/binop/ret of a non-Str) is L1206 — the builder's
@@ -1691,6 +1722,34 @@ impl Emitter<'_> {
         self.record(nt, Ty::IoToken);
         self.token = Some(nt);
         Ok(())
+    }
+
+    /// `time` (plan-time-builtin): consume the IO token, emit `TimeMs`, then
+    /// split the `(IoToken, f64)` pair — slot 0 rebinds the token (the effect
+    /// ordering, exactly as `print` rebinds it), slot 1 is the milliseconds
+    /// value the chain carries on. The value proj takes the lookahead `Dest`,
+    /// so `() -> time -> ret` writes Return directly.
+    fn emit_time(
+        &mut self,
+        fb: &mut FnBuilder,
+        next: Option<&Stage>,
+        ctx: &ChainCtx,
+        sp: syn::SourceLoc,
+    ) -> ER<ObjectId> {
+        let tok = self.consume_token(sp)?;
+        let pair = fb.time_ms(tok, ir_loc(sp)).map_err(|e| ir_err(e, sp))?;
+        self.record(pair, Ty::Tuple(vec![Ty::IoToken, Ty::f64()]));
+        let nt = fb
+            .proj(pair, 0, Dest::Fresh(None), ir_loc(sp))
+            .map_err(|e| ir_err(e, sp))?;
+        self.record(nt, Ty::IoToken);
+        self.token = Some(nt);
+        let dest = self.lookahead_dest(next, ctx, next.is_none())?;
+        let ms = fb
+            .proj(pair, 1, dest, ir_loc(sp))
+            .map_err(|e| ir_err(e, sp))?;
+        self.record(ms, Ty::f64());
+        Ok(ms)
     }
 
     // --- literals -----------------------------------------------------------
@@ -3217,6 +3276,7 @@ impl Emitter<'_> {
             if self.scope.resolve(text).is_none()
                 && !self.fn_ids.contains_key(text)
                 && !crate::is_print_builtin(text)
+                && !crate::is_time_builtin(text)
                 && !crate::is_pure_builtin(text)
             {
                 return Some(text.to_string());
@@ -3637,10 +3697,12 @@ fn scan_chain(
             StageKind::Expr(e) => {
                 if let ExprKind::Var(n) = &e.kind {
                     let text = name_text(source, *n);
-                    // A bare-name stage that resolves to `print` or to a
-                    // user-defined effectful fn is an effect in a Phi arm (L1404;
-                    // tokens cannot pass a Phi). Mirror typing.rs's L1605 check.
+                    // A bare-name stage that resolves to `print`/`time` or to
+                    // a user-defined effectful fn is an effect in a Phi arm
+                    // (L1404; tokens cannot pass a Phi). Mirror typing.rs's
+                    // L1605 check.
                     let effectful = crate::is_print_builtin(text)
+                        || crate::is_time_builtin(text)
                         || fn_sigs.get(text).map(|s| s.effectful).unwrap_or(false);
                     if effectful {
                         if scan.effect_span.is_none() {
@@ -3805,7 +3867,7 @@ fn effect_chain(source: &str, chain: &Chain, fn_sigs: &BTreeMap<String, FnSig>, 
                 if let ExprKind::Var(n) = &e.kind {
                     let text = name_text(source, *n);
                     let effectful = fn_sigs.get(text).map(|s| s.effectful).unwrap_or(false);
-                    if crate::is_print_builtin(text) || effectful {
+                    if crate::is_print_builtin(text) || crate::is_time_builtin(text) || effectful {
                         *found = true;
                     }
                 }

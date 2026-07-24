@@ -138,6 +138,11 @@ pub enum Operation {
     Print {
         newline: bool,
     },
+    /// `IoToken → (IoToken × f64)` — the effectful monotonic-clock read
+    /// (plan-time-builtin). The target is the `(token, milliseconds)` pair;
+    /// token-threaded exactly like `Print`, so it is never reordered, folded,
+    /// CSE'd, or DCE'd.
+    TimeMs,
     // loops (§7) — the inline-cycle realization of `Tr^U`
     /// `U → U`, init value → LoopMerge.
     LoopEnter,

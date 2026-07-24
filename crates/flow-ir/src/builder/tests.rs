@@ -424,6 +424,55 @@ fn str_outside_print() {
     assert_eq!(e, IrError::StrOutsidePrint);
 }
 
+// --- time (plan-time-builtin) ----------------------------------------------
+
+#[test]
+fn time_ms_builds_and_validates() {
+    use crate::validate::validate;
+    // main : IoToken -> IoToken — t0 --TimeMs--> (tok, f64); proj both; the
+    // proj'd token threads to Return (mirrors the print token path).
+    let (mut b, f) = one_fn(Ty::IoToken, Ty::IoToken);
+    {
+        let mut fb = b.build_fn(f).unwrap();
+        let t0 = fb.input();
+        let pair = fb.time_ms(t0, L).unwrap();
+        let tok = fb.proj(pair, 0, Dest::Fresh(None), L).unwrap();
+        let _ms = fb.proj(pair, 1, Dest::Fresh(Some("t0".into())), L).unwrap();
+        fb.output(tok, None, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(f).unwrap();
+    assert!(validate(&ir).is_empty(), "{:?}", validate(&ir));
+    // The op shape: one TimeMs morphism, token source, (IoToken, f64) target.
+    let tim: Vec<_> = ir
+        .morphisms()
+        .filter(|(_, m)| m.op == Operation::TimeMs)
+        .collect();
+    assert_eq!(tim.len(), 1);
+    let (_, m) = tim[0];
+    assert_eq!(ir.object(m.source).unwrap().ty, Ty::IoToken);
+    assert_eq!(
+        ir.object(m.target).unwrap().ty,
+        Ty::Tuple(vec![Ty::IoToken, Ty::f64()])
+    );
+}
+
+#[test]
+fn time_ms_rejects_non_token_source() {
+    let (mut b, f) = one_fn(Ty::i32(), Ty::i32());
+    let mut fb = b.build_fn(f).unwrap();
+    let x = fb.input();
+    let e = fb.time_ms(x, L).unwrap_err();
+    assert_eq!(
+        e,
+        IrError::TypeMismatch {
+            expected: Ty::IoToken,
+            found: Ty::i32(),
+            loc: L,
+        }
+    );
+}
+
 // --- struct name conflict -------------------------------------------------
 
 #[test]

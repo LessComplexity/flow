@@ -211,6 +211,86 @@ fn fn_body_tail_returns() {
     assert!(writers >= 1, "fn-body tail must write Return");
 }
 
+/// `() -> time` (plan-time-builtin): the wire-LESS head lowers clean, each
+/// clock read is `IoToken → (IoToken, f64)`, and the bracketed `t1 - t0` is an
+/// f64 subtraction — the elapsed milliseconds the bench legs print.
+#[test]
+fn time_bracket_types_f64() {
+    let src = r#"fn main() {
+    () -> time -> t0;
+    [1, 2, 3] -> map { x -> x * 2 } -> ys: [i32; 3];
+    () -> time -> t1;
+    t1 - t0 -> println;
+    ys[0] -> println;
+}
+"#;
+    let ir = lower_ok(src);
+    assert_eq!(count_op(&ir, |o| *o == Operation::TimeMs), 2, "two reads");
+    let pair_ty = flow_ir::Ty::Tuple(vec![flow_ir::Ty::IoToken, flow_ir::Ty::f64()]);
+    for (_, m) in ir.morphisms().filter(|(_, m)| m.op == Operation::TimeMs) {
+        assert_eq!(
+            ir.object(m.source).unwrap().ty,
+            flow_ir::Ty::IoToken,
+            "TimeMs source is the IO token"
+        );
+        assert_eq!(
+            ir.object(m.target).unwrap().ty,
+            pair_ty,
+            "TimeMs target is the (token, ms) pair"
+        );
+    }
+    // `t1 - t0` — the value half is f64, so the elapsed is f64 (not i32).
+    let sub = ir
+        .morphisms()
+        .find(|(_, m)| m.op == Operation::Sub)
+        .map(|(_, m)| m)
+        .expect("the `t1 - t0` subtraction");
+    assert_eq!(
+        ir.object(sub.target).unwrap().ty,
+        flow_ir::Ty::f64(),
+        "elapsed is f64 milliseconds"
+    );
+}
+
+/// The clock read rides the same token thread as `print` (plan-time-builtin
+/// composition rule 1): the second `TimeMs` consumes the token the first one
+/// produced (via its slot-0 Proj), so the two reads can never be reordered.
+#[test]
+fn time_reads_thread_the_io_token() {
+    let src = r#"fn main() {
+    () -> time -> t0;
+    () -> time -> t1;
+    t1 - t0 -> println;
+}
+"#;
+    let ir = lower_ok(src);
+    let main = func_named(&ir, "main");
+    let def = ir.func(main).unwrap();
+    let times: Vec<&flow_ir::Morphism> = def
+        .morphisms
+        .iter()
+        .map(|&m| ir.morphism(m).unwrap())
+        .filter(|m| m.op == Operation::TimeMs)
+        .collect();
+    assert_eq!(times.len(), 2, "main has two clock reads");
+    // The second read's source token is the slot-0 Proj of the first's pair.
+    let producer = ir
+        .in_edges(times[1].source)
+        .iter()
+        .map(|&mid| ir.morphism(mid).unwrap())
+        .next()
+        .expect("the second TimeMs token has a producer");
+    assert!(
+        matches!(producer.op, Operation::Proj { index: 0, .. }),
+        "the second read's token is Proj 0 of a pair, found {:?}",
+        producer.op
+    );
+    assert_eq!(
+        producer.source, times[0].target,
+        "the second read consumes the first read's output token"
+    );
+}
+
 const COUNTDOWN: &str = r#"fn countdown(mut n: i32) {
     loop {
         n -> print;

@@ -2686,9 +2686,178 @@ fn path_rank_prefers_heavy_bulk_long_path_to_light_scalar_chain() {
     assert!(plan.tasks[heavy].rank > plan.tasks[scalar].rank);
 }
 
+/// The bench bracket (plan-time-builtin): data generation, `t0`, the kernel
+/// map, `t1`, then `t1 - t0 -> print` and a `y[0]` readout. Two `TimeMs` reads
+/// on the host spine with a bulk task between them and a scalar task after.
+///
+/// Spans ASCEND with construction order, as a lowered program's do: the
+/// `TimeMs` fence is keyed on source position (the dataflow graph orders pure
+/// work against a clock read not at all), so a fixture built with one shared
+/// span would model a program written entirely on one line and fence nothing.
+fn time_bracket_fixture() -> (flow_ir::CategoryIr, flow_ir::FuncId) {
+    // One span per source "line", ascending.
+    let at = |line: u32| SourceLoc {
+        start: line * 10,
+        end: line * 10 + 9,
+    };
+    let mut b = IrBuilder::new();
+    let body = identity_map_body(&mut b);
+    let f = b
+        .declare(FuncKind::Named, "bracket", Ty::IoToken, Ty::IoToken, at(0))
+        .unwrap();
+    {
+        let mut fb = b.build_fn(f).unwrap();
+        let token = fb.input();
+        // Data generation — OUTSIDE the bracket (the conv2d gen/kernel split).
+        let eight = fb.constant(Value::I32(8), at(1)).unwrap();
+        let data = fb
+            .iota(eight, Dest::Fresh(Some("gen".into())), at(1))
+            .unwrap();
+        // `() -> time -> t0`: open the bracket.
+        let start = fb.time_ms(token, at(2)).unwrap();
+        let token = fb.proj(start, 0, Dest::Fresh(None), at(2)).unwrap();
+        let t0 = fb
+            .proj(start, 1, Dest::Fresh(Some("t0".into())), at(2))
+            .unwrap();
+        // The kernel: one bulk map over the generated array.
+        let mapped = fb
+            .map(body, data, Dest::Fresh(Some("y".into())), at(3))
+            .unwrap();
+        // `() -> time -> t1`: close it.
+        let stop = fb.time_ms(token, at(4)).unwrap();
+        let token = fb.proj(stop, 0, Dest::Fresh(None), at(4)).unwrap();
+        let t1 = fb
+            .proj(stop, 1, Dest::Fresh(Some("t1".into())), at(4))
+            .unwrap();
+        let elapsed = fb
+            .binop(
+                Operation::Sub,
+                t1,
+                t0,
+                Dest::Fresh(Some("elapsed".into())),
+                at(5),
+            )
+            .unwrap();
+        let token = fb.print(token, elapsed, at(5)).unwrap();
+        // Consume the kernel result so the map is not dead code.
+        let zero = fb.constant(Value::I32(0), at(6)).unwrap();
+        let head = fb.index(mapped, zero, Dest::Fresh(None), at(6)).unwrap();
+        let token = fb.print(token, head, at(6)).unwrap();
+        fb.output(token, None, at(7)).unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(f).unwrap();
+    assert!(validate(&ir).is_empty(), "{:?}", validate(&ir));
+    (ir, f)
+}
+
+#[test]
+fn path_time_ms_fences_only_the_tasks_entirely_before_the_read() {
+    // plan-time-builtin composition rule 1. A `TimeMs` on the spine consumes
+    // only the token, so it has NO value producer to wait for and would read
+    // the clock while the tasks it brackets are still in flight. It therefore
+    // fences: every task written ENTIRELY before it in the SOURCE must
+    // complete. Source order, because the graph supplies none — which is what
+    // makes `t1 - t0` the work written between the two reads.
+    let (ir, f) = time_bracket_fixture();
+    let plan = ir.path_plan(f);
+    let reads = func_ops(&ir, f, |op| op == Operation::TimeMs);
+    assert_eq!(reads.len(), 2, "t0 and t1");
+    let kernel = task_for(
+        &plan,
+        func_ops(&ir, f, |op| matches!(op, Operation::Map { .. }))[0],
+    );
+    let gen_task = task_for(&plan, func_ops(&ir, f, |op| op == Operation::Iota)[0]);
+    let readout = task_for(&plan, func_ops(&ir, f, |op| op == Operation::Index)[0]);
+    let checkpoint = |m: MorphismId| {
+        let topo = topo_pos(&ir, f, m);
+        plan.checkpoints
+            .iter()
+            .find(|c| c.topo == topo)
+            .expect("every TimeMs is a checkpoint")
+    };
+    let fences = |m: MorphismId, task: usize| {
+        checkpoint(m).wait.contains(&WaitEntry {
+            task,
+            threshold: None,
+        })
+    };
+
+    // t0 opens the bracket: the generation is written above it, so the read
+    // waits for its COMPLETION (threshold None, not a topo threshold) — that
+    // is what excludes generation from the interval. The kernel below it is
+    // untouched.
+    assert!(
+        fences(reads[0], gen_task),
+        "t0 fences the generation written above it: {:?}",
+        checkpoint(reads[0]).wait
+    );
+    assert!(
+        !fences(reads[0], kernel),
+        "t0 does not fence the kernel it opens: {:?}",
+        checkpoint(reads[0]).wait
+    );
+    // t1 closes it: the kernel is now written above, so it is fenced too.
+    assert!(
+        fences(reads[1], kernel) && fences(reads[1], gen_task),
+        "t1 fences the bracketed kernel: {:?}",
+        checkpoint(reads[1]).wait
+    );
+    // …and the fence is "written before", not "everything": the post-bracket
+    // readout task (the `y[0]` Index, written after t1) is untouched by both.
+    assert!(
+        !fences(reads[0], readout) && !fences(reads[1], readout),
+        "neither read fences work written below it: {:?} / {:?}",
+        checkpoint(reads[0]).wait,
+        checkpoint(reads[1]).wait
+    );
+}
+
+#[test]
+fn path_time_ms_consumer_cone_stays_on_the_host_spine() {
+    // `TimeMs` is the first spine op producing a VALUE, and tasks are
+    // dispatched BEFORE the host writes that slot — a task consuming a clock
+    // read races the write (the symptom was a NEGATIVE elapsed). The whole
+    // consumer cone therefore stays on the spine.
+    let (ir, f) = time_bracket_fixture();
+    let plan = ir.path_plan(f);
+    assert!(!plan.tasks.is_empty(), "the bulk work still parallelises");
+
+    let named = |n: &str| {
+        ir.objects()
+            .find(|(_, o)| o.name.as_deref() == Some(n))
+            .map(|(id, _)| id)
+            .unwrap()
+    };
+    // The clock-carrying objects: the two `(IoToken, f64)` read results and the
+    // `t0`/`t1`/`elapsed` chain hanging off them (proj, Sub, the print Pair).
+    let mut clock: Vec<flow_ir::ObjectId> = func_ops(&ir, f, |op| op == Operation::TimeMs)
+        .iter()
+        .map(|&m| ir.morphism(m).unwrap().target)
+        .collect();
+    clock.extend(["t0", "t1", "elapsed"].map(named));
+
+    for task in &plan.tasks {
+        let members: &[MorphismId] = match &task.kind {
+            TaskKind::Split { site, .. } => std::slice::from_ref(site),
+            TaskKind::Seq { morphisms } => morphisms,
+        };
+        for &m in members {
+            let morph = ir.morphism(m).unwrap();
+            assert!(
+                !clock.contains(&morph.source) && !clock.contains(&morph.target),
+                "clock-cone {:?} escaped onto a task",
+                morph.op
+            );
+        }
+    }
+}
+
 #[test]
 fn path_plan_is_deterministic() {
     let (ir, f) = diamond_path_fixture();
+    assert_eq!(ir.path_plan(f), ir.path_plan(f));
+    let (ir, f) = time_bracket_fixture();
     assert_eq!(ir.path_plan(f), ir.path_plan(f));
 }
 

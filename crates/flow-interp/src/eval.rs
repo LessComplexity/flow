@@ -367,6 +367,20 @@ pub(crate) fn eval_morphism(
             write(ctx, target, v);
             Ok(())
         }
+        Operation::TimeMs => {
+            // `IoToken → (IoToken, f64)` (plan-time-builtin): milliseconds from
+            // a monotonic clock against one process-lifetime epoch. The token
+            // threads through unchanged as the pair's first component.
+            let tok = read(ctx, source).clone();
+            debug_assert!(matches!(tok, RValue::Token(_)), "TimeMs source not a token");
+            let ms = time_epoch().elapsed().as_secs_f64() * 1000.0;
+            write(
+                ctx,
+                target,
+                RValue::Tuple(vec![tok, RValue::Scalar(Value::F64(ms))]),
+            );
+            Ok(())
+        }
         Operation::Output => {
             let v = read(ctx, source).clone();
             write(ctx, target, v);
@@ -379,6 +393,15 @@ pub(crate) fn eval_morphism(
 }
 
 // --- helpers --------------------------------------------------------------
+
+/// The process-lifetime monotonic epoch for `TimeMs` (plan-time-builtin): one
+/// `Instant` shared by every read in the process, so two reads are
+/// non-decreasing and a difference is real elapsed milliseconds. Same clock
+/// (`std::time::Instant`) as flow-rt's `flow_time_ms`/`flow_perf_begin`.
+fn time_epoch() -> &'static std::time::Instant {
+    static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    EPOCH.get_or_init(std::time::Instant::now)
+}
 
 /// Read `env[o]`; panics on an undefined object (a sealed, topo-ordered graph
 /// never reads before write).

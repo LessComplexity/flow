@@ -2292,8 +2292,8 @@ impl<'a> DevEmit<'a> {
             Operation::Fold { body, captures } => self.emit_fold(source, target, body, captures),
             Operation::Index => self.emit_index(m, source, target),
             Operation::Update => self.emit_update(source, target),
-            Operation::Print { .. } => {
-                unreachable!("token-free twins contain no Print (E2)")
+            Operation::Print { .. } | Operation::TimeMs => {
+                unreachable!("token-free twins contain no Print/TimeMs (E2)")
             }
             Operation::Output => self.emit_output(source, target),
             Operation::LoopEnter | Operation::LoopBack | Operation::LoopExit => {
