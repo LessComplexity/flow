@@ -151,6 +151,60 @@ pub struct TileRead {
     pub ci: u64,
     pub ck: u64,
     pub clane: u64,
+    /// The `k÷div`/`k%div` decomposition when this read's address is affine in
+    /// the fold's derived axes instead of raw `k` (`ck == 0` then). `None` on
+    /// plain affine reads.
+    pub ksplit: Option<TileKSplit>,
+}
+
+/// The `k = kq·div + kr` decomposition of a fold's counted axis: the read's
+/// address is affine in the derived variables `k÷div` (coefficient `cq`) and
+/// `k%div` (coefficient `cr`) — conv2d's `k/3`,`k%3` window taps. The same
+/// derived-var move the map body gets for `(t÷C, t%C)`, one level down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TileKSplit {
+    /// The literal divisor shared by the fold body's `Div`/`Mod` pair.
+    pub div: u64,
+    /// Address coefficient on `k÷div`.
+    pub cq: u64,
+    /// Address coefficient on `k%div`.
+    pub cr: u64,
+}
+
+/// Affine address coefficients over the tile axes:
+/// `base + ci·i + clane·lane + ck·k + cq·(k÷div) + cr·(k%div)`.
+#[derive(Clone, Copy, Default)]
+struct TileAffine {
+    base: u64,
+    ci: u64,
+    clane: u64,
+    ck: u64,
+    cq: u64,
+    cr: u64,
+}
+
+impl TileAffine {
+    fn add(self, other: Self) -> Option<Self> {
+        Some(Self {
+            base: self.base.checked_add(other.base)?,
+            ci: self.ci.checked_add(other.ci)?,
+            clane: self.clane.checked_add(other.clane)?,
+            ck: self.ck.checked_add(other.ck)?,
+            cq: self.cq.checked_add(other.cq)?,
+            cr: self.cr.checked_add(other.cr)?,
+        })
+    }
+
+    fn scale(self, by: u64) -> Option<Self> {
+        Some(Self {
+            base: self.base.checked_mul(by)?,
+            ci: self.ci.checked_mul(by)?,
+            clane: self.clane.checked_mul(by)?,
+            ck: self.ck.checked_mul(by)?,
+            cq: self.cq.checked_mul(by)?,
+            cr: self.cr.checked_mul(by)?,
+        })
+    }
 }
 
 /// Everything a backend needs to emit one recognized tiled map site.
@@ -692,6 +746,21 @@ impl CategoryIr {
             return None;
         };
         let fold_def = self.func(body)?;
+        // Fold-body analog of the map-body split (`tile_site`): bind a
+        // `Div`/`Mod` pair on the fold's counted element to the derived axes
+        // `(k÷div, k%div)` — conv2d's window taps. Rectangular windows only
+        // (`k % div == 0`); a pair that fails this simply stays unbound and
+        // the walker's `_ => None` arm refuses the site.
+        let element_slot = fold_captures + 1;
+        let ksplit_axes = fold_def.morphisms.iter().find_map(|&div_id| {
+            let (kq, div) =
+                self.tile_split(div_id, fold_def.input, element_slot, Operation::Div)?;
+            fold_def.morphisms.iter().find_map(|&mod_id| {
+                let (kr, mod_div) =
+                    self.tile_split(mod_id, fold_def.input, element_slot, Operation::Mod)?;
+                (mod_div == div && k % div == 0).then_some((kq, kr, div))
+            })
+        });
         let add = self.tile_definer(fold_def.output, Operation::Add)?;
         let add_lhs = self.pair_slot_source(add.source, 0)?;
         let add_rhs = self.pair_slot_source(add.source, 1)?;
@@ -722,15 +791,38 @@ impl CategoryIr {
             if self.objects.get(value)?.ty != **elem {
                 return None;
             }
-            let (base, ci, clane, ck) =
-                self.tile_affine(address, fold.source, fold_def.input, fold_captures, i, lane)?;
+            let aff = self.tile_affine(
+                address,
+                fold.source,
+                fold_def.input,
+                fold_captures,
+                i,
+                lane,
+                ksplit_axes.map(|(kq, kr, _)| (kq, kr)),
+            )?;
+            let ksplit = match ksplit_axes {
+                Some((_, _, div)) if aff.cq != 0 || aff.cr != 0 => {
+                    // A read is affine in raw `k` XOR in the derived axes —
+                    // never mixed.
+                    if aff.ck != 0 {
+                        return None;
+                    }
+                    Some(TileKSplit {
+                        div,
+                        cq: aff.cq,
+                        cr: aff.cr,
+                    })
+                }
+                _ => None,
+            };
             Some((
                 TileRead {
                     slot,
-                    base,
-                    ci,
-                    ck,
-                    clane,
+                    base: aff.base,
+                    ci: aff.ci,
+                    ck: aff.ck,
+                    clane: aff.clane,
+                    ksplit,
                 },
                 (**elem).clone(),
             ))
@@ -767,6 +859,7 @@ impl CategoryIr {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn tile_affine(
         &self,
         object: ObjectId,
@@ -775,22 +868,49 @@ impl CategoryIr {
         fold_captures: u32,
         i: Option<ObjectId>,
         lane: ObjectId,
-    ) -> Option<(u64, u64, u64, u64)> {
+        ksplit_axes: Option<(ObjectId, ObjectId)>,
+    ) -> Option<TileAffine> {
         if let Some(captured) =
             self.tile_fold_capture(object, fold_source, fold_input, fold_captures)
         {
             if i == Some(captured) {
-                return Some((0, 1, 0, 0));
+                return Some(TileAffine {
+                    ci: 1,
+                    ..TileAffine::default()
+                });
             }
             if captured == lane {
-                return Some((0, 0, 1, 0));
+                return Some(TileAffine {
+                    clane: 1,
+                    ..TileAffine::default()
+                });
+            }
+        }
+        if let Some((kq, kr)) = ksplit_axes {
+            if object == kq {
+                return Some(TileAffine {
+                    cq: 1,
+                    ..TileAffine::default()
+                });
+            }
+            if object == kr {
+                return Some(TileAffine {
+                    cr: 1,
+                    ..TileAffine::default()
+                });
             }
         }
         if self.tile_input_proj_index(object, fold_input) == fold_captures.checked_add(1) {
-            return Some((0, 0, 0, 1));
+            return Some(TileAffine {
+                ck: 1,
+                ..TileAffine::default()
+            });
         }
         if let Some(base) = self.tile_literal_u64(object) {
-            return Some((base, 0, 0, 0));
+            return Some(TileAffine {
+                base,
+                ..TileAffine::default()
+            });
         }
 
         let [m] = self.in_edges(object) else {
@@ -801,14 +921,25 @@ impl CategoryIr {
         let rhs = self.pair_slot_source(morph.source, 1)?;
         match morph.op {
             Operation::Add => {
-                let x = self.tile_affine(lhs, fold_source, fold_input, fold_captures, i, lane)?;
-                let y = self.tile_affine(rhs, fold_source, fold_input, fold_captures, i, lane)?;
-                Some((
-                    x.0.checked_add(y.0)?,
-                    x.1.checked_add(y.1)?,
-                    x.2.checked_add(y.2)?,
-                    x.3.checked_add(y.3)?,
-                ))
+                let x = self.tile_affine(
+                    lhs,
+                    fold_source,
+                    fold_input,
+                    fold_captures,
+                    i,
+                    lane,
+                    ksplit_axes,
+                )?;
+                let y = self.tile_affine(
+                    rhs,
+                    fold_source,
+                    fold_input,
+                    fold_captures,
+                    i,
+                    lane,
+                    ksplit_axes,
+                )?;
+                x.add(y)
             }
             Operation::Mul => {
                 let (scale, value) = if let Some(scale) = self.tile_literal_u64(lhs) {
@@ -816,14 +947,16 @@ impl CategoryIr {
                 } else {
                     (self.tile_literal_u64(rhs)?, lhs)
                 };
-                let value =
-                    self.tile_affine(value, fold_source, fold_input, fold_captures, i, lane)?;
-                Some((
-                    value.0.checked_mul(scale)?,
-                    value.1.checked_mul(scale)?,
-                    value.2.checked_mul(scale)?,
-                    value.3.checked_mul(scale)?,
-                ))
+                let value = self.tile_affine(
+                    value,
+                    fold_source,
+                    fold_input,
+                    fold_captures,
+                    i,
+                    lane,
+                    ksplit_axes,
+                )?;
+                value.scale(scale)
             }
             _ => None,
         }

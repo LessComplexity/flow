@@ -679,25 +679,203 @@ fn tile_contract_flags_are_opt_in() {
 fn golden_tile_map_shape_1d() {
     let ir = flow_rewrite::rewrite(lower_src(TILE_FIR_SRC)).ir;
     let tiled = emit(&ir).unwrap();
-    let tiled_fn = function_containing(&tiled, " = alloca [16 x float]");
+    let tiled_fn = function_containing(&tiled, " = alloca [64 x float]");
+    // The S28 window rung: TI=4 register blocks over the lane axis, so the
+    // accumulator is one flat entry-block scratch of TI×TJ elems (subrow r at
+    // r*16 + lane) — the rung-2 placement, one row deep.
     assert!(
         tiled_fn
             .lines()
             .any(|line| line.trim_start().starts_with("%s")
-                && line.contains(" = alloca [16 x float]")),
-        "FIR tile accumulator must be an entry-block scratch alloca:\n{tiled_fn}"
+                && line.contains(" = alloca [64 x float]")),
+        "FIR tile accumulator must be one flat [TI=4 x TJ=16] entry-block scratch alloca:\n{tiled_fn}"
     );
     assert!(
         !tiled_fn.contains(" = call float @fn"),
         "tiled FIR map must not call its per-sample body:\n{tiled_fn}"
     );
+    // Full blocks step TI·TJ = 64 lanes (`jb + 64 <= hi`), entered from the
+    // task window lo — no row loop, no [0, C) clip (rows == 1 makes the task
+    // range the whole window).
     assert!(
-        tiled_fn.contains(" = udiv i64 %lo, 16")
-            && tiled_fn.contains(" = add i64 %hi, 15")
-            && tiled_fn.contains(" = udiv i64 %t"),
-        "FIR tile nest must retain the generic row loop with i_hi=1:\n{tiled_fn}"
+        !tiled_fn.contains(" = udiv i64 %lo, 16") && !tiled_fn.contains(" = add i64 %hi, 15"),
+        "window nest must drop the collapsed row loop:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn
+            .lines()
+            .filter(|line| line.contains(" = add i64 ") && line.trim_end().ends_with(", 64"))
+            .count(),
+        1,
+        "full blocks must step TI·TJ = 64:\n{tiled_fn}"
+    );
+    // The block body: per-subrow seed splat (4), the ×2-unrolled k body (K=4
+    // even: two steps of 4 subrow lane loops), the single-k tail step (4),
+    // and per-subrow stores (4) — every lane loop constant-bounded by TJ.
+    // The TI=1 remainder adds one constant-TJ main trio (seed + k-lane +
+    // store = 3).
+    assert_eq!(
+        tiled_fn
+            .lines()
+            .filter(|line| {
+                let line = line.trim();
+                line.contains(" = icmp uge i64 %t") && line.ends_with(", 16")
+            })
+            .count(),
+        4 + 2 * 4 + 4 + 4 + 3,
+        "block + remainder-main lane loops must be bounded by the constant TJ=16:\n{tiled_fn}"
+    );
+    // ONE runtime `tj = min(remaining, TJ)` select in the whole nest — the
+    // TI=1 remainder tile. Full blocks never select.
+    assert_eq!(
+        tiled_fn
+            .lines()
+            .filter(|line| {
+                let line = line.trim();
+                line.contains(" = select i1 ") && line.ends_with(", i64 16")
+            })
+            .count(),
+        1,
+        "only the TI=1 remainder tile may clip to tj = min(remaining, TJ):\n{tiled_fn}"
+    );
+    // The shared read: ONE scalar w[k] load per emitted k step (three in the
+    // block path — the ×2 pair plus the tail step — two in the TI=1
+    // remainder), never one per (k, subrow): 5 w-load GEPs feed 14 FMA lane
+    // loops (3 block steps × TI=4 subrows + 2 remainder k loops).
+    assert_eq!(
+        tiled_fn.matches("getelementptr [4 x float]").count(),
+        5,
+        "one scalar a load per k step, shared across the TI subrows:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn.matches(" = fmul float ").count(),
+        14,
+        "3 block k-steps x TI=4 subrows + 2 remainder k-loops of FMAs:\n{tiled_fn}"
+    );
+    // The block k loop is ×2-unrolled (K=4 even) in the trio's shape: one
+    // `kk + 2` step. The TI=1 remainder keeps the plain single-k loop (two
+    // `k >= 4` heads — main tile and remainder tile).
+    assert_eq!(
+        tiled_fn
+            .lines()
+            .filter(|line| line.contains(" = add i64 ") && line.ends_with(", 2"))
+            .count(),
+        1,
+        "the block k loop must unroll x2:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn
+            .lines()
+            .filter(|line| {
+                let line = line.trim();
+                line.contains(" = icmp uge i64 %t") && line.ends_with(", 4")
+            })
+            .count(),
+        2,
+        "the TI=1 remainder must keep the plain single-k loop:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn.matches(" = icmp ule i64 ").count(),
+        2,
+        "the full-block guard plus the TI=1 main-tile guard:\n{tiled_fn}"
     );
     insta::assert_snapshot!("tile_nest_shape_1d", tiled_fn);
+}
+
+const TILE_CONV_SRC: &str = r#"
+fn main() {
+    324 -> iota -> ti;
+    ti -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> img;
+    9 -> iota -> kr;
+    kr -> map { t -> (t * 5 + 3) % 31 - 15 -> widen_f32 } -> w;
+    256 -> iota -> ts;
+    ts -> map { t ->
+        t / 16 -> i;
+        t % 16 -> j;
+        (0.0, kr) -> fold { acc, k -> acc + w[k] * img[(i + k / 3) * 18 + j + k % 3] }
+    } -> y;
+    y[0] -> println;
+    y[255] -> println;
+}
+"#;
+
+#[test]
+fn golden_tile_map_shape_conv() {
+    let ir = flow_rewrite::rewrite(lower_src(TILE_CONV_SRC)).ir;
+    let tiled = emit(&ir).unwrap();
+    let tiled_fn = function_containing(&tiled, " = alloca [16 x float]");
+    // The S28 conv rung: the k-split record cashed as an unrolled (kq, kr)
+    // tap nest — one flat TJ-lane accumulator per (row, j-tile).
+    assert!(
+        tiled_fn
+            .lines()
+            .any(|line| line.trim_start().starts_with("%s")
+                && line.contains(" = alloca [16 x float]")),
+        "conv tile accumulator must be an entry-block [TJ=16] scratch alloca:\n{tiled_fn}"
+    );
+    assert!(
+        !tiled_fn.contains(" = call float @fn"),
+        "tiled conv map must not call its per-cell body:\n{tiled_fn}"
+    );
+    // The S27c priced refusal, cashed: the fold body's k/3, k%3 become
+    // compile-time tap offsets — ZERO div/mod in the tile nest.
+    assert!(
+        !tiled_fn.contains("sdiv") && !tiled_fn.contains("srem"),
+        "conv tile nest must contain no sdiv/srem (the taps constant-fold):\n{tiled_fn}"
+    );
+    // K=9 taps fully unrolled per j-tile: 9 constant-index w loads and 9 FMA
+    // lane loops in each of the main and remainder tile bodies.
+    assert_eq!(
+        tiled_fn.matches("getelementptr [9 x float]").count(),
+        18,
+        "9 constant-index w[k] loads per tile body (main + remainder):\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn.matches(" = fmul float ").count(),
+        18,
+        "9 unrolled tap FMAs per tile body:\n{tiled_fn}"
+    );
+    // The tap offsets (cq·kq + cr·kr) fold to constants: offsets 18..38 by
+    // kq row appear once per tile body (offset 0 needs no add, 1/2 collide
+    // with lane arithmetic, so pin the unambiguous row offsets).
+    for off in ["18", "19", "20", "36", "37", "38"] {
+        assert_eq!(
+            tiled_fn
+                .lines()
+                .filter(|line| {
+                    line.contains(" = add i64 ") && line.trim_end().ends_with(&format!(", {off}"))
+                })
+                .count(),
+            2,
+            "tap offset {off} must appear as a constant add in each tile body:\n{tiled_fn}"
+        );
+    }
+    // Constant-TJ lane loops everywhere on the main path: seed + 9 taps +
+    // store = 11 per main tile body; the remainder tile body alone is
+    // bounded by the runtime `tj` (one select in the whole nest).
+    assert_eq!(
+        tiled_fn
+            .lines()
+            .filter(|line| {
+                let line = line.trim();
+                line.contains(" = icmp uge i64 %t") && line.ends_with(", 16")
+            })
+            .count(),
+        11,
+        "main-path lane loops must be bounded by the constant TJ=16:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn
+            .lines()
+            .filter(|line| {
+                let line = line.trim();
+                line.contains(" = select i1 ") && line.ends_with(", i64 16")
+            })
+            .count(),
+        1,
+        "only the remainder tile may clip to tj = min(remaining, TJ):\n{tiled_fn}"
+    );
+    insta::assert_snapshot!("tile_nest_shape_conv", tiled_fn);
 }
 
 #[test]

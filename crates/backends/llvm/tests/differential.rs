@@ -763,10 +763,12 @@ fn main() {
     };
     let tiled = flow_backend_llvm::emit(&ir).unwrap();
     assert!(
-        tiled.contains(" = alloca [16 x float]")
-            && tiled.contains(" = udiv i64 %lo, 64")
-            && tiled.contains(" = add i64 %hi, 63"),
-        "split task must contain the collapsed one-row tile nest:\n{tiled}"
+        tiled.contains(" = alloca [64 x float]")
+            && tiled
+                .lines()
+                .any(|line| line.contains(" = add i64 ") && line.trim_end().ends_with(", 64"))
+            && !tiled.contains(" = udiv i64 %lo, 64"),
+        "split task must contain the S28 window nest: TI blocks stepping TI·TJ over the lane axis:\n{tiled}"
     );
     let untiled = flow_backend_llvm::emit_with_opts(
         &ir,
@@ -793,6 +795,251 @@ fn main() {
             tiled_run.0, untiled_run.0,
             "tiled_fir/{opt}: tiled/untiled stdout"
         );
+    }
+}
+
+/// S28 window-rung remainder coverage: N=86 = TI·TJ + TJ + 6 — one full TI
+/// block, then the TI=1 remainder region runs one constant-TJ main tile plus
+/// the runtime `tj = 6` tile. K=7 (odd) exercises the block's plain single-k
+/// loop (the ×2 unroll gate is `K % 2 == 0`).
+#[test]
+fn differential_tiled_fir_remainder() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn main() {
+    92 -> iota -> tx;
+    tx -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> x;
+    7 -> iota -> kr;
+    kr -> map { t -> (t * 5 + 3) % 31 - 15 -> widen_f32 } -> w;
+    86 -> iota -> ts;
+    ts -> map { t ->
+        (0.0, kr) -> fold { acc, k -> acc + w[k] * x[t + k] }
+    } -> y;
+    y[0] -> println;
+    y[64] -> println;
+    y[85] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("FIR remainder oracle completes") else {
+        panic!("FIR remainder oracle must complete");
+    };
+    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    assert!(
+        tiled.contains(" = alloca [64 x float]")
+            && tiled
+                .lines()
+                .any(|line| line.contains(" = add i64 ") && line.trim_end().ends_with(", 64")),
+        "remainder case must contain the window nest's TI·TJ block step:\n{tiled}"
+    );
+    let untiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    assert_tiled_parity(&clang, &tiled, &untiled, &want, "tiled_fir_remainder");
+}
+
+/// S28 window-rung split coverage: N=10000 forces >1 split slice at the
+/// default GRAIN=4096 (the harness has no grain knob; FLOW_PAR pins the pool
+/// size, and `slice_ranges` divides the range evenly across slices — not at
+/// GRAIN boundaries). FLOW_PAR=2 gives [0,5000)+[5000,10000): 5000 % 64 = 8,
+/// a mid-block boundary — the second slice's window enters the block loop at
+/// jb=lo and exits through the TI=1 remainder. FLOW_PAR=1 is the single full
+/// range: 156 full blocks plus a constant-TJ remainder tile.
+#[test]
+fn differential_tiled_fir_split() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn main() {
+    10007 -> iota -> tx;
+    tx -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> x;
+    8 -> iota -> kr;
+    kr -> map { t -> (t * 5 + 3) % 31 - 15 -> widen_f32 } -> w;
+    10000 -> iota -> ts;
+    ts -> map { t ->
+        (0.0, kr) -> fold { acc, k -> acc + w[k] * x[t + k] }
+    } -> y;
+    y[0] -> println;
+    y[5000] -> println;
+    y[9999] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("FIR split oracle completes") else {
+        panic!("FIR split oracle must complete");
+    };
+    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    assert!(
+        tiled.contains(" = alloca [64 x float]"),
+        "split case must contain the window nest:\n{tiled}"
+    );
+    let untiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+
+    for opt in ["-O0", "-O2"] {
+        let tag_o = format!("tiled_fir_split/{opt}");
+        let (_tiled_dir, tiled_exe) = compile_exe(&clang, &tiled, &format!("{tag_o}/tiled"), opt);
+        let (_untiled_dir, untiled_exe) =
+            compile_exe(&clang, &untiled, &format!("{tag_o}/untiled"), opt);
+        for par in [None, Some("1"), Some("2")] {
+            let tag_p = format!("{tag_o}/FLOW_PAR={}", par.unwrap_or("default"));
+            let tiled_run = run_exe(&tiled_exe, TIMEOUT_SECS, par)
+                .unwrap_or_else(|| panic!("{tag_p}: tiled run timed out"));
+            let untiled_run = run_exe(&untiled_exe, TIMEOUT_SECS, par)
+                .unwrap_or_else(|| panic!("{tag_p}: untiled run timed out"));
+            assert_eq!(tiled_run.1, 0, "{tag_p}: tiled exit code");
+            assert_eq!(untiled_run.1, 0, "{tag_p}: untiled exit code");
+            assert_eq!(
+                String::from_utf8_lossy(&tiled_run.0),
+                want,
+                "{tag_p}: oracle stdout"
+            );
+            assert_eq!(tiled_run.0, untiled_run.0, "{tag_p}: tiled/untiled stdout");
+        }
+    }
+}
+
+/// The conv2d 3×3 shape at output side `side` (img side+2): y[i,j] =
+/// Σₖ w[k]·img[(i + k÷3)·(side+2) + j + k%3] — the fold body's `k/3`, `k%3`
+/// is the k-split record the S28 conv rung cashes.
+fn conv2d_src(side: u64) -> String {
+    let img = (side + 2) * (side + 2);
+    let n = side * side;
+    let stride = side + 2;
+    let mid = n / 2 - 1;
+    let last = n - 1;
+    format!(
+        r#"
+fn main() {{
+    {img} -> iota -> ti;
+    ti -> map {{ t -> (t * 7 + 13) % 101 - 50 -> widen_f32 }} -> img;
+    9 -> iota -> kr;
+    kr -> map {{ t -> (t * 5 + 3) % 31 - 15 -> widen_f32 }} -> w;
+    {n} -> iota -> ts;
+    ts -> map {{ t ->
+        t / {side} -> i;
+        t % {side} -> j;
+        (0.0, kr) -> fold {{ acc, k -> acc + w[k] * img[(i + k / 3) * {stride} + j + k % 3] }}
+    }} -> y;
+    y[0] -> println;
+    y[{mid}] -> println;
+    y[{last}] -> println;
+}}
+"#
+    )
+}
+
+fn emit_tiled_and_untiled(ir: &CategoryIr) -> (String, String) {
+    let tiled = flow_backend_llvm::emit(ir).unwrap();
+    let untiled = flow_backend_llvm::emit_with_opts(
+        ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    (tiled, untiled)
+}
+
+/// S28 conv rung coverage: side 16 has C % TJ == 0 — one constant-TJ main
+/// tile per row, no remainder — the unrolled 9-tap micro-kernel, byte-equal
+/// vs the untiled emission and the interp oracle at -O0 and -O2.
+#[test]
+fn differential_tiled_conv2d() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let ir = rewrite(lower_src(&conv2d_src(16))).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("conv2d oracle completes") else {
+        panic!("conv2d oracle must complete");
+    };
+    let (tiled, untiled) = emit_tiled_and_untiled(&ir);
+    assert!(
+        tiled.contains(" = alloca [16 x float]"),
+        "conv2d must tile into the unrolled tap nest:\n{tiled}"
+    );
+    assert_tiled_parity(&clang, &tiled, &untiled, &want, "tiled_conv2d");
+}
+
+/// side 20: C % TJ != 0 — each row runs one constant-TJ main tile plus the
+/// runtime `tj = 4` remainder tile.
+#[test]
+fn differential_tiled_conv2d_remainder() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let ir = rewrite(lower_src(&conv2d_src(20))).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("conv2d remainder oracle completes")
+    else {
+        panic!("conv2d remainder oracle must complete");
+    };
+    let (tiled, untiled) = emit_tiled_and_untiled(&ir);
+    assert!(
+        tiled.contains(" = alloca [16 x float]"),
+        "conv2d remainder case must tile:\n{tiled}"
+    );
+    assert_tiled_parity(&clang, &tiled, &untiled, &want, "tiled_conv2d_remainder");
+}
+
+/// side 92: n = 8464 > 2·GRAIN, so the default pool cuts 3 slices, and
+/// `slice_ranges`' even division lands the boundaries mid-row at j=62 and
+/// j=31 (both % TJ ≠ 0 — mid-tile). FLOW_PAR=1 is the single full range;
+/// FLOW_PAR=2 cuts two slices at a row-aligned boundary.
+#[test]
+fn differential_tiled_conv2d_split() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let ir = rewrite(lower_src(&conv2d_src(92))).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("conv2d split oracle completes") else {
+        panic!("conv2d split oracle must complete");
+    };
+    let (tiled, untiled) = emit_tiled_and_untiled(&ir);
+    assert!(
+        tiled.contains(" = alloca [16 x float]"),
+        "conv2d split case must tile:\n{tiled}"
+    );
+
+    for opt in ["-O0", "-O2"] {
+        let tag_o = format!("tiled_conv2d_split/{opt}");
+        let (_tiled_dir, tiled_exe) = compile_exe(&clang, &tiled, &format!("{tag_o}/tiled"), opt);
+        let (_untiled_dir, untiled_exe) =
+            compile_exe(&clang, &untiled, &format!("{tag_o}/untiled"), opt);
+        for par in [None, Some("1"), Some("2")] {
+            let tag_p = format!("{tag_o}/FLOW_PAR={}", par.unwrap_or("default"));
+            let tiled_run = run_exe(&tiled_exe, TIMEOUT_SECS, par)
+                .unwrap_or_else(|| panic!("{tag_p}: tiled run timed out"));
+            let untiled_run = run_exe(&untiled_exe, TIMEOUT_SECS, par)
+                .unwrap_or_else(|| panic!("{tag_p}: untiled run timed out"));
+            assert_eq!(tiled_run.1, 0, "{tag_p}: tiled exit code");
+            assert_eq!(untiled_run.1, 0, "{tag_p}: untiled exit code");
+            assert_eq!(
+                String::from_utf8_lossy(&tiled_run.0),
+                want,
+                "{tag_p}: oracle stdout"
+            );
+            assert_eq!(tiled_run.0, untiled_run.0, "{tag_p}: tiled/untiled stdout");
+        }
     }
 }
 

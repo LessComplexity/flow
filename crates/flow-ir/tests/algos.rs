@@ -1,8 +1,8 @@
 //! SCC / topo / loop-structure / deep-graph tests (DESIGN §16 item 4).
 
 use flow_ir::{
-    Dest, FuncKind, IrBuilder, MorphismId, Operation, PathPlan, SourceLoc, TaskKind, TileRead,
-    TileSite, Ty, Value, WaitEntry, validate,
+    Dest, FuncKind, IrBuilder, MorphismId, Operation, PathPlan, SourceLoc, TaskKind, TileKSplit,
+    TileRead, TileSite, Ty, Value, WaitEntry, validate,
 };
 use proptest::prelude::*;
 
@@ -1604,6 +1604,7 @@ fn tile_matmul_site_recognized() {
                 ci: 512,
                 ck: 1,
                 clane: 0,
+                ksplit: None,
             },
             b: TileRead {
                 slot: 2,
@@ -1611,6 +1612,7 @@ fn tile_matmul_site_recognized() {
                 ci: 0,
                 ck: 512,
                 clane: 1,
+                ksplit: None,
             },
             seed: Value::F64(0.0),
             elem: Ty::f64(),
@@ -1793,6 +1795,7 @@ fn tile_fir_site_recognized() {
                 ci: 0,
                 ck: 1,
                 clane: 0,
+                ksplit: None,
             },
             b: TileRead {
                 slot: 1,
@@ -1800,6 +1803,7 @@ fn tile_fir_site_recognized() {
                 ci: 0,
                 ck: 1,
                 clane: 1,
+                ksplit: None,
             },
             seed: Value::F32(0.0),
             elem: Ty::f32(),
@@ -1909,6 +1913,249 @@ fn tile_matmul_f32_site_recognized() {
     let site = plan.sites.iter().next().unwrap().1;
     assert_eq!(site.elem, Ty::f32());
     assert_eq!(site.seed, Value::F32(0.0));
+}
+
+// --- tile_plan: fold-body derived axes (conv2d k÷div / k%div) ----------------
+
+#[derive(Clone, Copy)]
+struct Conv2dFixture {
+    /// Output side; rows == c == side, mapped == side².
+    side: u64,
+    /// Window side; the fold body's `Div` divisor.
+    div: u64,
+    /// The fold body's `Mod` divisor (== div when the pair matches).
+    mod_div: u64,
+    /// Fold depth k (== div² when the window is rectangular).
+    depth: u64,
+    /// Also add raw `k` to the img address (mixed raw/derived refusal pin).
+    mix_raw_k: bool,
+}
+
+fn tile_conv2d_fixture_with(
+    cfg: Conv2dFixture,
+) -> (flow_ir::CategoryIr, flow_ir::FuncId, flow_ir::FuncId) {
+    let elem = Ty::f32();
+    let stride = cfg.side + cfg.div - 1;
+    let max_kq = (cfg.depth - 1) / cfg.div;
+    let max_addr = (cfg.side - 1 + max_kq) * stride
+        + (cfg.side - 1)
+        + (cfg.mod_div - 1)
+        + if cfg.mix_raw_k { cfg.depth - 1 } else { 0 };
+    let img_ty = tile_array(&elem, max_addr + 1);
+    let w_ty = tile_array(&elem, cfg.depth);
+    let k_ty = i32_arr(cfg.depth);
+
+    let mut b = IrBuilder::new();
+    let dot = b
+        .declare(
+            FuncKind::FoldBody,
+            "tile_conv_dot",
+            Ty::Tuple(vec![
+                w_ty.clone(),
+                Ty::i32(),
+                img_ty.clone(),
+                Ty::i32(),
+                elem.clone(),
+                Ty::i32(),
+            ]),
+            elem.clone(),
+            L,
+        )
+        .unwrap();
+    {
+        let mut fb = b.build_fn(dot).unwrap();
+        let input = fb.input();
+        let w = fb.proj(input, 0, Dest::Fresh(None), L).unwrap();
+        let i = fb.proj(input, 1, Dest::Fresh(None), L).unwrap();
+        let img = fb.proj(input, 2, Dest::Fresh(None), L).unwrap();
+        let j = fb.proj(input, 3, Dest::Fresh(None), L).unwrap();
+        let acc = fb.proj(input, 4, Dest::Fresh(None), L).unwrap();
+        let kk = fb.proj(input, 5, Dest::Fresh(None), L).unwrap();
+        let div_c = fb.constant(tile_count(cfg.div), L).unwrap();
+        let mod_c = fb.constant(tile_count(cfg.mod_div), L).unwrap();
+        let stride_c = fb.constant(tile_count(stride), L).unwrap();
+        let kq = fb
+            .binop(Operation::Div, kk, div_c, Dest::Fresh(None), L)
+            .unwrap();
+        let kr = fb
+            .binop(Operation::Mod, kk, mod_c, Dest::Fresh(None), L)
+            .unwrap();
+        let i_kq = fb
+            .binop(Operation::Add, i, kq, Dest::Fresh(None), L)
+            .unwrap();
+        let row = fb
+            .binop(Operation::Mul, i_kq, stride_c, Dest::Fresh(None), L)
+            .unwrap();
+        let row_j = fb
+            .binop(Operation::Add, row, j, Dest::Fresh(None), L)
+            .unwrap();
+        let addr = fb
+            .binop(Operation::Add, row_j, kr, Dest::Fresh(None), L)
+            .unwrap();
+        let addr = if cfg.mix_raw_k {
+            fb.binop(Operation::Add, addr, kk, Dest::Fresh(None), L)
+                .unwrap()
+        } else {
+            addr
+        };
+        let x = fb.index(img, addr, Dest::Fresh(None), L).unwrap();
+        let w_v = fb.index(w, kk, Dest::Fresh(None), L).unwrap();
+        let product = fb
+            .binop(Operation::Mul, w_v, x, Dest::Fresh(None), L)
+            .unwrap();
+        fb.binop(Operation::Add, acc, product, Dest::Ret { slot: None }, L)
+            .unwrap();
+        fb.finish().unwrap();
+    }
+
+    let cell = b
+        .declare(
+            FuncKind::MapBody,
+            "tile_conv_cell",
+            Ty::Tuple(vec![k_ty.clone(), w_ty.clone(), img_ty.clone(), Ty::i32()]),
+            elem.clone(),
+            L,
+        )
+        .unwrap();
+    {
+        let mut fb = b.build_fn(cell).unwrap();
+        let input = fb.input();
+        let krange = fb.proj(input, 0, Dest::Fresh(None), L).unwrap();
+        let w = fb.proj(input, 1, Dest::Fresh(None), L).unwrap();
+        let img = fb.proj(input, 2, Dest::Fresh(None), L).unwrap();
+        let t = fb.proj(input, 3, Dest::Fresh(None), L).unwrap();
+        let side_c = fb.constant(tile_count(cfg.side), L).unwrap();
+        let i = fb
+            .binop(Operation::Div, t, side_c, Dest::Fresh(None), L)
+            .unwrap();
+        let j = fb
+            .binop(Operation::Mod, t, side_c, Dest::Fresh(None), L)
+            .unwrap();
+        let seed = fb.constant(Value::F32(0.0), L).unwrap();
+        fb.fold_captured(
+            dot,
+            &[w, i, img, j],
+            seed,
+            krange,
+            Dest::Ret { slot: None },
+            L,
+        )
+        .unwrap();
+        fb.finish().unwrap();
+    }
+
+    let mapped_size = cfg.side * cfg.side;
+    let main = b
+        .declare(
+            FuncKind::Named,
+            "tile_conv_main",
+            Ty::Unit,
+            tile_array(&elem, mapped_size),
+            L,
+        )
+        .unwrap();
+    {
+        let mut fb = b.build_fn(main).unwrap();
+        let one = fb.constant(Value::F32(1.0), L).unwrap();
+        let w_count = fb.constant(tile_count(cfg.depth), L).unwrap();
+        let w = fb.fill(one, w_count, Dest::Fresh(None), L).unwrap();
+        let img_count = fb.constant(tile_count(max_addr + 1), L).unwrap();
+        let img = fb.fill(one, img_count, Dest::Fresh(None), L).unwrap();
+        let k_count = fb.constant(tile_count(cfg.depth), L).unwrap();
+        let krange = fb.iota(k_count, Dest::Fresh(None), L).unwrap();
+        let mapped_count = fb.constant(tile_count(mapped_size), L).unwrap();
+        let mapped = fb.iota(mapped_count, Dest::Fresh(None), L).unwrap();
+        fb.map_captured(cell, &[krange, w, img], mapped, Dest::Ret { slot: None }, L)
+            .unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(main).unwrap();
+    assert!(validate(&ir).is_empty(), "{:?}", validate(&ir));
+    (ir, main, dot)
+}
+
+#[test]
+fn tile_conv2d_site_recognized() {
+    let (ir, main, _) = tile_conv2d_fixture_with(Conv2dFixture {
+        side: 16,
+        div: 3,
+        mod_div: 3,
+        depth: 9,
+        mix_raw_k: false,
+    });
+    let plan = ir.tile_plan(main);
+    assert_eq!(plan.sites.len(), 1);
+    assert_eq!(
+        plan.sites.iter().next().unwrap().1,
+        &TileSite {
+            rows: 16,
+            c: 16,
+            k: 9,
+            a: TileRead {
+                slot: 1,
+                base: 0,
+                ci: 0,
+                ck: 1,
+                clane: 0,
+                ksplit: None,
+            },
+            b: TileRead {
+                slot: 2,
+                base: 0,
+                ci: 18,
+                ck: 0,
+                clane: 1,
+                ksplit: Some(TileKSplit {
+                    div: 3,
+                    cq: 18,
+                    cr: 1,
+                }),
+            },
+            seed: Value::F32(0.0),
+            elem: Ty::f32(),
+            mul_a_first: true,
+            add_acc_first: true,
+        }
+    );
+}
+
+#[test]
+fn tile_refuses_conv2d_non_rectangular_window() {
+    // k/3, k%3 present but depth 10 is not divisible by 3: the pair stays
+    // unbound and the raw Div/Mod refuse the site.
+    let (ir, main, _) = tile_conv2d_fixture_with(Conv2dFixture {
+        side: 16,
+        div: 3,
+        mod_div: 3,
+        depth: 10,
+        mix_raw_k: false,
+    });
+    assert!(ir.tile_plan(main).sites.is_empty());
+}
+
+#[test]
+fn tile_refuses_conv2d_divisor_mismatch() {
+    let (ir, main, _) = tile_conv2d_fixture_with(Conv2dFixture {
+        side: 16,
+        div: 3,
+        mod_div: 4,
+        depth: 9,
+        mix_raw_k: false,
+    });
+    assert!(ir.tile_plan(main).sites.is_empty());
+}
+
+#[test]
+fn tile_refuses_conv2d_mixed_raw_and_derived_k() {
+    // addr affine in raw k AND in (k÷3, k%3): mixed forms refuse (v1).
+    let (ir, main, _) = tile_conv2d_fixture_with(Conv2dFixture {
+        side: 16,
+        div: 3,
+        mod_div: 3,
+        depth: 9,
+        mix_raw_k: true,
+    });
+    assert!(ir.tile_plan(main).sites.is_empty());
 }
 
 // --- path_plan (parallel task DAG + host-spine checkpoints) ------------------
