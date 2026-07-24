@@ -1,6 +1,6 @@
 # Component: rewrite — DESIGN
 
-Written: 2026-07-17 · Session 12 · Status of this doc: increment 1 (P4) — authoritative for `crates/flow-rewrite`
+Written: 2026-07-17 · Session 12 · Updated: 2026-07-24 · S27b loop lifting — authoritative for `crates/flow-rewrite`
 Spec authority: category-ir.md §9 (optimization framework — layers, §9.6 verification) + §6.1.1 (map fusion = the `List` functor law) > ADR-0013 / ir/DESIGN (§5.1 typing table, §7 loops D7, §8 tokens I4/I4b, §11 validate, §17 "seal-then-rebuild is the v1 stopgap") > interp/DESIGN (the oracle: fueled `run`/`eval_call`, wrapping integer arithmetic, traps, guard-first loops, M1 canonical-loop scope) > check/DESIGN (pipeline position: check runs **pre-rewrite**; rewrite must preserve what check certified) > HANDOFF §5.7 (layer directories), §8 P4 DoD, §9 (random-program generation lives here).
 
 ## Categorical model (Dat + Trn)
@@ -11,7 +11,7 @@ Spec authority: category-ir.md §9 (optimization framework — layers, §9.6 ver
 
 ### Why (one paragraph)
 
-Modeling the rewriter categorically buys three things. (1) **Soundness is one stated equation, not a vibe**: every pass must satisfy the oracle-equality composition rule R1 below (`run ∘ rw ≈ run`), which is C-interp-2's `eval ∘ r ≅ eval` made precise — including what `≈` does with traps, fuel, and divergence, the three places a naive "same output" claim is wrong. (2) **A pass is a plan plus one shared replay functor**: the sealed IR is immutable (ir §17), so every pass factors as *analysis* (`CategoryIr → RewritePlan`, pure, read-only) followed by *replay* (`CategoryIr × RewritePlan → CategoryIr`, executed through the public `IrBuilder`). Well-formedness of the output is then **by construction** — the builder cannot emit an ill-formed graph — and `validate()` is a redundant independent check, exactly the ir §11 "P4 runs it before/after" posture. One replayer, four plans: the §5 one-seam rule. (3) **The layer taxonomy is the correctness budget** (category-ir §9.4 table): map fusion needs only the `List` functor law; const folding needs only per-op axioms; DCE/CSE need only graph properties. Each pass states which law it rides and takes nothing else for granted.
+Modeling the rewriter categorically buys three things. (1) **Soundness is one stated equation, not a vibe**: every pass must satisfy the oracle-equality composition rule R1 below (`run ∘ rw ≈ run`), which is C-interp-2's `eval ∘ r ≅ eval` made precise — including what `≈` does with traps, fuel, and divergence, the three places a naive "same output" claim is wrong. (2) **A pass is a plan plus one shared replay functor**: the sealed IR is immutable (ir §17), so every pass factors as *analysis* (`CategoryIr → RewritePlan`, pure, read-only) followed by *replay* (`CategoryIr × RewritePlan → CategoryIr`, executed through the public `IrBuilder`). Well-formedness of the output is then **by construction** — the builder cannot emit an ill-formed graph — and `validate()` is a redundant independent check, exactly the ir §11 "P4 runs it before/after" posture. One replayer, six plan channels: the §5 one-seam rule. (3) **The layer taxonomy is the correctness budget** (category-ir §9.4 table): map fusion needs only the `List` functor law; loop lifting needs the ratified guarded-trace factorization; const folding needs only per-op axioms; DCE/CSE need only graph properties.
 
 ### Core category
 
@@ -23,8 +23,10 @@ graph TB
     Cf["constify: ObjectId → Value"]
     Dr["drop: ObjectId-set"]
     Fu["fuse: MorphismId → FusionSpec"]
+    In["inline: MorphismId-set"]
+    Li["lift: ObjectId → LiftSpec"]
     Rep["RewriteReport"]
-    Pid["PassId<br/>{ConstFold, Cse, Dce, MapFusion}"]
+    Pid["PassId<br/>{Inline, LiftLoops, ConstFold, Cse, Dce, MapFusion}"]
     Res["RewriteResult"]
 
     Res -->|"ir"| CIr
@@ -33,6 +35,8 @@ graph TB
     Plan -->|"constify (partial)"| Cf
     Plan -->|"drop"| Dr
     Plan -->|"fuse (partial)"| Fu
+    Plan -->|"inline"| In
+    Plan -->|"lift (partial)"| Li
     Rep -->|"applied: (PassId × ℕ)*"| Pid
 
     style CIr fill:#4f8cf7,color:#fff
@@ -43,6 +47,8 @@ graph TB
     style Cf fill:#f7c04f,color:#000
     style Dr fill:#f7c04f,color:#000
     style Fu fill:#f7c04f,color:#000
+    style In fill:#f7c04f,color:#000
+    style Li fill:#f7c04f,color:#000
     style Pid fill:#cf7fcf,color:#fff
 ```
 
@@ -54,6 +60,8 @@ graph TB
 | `constify?` | `ObjectId → flow_ir::Value` | Partial | the object is re-materialized as a `Constant` with this value; its defining cone is not replayed for it (const fold) |
 | `drop` | `RewritePlan → ObjectId-set` | Total | objects (with their defining morphisms) not replayed at all (DCE). Plan-consistency: nothing live references a dropped object |
 | `fuse?` | `MorphismId → FusionSpec` | Partial | a `Map` edge replaced by a fused `Map` with a synthesized composed body (layer 1) |
+| `inline` | `RewritePlan → MorphismId-set` | Total | selected `Call` sites replay as the callee body with Return redirection |
+| `lift?` | `ObjectId(loop merge) → LiftSpec` | Partial | a canonical loop SCC becomes `Iota(K)` plus a synthesized captured `Map`/`Fold` body |
 | `applied` | `RewriteReport → (PassId × ℕ)*` | Total | the §9.6 diagnostic log: which law fired, how many times, per fixpoint round |
 | `ir` / `report` | `RewriteResult → …` | Total | the rewritten sealed graph + its log |
 
@@ -65,8 +73,10 @@ graph TB
 | `analyze_cse` | `CategoryIr → RewritePlan` | 4 — "same op + same source ⇒ same morphism" (category-ir §9.4) |
 | `analyze_dce` | `CategoryIr → RewritePlan` | 4 — graph liveness, **trap-conservative** (R4) |
 | `analyze_map_fusion` | `CategoryIr → RewritePlan` | 1 — `List` functor law `map g ∘ map f = map (g ∘ f)`, `map id = id` (§6.1.1) |
+| `analyze_inline` | `CategoryIr → RewritePlan` | structural substitution of loop-free callees, bounded by the recorded size policy |
+| `analyze_lift` | `CategoryIr → RewritePlan` | guarded-trace factorization R-LF/R-LM; exact v1 conditions in §4.1 |
 | `replay` | `CategoryIr × RewritePlan ⇀ CategoryIr` | the one graph constructor: full rebuild through `IrBuilder`; partial only on internal-error (surfaced as a bug, never user-facing) |
-| `rewrite` (driver) | `CategoryIr → RewriteResult` | fixpoint of the four passes, capped; `validate()` after every replay |
+| `rewrite` (driver) | `CategoryIr → RewriteResult` | capped fixpoint of `Inline → LiftLoops → ConstFold → Cse → Dce → MapFusion`; `validate()` after every replay |
 
 ### Composition rules (the implementation must preserve)
 
@@ -119,6 +129,7 @@ The builder exposes **typed primitives only** (no raw add-object/add-edge); comp
 | `LoopMerge` + routes + exits | the quartet | canonicity and per-merge layout are **delegated to `flow_ir::CategoryIr::loop_plan(f, merge)`** (ir §13, BL7 — the one source of truth; `is_canonical` gates on `loop_plan(...).is_some()` for every `loop_structure` merge, `replay` reads the same `LoopPlan` back). Replay init → `begin_loop` → in-SCC morphisms in body order (merge ↦ `merge_of(lh)`) → `loop_back(next_state', cond')` from the back route's slot feeders → `loop_exit(value', cond', dest)` from the exit route's slot feeders → `end_loop`. Route objects are never materialized. **Exit attribution (S12): by route-feeder membership in the specific merge's SCC (the interp driver's rule, now encapsulated in `loop_plan`) — never by reachability, which mis-attributed a downstream loop's exit to an upstream merge; two sequential canonical loops in one fn are canonical and rewritable** (pinned by `identity.rs::two_sequential_loops_rewrite_not_skipped`) |
 
 - **Id remap**: `SecondaryMap<ObjectId_old, ObjectId_new>`, built during the walk. `alias?` is resolved (transitively) *before* lookup; `constify?` short-circuits to a fresh `constant(v)`; `drop` objects are skipped.
+- `inline` redirects a selected call through the callee replay recipe. `lift` reconstructs the planned SCC as a captured collection op and marks the old merge/routes/SCC complete; both reuse the same remap and primitive emitter.
 - **Names and locs preserved** (`Dest::Fresh(name)`, original `loc`s) — Mermaid diffs stay readable; folded constants carry the folded morphism's `loc`.
 - **Function set**: `declare` every surviving fn first (declare-before-reference), then build each. Uncalled non-entry `Named` fns and unreferenced bodies are dropped (§3.1) — always sound: the oracle only evaluates called functions.
 - **Shared primitive-source products** (a product feeding both an explicit consumer and an internally-packing primitive) are validate-legal but not lower-emitted; the replayer handles them soundly by letting the primitive re-pack (one duplicate product; values identical). Recorded, not optimized.
@@ -179,12 +190,38 @@ One walk of `topo_order` per function; key = `(op discriminant + payload, resolv
 - **`map(id) → id`**: a `MapBody` whose body is exactly the identity (one `Output` edge param → Return) ⇒ `alias[map_target] = arr`; edge + body drop.
 - Layer 2 (naturality) ships as a **data table only** in `naturality.rs` — the four ir §17 `Zip`/`Enumerate` laws, marked `planned` — so the catalogue lives where §9.2 expects it without an unproven pass.
 
+### 4.1 Guarded-trace lifting — lift.rs
+
+`analyze_lift` consumes `CategoryIr::loop_plan`; it never re-derives SCC membership,
+routes, order, or product targets. Plans are keyed by the loop merge.
+
+- **R-LF:** exactly two carried components `(counter, acc)`; counter init `0`,
+  guard `counter < K`, step `counter + 1`, constant `K >= 1`; one attributed exit
+  carrying `acc`; no token in the SCC; accumulator advance is a pure cone over
+  `(acc, counter, invariants)`. Replay emits `Iota(K)` and a captured Fold seeded
+  by the original accumulator init. Fold item order `0..K-1` is the loop order.
+- **R-LM:** the other component is `c: [E; n]`; exactly one advance-phase
+  `Update(c, counter, v)`; the index is the counter object itself, `v` is pure and
+  c-free, `n == K`, and the exit carries c. Replay emits a captured Map over
+  `Iota(K)` and drops c's init edge because every cell is overwritten.
+- Any failed condition is an empty plan entry: non-constant/zero bounds, extra
+  carried state, effects/tokens, multiple Updates, non-identity index, unequal
+  length/bound, non-unit step, non-zero init, a c-dependent value cone, or any
+  unselected decide/advance work stay loops. Because replay retires the complete
+  SCC, every phase morphism must be either in the selected body cone or exact loop
+  scaffolding.
+
+Synthesized bodies clone safe pure invariant derivations down to parameter-projection
+capture boundaries, so affine structure stays visible to `tile_plan`. The selected
+cone root targets the body Return directly, matching fused-body synthesis and lower's
+canonical body shape.
+
 ## 5. The driver (driver.rs) + report
 
 ```rust
 pub fn rewrite(ir: CategoryIr) -> RewriteResult;                    // fixpoint, all passes
 pub fn rewrite_with(ir: CategoryIr, passes: &[PassId]) -> RewriteResult;   // tests / CLI
-pub enum PassId { ConstFold, Cse, Dce, MapFusion }
+pub enum PassId { Inline, LiftLoops, ConstFold, Cse, Dce, MapFusion }
 pub struct RewriteResult { pub ir: CategoryIr, pub report: RewriteReport }   // Debug only — CategoryIr is not Clone/PartialEq (as-built)
 pub struct RewriteReport { pub rounds: u32, pub applied: Vec<(PassId, u64)>, pub skipped_non_canonical: bool }
 ```
@@ -193,13 +230,13 @@ As-built (S12): `applied` holds **cumulative** counts per pass in first-fire ord
 
 **By-value intake** (`CategoryIr` is not `Clone`): a round whose plans are all empty returns the input graph *itself* — no rebuild, structurally untouched. **Non-canonical guard (R6, review F3):** if **any** function contains a loop shape outside the canonical quartet — a multi-merge SCC (the *lower-reachable* inner-exits-via-`ret` nested loop), or multiple backs/exits per merge — `rewrite` is the **identity on the whole graph**: it returns the input unchanged with `skipped_non_canonical = true`. The replayer never needs a multi-merge recipe; a generic-SCC replay path is a recorded later increment (§11). Differential harnesses run the oracle on the input *before* handing it to `rewrite` (by-value).
 
-Round = `ConstFold → Cse → Dce → MapFusion`, each pass replaying only if its plan is non-empty. Fixpoint: repeat until a full round applies nothing; cap `MAX_ROUNDS = 32` with a debug assertion on hitting it (no implemented rule grows the graph except fusion's body synthesis, which strictly decreases `Map`-edge count — termination is argued per-pass, capped anyway). `debug_assert!(validate(&out).is_empty())` after every replay; tests assert it unconditionally.
+Round = `Inline → LiftLoops → ConstFold → Cse → Dce → MapFusion`, each pass replaying only if its plan is non-empty. This order makes the matmul4 chain converge across rounds: lift the callee fold, inline the now-loop-free callee, then lift the caller map. Fixpoint: repeat until a full round applies nothing; cap `MAX_ROUNDS = 32`. `debug_assert!(validate(&out).is_empty())` after every replay; tests assert it unconditionally.
 
 ## 6. testgen — the random-program generator (HANDOFF §9: lives here, feeds P5–P7)
 
 `crates/flow-rewrite/tests/testgen/mod.rs` (shared test module, importable pattern per lower's `tests/common`). Two strategies over the **public builder** (well-typed by construction; seal always Ok):
 
-1. **Closed programs** — an entry `main` (effectful: token-threaded prints of every interesting intermediate; or pure) over a generated DAG of scalar/tuple/array ops: constants (small-int biased ±100 + edge values {0, 1, -1, MIN, MAX}), chains of `binop/unop/phi/pack/proj/index/zip/enumerate/map/fold/call`, helper fns (acyclic), canonical loops with **statically bounded** iteration (guard `i < K`, `K ≤ 64`, carried tuple state) — generated programs terminate; divergence is pinned by a separate hand-built case, not generated.
+1. **Closed programs** — an entry `main` (effectful: token-threaded prints of every interesting intermediate; or pure) over a generated DAG of scalar/tuple/array ops: constants (small-int biased ±100 + edge values {0, 1, -1, MIN, MAX}), chains of `binop/unop/phi/pack/proj/index/zip/enumerate/map/fold/call`, helper fns (acyclic), canonical loops with **statically bounded** iteration (guard `i < K`, `K ≤ 64`, carried tuple state), plus liftable `LiftFold` and identity-`Update` `LiftMap` shapes with `K >= 1` — generated programs terminate; divergence is pinned by a separate hand-built case, not generated.
 2. **Open functions** — pure `Named` fns with parameter input, exercised via `eval_call` with proptest-generated `RValue` args (random inputs × random programs).
 
 Modes: `default` (traps permitted — `Div/Mod/Index` with arbitrary feeders; the R1 relation absorbs them) and `trap_free` (divisors const-nonzero, indices const-in-bounds) — the mode P5–P7 differential harnesses will consume where backend trap behavior is not yet pinned. Budget: the acceptance `BUDGET = 100_000` scaled by generated loop bounds.
@@ -211,7 +248,7 @@ Modes: `default` (traps permitted — `Div/Mod/Index` with arbitrary feeders; th
 ## 8. Test plan (what P4-green means)
 
 1. **Identity-replay anchor**: `replay(ir, ∅)` on the **10 in-Core examples** (all of `examples/` except `vector.flow`, which is the out-of-Core generics sketch and does not lower — review F5) — validate-empty, interp `RunResult` byte-equal, Mermaid lint-clean.
-2. **The headline property (P4 DoD)**: ∀ generated program `p` (both strategies, both modes), ∀ pass subset: `run(rewrite(p)) ≈ run(p)` per R1; `validate` empty; plus **determinism** (same input ⇒ byte-identical output Mermaid) and **idempotence** (`rewrite(rewrite(p).ir)` applies nothing).
+2. **The headline property (P4 DoD)**: ∀ generated program `p` (both strategies, both modes), every pass including `Inline` and `LiftLoops`, and the full pipeline: `run(rewrite(p)) ≈ run(p)` per R1; `validate` empty; plus **determinism** (same input ⇒ byte-identical output Mermaid) and **idempotence** (`rewrite(rewrite(p).ir)` applies nothing).
 3. **Example goldens**: every example through `rewrite` → interp output unchanged (exact), rewritten Mermaid snapshot (insta, read against this DESIGN), report snapshot (which laws fired — e.g. lower's undeduped constants collapse under CSE).
 4. **Micro-goldens per rule** (before/after shape assertions): each §2 table row; each §3 exclusion (dead trapping `Div` **kept**; dead `Div` by const-2 removed; `-0.0`/`0.0` **not** CSE-merged; token-bearing never merged; cross-SCC never merged); `Phi`-select keeps branch cones; fusion micro (fused body shape, orphan bodies dropped, out-degree-2 intermediate **not** fused); `map(id)` elimination; uncalled-fn removal. **Plus the §1.2 pins**: `fn f() -> i32 { 2 + 3 }` and `x + 0 -> ret` survive `rewrite` *unchanged* and re-seal clean (P1); `x * 0 -> x` inside a loop is *not* constified (P2, the `LoopBackOutsideScc` repro); fusion skipped when either body contains a loop (P3); a dead pure bounded loop is *kept* (RW11); a hand-built multi-merge nested loop makes `rewrite` the whole-graph identity with `skipped_non_canonical` (RW8).
 5. **Adversarial R1 cases**: dead trapping code preserved end-to-end (`Trapped` before ⇒ `Trapped` after); a program with two independent traps stays `Trapped` under rebuild-order permutation; float-identity non-rewrites (`x+0.0` untouched); divergent hand-built loop stays `Diverged`.
@@ -222,7 +259,8 @@ Modes: `default` (traps permitted — `Div/Mod/Index` with arbitrary feeders; th
 ```
 crates/flow-rewrite/src/
   lib.rs             // rewrite, rewrite_with, PassId, RewriteResult, RewriteReport + curated pub use
-  plan.rs            // RewritePlan (alias/constify/drop/fuse), resolution helpers
+  plan.rs            // RewritePlan (alias/constify/drop/fuse/inline/lift), specs
+  lift.rs            // R-LF/R-LM analysis over flow-ir LoopPlan facts
   replay.rs          // the shared replayer (§1.1)
   driver.rs          // fixpoint rounds, report, validate assertion
   functor_laws.rs    // layer 1: map fusion, map(id)          (§4)
@@ -235,6 +273,7 @@ crates/flow-rewrite/tests/
   property.rs        // §8.2 headline + §8.5 adversarial
   golden.rs          // §8.3 example goldens
   micro.rs           // §8.4 per-rule shape assertions
+  lift.rs            // focused R-LF/R-LM positives + rejection pins
 crates/flow-rewrite/benches/rewrite_scale.rs
 ```
 
@@ -253,6 +292,7 @@ crates/flow-rewrite/benches/rewrite_scale.rs
 | RW9 | §1.2 P1/P2: plans key non-SCC `Temporary` objects only; alias preserves SCC membership | three CONFIRMED review blockers (Return-writer drop → I-RET fail; loop-state constify → `LoopBackOutsideScc`); lossless for Return (a sink) |
 | RW10 | §1.2 P3: fusion only on transitively loop-free bodies | fusion's per-element reorder can flip `Diverged ↔ Trapped` across R1 classes when a body can diverge (review, CONFIRMED) |
 | RW11 | `Print` + loop machinery pinned live in DCE (no assertion) | dead *pure* loops are validate-clean and lower-reachable (review SND-2); removal could flip `Diverged → Done` |
+| RW12 | R-LF/R-LM require constant `K >= 1`; zero-trip shapes stay loops | Core has no empty arrays, so `Iota(0)` is not a legal replacement; ratified option 2 |
 
 ## 11. Open questions (→ ADR candidates / later increments)
 
