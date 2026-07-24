@@ -4,18 +4,19 @@
 //! Covered rows: a two-fn program (entry calls a helper twice) inlines to one
 //! graph (orphan callee dropped); an oversized callee (> `INLINE_MAX_BODY`)
 //! stays a call, a callee exactly at the cap inlines (the `≤` boundary); the
-//! entry fn is never inlined (a `Call` cycle — the third guard — is
+//! entry fn is never inlined (a `Call` cycle — the fourth guard — is
 //! unrepresentable: the builder rejects recursive Calls at seal); a
 //! diamond-shared callee inlines per site (the documented duplication
-//! policy); callees with loops, tuple (slot-wise) returns, and
-//! direct-to-Return call sites substitute correctly; determinism (L2,
-//! byte-identical mermaid) + idempotence (inline ∘ inline = inline).
+//! policy); loop-bearing callees stay calls; tuple (slot-wise) returns and
+//! direct-to-Return call sites substitute correctly; Calls inside collection
+//! bodies strip; determinism (L2, byte-identical mermaid) + idempotence
+//! (inline ∘ inline = inline).
 
 mod testgen;
 
 use flow_interp::{Outcome, RValue, RunResult, eval_call, run};
 use flow_ir::{CategoryIr, Dest, FuncKind, IrBuilder, Operation, SourceLoc, Ty, Value, validate};
-use flow_rewrite::{INLINE_MAX_BODY, PassId, analyze_inline, replay, rewrite_with};
+use flow_rewrite::{INLINE_MAX_BODY, PassId, analyze_inline, replay, rewrite, rewrite_with};
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 
@@ -39,6 +40,17 @@ fn op_count(ir: &CategoryIr, op: Operation) -> usize {
 /// An i32 scalar `RValue`.
 fn scalar(x: i32) -> RValue {
     RValue::Scalar(Value::I32(x))
+}
+
+fn arr(xs: &[i32]) -> RValue {
+    RValue::Array(xs.iter().map(|&x| scalar(x)).collect())
+}
+
+fn arr_ty(size: u64) -> Ty {
+    Ty::Array {
+        elem: Box::new(Ty::i32()),
+        size,
+    }
 }
 
 /// R1's `≈` on whole-program runs (same shape as `property.rs`).
@@ -126,9 +138,9 @@ fn add_chain_fn(b: &mut IrBuilder, name: &str, n: u32) -> flow_ir::FuncId {
 
 #[test]
 fn oversized_callee_stays_a_call() {
-    // big(x) = x + 25: 25 Adds × 3 morphisms + Output = 76 > INLINE_MAX_BODY.
+    // big(x) = x + 86: 86 Adds × 3 morphisms + Output = 259 > INLINE_MAX_BODY.
     let mut b = IrBuilder::new();
-    let big = add_chain_fn(&mut b, "big", 25);
+    let big = add_chain_fn(&mut b, "big", 86);
     let main = b
         .declare(FuncKind::Named, "main", Ty::i32(), Ty::i32(), L)
         .unwrap();
@@ -158,16 +170,16 @@ fn oversized_callee_stays_a_call() {
 
     let before = eval_call(&ir, main, scalar(3), BUDGET);
     let after = eval_call(&out, out.entry(), scalar(3), BUDGET);
-    assert_eq!(before, Outcome::Done(scalar(28)));
+    assert_eq!(before, Outcome::Done(scalar(89)));
     assert_eq!(after, before);
 }
 
 #[test]
 fn callee_at_the_cap_inlines() {
-    // at_cap(x) = x + 21: 21 Adds × 3 morphisms + Output = 64 = INLINE_MAX_BODY
+    // at_cap(x) = x + 85: 85 Adds × 3 morphisms + Output = 256 = INLINE_MAX_BODY
     // (the policy is `≤`).
     let mut b = IrBuilder::new();
-    let at_cap = add_chain_fn(&mut b, "at_cap", 21);
+    let at_cap = add_chain_fn(&mut b, "at_cap", 85);
     let main = b
         .declare(FuncKind::Named, "main", Ty::i32(), Ty::i32(), L)
         .unwrap();
@@ -192,7 +204,7 @@ fn callee_at_the_cap_inlines() {
     assert_eq!(call_count(&out), 0);
     let before = eval_call(&ir, main, scalar(3), BUDGET);
     let after = eval_call(&out, out.entry(), scalar(3), BUDGET);
-    assert_eq!(before, Outcome::Done(scalar(24)));
+    assert_eq!(before, Outcome::Done(scalar(88)));
     assert_eq!(after, before);
 }
 
@@ -279,7 +291,7 @@ fn diamond_shared_callee_inlines_per_site() {
 // --- substitution shapes -------------------------------------------------------
 
 #[test]
-fn loop_bearing_callee_inlines() {
+fn loop_bearing_callee_stays_a_call() {
     // countdown(x) { s = x; while s > 0 { s = s - 1 }; s }  ⇒ 0 for x ≥ 0;
     // the loop exits to the callee's Return (the LoopExit redirect row).
     // main(x) = countdown(x) + x  ⇒  x.
@@ -321,15 +333,12 @@ fn loop_bearing_callee_inlines() {
     }
     let ir = b.seal(main).unwrap();
 
-    let out = replay(&ir, &analyze_inline(&ir)).unwrap();
+    let plan = analyze_inline(&ir);
+    assert!(plan.inline.is_empty(), "loop-bearing callee is not planned");
+    let out = replay(&ir, &plan).unwrap();
     assert!(validate(&out).is_empty(), "{:?}", validate(&out));
-    assert_eq!(call_count(&out), 0);
-    assert_eq!(out.funcs().count(), 1);
-    assert_eq!(
-        out.loop_structure(out.entry()).len(),
-        1,
-        "the callee's loop survives inside the caller"
-    );
+    assert_eq!(call_count(&out), 1);
+    assert_eq!(out.funcs().count(), 2);
 
     let before = eval_call(&ir, main, scalar(5), BUDGET);
     let after = eval_call(&out, out.entry(), scalar(5), BUDGET);
@@ -423,7 +432,59 @@ fn call_writing_return_inlines() {
     assert_eq!(after, before);
 }
 
-// --- the region-plan acceptance shape (matmul4) ----------------------------------
+#[test]
+fn default_rewrite_inlines_call_inside_map_body() {
+    // helper(x) = x + 1; body(x) = helper(x); main(a) = map(body, a).
+    let mut b = IrBuilder::new();
+    let helper = b
+        .declare(FuncKind::Named, "helper", Ty::i32(), Ty::i32(), L)
+        .unwrap();
+    {
+        let mut fb = b.build_fn(helper).unwrap();
+        let x = fb.input();
+        let one = fb.constant(Value::I32(1), L).unwrap();
+        fb.binop(Operation::Add, x, one, Dest::Ret { slot: None }, L)
+            .unwrap();
+        fb.finish().unwrap();
+    }
+    let body = b
+        .declare(FuncKind::MapBody, "body", Ty::i32(), Ty::i32(), L)
+        .unwrap();
+    {
+        let mut fb = b.build_fn(body).unwrap();
+        let x = fb.input();
+        fb.call(helper, x, Dest::Ret { slot: None }, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let main = b
+        .declare(FuncKind::Named, "main", arr_ty(3), arr_ty(3), L)
+        .unwrap();
+    {
+        let mut fb = b.build_fn(main).unwrap();
+        let input = fb.input();
+        fb.map(body, input, Dest::Ret { slot: None }, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(main).unwrap();
+    let before = eval_call(&ir, main, arr(&[1, 2, 3]), BUDGET);
+
+    let out = rewrite(ir).ir;
+    assert!(validate(&out).is_empty(), "{:?}", validate(&out));
+    assert_eq!(call_count(&out), 0, "the MapBody Call is stripped");
+    assert_eq!(out.funcs().count(), 2, "only main + MapBody remain");
+    assert!(
+        out.morphisms()
+            .any(|(_, m)| matches!(m.op, Operation::Map { .. })),
+        "the collection output remains a Map"
+    );
+    assert_eq!(before, Outcome::Done(arr(&[2, 3, 4])));
+    assert_eq!(
+        eval_call(&out, out.entry(), arr(&[1, 2, 3]), BUDGET),
+        before
+    );
+}
+
+// --- loop-bearing matmul4 policy shape -------------------------------------------
 
 /// Lower an in-Core example (the `golden.rs` path) into sealed IR.
 fn lower_example(name: &str) -> CategoryIr {
@@ -443,12 +504,9 @@ fn lower_example(name: &str) -> CategoryIr {
 }
 
 #[test]
-fn matmul4_strips_to_one_primitive_graph() {
-    // The region-emission plan's §3 acceptance example, Move 1 half: `cell`
-    // (an inner k-loop) is called inside `matmul`'s outer t-loop; `matmul` is
-    // called by `main`. The strip flattens both calls — one graph, zero
-    // Calls, validate-clean — and the nested loop it produces is exactly the
-    // "one primitive graph: outer loop t, inner loop k" the plan asks for.
+fn matmul4_loops_lift_then_callees_inline() {
+    // R-LF removes `cell`'s k-loop, R-LM removes `matmul`'s t-loop, then the
+    // next fixpoint round strips both now-loop-free Call boundaries.
     let ir = lower_example("matmul4");
     let before = run(&ir, BUDGET);
     assert!(
@@ -456,21 +514,36 @@ fn matmul4_strips_to_one_primitive_graph() {
         "raw matmul4 runs"
     );
 
-    let res = rewrite_with(ir, &[PassId::Inline]);
-    assert!(validate(&res.ir).is_empty(), "{:?}", validate(&res.ir));
-    assert_eq!(call_count(&res.ir), 0, "every call stripped");
-    assert_eq!(res.ir.funcs().count(), 1, "one flattened graph (main)");
-
-    // The honest boundary (recorded, not a regression): the flattened graph's
-    // nested loop is a multi-merge SCC — outside interp's M1 canonical
-    // quartet, so the oracle cannot evaluate THIS shape today (suggestions
-    // #4: generic-SCC replay + interp M1 lifting; the region pipeline
-    // consumes the graph structurally, not through interp). Pin the boundary
-    // so a future M1 lift turns this row into an oracle-equality row.
     assert!(
-        !flow_rewrite::is_canonical(&res.ir),
-        "nested loops are non-canonical — the interp-M1 boundary"
+        analyze_inline(&ir).inline.is_empty(),
+        "raw loop callees stay Calls"
     );
+    let res = rewrite(ir);
+    assert!(validate(&res.ir).is_empty(), "{:?}", validate(&res.ir));
+    assert_eq!(call_count(&res.ir), 0, "both lifted callees inline");
+    assert_eq!(
+        res.ir
+            .funcs()
+            .flat_map(|(f, _)| res.ir.loop_structure(f))
+            .count(),
+        0,
+        "all loop SCCs are gone"
+    );
+    assert!(
+        res.ir.morphisms().any(|(_, m)| {
+            let Operation::Map { body, .. } = m.op else {
+                return false;
+            };
+            res.ir
+                .func(body)
+                .expect("MapBody")
+                .morphisms
+                .iter()
+                .any(|&bm| matches!(res.ir.morphism(bm).unwrap().op, Operation::Fold { .. }))
+        }),
+        "the final graph contains a Map whose body contains the lifted Fold"
+    );
+    assert_eq!(run(&res.ir, BUDGET), before);
 }
 
 // --- determinism + idempotence (directed) ---------------------------------------

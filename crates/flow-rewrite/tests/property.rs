@@ -18,7 +18,7 @@ use flow_rewrite::{PassId, RewriteResult, is_canonical, rewrite, rewrite_with};
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 
-use testgen::{Prog, build, prog_strategy};
+use testgen::{Prog, Step, build, prog_strategy};
 
 const BUDGET: u64 = 200_000;
 const L: SourceLoc = SourceLoc { start: 0, end: 0 };
@@ -29,6 +29,7 @@ const ALL: &[PassId] = &[
     PassId::Dce,
     PassId::MapFusion,
     PassId::Inline,
+    PassId::LiftLoops,
 ];
 
 /// R1's `≈` on whole-program runs.
@@ -136,6 +137,41 @@ fn check_determinism_idempotence(prog: &Prog, res: &RewriteResult) -> Result<(),
         twice.report.applied
     );
     Ok(())
+}
+
+#[test]
+fn sequential_generated_lifts_with_intervening_fold() {
+    let prog = Prog {
+        trap_free: true,
+        open: false,
+        effectful: false,
+        helpers: vec![],
+        map_bodies: vec![],
+        fold_bodies: vec![],
+        map_cap_bodies: vec![],
+        map_acap_bodies: vec![],
+        fold_cap_bodies: vec![vec![]],
+        nest_bodies: vec![],
+        main: vec![
+            Step::LiftMap { arr: 0, cap: 0 },
+            Step::Phi { t: 0, e: 0, c: 0 },
+            Step::FoldCapScalar {
+                arr: 0,
+                seed: 0,
+                cap: 0,
+                body: 0,
+            },
+            Step::LiftFold {
+                k: 0,
+                seed: 0,
+                cap: 34,
+            },
+        ],
+        prints: vec![],
+        ret: 0,
+        args: vec![0],
+    };
+    check_closed(&prog).unwrap();
 }
 
 proptest! {

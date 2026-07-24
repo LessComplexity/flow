@@ -117,6 +117,18 @@ pub enum Step {
     Loop {
         k: u8,
     },
+    /// R-LF: canonical `(counter, acc)` with static `K >= 1`.
+    LiftFold {
+        k: u8,
+        seed: u8,
+        cap: u8,
+    },
+    /// R-LM: canonical `(out, counter)` with one identity-indexed Update and
+    /// `len(out) == K == ARR`.
+    LiftMap {
+        arr: u8,
+        cap: u8,
+    },
     /// ADR-0027: map with an i32 capture from the scalar pool; body
     /// `(cap, elem) -> i32` (the `x * scale` shape).
     MapCapScalar {
@@ -241,6 +253,8 @@ fn main_step() -> impl Strategy<Value = Step> {
         1 => any::<u8>().prop_map(|arr| Step::Enumerate { arr }),
         1 => (any::<u8>(), any::<u8>()).prop_map(|(a, helper)| Step::Call { a, helper }),
         1 => any::<u8>().prop_map(|k| Step::Loop { k }),
+        1 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(k, seed, cap)| Step::LiftFold { k, seed, cap }),
+        1 => (any::<u8>(), any::<u8>()).prop_map(|(arr, cap)| Step::LiftMap { arr, cap }),
         1 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(arr, cap, body)| Step::MapCapScalar { arr, cap, body }),
         1 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(arr, cap, body)| Step::MapCapArray { arr, cap, body }),
         1 => (any::<u8>(), any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(arr, seed, cap, body)| Step::FoldCapScalar { arr, seed, cap, body }),
@@ -994,6 +1008,22 @@ fn emit_step(
             pool.loops_used += 1;
             pool.i32s.push(build_loop(fb, (k % 65) as i32));
         }
+        Step::LiftFold { k, seed, cap } if collections && pool.loops_used < MAX_LOOPS => {
+            let Some(seed) = pick(&pool.i32s, seed) else {
+                return;
+            };
+            let cap = fb.constant(Value::I32(i32::from(cap)), L).unwrap();
+            pool.loops_used += 1;
+            pool.i32s
+                .push(build_lift_fold(fb, (k % ARR as u8 + 1) as i32, seed, cap));
+        }
+        Step::LiftMap { arr, cap } if collections && pool.loops_used < MAX_LOOPS => {
+            let cap = fb.constant(Value::I32(i32::from(cap)), L).unwrap();
+            let init = pick(&pool.arrs, arr)
+                .unwrap_or_else(|| fb.pack_array(&[cap; ARR], Dest::Fresh(None), L).unwrap());
+            pool.loops_used += 1;
+            pool.arrs.push(build_lift_map(fb, init, cap));
+        }
         Step::MapCapScalar { arr, cap, body } if collections => {
             let (Some(a), Some(c), Some(bd)) = (
                 pick(&pool.arrs, arr),
@@ -1081,6 +1111,90 @@ fn build_loop(fb: &mut flow_ir::FnBuilder<'_>, k: i32) -> flow_ir::ObjectId {
         .unwrap();
     fb.loop_back(&lh, next, cond, L).unwrap();
     let exit = fb.loop_exit(&lh, i, cond, Dest::Fresh(None), L).unwrap();
+    fb.end_loop(lh).unwrap();
+    exit
+}
+
+fn build_lift_fold(
+    fb: &mut flow_ir::FnBuilder<'_>,
+    k: i32,
+    seed: flow_ir::ObjectId,
+    capture: flow_ir::ObjectId,
+) -> flow_ir::ObjectId {
+    let zero = fb.constant(Value::I32(0), L).unwrap();
+    // Make the invariant an explicit predecessor of LoopEnter. Core starts a
+    // loop when its init is ready, so an otherwise body-only invariant could
+    // still be pending when the first advance phase runs.
+    let capture_zero = fb
+        .binop(Operation::Mul, capture, zero, Dest::Fresh(None), L)
+        .unwrap();
+    let ready_seed = fb
+        .binop(Operation::Add, seed, capture_zero, Dest::Fresh(None), L)
+        .unwrap();
+    let init = fb.pack(&[zero, ready_seed], Dest::Fresh(None), L).unwrap();
+    let lh = fb.begin_loop(init, L).unwrap();
+    let state = fb.merge_of(&lh);
+    let counter = fb.proj(state, 0, Dest::Fresh(None), L).unwrap();
+    let acc = fb.proj(state, 1, Dest::Fresh(None), L).unwrap();
+    let bound = fb.constant(Value::I32(k), L).unwrap();
+    let cond = fb
+        .binop(Operation::Lt, counter, bound, Dest::Fresh(None), L)
+        .unwrap();
+    let partial = fb
+        .binop(Operation::Add, acc, counter, Dest::Fresh(None), L)
+        .unwrap();
+    let next_acc = fb
+        .binop(Operation::Add, partial, capture, Dest::Fresh(None), L)
+        .unwrap();
+    let one = fb.constant(Value::I32(1), L).unwrap();
+    let next_counter = fb
+        .binop(Operation::Add, counter, one, Dest::Fresh(None), L)
+        .unwrap();
+    let next = fb
+        .pack(&[next_counter, next_acc], Dest::Fresh(None), L)
+        .unwrap();
+    fb.loop_back(&lh, next, cond, L).unwrap();
+    let exit = fb.loop_exit(&lh, acc, cond, Dest::Fresh(None), L).unwrap();
+    fb.end_loop(lh).unwrap();
+    exit
+}
+
+fn build_lift_map(
+    fb: &mut flow_ir::FnBuilder<'_>,
+    init_array: flow_ir::ObjectId,
+    capture: flow_ir::ObjectId,
+) -> flow_ir::ObjectId {
+    let zero = fb.constant(Value::I32(0), L).unwrap();
+    // As above, sequence the invariant before LoopEnter through the collection
+    // init. Coverage overwrites every cell, so this value is observationally
+    // dead and is dropped by R-LM.
+    let ready_array = fb
+        .update(init_array, zero, capture, Dest::Fresh(None), L)
+        .unwrap();
+    let init = fb.pack(&[ready_array, zero], Dest::Fresh(None), L).unwrap();
+    let lh = fb.begin_loop(init, L).unwrap();
+    let state = fb.merge_of(&lh);
+    let out = fb.proj(state, 0, Dest::Fresh(None), L).unwrap();
+    let counter = fb.proj(state, 1, Dest::Fresh(None), L).unwrap();
+    let bound = fb.constant(Value::I32(ARR as i32), L).unwrap();
+    let cond = fb
+        .binop(Operation::Lt, counter, bound, Dest::Fresh(None), L)
+        .unwrap();
+    let value = fb
+        .binop(Operation::Add, counter, capture, Dest::Fresh(None), L)
+        .unwrap();
+    let updated = fb
+        .update(out, counter, value, Dest::Fresh(None), L)
+        .unwrap();
+    let one = fb.constant(Value::I32(1), L).unwrap();
+    let next_counter = fb
+        .binop(Operation::Add, counter, one, Dest::Fresh(None), L)
+        .unwrap();
+    let next = fb
+        .pack(&[updated, next_counter], Dest::Fresh(None), L)
+        .unwrap();
+    fb.loop_back(&lh, next, cond, L).unwrap();
+    let exit = fb.loop_exit(&lh, out, cond, Dest::Fresh(None), L).unwrap();
     fb.end_loop(lh).unwrap();
     exit
 }

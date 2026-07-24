@@ -43,6 +43,10 @@ pub(crate) const PERF_DECLS: &str = "\
 declare void @flow_perf_begin()\n\
 declare void @flow_perf_end()\n";
 
+/// Packed tiled kernels prefetch their next panel line.
+pub(crate) const PREFETCH_DECL: &str =
+    "declare void @llvm.prefetch.p0(ptr, i32 immarg, i32 immarg, i32 immarg)\n";
+
 /// The parallel scheduler ABI, emitted only for a parallel `flow_main`.
 pub(crate) const PAR_DECLS: &str = "\
 declare ptr @flow_par_begin(i32)\n\

@@ -1,5 +1,5 @@
 //! The fixpoint driver (DESIGN §5) — the crate's public entry point. Runs the
-//! four passes to a fixpoint through the one shared replayer, capped at
+//! six passes to a fixpoint through the one shared replayer, capped at
 //! [`MAX_ROUNDS`], asserting `validate()`-clean after every rebuild (R2).
 //!
 //! **By-value intake** (`CategoryIr` is not `Clone`): a round whose plans are all
@@ -13,6 +13,7 @@ use crate::equations::analyze_const_fold;
 use crate::functor_laws::analyze_map_fusion;
 use crate::graph_rewrites::{analyze_cse, analyze_dce};
 use crate::inline::analyze_inline;
+use crate::lift::analyze_lift;
 use crate::plan::RewritePlan;
 use crate::replay::{is_canonical, replay};
 
@@ -21,7 +22,7 @@ use crate::replay::{is_canonical, replay};
 /// pass shrinks a well-founded measure, so the cap is a safety net, not a bound.
 pub const MAX_ROUNDS: u32 = 32;
 
-/// The passes, in round order (DESIGN §5 + region-emission plan Move 1).
+/// The available passes (DESIGN §5 + region-emission plan Move 1 + R-LF/R-LM).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PassId {
     /// Layer 3 — constant folding + algebraic identities (§2).
@@ -33,9 +34,9 @@ pub enum PassId {
     /// Layer 1 — map fusion + `map(id)` (§4).
     MapFusion,
     /// Region-emission Move 1 — strip `Call` morphisms by graph substitution.
-    /// NOT in the default [`rewrite`] list: it is the region pipeline's
-    /// pre-pass (runs before region formation), invoked via [`rewrite_with`].
     Inline,
+    /// R-LF / R-LM — canonical counted loops to captured `Fold` / `Map`.
+    LiftLoops,
 }
 
 /// The rewrite of one graph plus its diagnostic log (DESIGN §5). Not `Clone`/
@@ -61,11 +62,14 @@ pub struct RewriteReport {
     pub skipped_non_canonical: bool,
 }
 
-/// The default rewrite: the four passes to a fixpoint (DESIGN §5).
+/// The default rewrite: six passes, with loop lifting immediately after Inline,
+/// to a fixpoint (DESIGN §5).
 pub fn rewrite(ir: CategoryIr) -> RewriteResult {
     rewrite_with(
         ir,
         &[
+            PassId::Inline,
+            PassId::LiftLoops,
             PassId::ConstFold,
             PassId::Cse,
             PassId::Dce,
@@ -140,13 +144,18 @@ fn analyze(pass: PassId, ir: &CategoryIr) -> RewritePlan {
         PassId::Dce => analyze_dce(ir),
         PassId::MapFusion => analyze_map_fusion(ir),
         PassId::Inline => analyze_inline(ir),
+        PassId::LiftLoops => analyze_lift(ir),
     }
 }
 
 /// The number of applications a plan encodes (its total channel entries).
 fn plan_len(plan: &RewritePlan) -> u64 {
-    (plan.alias.len() + plan.constify.len() + plan.drop.len() + plan.fuse.len() + plan.inline.len())
-        as u64
+    (plan.alias.len()
+        + plan.constify.len()
+        + plan.drop.len()
+        + plan.fuse.len()
+        + plan.inline.len()
+        + plan.lift.len()) as u64
 }
 
 /// Accumulate `n` applications of `pass` (first-occurrence order, deterministic).

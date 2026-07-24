@@ -2,93 +2,39 @@
 source: crates/backends/llvm/tests/golden_ll.rs
 expression: untiled_fn
 ---
-define internal [16 x float] @fn0({ ptr, ptr } %arg) readonly nounwind willreturn {
+define internal void @task4(i64 %lo, i64 %hi, ptr %frame) {
 entry:
-  %o0 = alloca { ptr, ptr }
-  %o1 = alloca [16 x float]
-  %o2 = alloca ptr
-  %o3 = alloca ptr
-  %o4 = alloca [16 x i32]
-  %o5 = alloca [4 x i32]
-  %o6 = alloca { ptr, ptr, ptr, ptr }
-  %o7 = alloca [16 x float]
-  %s4 = alloca i64
-  %s13 = alloca i64
-  %s28 = alloca i64
-  %s36 = alloca { ptr, ptr, ptr, i32 }
-  store { ptr, ptr } %arg, ptr %o0
-  %t0 = getelementptr { ptr, ptr }, ptr %o0, i32 0, i32 0
-  %t1 = load ptr, ptr %t0
-  store ptr %t1, ptr %o2
-  %t2 = getelementptr { ptr, ptr }, ptr %o0, i32 0, i32 1
-  %t3 = load ptr, ptr %t2
-  store ptr %t3, ptr %o3
-  store i64 0, ptr %s4
-  br label %bb5
-bb5:
-  %t8 = load i64, ptr %s4
-  %t9 = icmp uge i64 %t8, 16
-  br i1 %t9, label %bb7, label %bb6
-bb6:
-  %t10 = trunc i64 %t8 to i32
-  %t11 = getelementptr [16 x i32], ptr %o4, i64 0, i64 %t8
-  store i32 %t10, ptr %t11
-  %t12 = add i64 %t8, 1
-  store i64 %t12, ptr %s4
-  br label %bb5
-bb7:
-  store i64 0, ptr %s13
-  br label %bb14
-bb14:
-  %t17 = load i64, ptr %s13
-  %t18 = icmp uge i64 %t17, 4
-  br i1 %t18, label %bb16, label %bb15
-bb15:
-  %t19 = trunc i64 %t17 to i32
-  %t20 = getelementptr [4 x i32], ptr %o5, i64 0, i64 %t17
-  store i32 %t19, ptr %t20
-  %t21 = add i64 %t17, 1
-  store i64 %t21, ptr %s13
-  br label %bb14
-bb16:
-  %t22 = load ptr, ptr %o2
-  %t23 = getelementptr { ptr, ptr, ptr, ptr }, ptr %o6, i32 0, i32 1
-  store ptr %t22, ptr %t23
-  %t24 = load ptr, ptr %o3
-  %t25 = getelementptr { ptr, ptr, ptr, ptr }, ptr %o6, i32 0, i32 2
-  store ptr %t24, ptr %t25
-  %t26 = getelementptr { ptr, ptr, ptr, ptr }, ptr %o6, i32 0, i32 3
-  store ptr %o4, ptr %t26
-  %t27 = getelementptr { ptr, ptr, ptr, ptr }, ptr %o6, i32 0, i32 0
-  store ptr %o5, ptr %t27
-  store i64 0, ptr %s28
-  br label %bb29
-bb29:
-  %t32 = load i64, ptr %s28
-  %t33 = icmp uge i64 %t32, 16
-  br i1 %t33, label %bb31, label %bb30
-bb30:
-  %t34 = getelementptr [16 x i32], ptr %o4, i64 0, i64 %t32
-  %t35 = load i32, ptr %t34
-  %t37 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s36, i32 0, i32 0
-  store ptr %o5, ptr %t37
-  %t38 = load ptr, ptr %o2
-  %t39 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s36, i32 0, i32 1
-  store ptr %t38, ptr %t39
-  %t40 = load ptr, ptr %o3
-  %t41 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s36, i32 0, i32 2
-  store ptr %t40, ptr %t41
-  %t42 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s36, i32 0, i32 3
-  store i32 %t35, ptr %t42
-  %t43 = load { ptr, ptr, ptr, i32 }, ptr %s36
-  %t44 = call float @fn3({ ptr, ptr, ptr, i32 } %t43)
-  %t45 = getelementptr [16 x float], ptr %o7, i64 0, i64 %t32
-  store float %t44, ptr %t45
-  %t46 = add i64 %t32, 1
-  store i64 %t46, ptr %s28
-  br label %bb29
-bb31:
-  call void @llvm.memcpy.p0.p0.i64(ptr %o1, ptr %o7, i64 ptrtoint (ptr getelementptr ([16 x float], ptr null, i64 1) to i64), i1 false)
-  %t47 = load [16 x float], ptr %o1
-  ret [16 x float] %t47
+  %s0 = alloca i64
+  %s8 = alloca { ptr, ptr, ptr, i32 }
+  %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
+  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
+  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
+  %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
+  store i64 %lo, ptr %s0
+  br label %bb1
+bb1:
+  %t4 = load i64, ptr %s0
+  %t5 = icmp uge i64 %t4, %hi
+  br i1 %t5, label %bb3, label %bb2
+bb2:
+  %t6 = getelementptr [16 x i32], ptr %o4, i64 0, i64 %t4
+  %t7 = load i32, ptr %t6
+  %t9 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s8, i32 0, i32 0
+  store ptr %o5, ptr %t9
+  %t10 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s8, i32 0, i32 1
+  store ptr %o2, ptr %t10
+  %t11 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s8, i32 0, i32 2
+  store ptr %o3, ptr %t11
+  %t12 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s8, i32 0, i32 3
+  store i32 %t7, ptr %t12
+  %t13 = load { ptr, ptr, ptr, i32 }, ptr %s8
+  %t14 = call float @fn2({ ptr, ptr, ptr, i32 } %t13)
+  %t15 = getelementptr [16 x float], ptr %o7, i64 0, i64 %t4
+  store float %t14, ptr %t15
+  %t16 = add i64 %t4, 1
+  store i64 %t16, ptr %s0
+  br label %bb1
+bb3:
+  ret void
 }

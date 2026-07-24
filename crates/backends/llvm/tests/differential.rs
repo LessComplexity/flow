@@ -20,8 +20,8 @@ use std::sync::{Mutex, Once};
 use std::time::{Duration, Instant};
 
 use flow_interp::{Outcome, RValue, RunResult, render, run};
-use flow_ir::{CategoryIr, Ty};
-use flow_rewrite::rewrite;
+use flow_ir::{CategoryIr, Operation, Ty};
+use flow_rewrite::{PassId, rewrite};
 
 // The testgen program generator (shared with flow-rewrite's differential duty).
 #[path = "../../../flow-rewrite/tests/testgen/mod.rs"]
@@ -376,6 +376,7 @@ fn differential_testgen_closed_sweep() {
     let mut runner = TestRunner::deterministic();
     let mut jobs: Vec<Job> = Vec::new();
     let mut n = 0usize;
+    let mut lifted = 0usize;
     for (count, trap_free) in [(256usize, false), (64usize, true)] {
         let strat = prog_strategy(trap_free, false);
         for _ in 0..count {
@@ -391,6 +392,14 @@ fn differential_testgen_closed_sweep() {
                 continue; // diverged
             }
             let res = rewrite(build(&prog).ir);
+            if res
+                .report
+                .applied
+                .iter()
+                .any(|(pass, count)| *pass == PassId::LiftLoops && *count > 0)
+            {
+                lifted += 1;
+            }
             let rr2 = run(&res.ir, BUDGET);
             if let Some(j) = make_job(&res.ir, &rr2, format!("testgen#{n}/rewritten")) {
                 jobs.push(j);
@@ -399,6 +408,7 @@ fn differential_testgen_closed_sweep() {
         }
     }
     assert!(n >= 256, "expected ≥256 closed cases, got {n}");
+    assert!(lifted > 0, "testgen sweep did not exercise loop lifting");
     eprintln!(
         "differential_testgen: phase 1 (generate+emit) {:?}; {} jobs",
         t0.elapsed(),
@@ -610,6 +620,119 @@ fn main() {
         assert_eq!(
             tiled_run.0, untiled_run.0,
             "tiled_matmul/{opt}: tiled/untiled stdout"
+        );
+    }
+}
+
+#[test]
+fn differential_tiled_matmul_via_helper_fn() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn dot(a: [f32; 16], b: [f32; 16], kr: [i32; 4], cell: i32) -> f32 {
+    cell / 4 -> i;
+    cell % 4 -> j;
+    (0.0, kr) -> fold { acc, k -> acc + a[i * 4 + k] * b[k * 4 + j] } -> ret;
+}
+fn main() {
+    [ -37.0, -30.0, -23.0, -16.0, -9.0, -2.0, 5.0, 12.0,
+      19.0, 26.0, 33.0, 40.0, 47.0, -47.0, -40.0, -33.0] -> a: [f32; 16];
+    [7.0, 14.0, 21.0, 28.0, 35.0, 42.0, 49.0, -45.0,
+     -38.0, -31.0, -24.0, -17.0, -10.0, -3.0, 4.0, 11.0] -> b: [f32; 16];
+    16 -> iota -> cells;
+    4 -> iota -> kr;
+    cells -> map { cell -> (a, b, kr, cell) -> dot } -> c;
+    c[0] -> println;
+    c[15] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    assert!(
+        ir.morphisms()
+            .all(|(_, m)| !matches!(m.op, Operation::Call(_))),
+        "default rewrite must strip the helper Call inside the MapBody"
+    );
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("helper matmul oracle completes") else {
+        panic!("helper matmul oracle must complete");
+    };
+    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    assert!(
+        tiled
+            .lines()
+            .any(|line| line.ends_with(" = alloca [64 x float], align 64"))
+            && tiled
+                .lines()
+                .any(|line| line.ends_with(" = alloca [64 x float]")),
+        "helper-free MapBody must expose the packed tiled nest and accumulator:\n{tiled}"
+    );
+    let untiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+
+    assert_tiled_parity(&clang, &tiled, &untiled, &want, "tiled_matmul_via_helper");
+}
+
+#[test]
+fn differential_default_rewritten_matmul4_lifts_and_tiles() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let ir = rewrite(build_example("matmul4")).ir;
+    assert!(
+        ir.morphisms()
+            .all(|(_, m)| !matches!(m.op, Operation::Call(_))),
+        "the lifted cell/matmul callees must inline"
+    );
+    assert!(
+        ir.funcs().all(|(f, _)| ir.loop_structure(f).is_empty()),
+        "the default-rewritten matmul4 must be loop-SCC-free"
+    );
+    assert!(
+        ir.morphisms().any(|(_, m)| {
+            let Operation::Map { body, .. } = m.op else {
+                return false;
+            };
+            ir.func(body).expect("MapBody").morphisms.iter().any(|&bm| {
+                matches!(
+                    ir.morphism(bm).expect("body morphism").op,
+                    Operation::Fold { .. }
+                )
+            })
+        }),
+        "the lifted graph must contain a Map with a Fold body"
+    );
+
+    let rr = run(&ir, BUDGET);
+    assert_eq!(rr.output, "-275\n3748\n", "interp oracle contract");
+    let ll = flow_backend_llvm::emit(&ir).unwrap();
+    assert!(
+        ll.lines()
+            .any(|line| line.ends_with(" = alloca [64 x float], align 64")),
+        "default-rewritten matmul4 must tile with a packed align-64 panel:\n{ll}"
+    );
+
+    for opt in ["-O0", "-O2"] {
+        let (_dir, exe) = compile_exe(&clang, &ll, "default_rewritten_matmul4", opt);
+        let default = run_exe(&exe, TIMEOUT_SECS, None)
+            .unwrap_or_else(|| panic!("default_rewritten_matmul4/{opt}: timed out"));
+        let one = run_exe(&exe, TIMEOUT_SECS, Some("1"))
+            .unwrap_or_else(|| panic!("default_rewritten_matmul4/{opt}/FLOW_PAR=1: timed out"));
+        assert_eq!(default.1, 0, "default_rewritten_matmul4/{opt}: exit");
+        assert_eq!(
+            String::from_utf8_lossy(&default.0),
+            rr.output,
+            "default_rewritten_matmul4/{opt}: oracle stdout"
+        );
+        assert_eq!(
+            default, one,
+            "default_rewritten_matmul4/{opt}: FLOW_PAR=1 parity"
         );
     }
 }
@@ -845,6 +968,192 @@ fn main() {
     );
 
     assert_tiled_parity(&clang, &tiled, &untiled, &want, "tiled_matmul_r6_c32_k5");
+}
+
+/// S27 f64 width pin: TJ=8 gives two full panels plus a four-lane remainder;
+/// K=5 exercises the unrolled pair body and its trailing single-k step, while
+/// rows=6 retains the two-row TI tail.
+#[test]
+fn differential_tiled_matmul_r6_c20_k5_f64() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn main() {
+    30 -> iota -> ais;
+    ais -> map { x -> (x * 5 + 7) % 67 - 33 -> widen_f64 } -> a;
+    100 -> iota -> bis;
+    bis -> map { x -> (x * 7 + 11) % 101 - 50 -> widen_f64 } -> b;
+    120 -> iota -> cells;
+    5 -> iota -> ks;
+    cells -> map { cell ->
+        cell / 20 -> i;
+        cell % 20 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 5 + k] * b[k * 20 + j] }
+    } -> c;
+    c[0] -> println;
+    c[80] -> println;
+    c[119] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("matmul r6_c20_k5_f64 oracle completes")
+    else {
+        panic!("matmul r6_c20_k5_f64 oracle must complete");
+    };
+    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    assert!(
+        tiled.contains(" = alloca [32 x double]")
+            && tiled.contains(" = alloca [120 x double], align 64")
+            && tiled.contains("call void @llvm.prefetch.p0("),
+        "f64 tiled nest must use TJ=8, packed panels, and prefetch:\n{tiled}"
+    );
+    let untiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    let nopack = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            packing: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+
+    assert_tiled_parity(
+        &clang,
+        &tiled,
+        &untiled,
+        &want,
+        "tiled_matmul_r6_c20_k5_f64",
+    );
+    for opt in ["-O0", "-O2"] {
+        let packed_run = compile_run(
+            &clang,
+            &tiled,
+            &format!("tiled_matmul_r6_c20_k5_f64/{opt}/packed"),
+            opt,
+        )
+        .unwrap_or_else(|| panic!("tiled_matmul_r6_c20_k5_f64/{opt}/packed: timed out"));
+        let nopack_run = compile_run(
+            &clang,
+            &nopack,
+            &format!("tiled_matmul_r6_c20_k5_f64/{opt}/nopack"),
+            opt,
+        )
+        .unwrap_or_else(|| panic!("tiled_matmul_r6_c20_k5_f64/{opt}/nopack: timed out"));
+        assert_eq!(
+            packed_run, nopack_run,
+            "tiled_matmul_r6_c20_k5_f64/{opt}: --no-pack parity"
+        );
+    }
+}
+
+#[test]
+fn differential_tiled_matmul_loop_carried_pack() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn main() {
+    [2.0, 0.0, 0.0, 0.0,
+     0.0, 2.0, 0.0, 0.0,
+     0.0, 0.0, 2.0, 0.0,
+     0.0, 0.0, 0.0, 2.0] -> a: [f32; 16];
+    [1.0, 2.0, 3.0, 4.0,
+     5.0, 6.0, 7.0, 8.0,
+     9.0, 10.0, 11.0, 12.0,
+     13.0, 14.0, 15.0, 16.0] -> b0: [f32; 16];
+    4 -> iota -> kr;
+    16 -> iota -> cells;
+    mut b: [f32; 16] <- b0;
+    mut iteration: i32 <- 0;
+    loop {
+        (iteration < 2) -> {
+            -true-> {
+                cells -> map { cell ->
+                    cell / 4 -> i;
+                    cell % 4 -> j;
+                    (0.0, kr) -> fold { acc, k ->
+                        acc + a[i * 4 + k] * b[k * 4 + j]
+                    }
+                } -> c;
+                c -> b;
+                iteration + 1 -> iteration;
+                -> loop;
+            }
+            -false-> b -> out;
+        }
+    }
+    8 -> iota -> xs;
+    xs -> map { x -> x * 3 + 1 } -> extra;
+    out[0] -> println;
+    out[15] -> println;
+    extra[7] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("loop-carried pack oracle completes")
+    else {
+        panic!("loop-carried pack oracle must complete");
+    };
+    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    let entry = tiled
+        .split("define internal void @flow_main(")
+        .nth(1)
+        .and_then(|s| s.split("\n}\n").next())
+        .expect("parallel flow_main");
+    assert!(
+        entry.contains("call ptr @flow_par_begin(")
+            && entry.contains("call void @flow_par_launch("),
+        "entry must retain a multi-path parallel plan:\n{tiled}"
+    );
+    let loop_task = tiled
+        .split("define internal void @task")
+        .skip(1)
+        .filter_map(|s| s.split("\n}\n").next())
+        .find(|task| task.contains("alloca [64 x float], align 64"))
+        .unwrap_or_else(|| panic!("loop task must allocate and pack b inline:\n{tiled}"));
+    assert!(
+        loop_task.contains("getelementptr [64 x float], ptr") && !tiled.contains("%pack_field"),
+        "Seq-loop packing must stay in its task, not the frame:\n{tiled}"
+    );
+
+    let untiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    for opt in ["-O0", "-O2"] {
+        let (_tiled_dir, tiled_exe) =
+            compile_exe(&clang, &tiled, "tiled_matmul_loop_carried_pack", opt);
+        let (_untiled_dir, untiled_exe) =
+            compile_exe(&clang, &untiled, "untiled_matmul_loop_carried_pack", opt);
+        let default = run_exe(&tiled_exe, TIMEOUT_SECS, None)
+            .unwrap_or_else(|| panic!("loop-carried pack/{opt}/default: timed out"));
+        let one = run_exe(&tiled_exe, TIMEOUT_SECS, Some("1"))
+            .unwrap_or_else(|| panic!("loop-carried pack/{opt}/FLOW_PAR=1: timed out"));
+        let untiled = run_exe(&untiled_exe, TIMEOUT_SECS, None)
+            .unwrap_or_else(|| panic!("loop-carried pack/{opt}/untiled: timed out"));
+        assert_eq!(default.1, 0, "loop-carried pack/{opt}: exit code");
+        assert_eq!(
+            String::from_utf8_lossy(&default.0),
+            want,
+            "loop-carried pack/{opt}: oracle stdout"
+        );
+        assert_eq!(default, one, "loop-carried pack/{opt}: FLOW_PAR=1 parity");
+        assert_eq!(default, untiled, "loop-carried pack/{opt}: tiled parity");
+    }
 }
 
 /// loop building the result via a loop-carried `mut c` array and `c[t] <- v`

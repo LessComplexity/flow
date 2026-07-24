@@ -1,6 +1,6 @@
 //! `RewritePlan` — the read-only analysis product every pass emits (DESIGN §1,
-//! morphism table). One replayer, five plan channels: `alias` / `constify` /
-//! `drop` / `fuse` / `inline`. The plan is pure data; [`replay`](crate::replay)
+//! morphism table). One replayer, six plan channels: `alias` / `constify` /
+//! `drop` / `fuse` / `inline` / `lift`. The plan is pure data; [`replay`](crate::replay)
 //! is the only consumer.
 //!
 //! All maps are `SecondaryMap`/`Vec` keyed by the **input** graph's ids — no
@@ -26,8 +26,41 @@ pub struct FusionSpec {
     pub captures: u32,
 }
 
-/// The five plan channels (DESIGN §1 morphism table + the region-emission
-/// plan's Move 1 `inline`). Empty plan ⇒ identity replay (the WP1 anchor).
+/// Which collection operation replaces a canonical loop.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LiftKind {
+    /// R-LF: the second state component becomes the fold accumulator.
+    Fold {
+        /// The loop's accumulator component object.
+        accumulator: ObjectId,
+        /// The loop-invariant accumulator seed.
+        seed: ObjectId,
+    },
+    /// R-LM: the second state component is replaced by a captured map.
+    Map,
+}
+
+/// A loop→map/fold synthesis request keyed by its `LoopMerge`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiftSpec {
+    /// R-LF or R-LM and its rule-specific operands.
+    pub kind: LiftKind,
+    /// The projected canonical counter object; becomes the collection item.
+    pub counter: ObjectId,
+    /// Static positive trip count (`1..=i32::MAX`).
+    pub count: i32,
+    /// Loop-invariant values threaded into the synthesized body, in stable
+    /// object insertion order.
+    pub captures: Vec<ObjectId>,
+    /// The backward cone copied into the synthesized body. Membership only;
+    /// replay walks the original deterministic object order.
+    pub body_objects: Vec<ObjectId>,
+    /// The cone root returned by the synthesized body.
+    pub body_result: ObjectId,
+}
+
+/// The six plan channels (DESIGN §1 morphism table + `inline` + loop lifting).
+/// Empty plan ⇒ identity replay (the WP1 anchor).
 #[derive(Debug, Default)]
 pub struct RewritePlan {
     /// `alias?`: consumers of the key read the value instead. Resolved
@@ -46,6 +79,9 @@ pub struct RewritePlan {
     /// `input ↦ call source`, `output ↦ call target`. Keys are Call-edge ids;
     /// P1/P2 (object-keyed) do not apply.
     pub inline: SecondaryMap<MorphismId, ()>,
+    /// `lift?`: a canonical loop SCC replaced by `Iota` + captured `Map`/`Fold`.
+    /// Keys are the input graph's `LoopMerge` objects.
+    pub lift: SecondaryMap<ObjectId, LiftSpec>,
 }
 
 impl RewritePlan {
@@ -62,6 +98,7 @@ impl RewritePlan {
             && self.drop.is_empty()
             && self.fuse.is_empty()
             && self.inline.is_empty()
+            && self.lift.is_empty()
     }
 
     /// Resolve an `alias` chain transitively to its terminal object (DESIGN §1).

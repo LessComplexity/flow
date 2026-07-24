@@ -50,6 +50,28 @@ fn main() {
 }
 "#;
 
+const TILE_MATMUL_F64_SRC: &str = r#"
+fn matmul(a: [f64; 30], b: [f64; 100]) -> [f64; 120] {
+    120 -> iota -> cells;
+    5 -> iota -> ks;
+    cells -> map { cell ->
+        cell / 20 -> i;
+        cell % 20 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 5 + k] * b[k * 20 + j] }
+    } -> c;
+    c -> ret;
+}
+fn main() {
+    30 -> iota -> ais;
+    ais -> map { x -> (x * 5 + 7) % 67 - 33 -> widen_f64 } -> a;
+    100 -> iota -> bis;
+    bis -> map { x -> (x * 7 + 11) % 101 - 50 -> widen_f64 } -> b;
+    (a, b) -> matmul -> c;
+    c[0] -> println;
+    c[119] -> println;
+}
+"#;
+
 const TILE_FIR_SRC: &str = r#"
 fn fir(w: [f32; 4], x: [f32; 19]) -> [f32; 16] {
     16 -> iota -> ts;
@@ -490,8 +512,8 @@ fn main() {
 fn golden_tile_map_shapes() {
     let ir = flow_rewrite::rewrite(lower_src(TILE_MATMUL_SRC)).ir;
     let tiled = emit(&ir).unwrap();
-    let tiled_fn = function_containing(&tiled, "define internal [16 x float]");
-    // S26: rows run in TI=4 register blocks, so the accumulator is ONE flat
+    let tiled_fn = function_containing(&tiled, " = alloca [64 x float]");
+    // Rows run in TI=4 register blocks, so the accumulator is one flat
     // entry-block scratch of TI×TJ elems (subrow r at r*16 + lane).
     assert!(
         tiled_fn
@@ -508,13 +530,15 @@ fn golden_tile_map_shapes() {
     // loop splits into boundary head rows / TI-blocked full-window interior /
     // tail rows.
     assert!(
-        tiled_fn.contains(" = udiv i64 0, 4") && tiled_fn.contains(" = udiv i64 16, 4"),
+        tiled_fn.contains(" = udiv i64 %lo, 4")
+            && tiled_fn.contains(" = add i64 %hi, 3")
+            && tiled_fn.contains(" = add i64 %lo, 3")
+            && tiled_fn.contains(" = udiv i64 %hi, 4"),
         "tile nest must contain the row bounds, incl. the interior full-window end:\n{tiled_fn}"
     );
-    // Fixed-TJ main body: every lane loop (zero/mac/store in each region's
-    // main body) is bounded by the compile-time constant TJ=16 — 15 lane-loop
-    // guards (3 head + 9 interior + 3 tail); the 16th match is the
-    // `16 -> iota` materialization guard.
+    // The jt-outer main body has one emitted set of TI=4 constant-TJ lane
+    // loops, reused across all main panels; the remainder body stays runtime
+    // bounded.
     assert_eq!(
         tiled_fn
             .lines()
@@ -523,23 +547,59 @@ fn golden_tile_map_shapes() {
                 line.contains(" = icmp uge i64 %t") && line.ends_with(", 16")
             })
             .count(),
-        16,
+        10,
         "main-body lane loops must be bounded by the constant TJ=16:\n{tiled_fn}"
     );
-    // Runtime-tj remainder: one `tj = min(remaining, TJ)` select per i region
-    // (head/interior/tail); the four other selects are the jw clip pairs on
-    // the boundary (head/tail) rows.
-    assert!(
+    // The outer main and remainder bodies each compute their packed-panel
+    // base once, then reuse it across head/interior/tail row groups.
+    assert_eq!(
+        (
+            tiled_fn
+                .lines()
+                .filter(|line| line.contains(" = udiv i64 ") && line.trim_end().ends_with(", 16"))
+                .count(),
+            tiled_fn
+                .lines()
+                .filter(|line| line.contains(" = mul i64 ") && line.trim_end().ends_with(", 64"))
+                .count(),
+        ),
+        (2, 2),
+        "jt-outer kernel must compute one panel base in each main/remainder body:\n{tiled_fn}"
+    );
+    // One runtime `tj = min(remaining, TJ)` select belongs to the outer
+    // remainder tile. Boundary rows retain signed jw clipping in both outer
+    // bodies.
+    assert_eq!(
         tiled_fn
             .lines()
             .filter(|line| {
                 let line = line.trim();
                 line.contains(" = select i1 ") && line.ends_with(", i64 16")
             })
-            .count()
-            == 3
-            && tiled_fn.matches(" = select i1 ").count() == 7,
-        "each i region must clip its remainder tile to tj = min(remaining, TJ):\n{tiled_fn}"
+            .count(),
+        1,
+        "jt-outer remainder must clip once to tj = min(remaining, TJ):\n{tiled_fn}"
+    );
+    assert_eq!(
+        (
+            tiled_fn.matches(" = icmp slt i64 ").count(),
+            tiled_fn.matches(" = icmp sgt i64 ").count(),
+        ),
+        (4, 4),
+        "head/tail rows must retain signed jw clipping in both jt bodies:\n{tiled_fn}"
+    );
+    assert!(
+        tiled.contains(" = alloca [64 x float], align 64")
+            && tiled.contains("store float zeroinitializer")
+            && tiled.contains("getelementptr [64 x float], ptr %packed"),
+        "module must zero-pad and address the packed b buffer:\n{tiled}"
+    );
+    assert!(
+        tiled_fn.contains("call void @llvm.prefetch.p0(")
+            && tiled_fn
+                .lines()
+                .any(|line| line.contains(" = add i64 ") && line.ends_with(", 2")),
+        "tile nest must prefetch and unroll k:\n{tiled_fn}"
     );
     insta::assert_snapshot!("tile_nest_shape", tiled_fn);
 
@@ -551,7 +611,7 @@ fn golden_tile_map_shapes() {
         },
     )
     .unwrap();
-    let untiled_fn = function_containing(&untiled, "define internal [16 x float]");
+    let untiled_fn = function_containing(&untiled, " = call float @fn");
     assert!(
         !untiled_fn
             .lines()
@@ -564,13 +624,62 @@ fn golden_tile_map_shapes() {
         "untiled map must retain its per-cell body call:\n{untiled_fn}"
     );
     insta::assert_snapshot!("untiled_map_shape", untiled_fn);
+
+    let f64_ir = flow_rewrite::rewrite(lower_src(TILE_MATMUL_F64_SRC)).ir;
+    let f64 = emit(&f64_ir).unwrap();
+    let f64_fn = function_containing(&f64, " = alloca [32 x double]");
+    assert!(
+        f64_fn.contains(" = alloca [32 x double]")
+            && f64.contains(" = alloca [120 x double], align 64")
+            && f64.contains("store double zeroinitializer")
+            && f64.contains("getelementptr [120 x double], ptr %packed")
+            && f64_fn
+                .lines()
+                .any(|line| line.contains(" = add i64 ") && line.ends_with(", 8"))
+            && f64_fn.contains("call void @llvm.prefetch.p0("),
+        "f64 tile nest must use TJ=8 throughout packing and the kernel:\n{f64_fn}"
+    );
+    assert_eq!(
+        (
+            f64_fn
+                .lines()
+                .filter(|line| line.contains(" = udiv i64 ") && line.trim_end().ends_with(", 8"))
+                .count(),
+            f64_fn
+                .lines()
+                .filter(|line| line.contains(" = mul i64 ") && line.trim_end().ends_with(", 40"))
+                .count(),
+        ),
+        (2, 2),
+        "f64 jt-outer kernel must compute one panel base in each main/remainder body:\n{f64_fn}"
+    );
+    insta::assert_snapshot!("tile_nest_shape_f64", f64_fn);
+}
+
+#[test]
+fn tile_contract_flags_are_opt_in() {
+    let ir = flow_rewrite::rewrite(lower_src(TILE_MATMUL_SRC)).ir;
+    let plain = emit_with_opts(&ir, &EmitOpts::default()).unwrap();
+    let contracted = emit_with_opts(
+        &ir,
+        &EmitOpts {
+            contract: true,
+            ..EmitOpts::default()
+        },
+    )
+    .unwrap();
+
+    assert!(!plain.contains("fmul contract"));
+    assert!(!plain.contains("fadd contract"));
+    assert!(contracted.contains("fmul contract float"));
+    assert!(contracted.contains("fadd contract float"));
 }
 
 #[test]
 fn golden_tile_map_shape_1d() {
     let ir = flow_rewrite::rewrite(lower_src(TILE_FIR_SRC)).ir;
     let tiled = emit(&ir).unwrap();
-    let tiled_fn = function_containing(&tiled, "define internal [16 x float]");
+    let tiled_fn = function_containing(&tiled, " = alloca [16 x float]");
     assert!(
         tiled_fn
             .lines()
@@ -583,8 +692,8 @@ fn golden_tile_map_shape_1d() {
         "tiled FIR map must not call its per-sample body:\n{tiled_fn}"
     );
     assert!(
-        tiled_fn.contains(" = udiv i64 0, 16")
-            && tiled_fn.contains(" = add i64 16, 15")
+        tiled_fn.contains(" = udiv i64 %lo, 16")
+            && tiled_fn.contains(" = add i64 %hi, 15")
             && tiled_fn.contains(" = udiv i64 %t"),
         "FIR tile nest must retain the generic row loop with i_hi=1:\n{tiled_fn}"
     );

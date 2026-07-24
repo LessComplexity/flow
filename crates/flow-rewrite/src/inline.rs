@@ -13,14 +13,16 @@
 //!     a callee called at K sites is copied K times; the cap is a recorded
 //!     constant, tuned by the perf harness, never semantics-bearing), ∧,
 //!   - the callee is not the entry (the entry fn is never inlined), ∧,
+//!   - the callee has no loop (inlining it into a caller loop can create nested
+//!     SCCs, which lower never produces and the LLVM backend rejects; the
+//!     future loop-to-fold lift makes these callees eligible), ∧,
 //!   - no `Call` cycle (the builder rejects recursive Calls at seal —
 //!     `IrError::RecursiveCall` — so the graph is a DAG by construction; if
 //!     recursion ever arrives, cycle members stay as calls, plan §7).
 //!
-//! `Map`/`Fold` bodies are NOT stripped — they are parameterized fanout
-//! subgraphs quantified over n, never elaborated to physical nodes (a `Call`
-//! can only target a `Named` fn, so this falls out of the IR shape). Sites
-//! kept as calls remain region boundaries (the callee is its own region
+//! Calls inside `Map`/`Fold` bodies are stripped: those bodies are separate
+//! functions, and the graph-wide morphism walk plans their call sites too.
+//! Sites kept as calls remain region boundaries (the callee is its own region
 //! graph).
 
 use slotmap::SecondaryMap;
@@ -30,16 +32,16 @@ use flow_ir::{CategoryIr, FuncId, Operation};
 use crate::plan::RewritePlan;
 
 /// Policy cap (plan §Move 1, v2.0): a callee's body is inlined only when its
-/// morphism count is ≤ this. Recorded, perf-harness-tuned, never
-/// semantics-bearing.
-pub const INLINE_MAX_BODY: u32 = 64;
+/// morphism count is ≤ this recorded, perf-harness-tuned 256-morphism limit;
+/// the cap is never semantics-bearing.
+pub const INLINE_MAX_BODY: u32 = 256;
 
 /// Analyze `ir` for strippable `Call` edges (region-emission plan Move 1).
 /// Every `Call(g)` morphism whose callee passes the module-header policy gets
 /// an `inline[m] = ()` entry. Deterministic (insertion-order walk) and
 /// idempotent: stripped calls are gone from the output, and kept calls
-/// (oversized / entry / cyclic) stay un-inlinable, so a second pass plans
-/// nothing.
+/// (oversized / entry / loop-bearing / cyclic) stay un-inlinable, so a second
+/// pass plans nothing.
 pub fn analyze_inline(ir: &CategoryIr) -> RewritePlan {
     let mut plan = RewritePlan::new();
     let cyclic = call_cyclic(ir);
@@ -47,7 +49,7 @@ pub fn analyze_inline(ir: &CategoryIr) -> RewritePlan {
         let Operation::Call(g) = morph.op else {
             continue;
         };
-        if g == ir.entry() || cyclic.contains_key(g) {
+        if g == ir.entry() || !ir.loop_structure(g).is_empty() || cyclic.contains_key(g) {
             continue;
         }
         let def = ir.func(g).expect("call target");

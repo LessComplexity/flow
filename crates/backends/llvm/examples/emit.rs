@@ -1,5 +1,5 @@
 //! Emit textual LLVM IR for a `.flow` file (ADR-0020; dev tool — the future
-//! `flow build` embryo). Usage: `cargo run -p flow-backend-llvm --example emit -- <file.flow> [-] [--perf] [--no-tile] [--rewrite]`
+//! `flow build` embryo). Usage: `cargo run -p flow-backend-llvm --example emit -- <file.flow> [-] [--perf] [--no-tile] [--no-pack] [--contract] [--rewrite]`
 //! (writes `<file>.ll` next to the source, `<file>_perf.ll` with `--perf`, or
 //! stdout with `-`; `--rewrite` rewrites the lowered IR before emission).
 
@@ -8,7 +8,9 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let Some(path) = args.next() else {
-        eprintln!("usage: emit <file.flow> [-] [--perf] [--no-tile] [--rewrite]");
+        eprintln!(
+            "usage: emit <file.flow> [-] [--perf] [--no-tile] [--no-pack] [--contract] [--rewrite]"
+        );
         return ExitCode::from(2);
     };
     let mut to_stdout = false;
@@ -19,10 +21,12 @@ fn main() -> ExitCode {
             "-" => to_stdout = true,
             "--perf" => opts.perf_timing = true,
             "--no-tile" => opts.tiling = false,
+            "--no-pack" => opts.packing = false,
+            "--contract" => opts.contract = true,
             "--rewrite" => rewrite = true,
             other => {
                 eprintln!(
-                    "unknown flag: {other} (usage: emit <file.flow> [-] [--perf] [--no-tile] [--rewrite])"
+                    "unknown flag: {other} (usage: emit <file.flow> [-] [--perf] [--no-tile] [--no-pack] [--contract] [--rewrite])"
                 );
                 return ExitCode::from(2);
             }

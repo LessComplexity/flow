@@ -20,9 +20,10 @@ mod ty;
 use flow_ir::{CategoryIr, FuncId, MorphismId, Operation, PathPlan, SourceLoc, TaskKind};
 use slotmap::SecondaryMap;
 
-use crate::func::{FnAttrs, FnEmit};
+use crate::func::{FnAttrs, FnEmit, packing_site};
 use crate::module::{
-    PAR_DECLS, PERF_DECLS, RT_DECLS, collect_str_globals, emit_main_wrapper, emit_str_globals,
+    PAR_DECLS, PERF_DECLS, PREFETCH_DECL, RT_DECLS, collect_str_globals, emit_main_wrapper,
+    emit_str_globals,
 };
 
 /// A structured, renderer-free emission error (ADR-0020 §1; C3).
@@ -42,6 +43,11 @@ pub struct EmitOpts {
     pub perf_timing: bool,
     /// Tile recognized matmul-shaped map sites.
     pub tiling: bool,
+    /// Pack tiled two-dimensional right-hand operands.
+    pub packing: bool,
+    /// Use single-rounding FMA contraction on the product face; the default
+    /// conformance face stays bit-exact.
+    pub contract: bool,
 }
 
 impl Default for EmitOpts {
@@ -49,6 +55,8 @@ impl Default for EmitOpts {
         Self {
             perf_timing: false,
             tiling: true,
+            packing: true,
+            contract: false,
         }
     }
 }
@@ -113,10 +121,21 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
     } else {
         SecondaryMap::new()
     };
+    let prefetch = opts.tiling
+        && opts.packing
+        && ir.funcs().any(|(f, _)| {
+            ir.tile_plan(f)
+                .sites
+                .iter()
+                .any(|(_, site)| packing_site(site))
+        });
 
     let mut out = String::new();
     out.push_str("; flow-backend-llvm emitted module\n");
     out.push_str(RT_DECLS);
+    if prefetch {
+        out.push_str(PREFETCH_DECL);
+    }
     if opts.perf_timing {
         out.push_str(PERF_DECLS);
     }
@@ -142,9 +161,20 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
                 path_plan.as_ref().expect("parallel plan"),
                 opts.perf_timing,
                 opts.tiling,
+                opts.packing,
+                opts.contract,
             ));
         } else {
-            let mut fe = FnEmit::new(ir, id, &fnames, &strings, &attrs, opts.tiling);
+            let mut fe = FnEmit::new(
+                ir,
+                id,
+                &fnames,
+                &strings,
+                &attrs,
+                opts.tiling,
+                opts.packing,
+                opts.contract,
+            );
             if id == entry {
                 fe.set_perf_timing(opts.perf_timing);
             }
