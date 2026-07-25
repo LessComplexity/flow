@@ -3774,7 +3774,10 @@ impl<'a> FnEmit<'a> {
         // its own run, and that path is not the one the lever exercised.
         // Until that is explained, `1` reproduces today's slicing exactly and
         // the floor below is the only behaviour change (plan-s32 §2.6).
-        let oversub = 1;
+        let oversub = match crate::reuse::i_reuse(site, &site.b) {
+            crate::reuse::Reuse::Invariant => 4,
+            _ => 1,
+        };
         (floor, oversub)
     }
 

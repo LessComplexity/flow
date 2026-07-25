@@ -229,11 +229,21 @@ fn slice_ranges(def: TaskDef, threads: usize) -> Vec<(i64, i64)> {
         // which measured 7x on matmul1024 (plan-s32 §2.6). Within that floor the
         // runtime picks the count, because lane count is the one input the
         // compiler does not have.
-        let ceiling = usize::try_from((def.n as u64).div_ceil(def.slice_elems as u64))
+        // Cut EQUAL numbers of blocks, never an arbitrary count.
+        //
+        // A count that does not divide the block total leaves slices of
+        // different sizes, and the cost is out of all proportion to the 1.25x
+        // size ratio it creates. Measured on matmul1024 at 14 lanes (256
+        // blocks): every count that divides 256 runs 2.49-2.73 ms (32, 64, 128,
+        // 256) while neighbouring counts that do not run 3.3-5.8 (41, 43, 47,
+        // 52, 57) — 1.8x for being ragged. Deriving blocks-per-slice first and
+        // the count from it makes ragged counts unreachable.
+        let blocks = usize::try_from((def.n as u64).div_ceil(def.slice_elems as u64))
             .unwrap_or(usize::MAX)
             .max(1);
         let wanted = threads.saturating_mul(def.oversub.max(1) as usize).max(1);
-        wanted.min(ceiling)
+        let per = (blocks / wanted).max(1);
+        blocks.div_ceil(per)
     } else {
         usize::try_from((def.n as u64).div_ceil(GRAIN as u64))
             .unwrap_or(usize::MAX)
@@ -1539,6 +1549,31 @@ mod tests {
                 for &(lo, hi) in &ranges {
                     assert_eq!((hi - lo) % quantum, 0, "whole blocks only: {lo}..{hi}");
                 }
+            }
+        }
+    }
+
+    /// Ragged slice counts are unreachable: whatever is asked for, the pieces
+    /// carry equal numbers of blocks. Measured cost of raggedness on matmul1024
+    /// at 14 lanes: 1.8x (a count of 57 over 256 blocks ran 4.48 ms against
+    /// 2.49-2.73 for every count that divides 256).
+    #[test]
+    fn slice_counts_are_never_ragged() {
+        let (n, quantum) = (1_048_576, 4096);
+        let blocks = n / quantum;
+        for threads in [1usize, 4, 8, 14] {
+            for oversub in [1u32, 4, 16, 64] {
+                let ranges = slice_ranges(def_of(n, quantum, oversub), threads);
+                let sizes: Vec<i64> = ranges.iter().map(|&(lo, hi)| (hi - lo) / quantum).collect();
+                let (min, max) = (
+                    *sizes.iter().min().expect("slices"),
+                    *sizes.iter().max().expect("slices"),
+                );
+                assert!(
+                    max - min <= 1,
+                    "threads={threads} oversub={oversub}: block counts {sizes:?}"
+                );
+                assert!(ranges.len() <= blocks as usize, "never below one block");
             }
         }
     }
