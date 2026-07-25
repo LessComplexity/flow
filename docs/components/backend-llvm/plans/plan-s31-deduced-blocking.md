@@ -239,3 +239,79 @@ already include clang's CSE") and the ratio was allowed to drive the ordering de
 supports: the nine per-tap lane loops in the remainder path, the TI=1 image-row reuse
 (item 4), and the fact that no matmul rung above register blocking reaches conv at all
 (`packing_site` refuses k-split — suggestion #12's im2col is the move that opens them).
+
+---
+
+## As built — items 3 and 4: blocking is deduced, and it pays
+
+**Item 3 (`crates/backends/llvm/src/reuse.rs`, new).** `Reuse` + `i_reuse` + `distinct_runs`
+— ~60 lines of arithmetic over recorded `TileRead` fields, zero flow-ir change (ADR-0032
+category (b)). The load-bearing claim of the plan is now code: **`ci == 0` and `ci == cq` are
+the same predicate at `q = 0` and `q = 1`**, so matmul's row-invariance and conv's sliding
+window are one rung, not two. Five unit tests over the recorded oracles pin it, including the
+correction that conv's reuse at TI=4 is **2.0×, not suggestion #11's 3×** (that is the
+`TI → ∞` limit and needs TI ≥ 12).
+
+**Item 4 (`emit_conv_blocked_range` + `emit_conv_block_tile`).** The conv nest becomes three
+row regions threaded on one counter — head (TI=1) → interior full-window rows TI at a time →
+tail (TI=1) — entered **because the record says the read slides**, not because the site is
+conv2d. Composition rule 4 is honoured: the block hoists its tap-row union once
+(`(TI−1)·q + k/div` = 6 rows for 4 output rows) and each loaded vector is consumed by every
+row that uses it, so the loop nests row *inside* tap. Emitting TI copies of the tap nest would
+have reproduced the GVN failure S29 recorded. R1 holds because `kq = kqp − q·r` rises with
+`kqp`, keeping each cell's chain k-ascending.
+
+`reuse::distinct_runs` is not decoration: the emitter `debug_assert`s that its own union size
+equals what the query predicts, so the two cannot drift.
+
+### Measured
+
+conv2d, min/median of 15, compute-only, product face, M4 Pro. `item2` is the vector
+accumulator alone; `item4` adds row blocking.
+
+| shape | item2 | item4 | Δ |
+| --- | --- | --- | ---: |
+| conv2d_512 1t | 0.1113 / 0.1303 | **0.0910 / 0.1018** | **−18% / −22%** |
+| conv2d_1024 1t | 0.4740 / 0.5070 | **0.3992 / 0.4125** | **−16% / −19%** |
+| conv2d_1024 par | 0.4082 / 0.4785 | 0.4075 / 0.4720 | flat |
+
+Output byte-equal on every leg. **Row blocking is worth more than the accumulator was** —
+~17% against ~10% — which inverts the ordering this plan argued for. The ordering was still
+operationally right (the accumulator had to land first so TI>1 would not quadruple a memory
+accumulator into the promotion risk S29 lost), but it was right for a reason the plan did not
+give, and the 2.9×-vs-1.2× arithmetic that justified it was wrong in both terms.
+
+**The reuse reached the machine.** Hot-function disassembly, `fmla` against vector loads:
+
+| | fmla | `ldr q` | FMA:load |
+| --- | ---: | ---: | ---: |
+| item2 | 81 | 101 | 0.80 |
+| item4 | 306 | 255 | **1.20** |
+
+A 50% rise in arithmetic intensity, which is the deduced 2.0× reuse showing up as fetched
+vectors — diluted by the head/tail TI=1 regions and the remainder paths, as expected.
+
+### Where conv2d stands now
+
+| | 1t min | vs cpp-1t 0.2553 |
+| --- | ---: | ---: |
+| session start | 0.5343 | 2.09× behind |
+| + item 2 (vector accumulator) | 0.4810 | 1.88× |
+| + item 4 (deduced row blocking) | **0.3992** | **1.56×** |
+
+**−25% total at one thread**, and the per-core gap that S30 called the highest-value item in
+the queue is down by a quarter without a single machine constant being hand-set.
+
+Parallel is unchanged, and the width sweep says why — optimum is still 4 threads (0.235 ms)
+against 0.411 at the default 14. **The remaining conv2d deficit is now majority scheduling,
+not kernel**, which is the thread-count P0.
+
+### Still open
+
+- The 1-D window rung (`WINDOW_SUBROWS`) does not consume `i_reuse`; it blocks lanes, not
+  rows, and its `4` is still unjustified.
+- `distinct_runs` is consumed only by the conv path and the assert. The matmul rung still
+  keys on the raw `site.b.ci == 0` rather than on `i_reuse(b) == Invariant` — same predicate,
+  but the shared name is not yet the shared call.
+- Nothing here touches `packing_site`'s k-split refusal, so the packed/KC rungs remain
+  unreachable for conv (suggestion #12).

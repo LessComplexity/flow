@@ -16,6 +16,7 @@ mod func;
 mod loops;
 mod module;
 mod profile;
+mod reuse;
 mod ty;
 
 pub use crate::profile::TargetProfile;

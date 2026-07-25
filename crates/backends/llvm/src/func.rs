@@ -3562,6 +3562,59 @@ impl<'a> FnEmit<'a> {
         self.line(format!("{i_hi} = udiv i64 {hi_biased}, {}", site.c));
         self.line(format!("store i64 {i_lo}, ptr {i_ctr}"));
 
+        // plan-s31-deduced-blocking item 4. Row blocking is applied because the
+        // RECORD says this read slides — `i_reuse(b) == Sliding{q}` — not
+        // because the site is conv2d; it is the same predicate the matmul rung
+        // uses at q = 0 (`Invariant`). Interior full-window rows run TI at a
+        // time; head and tail rows keep the TI=1 path, the rung-2 i split.
+        let ti = self.profile.tile_i();
+        let sliding = match crate::reuse::i_reuse(site, &site.b) {
+            crate::reuse::Reuse::Sliding { q } if site.rows > 1 && ti > 1 => Some(q),
+            _ => None,
+        };
+        if let Some(q) = sliding {
+            // Interior rows are [ceil(lo/C), floor(hi/C)): the rows whose whole
+            // lane window [0, C) lies inside the task range, so no jw clip.
+            let lo_biased = self.tmp();
+            self.line(format!("{lo_biased} = add i64 {lo}, {}", site.c - 1));
+            let i_fw_lo = self.tmp();
+            self.line(format!("{i_fw_lo} = udiv i64 {lo_biased}, {}", site.c));
+            let i_fw_hi = self.tmp();
+            self.line(format!("{i_fw_hi} = udiv i64 {hi}, {}", site.c));
+            let fw_past_end = self.tmp();
+            self.line(format!("{fw_past_end} = icmp ugt i64 {i_fw_lo}, {i_hi}"));
+            let head_end = self.tmp();
+            self.line(format!(
+                "{head_end} = select i1 {fw_past_end}, i64 {i_hi}, i64 {i_fw_lo}"
+            ));
+            // One counter through all three regions: each loop resumes where
+            // the previous left it, so no region can skip or repeat a row.
+            self.emit_conv_row_range(site, &ctx, &i_ctr, &j_ctr, &head_end, &lo, &hi);
+            self.emit_conv_blocked_range(site, &ctx, &i_ctr, &j_ctr, &i_fw_hi, ti, q);
+            self.emit_conv_row_range(site, &ctx, &i_ctr, &j_ctr, &i_hi, &lo, &hi);
+            return;
+        }
+
+        self.emit_conv_row_range(site, &ctx, &i_ctr, &j_ctr, &i_hi, &lo, &hi);
+    }
+
+    /// The TI=1 conv row loop over `[*i_ctr, to)`, leaving `i_ctr` at `to` —
+    /// the S28 body verbatim. The head and tail regions of a blocked nest and
+    /// the whole nest of an unblocked site are the same code.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_conv_row_range(
+        &mut self,
+        site: &TileSite,
+        ctx: &ConvTileCtx,
+        i_ctr: &str,
+        j_ctr: &str,
+        to: &str,
+        lo: &str,
+        hi: &str,
+    ) {
+        let tile_j = ctx.tile_j;
+        let i_hi = to;
+
         let (i_head, i_body, i_done) = (self.label(), self.label(), self.label());
         self.line(format!("br label %{i_head}"));
         self.label_line(&i_head);
@@ -3669,6 +3722,250 @@ impl<'a> FnEmit<'a> {
     /// `b[b_row + (cq·kq + cr·kr) + j0 + lane]` — the parenthesized tap
     /// offset folds to a compile-time constant — FMA into the acc vector,
     /// respecting the recorded operand orders.
+    /// TI interior rows at a time (plan-s31-deduced-blocking item 4). Entered
+    /// only where the record says the sliding read shares across rows, and only
+    /// for full-window rows, so there is no per-row jw clip inside.
+    ///
+    /// Leaves `i_ctr` at the first row it did not take, so the tail range
+    /// resumes from it.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_conv_blocked_range(
+        &mut self,
+        site: &TileSite,
+        ctx: &ConvTileCtx,
+        i_ctr: &str,
+        j_ctr: &str,
+        to: &str,
+        ti: u64,
+        q: u64,
+    ) {
+        let tile_j = ctx.tile_j;
+        let (head, body, done) = (self.label(), self.label(), self.label());
+        self.line(format!("br label %{head}"));
+        self.label_line(&head);
+        let i = self.tmp();
+        self.line(format!("{i} = load i64, ptr {i_ctr}"));
+        let i_end = self.tmp();
+        self.line(format!("{i_end} = add i64 {i}, {ti}"));
+        let fits = self.tmp();
+        self.line(format!("{fits} = icmp ule i64 {i_end}, {to}"));
+        self.line(format!("br i1 {fits}, label %{body}, label %{done}"));
+
+        self.label_line(&body);
+        let row0 = self.tmp();
+        self.line(format!("{row0} = mul i64 {i}, {}", site.c));
+        // Per-row read bases: row i+r sits `ci·r` past the block's own.
+        let mut a_rows = Vec::with_capacity(ti as usize);
+        let mut b_rows = Vec::with_capacity(ti as usize);
+        for (coeff, base, rows) in [
+            (site.a.ci, site.a.base, &mut a_rows),
+            (site.b.ci, site.b.base, &mut b_rows),
+        ] {
+            let block = self.emit_tile_index(
+                (base != 0).then(|| base.to_string()),
+                &[(coeff, i.as_str())],
+            );
+            for r in 0..ti {
+                let off = coeff * r;
+                if off == 0 {
+                    rows.push(block.clone());
+                } else {
+                    let prev = block.clone().unwrap_or_else(|| "0".to_owned());
+                    let shifted = self.tmp();
+                    self.line(format!("{shifted} = add i64 {prev}, {off}"));
+                    rows.push(Some(shifted));
+                }
+            }
+        }
+
+        // Constant-TJ main tiles across the full window [0, C).
+        let (j_head, j_body, j_done) = (self.label(), self.label(), self.label());
+        self.line(format!("store i64 0, ptr {j_ctr}"));
+        self.line(format!("br label %{j_head}"));
+        self.label_line(&j_head);
+        let j0 = self.tmp();
+        self.line(format!("{j0} = load i64, ptr {j_ctr}"));
+        let j0_full = self.tmp();
+        self.line(format!("{j0_full} = add i64 {j0}, {tile_j}"));
+        let full = self.tmp();
+        self.line(format!("{full} = icmp ule i64 {j0_full}, {}", site.c));
+        self.line(format!("br i1 {full}, label %{j_body}, label %{j_done}"));
+        self.label_line(&j_body);
+        self.emit_conv_block_tile(site, ctx, &j0, &row0, &a_rows, &b_rows[0], ti, q);
+        let j0_next = self.tmp();
+        self.line(format!("{j0_next} = add i64 {j0}, {tile_j}"));
+        self.line(format!("store i64 {j0_next}, ptr {j_ctr}"));
+        self.line(format!("br label %{j_head}"));
+        self.label_line(&j_done);
+
+        // Remainder lanes (< TJ): TI separate TI=1 tiles on the scalar path —
+        // blocking buys nothing on a partial tile and the shared code is the
+        // negative control.
+        let j_rem = self.tmp();
+        self.line(format!("{j_rem} = load i64, ptr {j_ctr}"));
+        let has_rem = self.tmp();
+        self.line(format!("{has_rem} = icmp ult i64 {j_rem}, {}", site.c));
+        let (rem_body, rem_done) = (self.label(), self.label());
+        self.line(format!(
+            "br i1 {has_rem}, label %{rem_body}, label %{rem_done}"
+        ));
+        self.label_line(&rem_body);
+        let rem_len = self.tmp();
+        self.line(format!("{rem_len} = sub i64 {}, {j_rem}", site.c));
+        for r in 0..ti {
+            let row0_r = if r == 0 {
+                row0.clone()
+            } else {
+                let t = self.tmp();
+                self.line(format!("{t} = add i64 {row0}, {}", r * site.c));
+                t
+            };
+            let (a_r, b_r) = (a_rows[r as usize].clone(), b_rows[r as usize].clone());
+            self.emit_tile_conv_tile(site, ctx, &j_rem, &row0_r, &a_r, &b_r, &rem_len);
+        }
+        self.line(format!("br label %{rem_done}"));
+        self.label_line(&rem_done);
+
+        self.line(format!("store i64 {i_end}, ptr {i_ctr}"));
+        self.line(format!("br label %{head}"));
+        self.label_line(&done);
+    }
+
+    /// One TI×TJ block of the conv nest: TI `<TJ x elem>` accumulators, and the
+    /// taps **hoisted once per block** rather than re-emitted per row.
+    ///
+    /// The union of tap-rows a block touches is `(TI−1)·q + k/div` — six image
+    /// rows for four output rows at `q = 1`, `k/div = 3` — against `TI · k/div`
+    /// = twelve unblocked. Each is loaded ONCE, into one vector register, and
+    /// consumed by every row that uses it. Emitting TI copies of the tap nest
+    /// instead would put the matching loads in different basic blocks separated
+    /// by aliasing stores, which is the GVN situation S29 recorded failing;
+    /// this is plan composition rule 4, and it is why the loop nests row
+    /// INSIDE tap rather than outside.
+    ///
+    /// R1 holds: for a fixed row `r`, `kq = kqp − q·r` rises with `kqp` and
+    /// `kr` rises within it, so the per-cell chain is still k-ascending, with
+    /// the recorded operand orders untouched.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_conv_block_tile(
+        &mut self,
+        site: &TileSite,
+        ctx: &ConvTileCtx,
+        j0: &str,
+        row0: &str,
+        a_rows: &[Option<String>],
+        b_row: &Option<String>,
+        ti: u64,
+        q: u64,
+    ) {
+        let vllt = vec_llt(&ctx.elem_llt, ctx.tile_j);
+        let align = llt_align(&ctx.elem_llt);
+        let ks = *site.b.ksplit.as_ref().expect("conv site records ksplit");
+        let kq_rows = site.k / ks.div;
+        // The emitter and the reuse query must agree on how many distinct
+        // tap-rows this block touches; if they ever diverge, one of them is
+        // wrong about what blocking buys.
+        debug_assert_eq!(
+            (ti - 1) * q + kq_rows,
+            crate::reuse::distinct_runs(site, &site.b, ti),
+            "block tap-row union must match the deduced reuse"
+        );
+
+        let b_tile = self
+            .emit_tile_index(b_row.clone(), &[(1, j0)])
+            .expect("conv b has lane term");
+        let seed = ctx.seed.clone();
+        let mut accs = Vec::with_capacity(ti as usize);
+        for _ in 0..ti {
+            let acc = self.emit_splat(&ctx.elem_llt, ctx.tile_j, &seed);
+            accs.push(acc);
+        }
+
+        for kqp in 0..((ti - 1) * q + kq_rows) {
+            for kr in 0..ks.div {
+                let users: Vec<u64> = (0..ti)
+                    .filter(|r| kqp >= q * r && kqp - q * r < kq_rows)
+                    .collect();
+                if users.is_empty() {
+                    continue;
+                }
+                let tap_off = ks.cq * kqp + ks.cr * kr;
+                let b_start = if tap_off == 0 {
+                    b_tile.clone()
+                } else {
+                    let shifted = self.tmp();
+                    self.line(format!("{shifted} = add i64 {b_tile}, {tap_off}"));
+                    shifted
+                };
+                let b_elem_ptr = self.tmp();
+                self.line(format!(
+                    "{b_elem_ptr} = getelementptr {}, ptr {}, i64 0, i64 {b_start}",
+                    ctx.b_llt, ctx.b_ptr
+                ));
+                let b_vec = self.tmp();
+                self.line(format!(
+                    "{b_vec} = load {vllt}, ptr {b_elem_ptr}, align {align}"
+                ));
+
+                for r in users {
+                    let k_tap = ((kqp - q * r) * ks.div + kr).to_string();
+                    let a_index = self
+                        .emit_tile_index(a_rows[r as usize].clone(), &[(site.a.ck, k_tap.as_str())])
+                        .unwrap_or_else(|| "0".to_owned());
+                    let a_elem_ptr = self.tmp();
+                    self.line(format!(
+                        "{a_elem_ptr} = getelementptr {}, ptr {}, i64 0, i64 {a_index}",
+                        ctx.a_llt, ctx.a_ptr
+                    ));
+                    let a_value = self.tmp();
+                    self.line(format!(
+                        "{a_value} = load {}, ptr {a_elem_ptr}",
+                        ctx.elem_llt
+                    ));
+                    let a_vec = self.emit_splat(&ctx.elem_llt, ctx.tile_j, &a_value);
+                    let product = self.tmp();
+                    let (mul_lhs, mul_rhs) = if site.mul_a_first {
+                        (a_vec.clone(), b_vec.clone())
+                    } else {
+                        (b_vec.clone(), a_vec.clone())
+                    };
+                    self.line(format!(
+                        "{product} = {}{} {vllt} {mul_lhs}, {mul_rhs}",
+                        ctx.mul_op, ctx.contract_flag
+                    ));
+                    let sum = self.tmp();
+                    let acc = accs[r as usize].clone();
+                    let (add_lhs, add_rhs) = if site.add_acc_first {
+                        (acc, product.clone())
+                    } else {
+                        (product.clone(), acc)
+                    };
+                    self.line(format!(
+                        "{sum} = {}{} {vllt} {add_lhs}, {add_rhs}",
+                        ctx.add_op, ctx.contract_flag
+                    ));
+                    accs[r as usize] = sum;
+                }
+            }
+        }
+
+        for r in 0..ti {
+            let out_start = self.tmp();
+            self.line(format!("{out_start} = add i64 {row0}, {}", r * site.c));
+            let out_index = self.tmp();
+            self.line(format!("{out_index} = add i64 {out_start}, {j0}"));
+            let out_elem_ptr = self.tmp();
+            self.line(format!(
+                "{out_elem_ptr} = getelementptr {}, ptr {}, i64 0, i64 {out_index}",
+                ctx.out_llt, ctx.out_ptr
+            ));
+            self.line(format!(
+                "store {vllt} {}, ptr {out_elem_ptr}, align {align}",
+                accs[r as usize]
+            ));
+        }
+    }
+
     /// The constant-TJ main tile as `<TJ x elem>` SSA values — plan-s31-
     /// deduced-blocking work item 2, the S30 accumulator carve-out applied to
     /// the conv rung.
@@ -3721,7 +4018,10 @@ impl<'a> FnEmit<'a> {
                     ctx.a_llt, ctx.a_ptr
                 ));
                 let a_value = self.tmp();
-                self.line(format!("{a_value} = load {}, ptr {a_elem_ptr}", ctx.elem_llt));
+                self.line(format!(
+                    "{a_value} = load {}, ptr {a_elem_ptr}",
+                    ctx.elem_llt
+                ));
                 let a_vec = self.emit_splat(&ctx.elem_llt, ctx.tile_j, &a_value);
 
                 let tap_off = ksplit.cq * kq + ksplit.cr * kr;
@@ -3738,7 +4038,9 @@ impl<'a> FnEmit<'a> {
                     ctx.b_llt, ctx.b_ptr
                 ));
                 let b_vec = self.tmp();
-                self.line(format!("{b_vec} = load {vllt}, ptr {b_elem_ptr}, align {align}"));
+                self.line(format!(
+                    "{b_vec} = load {vllt}, ptr {b_elem_ptr}, align {align}"
+                ));
 
                 let product = self.tmp();
                 let (mul_lhs, mul_rhs) = if site.mul_a_first {

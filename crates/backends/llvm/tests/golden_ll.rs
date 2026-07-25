@@ -1012,102 +1012,82 @@ fn golden_tile_map_shape_conv() {
     let ir = flow_rewrite::rewrite(lower_src(TILE_CONV_SRC)).ir;
     let tiled = emit(&ir).unwrap();
     let tiled_fn = function_containing(&tiled, " = alloca [16 x float]");
-    // The S28 conv rung: the k-split record cashed as an unrolled (kq, kr) tap
-    // nest. S31 (plan-s31-deduced-blocking item 2) moved the constant-TJ MAIN
-    // tile onto `<TJ x elem>` SSA values; the runtime-`tj` remainder still uses
-    // the flat [TJ] scratch, so the alloca remains — for the remainder alone.
-    assert!(
-        tiled_fn
-            .lines()
-            .any(|line| line.trim_start().starts_with("%s")
-                && line.contains(" = alloca [16 x float]")),
-        "the remainder tile keeps the [TJ=16] scratch alloca:\n{tiled_fn}"
-    );
-    // THE property this rung buys: the main tile touches no accumulator memory
-    // at all. Every `[16 x float]` GEP is an accumulator access, and 11 of the
-    // 22 (one seed + 9 taps + one store, per tile body) are gone with the main
-    // body's — what remains is exactly the remainder tile's.
-    assert_eq!(
-        tiled_fn.matches("getelementptr [16 x float]").count(),
-        11,
-        "only the remainder tile may address accumulator memory:\n{tiled_fn}"
-    );
-    // Conv has no runtime k loop — the taps are unrolled at emission — so the
-    // main tile's accumulator is a straight SSA chain, not even a phi: one
-    // splat of the seed, then one fmul/fadd pair per tap.
-    assert_eq!(
-        tiled_fn.matches(" = fmul <16 x float> ").count(),
-        9,
-        "9 unrolled taps on vector accumulators in the main tile:\n{tiled_fn}"
-    );
-    assert_eq!(
-        tiled_fn.matches(" = fadd <16 x float> ").count(),
-        9,
-        "9 vector accumulations in the main tile:\n{tiled_fn}"
-    );
-    assert_eq!(
-        tiled_fn.matches(" = load <16 x float>, ").count(),
-        9,
-        "one contiguous b vector load per tap:\n{tiled_fn}"
-    );
-    assert_eq!(
-        tiled_fn.matches("store <16 x float> ").count(),
-        1,
-        "the main tile stores its accumulator once:\n{tiled_fn}"
-    );
-    assert_eq!(
-        tiled_fn.matches(" = insertelement <16 x float> ").count(),
-        10,
-        "the seed splat plus one w[k] splat per tap:\n{tiled_fn}"
-    );
-    // Element alignment, never the vector type's ABI alignment — j0 is
-    // arbitrary and <16 x float> would claim 64 (S30 composition rule 3).
-    assert!(
-        !tiled_fn.contains("<16 x float>, ptr %t") || tiled_fn.contains(", align 4"),
-        "vector accesses must carry the element alignment:\n{tiled_fn}"
-    );
+    // The S28 conv rung cashed the k-split record as an unrolled (kq, kr) tap
+    // nest. S31 added two things on top (plan-s31-deduced-blocking):
+    //   item 2 — the constant-TJ MAIN tile runs on <TJ x elem> SSA values;
+    //   item 4 — interior full-window rows run TI at a time, because the
+    //            RECORD says b slides (`i_reuse(b) == Sliding{1}`).
+    // The nest is therefore three row regions on one counter: head (TI=1),
+    // blocked interior (TI=4), tail (TI=1).
     assert!(
         !tiled_fn.contains(" = call float @fn"),
         "tiled conv map must not call its per-cell body:\n{tiled_fn}"
     );
-    // The S27c priced refusal, cashed: the fold body's k/3, k%3 become
-    // compile-time tap offsets — ZERO div/mod in the tile nest.
+    // The S27c priced refusal, still cashed: zero div/mod in the tile nest.
     assert!(
         !tiled_fn.contains("sdiv") && !tiled_fn.contains("srem"),
         "conv tile nest must contain no sdiv/srem (the taps constant-fold):\n{tiled_fn}"
     );
-    // K=9 taps fully unrolled per j-tile: 9 constant-index w loads and 9 FMA
-    // lane loops in each of the main and remainder tile bodies.
-    assert_eq!(
-        tiled_fn.matches("getelementptr [9 x float]").count(),
-        18,
-        "9 constant-index w[k] loads per tile body (main + remainder):\n{tiled_fn}"
-    );
-    assert_eq!(
-        tiled_fn.matches(" = fmul float ").count(),
-        9,
-        "the scalar tap FMAs are now the REMAINDER tile's alone:\n{tiled_fn}"
-    );
-    // The tap offsets (cq·kq + cr·kr) fold to constants: offsets 18..38 by
-    // kq row appear once per tile body (offset 0 needs no add, 1/2 collide
-    // with lane arithmetic, so pin the unambiguous row offsets).
-    for off in ["18", "19", "20", "36", "37", "38"] {
-        assert_eq!(
-            tiled_fn
-                .lines()
-                .filter(|line| {
-                    line.contains(" = add i64 ") && line.trim_end().ends_with(&format!(", {off}"))
-                })
-                .count(),
-            2,
-            "tap offset {off} must appear as a constant add in each tile body:\n{tiled_fn}"
+
+    // --- item 4: the tap-row union is HOISTED, which is the whole point ------
+    // A TI=1 row reaches tap-rows 0..3, so its largest row offset is cq·2 = 36.
+    // Offsets 54/72/90 (cq·3, cq·4, cq·5) can only come from a block whose
+    // union of tap-rows is (TI−1)·q + k/div = 6 — six image rows serving four
+    // output rows. Their presence IS the reuse.
+    for off in ["54", "72", "90"] {
+        assert!(
+            tiled_fn.lines().any(|line| {
+                line.contains(" = add i64 ") && line.trim_end().ends_with(&format!(", {off}"))
+            }),
+            "tap-row offset {off} proves the blocked union was hoisted:\n{tiled_fn}"
         );
     }
-    // Constant-TJ lane loops everywhere on the main path: seed + 9 taps +
-    // store = 11 per main tile body; the remainder tile body alone is
-    // bounded by the runtime `tj` (one select in the whole nest).
-    // The main tile has NO lane loops left — seed, taps and store are all one
-    // vector operation each. (Was 11: seed + 9 taps + store.)
+    // The reuse factor itself, read off the emission. Head and tail are TI=1
+    // vector tiles (9 taps each: 9 loads, 9 FMAs); everything else is the
+    // blocked tile. It must issue 18 vector loads for 36 FMAs — exactly the
+    // 2.0x that `reuse::distinct_runs` predicts at TI=4, and NOT the 3x of
+    // suggestion #11 (that is the TI -> infinity limit).
+    let vec_loads = tiled_fn.matches(" = load <16 x float>, ").count();
+    let vec_fmuls = tiled_fn.matches(" = fmul <16 x float> ").count();
+    assert_eq!(
+        (vec_loads, vec_fmuls),
+        (36, 54),
+        "region decomposition:\n{tiled_fn}"
+    );
+    let (blocked_loads, blocked_fmuls) = (vec_loads - 2 * 9, vec_fmuls - 2 * 9);
+    assert_eq!(
+        (blocked_loads, blocked_fmuls),
+        (18, 36),
+        "the blocked tile must reuse each tap-row across the block:\n{tiled_fn}"
+    );
+    assert_eq!(blocked_fmuls / blocked_loads, 2, "2.0x reuse at TI=4");
+
+    // --- item 2: no main tile touches accumulator memory ---------------------
+    // Every `[16 x float]` GEP is an accumulator access. What remains is the
+    // REMAINDER path only: head + tail (11 each) plus the blocked range's four
+    // per-row remainders (4 x 11). The main tiles contribute none.
+    assert_eq!(
+        tiled_fn.matches("getelementptr [16 x float]").count(),
+        66,
+        "only remainder tiles may address accumulator memory:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn.matches(" = fadd <16 x float> ").count(),
+        54,
+        "one vector accumulation per tap per blocked row:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn.matches("store <16 x float> ").count(),
+        6,
+        "one vector store per main tile: head + tail + TI blocked rows:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn.matches(" = insertelement <16 x float> ").count(),
+        60,
+        "a seed splat per accumulator plus one w[k] splat per FMA:\n{tiled_fn}"
+    );
+    // No main-path lane loops survive anywhere: seed, taps and store are one
+    // vector operation each in every main tile.
     assert_eq!(
         tiled_fn
             .lines()
@@ -1117,18 +1097,7 @@ fn golden_tile_map_shape_conv() {
             })
             .count(),
         0,
-        "the main tile must have no constant-TJ lane loops left:\n{tiled_fn}"
-    );
-    assert_eq!(
-        tiled_fn
-            .lines()
-            .filter(|line| {
-                let line = line.trim();
-                line.contains(" = select i1 ") && line.ends_with(", i64 16")
-            })
-            .count(),
-        1,
-        "only the remainder tile may clip to tj = min(remaining, TJ):\n{tiled_fn}"
+        "no main tile may keep a constant-TJ lane loop:\n{tiled_fn}"
     );
     insta::assert_snapshot!("tile_nest_shape_conv", tiled_fn);
 }
