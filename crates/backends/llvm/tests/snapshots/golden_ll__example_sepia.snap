@@ -14,7 +14,7 @@ declare double @flow_time_ms()
 declare void @flow_trap(i32) noreturn
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
 declare ptr @flow_par_begin(i32)
-declare void @flow_par_task(ptr, i32, i32, ptr, i64, i32)
+declare void @flow_par_task(ptr, i32, i32, ptr, i64, i32, i64, i32)
 declare void @flow_par_pin(ptr, i32)
 declare void @flow_par_dep(ptr, i32, i32)
 declare void @flow_par_launch(ptr, ptr)
@@ -378,10 +378,10 @@ entry:
   %o21 = getelementptr %Frame, ptr %frame, i32 0, i32 19
   %o22 = getelementptr %Frame, ptr %frame, i32 0, i32 20
   %h = call ptr @flow_par_begin(i32 4)
-  call void @flow_par_task(ptr %h, i32 0, i32 0, ptr @task0, i64 64, i32 34)
-  call void @flow_par_task(ptr %h, i32 1, i32 0, ptr @task1, i64 2, i32 17)
-  call void @flow_par_task(ptr %h, i32 2, i32 1, ptr @task2, i64 16, i32 33)
-  call void @flow_par_task(ptr %h, i32 3, i32 0, ptr @task3, i64 1, i32 16)
+  call void @flow_par_task(ptr %h, i32 0, i32 0, ptr @task0, i64 64, i32 34, i64 0, i32 0)
+  call void @flow_par_task(ptr %h, i32 1, i32 0, ptr @task1, i64 2, i32 17, i64 0, i32 0)
+  call void @flow_par_task(ptr %h, i32 2, i32 1, ptr @task2, i64 16, i32 33, i64 0, i32 0)
+  call void @flow_par_task(ptr %h, i32 3, i32 0, ptr @task3, i64 1, i32 16, i64 0, i32 0)
   call void @flow_par_dep(ptr %h, i32 2, i32 1)
   call void @flow_par_dep(ptr %h, i32 0, i32 2)
   call void @flow_par_dep(ptr %h, i32 1, i32 3)

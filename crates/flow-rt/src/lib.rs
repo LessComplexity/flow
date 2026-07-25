@@ -95,6 +95,14 @@ struct TaskDef {
     f: TaskFn,
     n: i64,
     rank: u32,
+    /// Elements per slice, decided at COMPILE TIME (plan-s32 §2.5: the compiler
+    /// sizes, the runtime assigns). `0` = none supplied, keep the legacy rule.
+    slice_elems: i64,
+    /// Lanes this dispatch should spread across, decided at compile time.
+    /// `0` = none supplied, use the whole pool. Stealing is deliberately NOT
+    /// confined to them: an idle lane helping is the runtime's assignment
+    /// freedom, which is the half of the decision the compiler cannot make.
+    width: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,11 +167,52 @@ enum Placement {
     Local(usize),
 }
 
+/// How many pieces a dispatch is cut into, and therefore whether work stealing
+/// has anything to steal.
+///
+/// **The legacy rule (`slice_elems == 0`) is `ceil(n/GRAIN).min(threads)` —
+/// exactly one piece per worker.** That leaves the deques empty, so a fast lane
+/// finishing early cannot help a slow one: the dispatch ends when the slowest
+/// piece ends, and on an asymmetric machine (10 P + 4 E) that is the whole wave
+/// waiting on an E-core. Measured cost: matmul512 at 14 lanes went 0.778 ms to
+/// 0.463 ms purely from cutting more pieces (plan-s32 §1(c)).
+///
+/// A compile-time `slice_elems` overrides it. It is NOT simply "smaller is
+/// better" — finer slicing re-pays every boundary's reuse halo and shortens the
+/// run over which a packed panel amortises, which is why the same 8x
+/// over-decomposition that wins 68% on matmul512 costs conv2d ~20% (§2.6). The
+/// size is a per-region decision; this function only applies it.
+/// Experiment lever: override every dispatch's slice size (`FLOW_SLICE=<elems>`).
+///
+/// Not part of the design — the compiler is what sets slice sizes (plan-s32
+/// §2.5). This exists so the sizing model can be swept and falsified on real
+/// kernels *before* the deduction is written, and so ADR-0034's autotuner has a
+/// knob to search. `FLOW_PAR`'s sibling, with the same status.
+fn slice_override() -> i64 {
+    static OVERRIDE: OnceLock<i64> = OnceLock::new();
+    *OVERRIDE.get_or_init(|| {
+        std::env::var("FLOW_SLICE")
+            .ok()
+            .and_then(|v| v.parse::<i64>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(0)
+    })
+}
+
 fn slice_ranges(def: TaskDef, threads: usize) -> Vec<(i64, i64)> {
+    let slice_elems = match slice_override() {
+        0 => def.slice_elems,
+        forced => forced,
+    };
+    let def = TaskDef { slice_elems, ..def };
     let slices = if def.kind == 0 {
         1
     } else if def.n == 0 {
         0
+    } else if def.slice_elems > 0 {
+        usize::try_from((def.n as u64).div_ceil(def.slice_elems as u64))
+            .unwrap_or(usize::MAX)
+            .max(1)
     } else {
         usize::try_from((def.n as u64).div_ceil(GRAIN as u64))
             .unwrap_or(usize::MAX)
@@ -487,7 +536,7 @@ impl Run {
 
             let batch = std::mem::take(&mut ready);
             for task_idx in batch {
-                let (ranges, unlocked) = {
+                let (ranges, unlocked, width) = {
                     let mut state = lock(&self.state);
                     if state.tasks[task_idx].state != TaskState::Waiting
                         || state.tasks[task_idx].deps_left != 0
@@ -509,10 +558,10 @@ impl Run {
                                 unlocked.push(dependent);
                             }
                         }
-                        (Vec::new(), unlocked)
+                        (Vec::new(), unlocked, 0)
                     } else {
                         state.tasks[task_idx].slices_left = ranges.len();
-                        (ranges, Vec::new())
+                        (ranges, Vec::new(), def.width)
                     }
                 };
 
@@ -520,7 +569,17 @@ impl Run {
                 for (lo, hi) in ranges {
                     let lane = match placement {
                         Placement::Seed => {
-                            let lane = cursor % self.pool.threads;
+                            // plan-s32 step 1: lay the dispatch across the lanes
+                            // the compiler asked for. Stealing still lets any
+                            // idle lane help — placement is a starting point,
+                            // not a fence, because which lane is free is the one
+                            // thing only the runtime can see.
+                            let span = if width == 0 {
+                                self.pool.threads
+                            } else {
+                                (width as usize).clamp(1, self.pool.threads)
+                            };
+                            let lane = cursor % span;
                             cursor += 1;
                             lane
                         }
@@ -678,6 +737,8 @@ pub unsafe extern "C" fn flow_par_task(
     f: TaskFn,
     n: i64,
     rank: u32,
+    slice_elems: i64,
+    width: u32,
 ) {
     let run = &unsafe { run_handle(handle) }.run;
     let mut state = lock(&run.state);
@@ -689,7 +750,14 @@ pub unsafe extern "C" fn flow_par_task(
         kind == 0 || n >= 0,
         "split task length must be non-negative"
     );
-    task.def = Some(TaskDef { kind, f, n, rank });
+    task.def = Some(TaskDef {
+        kind,
+        f,
+        n,
+        rank,
+        slice_elems,
+        width,
+    });
 }
 
 /// Add a dependency edge: `after` cannot execute before `before` completes.
@@ -1145,7 +1213,7 @@ mod tests {
         });
         let handle = test_run(1, 4);
         unsafe {
-            flow_par_task(handle, 0, 1, hit_slice, n as i64, 0);
+            flow_par_task(handle, 0, 1, hit_slice, n as i64, 0, 0, 0);
             flow_par_launch(handle, frame_ptr(&*frame));
             flow_par_finish(handle);
         }
@@ -1162,8 +1230,8 @@ mod tests {
         });
         let handle = test_run(2, 4);
         unsafe {
-            flow_par_task(handle, 0, 1, zero_split, 0, 0);
-            flow_par_task(handle, 1, 0, zero_dependent, 0, 0);
+            flow_par_task(handle, 0, 1, zero_split, 0, 0, 0, 0);
+            flow_par_task(handle, 1, 0, zero_dependent, 0, 0, 0, 0);
             flow_par_dep(handle, 0, 1);
             flow_par_launch(handle, frame_ptr(&*zero));
             flow_par_finish(handle);
@@ -1203,8 +1271,8 @@ mod tests {
         });
         let handle = test_run(2, 4);
         unsafe {
-            flow_par_task(handle, 0, 1, dep_producer, n as i64, 0);
-            flow_par_task(handle, 1, 0, dep_consumer, 0, u32::MAX);
+            flow_par_task(handle, 0, 1, dep_producer, n as i64, 0, 0, 0);
+            flow_par_task(handle, 1, 0, dep_consumer, 0, u32::MAX, 0, 0);
             flow_par_dep(handle, 0, 1);
             flow_par_launch(handle, frame_ptr(&*frame));
             flow_par_finish(handle);
@@ -1228,9 +1296,9 @@ mod tests {
         });
         let handle = test_run(3, 1);
         unsafe {
-            flow_par_task(handle, 2, 0, record_order, 12, 100);
-            flow_par_task(handle, 0, 0, record_order, 10, 0);
-            flow_par_task(handle, 1, 0, record_order, 11, 50);
+            flow_par_task(handle, 2, 0, record_order, 12, 100, 0, 0);
+            flow_par_task(handle, 0, 0, record_order, 10, 0, 0, 0);
+            flow_par_task(handle, 1, 0, record_order, 11, 50, 0, 0);
             flow_par_launch(handle, frame_ptr(&*frame));
         }
         assert!(lock(&frame.calls).is_empty(), "launch must only seed");
@@ -1254,8 +1322,8 @@ mod tests {
         });
         let handle = test_run(2, 2);
         unsafe {
-            flow_par_task(handle, 0, 0, trap_after_barrier, 50, 0);
-            flow_par_task(handle, 1, 0, trap_after_barrier, 7, 0);
+            flow_par_task(handle, 0, 0, trap_after_barrier, 50, 0, 0, 0);
+            flow_par_task(handle, 1, 0, trap_after_barrier, 7, 0, 0, 0);
             flow_par_launch(handle, frame_ptr(&*frame));
             let entries = [completion_entry(0), completion_entry(1)];
             flow_par_wait(handle, entries.as_ptr(), entries.len() as u32);
@@ -1291,8 +1359,8 @@ mod tests {
         });
         let handle = test_run(2, 1);
         unsafe {
-            flow_par_task(handle, 0, 0, trapping_task, 0, 0);
-            flow_par_task(handle, 1, 0, dependent_after_trap, 0, 0);
+            flow_par_task(handle, 0, 0, trapping_task, 0, 0, 0, 0);
+            flow_par_task(handle, 1, 0, dependent_after_trap, 0, 0, 0, 0);
             flow_par_dep(handle, 0, 1);
             flow_par_launch(handle, frame_ptr(&*frame));
             let entries = [completion_entry(1)];
@@ -1330,7 +1398,7 @@ mod tests {
         });
         let handle = test_run(1, 2);
         unsafe {
-            flow_par_task(handle, 0, 0, publish_then_wait, 0, 0);
+            flow_par_task(handle, 0, 0, publish_then_wait, 0, 0, 0, 0);
             flow_par_launch(handle, frame_ptr(&*frame));
         }
 
@@ -1394,8 +1462,8 @@ mod tests {
         });
         let handle = allocate_run(2, Pool::with_workers(4, 0));
         unsafe {
-            flow_par_task(handle, 0, 1, pinned_slice, n, 0);
-            flow_par_task(handle, 1, 0, pinned_dependent, 0, 0);
+            flow_par_task(handle, 0, 1, pinned_slice, n, 0, 0, 0);
+            flow_par_task(handle, 1, 0, pinned_dependent, 0, 0, 0, 0);
             flow_par_dep(handle, 0, 1);
             flow_par_pin(handle, 0);
             flow_par_launch(handle, frame_ptr(&*frame));
@@ -1427,8 +1495,8 @@ mod tests {
         });
         let handle = allocate_run(2, Pool::with_workers(4, 4));
         unsafe {
-            flow_par_task(handle, 0, 0, pinned_slice, 1, 0);
-            flow_par_task(handle, 1, 0, pinned_dependent, 0, 0);
+            flow_par_task(handle, 0, 0, pinned_slice, 1, 0, 0, 0);
+            flow_par_task(handle, 1, 0, pinned_dependent, 0, 0, 0, 0);
             flow_par_pin(handle, 0);
             flow_par_launch(handle, frame_ptr(&*frame));
             // Workers finish the normal sibling; the pinned task stays untouched.
@@ -1490,7 +1558,7 @@ mod tests {
         });
         let blocker_run = allocate_run(1, Arc::clone(&pool));
         unsafe {
-            flow_par_task(blocker_run, 0, 0, blocking_task, 0, 0);
+            flow_par_task(blocker_run, 0, 0, blocking_task, 0, 0, 0, 0);
             flow_par_launch(blocker_run, frame_ptr(&*blocker));
         }
 
@@ -1509,7 +1577,7 @@ mod tests {
         });
         let helped_run = allocate_run(1, pool);
         unsafe {
-            flow_par_task(helped_run, 0, 0, helped_task, 0, 0);
+            flow_par_task(helped_run, 0, 0, helped_task, 0, 0, 0, 0);
             flow_par_launch(helped_run, frame_ptr(&*help));
             let entries = [completion_entry(0)];
             flow_par_wait(helped_run, entries.as_ptr(), 1);
@@ -1539,7 +1607,7 @@ mod tests {
         let nested = unsafe { &*frame.cast::<NestedFrame>() };
         let inner = test_run(1, 1);
         unsafe {
-            flow_par_task(inner, 0, 0, nested_inner, 0, 0);
+            flow_par_task(inner, 0, 0, nested_inner, 0, 0, 0, 0);
             flow_par_launch(inner, frame);
             let entries = [completion_entry(0)];
             flow_par_wait(inner, entries.as_ptr(), 1);
@@ -1557,7 +1625,7 @@ mod tests {
         });
         let outer = test_run(1, 1);
         unsafe {
-            flow_par_task(outer, 0, 0, nested_outer, 0, 0);
+            flow_par_task(outer, 0, 0, nested_outer, 0, 0, 0, 0);
             flow_par_launch(outer, frame_ptr(&*frame));
             let entries = [completion_entry(0)];
             flow_par_wait(outer, entries.as_ptr(), 1);
@@ -1630,6 +1698,8 @@ mod tests {
                         dag_task,
                         task as i64,
                         lcg(&mut seed) as u32,
+                        0,
+                        0,
                     );
                 }
                 for after in 0..n_tasks {

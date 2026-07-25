@@ -1604,7 +1604,7 @@ impl<'a> FnEmit<'a> {
                 TaskKind::Seq { morphisms } => (0, morphisms.len().max(1) as u64),
             };
             host.line(format!(
-                "call void @flow_par_task(ptr %h, i32 {task_id}, i32 {kind}, ptr @task{task_id}, i64 {n}, i32 {})",
+                "call void @flow_par_task(ptr %h, i32 {task_id}, i32 {kind}, ptr @task{task_id}, i64 {n}, i32 {}, i64 0, i32 0)",
                 task.rank
             ));
         }
@@ -1756,7 +1756,7 @@ impl<'a> FnEmit<'a> {
             let handle = emit.tmp();
             emit.line(format!("{handle} = call ptr @flow_par_begin(i32 1)"));
             emit.line(format!(
-                "call void @flow_par_task(ptr {handle}, i32 0, i32 1, ptr @task{task_id}_slice, i64 {n}, i32 {})",
+                "call void @flow_par_task(ptr {handle}, i32 0, i32 1, ptr @task{task_id}_slice, i64 {n}, i32 {}, i64 0, i32 0)",
                 task.rank
             ));
             emit.line(format!(
