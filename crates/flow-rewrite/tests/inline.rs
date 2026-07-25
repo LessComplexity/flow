@@ -507,7 +507,7 @@ fn lower_example(name: &str) -> CategoryIr {
 fn matmul4_loops_lift_then_callees_inline() {
     // R-LF removes `cell`'s k-loop, R-LM removes `matmul`'s t-loop, then the
     // next fixpoint round strips both now-loop-free Call boundaries.
-    let ir = lower_example("matmul4");
+    let ir = lower_example("matmul4_loop");
     let before = run(&ir, BUDGET);
     assert!(
         matches!(before.outcome, Outcome::Done(_)),

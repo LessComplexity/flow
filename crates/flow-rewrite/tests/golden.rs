@@ -15,7 +15,7 @@ const EXAMPLES: &[&str] = &[
     "calc",
     "fanout",
     "fir",
-    "matmul4",
+    "matmul4_loop",
     "pipeline",
     "sepia",
     "seq_demo",

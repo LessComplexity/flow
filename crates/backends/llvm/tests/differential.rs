@@ -684,7 +684,7 @@ fn differential_default_rewritten_matmul4_lifts_and_tiles() {
     let Some(clang) = clang() else {
         return;
     };
-    let ir = rewrite(build_example("matmul4")).ir;
+    let ir = rewrite(build_example("matmul4_loop")).ir;
     assert!(
         ir.morphisms()
             .all(|(_, m)| !matches!(m.op, Operation::Call(_))),
@@ -2241,4 +2241,73 @@ fn differential_parallel_run_twice() {
             "parallel_run_twice/{opt}: oracle"
         );
     }
+}
+
+/// plan-s31-target-profiles composition rule 2, discharged: **every profile
+/// field is value-invariant**. `zen3` is the profile that actually changes
+/// emission — 32 B vectors and 16 registers give TJ 16 → 32 and TI 4 → 2, so
+/// the whole tile geometry moves — and this shape exercises a main tile, a
+/// runtime remainder and an i-tail under BOTH profiles (C=40: generic runs two
+/// TJ=16 tiles + tj=8, zen3 one TJ=32 tile + tj=8; rows=5 leaves a tail either
+/// way, 5 % 4 == 1 and 5 % 2 == 1).
+///
+/// The claim under test is not "zen3 is fast" — it is unmeasured on hardware
+/// and marked so. It is that choosing it cannot change an answer, which is what
+/// keeps the differential suite a valid gate under every profile (ADR-0032 D1).
+#[test]
+fn differential_zen3_profile_is_value_invariant() {
+    let Some(clang) = clang() else {
+        return;
+    };
+    let src = r#"
+fn matmul(a: [f32; 35], b: [f32; 280]) -> [f32; 200] {
+    200 -> iota -> cells;
+    7 -> iota -> ks;
+    cells -> map { cell ->
+        cell / 40 -> i;
+        cell % 40 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 7 + k] * b[k * 40 + j] }
+    } -> c;
+    c -> ret;
+}
+fn main() {
+    35 -> iota -> ta;
+    ta -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    280 -> iota -> tb;
+    tb -> map { t -> (t * 7 + 57) % 101 - 50 -> widen_f32 } -> b;
+    (a, b) -> matmul -> c;
+    c[0] -> println;
+    c[199] -> println;
+}
+"#;
+    let ir = rewrite(lower_src(src)).ir;
+    let rr = run(&ir, BUDGET);
+    let (Some(want), 0) = expect_native(&ir, &rr).expect("zen3 shape oracle completes") else {
+        panic!("zen3 shape oracle must complete");
+    };
+
+    let generic = flow_backend_llvm::emit(&ir).unwrap();
+    let zen3 = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            target: "zen3",
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    assert_ne!(
+        generic, zen3,
+        "zen3 must actually re-tile (TJ 16 -> 32, TI 4 -> 2), else this proves nothing"
+    );
+
+    let untiled = flow_backend_llvm::emit_with_opts(
+        &ir,
+        &flow_backend_llvm::EmitOpts {
+            tiling: false,
+            ..flow_backend_llvm::EmitOpts::default()
+        },
+    )
+    .unwrap();
+    assert_tiled_parity(&clang, &generic, &untiled, &want, "profile_generic");
+    assert_tiled_parity(&clang, &zen3, &untiled, &want, "profile_zen3");
 }
