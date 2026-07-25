@@ -3,11 +3,15 @@ fn main() {
     ta -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f64 } -> a;
     ta -> map { t -> (t * 7 + 57) % 101 - 50 -> widen_f64 } -> b;
     2048 -> iota -> krange;
+    () -> time -> t0;
     ta -> map { t ->
         t / 2048 -> i;
         t % 2048 -> j;
         (0.0, krange) -> fold { acc, k -> acc + a[i * 2048 + k] * b[k * 2048 + j] }
     } -> c;
+    () -> time -> t1;
     c[0] -> println;
     c[4194303] -> println;
+    "iter ms=" -> print;
+    t1 - t0 -> println;
 }
