@@ -85,7 +85,7 @@ splits: **geometry from the graph, constants from the profile.**
 | `footprint : Task → ℕ` | `Trn`, deduced | live bytes per dispatch, from the site's array extents. Distinguishes matmul 1024 (wants 8) from matmul 4096 (wants 14) at *equal* intensity |
 | `Dispatch` | `Dat` | `{ task, width : ℕ, grain : ℕ, lanes : 𝒫(Loc) }` — the reified scheduling decision. `width` and `grain` are **independent**, which is the structural fix of §1(d) |
 | `schedule : (PathPlan × TargetProfile) → Task ⇀ Dispatch` | `Trn`, **deduced**, emitter-local | the compile-time scheduler. Total on `Split` tasks, undefined on `Seq`/pinned ones (they are host-spine by construction) |
-| `levels : PathPlan → (𝒫(Task))*` | `Trn`, deduced | the DAG's antichains — the sets of tasks that may run **concurrently**. This is the object rung 3 needs and `path_plan.deps` already determines |
+| `levels : PathPlan → (𝒫(Task))*` | `Trn`, deduced | the DAG's antichains — the sets of tasks that may run **concurrently**. This is the object step 3 needs and `path_plan.deps` already determines |
 | `RegionPlan : Task ⇀ Granularity` | `Dat`, **deduced**, emitted as data | the whole granularity nest for one region — `{tile_i, tile_j, kc, nc, slice_elems, width, lane_pref}` — computed at emission and read by the pool. The levels travel together because they constrain each other (§2.5) |
 | `halo : (TileRead, ℕ) → ℕ` | `Trn`, deduced | the reuse a slice boundary re-pays, from `reuse::distinct_runs` one level up. The floor under `slice_elems` (§2.6) |
 | `Loc` — worker lane | `Loc` | a pool lane, with its core class (P or E) from the profile. Lanes are physical sites; that a lane is "slow" is a machine fact |
@@ -152,7 +152,7 @@ The compiler cannot know which core a slice will land on, whether that core is a
 what else is resident, or how the machine is loaded — so it must not try to assign. The
 runtime cannot know the reuse structure, the halo cost of a boundary, or the working-set
 footprint — so it must not try to size. Each decides exactly what it can see, and the
-`RegionPlan` is the interface between them. That also states R0's job precisely: the pool
+`RegionPlan` is the interface between them. That also states step 1's job precisely: the pool
 stops *inventing* sizes and starts *receiving* them.
 
 ## 2.6 Grain is bounded on both sides, and both bounds are computable
@@ -184,9 +184,42 @@ with halo must trade halo against imbalance rather than take a global constant. 
 per slice amortising the same pack), which is why `slice_elems` and `kc`/`nc` must be decided
 **together in one record** rather than by two independent rules.
 
-## 3. The rungs — all three committed
+## 2.7 Region plans compose — plans are built recursively on the graph
 
-### R0 — the pool stops inventing sizes and starts receiving them
+Sapir, S32: *"this is composable — combining regions is combining plans into a bigger plan,
+allowing us to create plans recursively on the graph."* This is the FRAMEWORK §4.3 rule
+(a composite's views are **deduced** from its parts, never re-described) applied to scheduling,
+and it changes the shape of the work: **co-scheduling stops being a third mechanism and becomes
+the composition operator.**
+
+A region is any subgraph of the execution DAG. A leaf region is one `Split` task. Two regions
+combine in exactly two ways, because the DAG offers exactly two relationships:
+
+| operator | when | how the plans combine |
+| --- | --- | --- |
+| `A ▸ B` (sequential) | `B` depends on `A` | the machine is handed over whole: each keeps its own width and grain. The composite's cost is additive; its width is the max, not the sum |
+| `A ∥ B` (concurrent) | neither depends on the other — an antichain of `levels` | lanes are **apportioned**: `width(A ∥ B) = width(A) + width(B)` when that fits, otherwise share by `rank` (the recorded critical-path weight) and narrow the rest. Grain is unchanged — it is a locality property of each region, not of the pair |
+
+Both operators are associative, and the empty region is the unit, so **regions and their plans
+form a monoid** and a plan for the whole program is built by folding the DAG. That is what
+makes "recursively on the graph" precise rather than a metaphor.
+
+Two consequences worth stating, because they are what the structure buys:
+
+1. **The scheduler is one fold, not three passes.** Deduce leaves (§2.6), then fold up the DAG
+   with `▸` and `∥`. Step 3 adds no new deduction — it adds `∥`.
+2. **Grain is invariant under composition; width is not.** Grain answers "how big a piece keeps
+   this region's working set hot", which no sibling can change. Width answers "how much of the
+   machine does this region get", which every sibling changes. That asymmetry is why the two
+   knobs had to be separated (§1(d)) before composition could mean anything — and it is the
+   test: composing must never rewrite a grain.
+
+The same structure is what carries to other backends: on CUDA `∥` is stream assignment and `▸`
+is a stream dependency, over the identical record.
+
+## 3. The steps — all three committed
+
+### Step 1 — the pool stops inventing sizes and starts receiving them
 
 `flow_par_task` carries the region's `Granularity` — at minimum `width` and `slice_elems` —
 and `slice_ranges` stops collapsing them. This is the §2.5 principle made concrete: the pool
@@ -201,7 +234,7 @@ lets an E-core take fewer pieces without anyone deciding it should.
 - **defaults reproduce today exactly** (`width = threads`, `grain = width`), so R0 alone is a
   no-op on every measured number — the safety property, checked not asserted.
 
-### R1 — per-dispatch width and grain, deduced
+### Step 2 — the sizes are deduced per region
 
 `schedule` computes `(width, grain)` per `Split` task from `intensity`, `footprint` and `n`
 (graph) against cores, P/E split and cache sizes (profile). §1(a) and §1(c) are the fixture:
@@ -211,9 +244,10 @@ and must pick over-decomposition for matmul512 while refusing it for conv2d.
 This is where `work_per_element` enters flow-ir — the single graph fact the whole S31/S32 line
 has been missing, and the one thing here that is legal to put there.
 
-### R2 — DAG co-scheduling (committed, designed up front)
+### Step 3 — region plans compose (this is the DAG rung, and it is the same operator)
 
-Rung 1 answers *how wide is this dispatch*. Rung 2 answers *what else runs at the same time*.
+Step 2 answers *how wide is this dispatch*. Step 3 answers *what else runs at the same time* — and
+by §2.7 that is not a new mechanism, it is `RegionPlan` composition.
 Two independent tasks each wanting 4 lanes on a 14-lane machine should run **concurrently on
 8**, not sequentially on 4 with 10 lanes idle. `path_plan.deps` already determines the
 antichains; nothing new is needed from the graph.
@@ -224,7 +258,7 @@ antichains; nothing new is needed from the graph.
 - when `Σ width > lanes`, prefer the critical path and narrow the rest rather than serialize;
 - when `Σ width < lanes`, widen the critical path into the slack.
 
-**This rung is not gated on discovering a program that needs it.** The benchmark programs in
+**This step is not gated on discovering a program that needs it.** The benchmark programs in
 §4 are deliverables of this plan, written *for* it — a language whose thesis is that the
 compiler sees the whole graph must be designed for wide graphs before one shows up, or the
 scheduler will be shaped wrong.
@@ -255,8 +289,10 @@ schedule, with cpp/rust baselines where a baseline is meaningful.
   does for the profile.
 - **The deduction reproduces the measured optima** — a unit test over the six kernels of
   §1(a), the way `profile::tests::generic_reproduces_the_six_literals` pins the tile factors.
+- **Composition law tests** (§2.7): plans for two regions composed must equal the plan deduced
+  for their union, on both the sequential and the concurrent operator.
 - **`work_per_element` oracle tests** in flow-ir, against hand-counted bodies.
-- **R0 is a no-op at its defaults** — every measured number unmoved before R1 sets the knobs.
+- **Step 1 is a no-op at its defaults** — every measured number unmoved before R1 sets the knobs.
 
 ## 6. ADR-0033 D2 — the three-line record
 
@@ -278,10 +314,10 @@ schedule, with cpp/rust baselines where a baseline is meaningful.
    P/E split, throughput ratio) are facts about a *runtime* placement, and `TargetProfile` is
    an emitter table. Either it grows a runtime half, or flow-rt gets its own profile and the
    emitter passes a schedule it cannot fully validate. Recorded as a collision in
-   plan-s31-target-profiles; it must be settled before R1.
+   plan-s31-target-profiles; it must be settled before step 2.
 2. **Does `work_per_element` weight op classes?** A divide is not an add. Unweighted is
    simpler and probably sufficient for a width decision; weighted is more honest and invites
    the "what are the weights" question that ADR-0034 answers with a search.
-3. **Is the E-core answer exclusion or uneven slicing?** R0's over-decomposition lets stealing
+3. **Is the E-core answer exclusion or uneven slicing?** Step 1's over-decomposition lets stealing
    balance them automatically, which may be enough. If not, the profile must expose lane
    classes and the scheduler must slice unevenly — a bigger commitment.
