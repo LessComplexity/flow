@@ -94,16 +94,21 @@ Flow's blocking is generated. **Against NumPy we are 4× behind** at 4096.
 
 | workload | Flow | C++ (naive, threaded) | NumPy (1 thread) |
 | --- | ---: | ---: | ---: |
-| FIR filter, 1M samples | **0.40 ms** | 1.46 | 6.37 |
-| conv2d 3×3, 1024×1024 | 0.45 ms | **0.13** | 1.64 |
+| FIR filter, 1M samples | **0.42 ms** | 1.45 | 6.21 |
+| conv2d 3×3, 1024×1024 | 0.42 ms | **0.13** | 1.56 |
 
 Two things to read carefully here:
 
-- **conv2d is our loss.** Threaded C++ beats us 3.4× and the cause is diagnosed: our
-  convolution kernel computes one output row at a time, so each output row re-loads all
-  three image rows it needs. It issues 24 vector loads per 36 multiply-adds, where our
-  matrix kernel manages 4 per 32. The fix — blocking over output rows — is designed and
-  not yet built.
+- **conv2d is our loss, and half of what is left is not the kernel.** Our convolution used
+  to compute one output row at a time, re-loading all three image rows for each — 24 vector
+  loads per 36 multiply-adds, where our matrix kernel manages 4 per 32. Blocking over output
+  rows is now built, and it is deduced rather than special-cased: the compiler notices from
+  the recorded address coefficients that the read *slides* across rows, which is the same
+  fact that makes matrix multiply's read row-invariant. That closed the single-thread gap
+  from 2.09× to **1.56×** (0.53 ms → 0.40) and raised the kernel's arithmetic intensity by
+  50%. The parallel number barely moved, and measurement says why: at its best thread count
+  conv2d is 1.83× behind, at the default it is 2.67× behind, so **most of the remaining
+  parallel deficit is scheduling, not arithmetic.** That is the next item below.
 - **The NumPy comparisons are not like-for-like.** Those are Flow on 14 cores against
   NumPy on one, because the harness never runs a threaded NumPy leg for these shapes. And
   NumPy has no real conv2d kernel here — the baseline is a Python loop over nine array
@@ -213,14 +218,21 @@ most of the language, `fir.flow` for a loop.
 
 ## What is next
 
-1. **Machine profiles.** Get the tuning constants out of the compiler and into a named
-   table of machine facts, so blocking is chosen for the target chip instead of assumed.
-2. **Deduce the thread count.** Right now every parallel program uses every core, and that
-   is measurably the wrong choice: conv2d runs 2.1× faster on 4 threads than on 14, FIR
-   peaks at 8, and only the largest matrix multiply wants all of them. The graph already
-   tells us the element count and the work per element — the right width is deducible, and
-   it should be deduced rather than assumed.
-3. **conv2d row blocking** — the diagnosed 2× per-core gap above.
+1. ~~**Machine profiles.**~~ **Done.** The tuning constants are out of the compiler and into
+   a named table of machine facts, so blocking is derived for the target chip instead of
+   assumed. One consequence is worth naming: a cache-blocking rung that had to be disabled by
+   hand now switches *itself* off on a machine whose cache makes it pointless.
+2. ~~**conv2d row blocking.**~~ **Done** — see above. Deduced from the recorded read
+   structure, not written for convolution.
+3. **Scheduling deduced per region, at compile time.** Every parallel dispatch currently
+   splits into exactly one piece per core, which leaves the work-stealing queues empty — a
+   fast core that finishes cannot help a slow one, so every dispatch waits for the slowest
+   piece. Separating *how many pieces* from *how many cores* is done; choosing them per
+   region is not. Measured with the sizes forced by hand, the right choice is worth
+   **1.46–1.78×** on three different kernels, and which direction to move is predicted by
+   the same recorded fact that drives row blocking — a sliding read re-pays its overlap at
+   every boundary, an invariant one does not. **These numbers are not in the table above:
+   nothing here is on by default until the compiler picks the sizes itself.**
 4. **Matrix units.** CPUs are growing dedicated matrix hardware (Arm SME, Intel AMX) and
    GPUs have had it for years. Same idea, same catch: they fix their own arithmetic
    ordering, so results stop being bit-identical. That gets an explicit opt-in, never a
