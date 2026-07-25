@@ -170,3 +170,72 @@ constant.
    today's number. Plan assumes seeding.
 3. **The FIR rung's `4`** is now explicitly an unjustified constant with its own name. Leaving it
    at 4 is the byte-identical choice; justifying or searching it belongs to ADR-0034.
+
+---
+
+## As built — item 2, and the prediction it refutes
+
+**Built (S31, worktree `s31-deduced-blocking`):** `emit_tile_conv_tile_vec` — the conv rung's
+constant-TJ main tile on `<TJ x elem>` SSA values. Conv has **no runtime k loop** (the taps
+are unrolled at emission), so the accumulator needs no `phi` at all: one splat of the seed,
+one `fmul`/`fadd` pair per tap, one vector store. The runtime-`tj` remainder keeps the memory
+form, the same carve-out S30 used. `tile_vec_llt`/`emit_vec_splat` were split into
+`vec_llt`/`emit_splat` over the two fields they use, so the conv context shares them instead
+of duplicating.
+
+Emission, before → after (in the conv function):
+
+| | before | after |
+| --- | ---: | ---: |
+| `getelementptr [16 x float]` (accumulator memory) | 22 | **11** (remainder only) |
+| `fmul`/`fadd float` | 19 | 10 |
+| `fmul`/`fadd <16 x float>` | 0 | **9** |
+| `load` / `store <16 x float>` | 0 | 9 / 1 |
+| lane loops (`icmp uge i64 %t…, 16`) | 29 | 18 (main tile: **0**) |
+
+### The measurement, and the correction it forces
+
+conv2d, min-of-15 and median-of-15, compute-only, product face, M4 Pro:
+
+| shape | old min / med | new min / med | Δ |
+| --- | --- | --- | ---: |
+| conv2d_512 1t | 0.1223 / 0.1377 | 0.1086 / 0.1227 | **−11%** |
+| conv2d_1024 1t | 0.5343 / 0.5692 | 0.4810 / 0.5222 | **−10% / −8%** |
+| conv2d_1024 par | 0.4286 / 0.5075 | 0.4195 / 0.4921 | −2% |
+| conv2d_512 par | 0.1258 / 0.1704 | 0.1033 / 0.1750 | noise (sub-0.2 ms) |
+
+Output byte-equal on every leg (`576 / -96`) — R1 holds.
+
+**This refutes the mem-op accounting above.** That table predicted the vector accumulator
+was worth ~2.9× (29 → 10 memory operations per 9 FMAs). Measured: **~10% at one thread**,
+and the assembly says why — whole-function counts move from 81 fmla / 106 `ldr q` / 31
+`str q` / 804 instructions to 81 / 101 / 29 / 776. Almost nothing was removed, because
+**almost nothing was there**: LLVM was already promoting the conv accumulator alloca and
+vectorizing the lane loops. S29 recorded exactly this — *"fir's window rung and conv2d's conv
+rung … are register-resident already"* — and the table still counted those operations as if
+they reached the machine. The caveat was even written into the table ("the S30 disasm counts
+already include clang's CSE") and the ratio was allowed to drive the ordering decision anyway.
+
+**What survives, and what does not:**
+
+- **Survives — the durable half of the S30 argument.** The register form is now *emitted*
+  rather than *granted* by a promotion heuristic. That grant is precisely what S29 watched
+  LLVM withdraw (92 `str q…,[sp]`) when unrelated code touched the same slot, and TI>1 would
+  have quadrupled this accumulator into exactly that risk. So item 2 remains the right
+  prerequisite for item 4 — but as insurance, not as the payoff.
+- **Does not survive — the 2.9× and the ordering argument built on it.** Counting operations
+  in emitted IR predicts nothing about a machine when the optimizer deletes them first. Any
+  future ordering claim in this plan must come from a measurement or a disassembly, never
+  from an IR op-count table.
+- **Item 4's predicted 1.2× is under the same doubt** and must be measured, not asserted. So
+  is suggestion #11's premise that `TI=1` is *the* cause of conv2d's 3.4× loss at 1024 — the
+  reuse arithmetic (2.0× at TI=4) is sound, but whether it converts to time is now an open
+  question rather than a projection.
+
+### Where conv2d actually stands after item 2
+
+1t at 1024: **0.481 ms** against C++'s 0.353 (S30 basis) — the gap narrows from ~2.0× to
+~1.8×. The remaining distance is not the accumulator. Candidates, in the order the evidence
+supports: the nine per-tap lane loops in the remainder path, the TI=1 image-row reuse
+(item 4), and the fact that no matmul rung above register blocking reaches conv at all
+(`packing_site` refuses k-split — suggestion #12's im2col is the move that opens them).

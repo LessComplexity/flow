@@ -376,7 +376,13 @@ const WINDOW_SUBROWS: u64 = 4;
 /// to whatever the machine has, so the emitter stays target-independent and
 /// `TILE_J` never couples to a hardware register size (plan-s30).
 fn tile_vec_llt(ctx: &TileCtx) -> String {
-    format!("<{} x {}>", ctx.tile_j, ctx.elem_llt)
+    vec_llt(&ctx.elem_llt, ctx.tile_j)
+}
+
+/// The same, for the conv rung — which carries its own context type but the
+/// same `<TJ x elem>` accumulator shape.
+fn vec_llt(elem_llt: &str, tile_j: u64) -> String {
+    format!("<{tile_j} x {elem_llt}>")
 }
 
 /// Heap-lowering threshold (plan-s29 emission item 4): an entry-block block of
@@ -515,6 +521,10 @@ struct TileCtx {
 /// lowered type the seed/tap/store lane loops need, built once per site. The
 /// k-split sibling of `TileCtx` — no k counter: the (kq, kr) taps unroll.
 struct ConvTileCtx {
+    /// The j-tile width in lanes: the constant-TJ main tile runs on a
+    /// `<TJ x elem>` SSA accumulator, the runtime-`tj` remainder on the memory
+    /// form (plan-s31-deduced-blocking work item 2, the S30 carve-out).
+    tile_j: u64,
     acc: String,
     acc_llt: String,
     elem_llt: String,
@@ -3522,6 +3532,7 @@ impl<'a> FnEmit<'a> {
         let j_ctr = self.scratch("i64");
         let lane_ctr = self.scratch("i64");
         let ctx = ConvTileCtx {
+            tile_j,
             acc,
             acc_llt,
             elem_llt,
@@ -3658,6 +3669,114 @@ impl<'a> FnEmit<'a> {
     /// `b[b_row + (cq·kq + cr·kr) + j0 + lane]` — the parenthesized tap
     /// offset folds to a compile-time constant — FMA into the acc vector,
     /// respecting the recorded operand orders.
+    /// The constant-TJ main tile as `<TJ x elem>` SSA values — plan-s31-
+    /// deduced-blocking work item 2, the S30 accumulator carve-out applied to
+    /// the conv rung.
+    ///
+    /// Conv has **no runtime k loop** (the `(kq, kr)` taps are unrolled at
+    /// emission), so the accumulator needs no `phi` at all: it is a straight
+    /// chain of SSA values, one `fadd` per tap. That removes what the memory
+    /// form spends per (tap, lane) — a `getelementptr`, a `load` and a `store`
+    /// of accumulator state — plus the whole seed and store lane loops, leaving
+    /// one splat, one vector load per tap, and one vector store.
+    ///
+    /// Bit-exact against the scalar form by the same argument as S30: SIMD
+    /// lanes are independent, so lane j of the result is exactly the scalar
+    /// chain's value for lane j, and the tap order and both recorded operand
+    /// orders are preserved. Alignment is the ELEMENT's, never the vector
+    /// type's ABI alignment — `j0` is arbitrary (S30 composition rule 3).
+    ///
+    /// The remainder tile (runtime `tj`) and every boundary row keep the memory
+    /// form, exactly as the matmul rung's carve-out does.
+    fn emit_tile_conv_tile_vec(
+        &mut self,
+        site: &TileSite,
+        ctx: &ConvTileCtx,
+        j0: &str,
+        row0: &str,
+        a_row: &Option<String>,
+        b_row: &Option<String>,
+    ) {
+        let vllt = vec_llt(&ctx.elem_llt, ctx.tile_j);
+        let align = llt_align(&ctx.elem_llt);
+        let ksplit = site.b.ksplit.as_ref().expect("conv site records ksplit");
+        debug_assert_eq!(site.k % ksplit.div, 0, "rectangular window (rule 2)");
+
+        // Hoist b_row + j0 once; each tap adds its compile-time offset.
+        let b_tile = self
+            .emit_tile_index(b_row.clone(), &[(1, j0)])
+            .expect("conv b has lane term");
+        let seed = ctx.seed.clone();
+        let mut acc = self.emit_splat(&ctx.elem_llt, ctx.tile_j, &seed);
+
+        for kq in 0..(site.k / ksplit.div) {
+            for kr in 0..ksplit.div {
+                let k_tap = (kq * ksplit.div + kr).to_string();
+                let a_index = self
+                    .emit_tile_index(a_row.clone(), &[(site.a.ck, k_tap.as_str())])
+                    .unwrap_or_else(|| "0".to_owned());
+                let a_elem_ptr = self.tmp();
+                self.line(format!(
+                    "{a_elem_ptr} = getelementptr {}, ptr {}, i64 0, i64 {a_index}",
+                    ctx.a_llt, ctx.a_ptr
+                ));
+                let a_value = self.tmp();
+                self.line(format!("{a_value} = load {}, ptr {a_elem_ptr}", ctx.elem_llt));
+                let a_vec = self.emit_splat(&ctx.elem_llt, ctx.tile_j, &a_value);
+
+                let tap_off = ksplit.cq * kq + ksplit.cr * kr;
+                let b_start = if tap_off == 0 {
+                    b_tile.clone()
+                } else {
+                    let shifted = self.tmp();
+                    self.line(format!("{shifted} = add i64 {b_tile}, {tap_off}"));
+                    shifted
+                };
+                let b_elem_ptr = self.tmp();
+                self.line(format!(
+                    "{b_elem_ptr} = getelementptr {}, ptr {}, i64 0, i64 {b_start}",
+                    ctx.b_llt, ctx.b_ptr
+                ));
+                let b_vec = self.tmp();
+                self.line(format!("{b_vec} = load {vllt}, ptr {b_elem_ptr}, align {align}"));
+
+                let product = self.tmp();
+                let (mul_lhs, mul_rhs) = if site.mul_a_first {
+                    (a_vec.clone(), b_vec.clone())
+                } else {
+                    (b_vec.clone(), a_vec.clone())
+                };
+                self.line(format!(
+                    "{product} = {}{} {vllt} {mul_lhs}, {mul_rhs}",
+                    ctx.mul_op, ctx.contract_flag
+                ));
+                let sum = self.tmp();
+                let (add_lhs, add_rhs) = if site.add_acc_first {
+                    (acc.clone(), product.clone())
+                } else {
+                    (product.clone(), acc.clone())
+                };
+                self.line(format!(
+                    "{sum} = {}{} {vllt} {add_lhs}, {add_rhs}",
+                    ctx.add_op, ctx.contract_flag
+                ));
+                acc = sum;
+            }
+        }
+
+        // One contiguous vector store: out[row0 + j0 .. + TJ).
+        let out_start = self.tmp();
+        self.line(format!("{out_start} = add i64 {row0}, {j0}"));
+        let out_elem_ptr = self.tmp();
+        self.line(format!(
+            "{out_elem_ptr} = getelementptr {}, ptr {}, i64 0, i64 {out_start}",
+            ctx.out_llt, ctx.out_ptr
+        ));
+        self.line(format!(
+            "store {vllt} {acc}, ptr {out_elem_ptr}, align {align}"
+        ));
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn emit_tile_conv_tile(
         &mut self,
@@ -3669,6 +3788,14 @@ impl<'a> FnEmit<'a> {
         b_row: &Option<String>,
         bound: &str,
     ) {
+        // plan-s31 work item 2: the constant-TJ main tile runs on SSA vector
+        // values (no accumulator memory at all); the runtime-`tj` remainder
+        // keeps the form below — the S30 carve-out, same shape.
+        if bound.parse::<u64>().ok() == Some(ctx.tile_j) {
+            self.emit_tile_conv_tile_vec(site, ctx, j0, row0, a_row, b_row);
+            return;
+        }
+
         // Seed splat: acc[lane] = seed over [0, bound).
         let (seed_head, seed_body, seed_done) = (self.label(), self.label(), self.label());
         self.line(format!("store i64 0, ptr {}", ctx.lane_ctr));
@@ -5547,16 +5674,20 @@ impl<'a> FnEmit<'a> {
     /// then a zeroinitializer `shufflevector` — LLVM's canonical splat, which
     /// instcombine folds to a constant vector when the scalar is one.
     fn emit_vec_splat(&mut self, ctx: &TileCtx, scalar: &str) -> String {
-        let vllt = tile_vec_llt(ctx);
+        self.emit_splat(&ctx.elem_llt, ctx.tile_j, scalar)
+    }
+
+    /// [`Self::emit_vec_splat`] over the two fields it actually needs, so the
+    /// conv rung (its own context type, same accumulator shape) shares it.
+    fn emit_splat(&mut self, elem_llt: &str, tile_j: u64, scalar: &str) -> String {
+        let vllt = vec_llt(elem_llt, tile_j);
         let one = self.tmp();
         self.line(format!(
-            "{one} = insertelement {vllt} poison, {} {scalar}, i64 0",
-            ctx.elem_llt
+            "{one} = insertelement {vllt} poison, {elem_llt} {scalar}, i64 0"
         ));
         let all = self.tmp();
         self.line(format!(
-            "{all} = shufflevector {vllt} {one}, {vllt} poison, <{} x i32> zeroinitializer",
-            ctx.tile_j
+            "{all} = shufflevector {vllt} {one}, {vllt} poison, <{tile_j} x i32> zeroinitializer"
         ));
         all
     }

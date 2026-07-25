@@ -1012,14 +1012,59 @@ fn golden_tile_map_shape_conv() {
     let ir = flow_rewrite::rewrite(lower_src(TILE_CONV_SRC)).ir;
     let tiled = emit(&ir).unwrap();
     let tiled_fn = function_containing(&tiled, " = alloca [16 x float]");
-    // The S28 conv rung: the k-split record cashed as an unrolled (kq, kr)
-    // tap nest — one flat TJ-lane accumulator per (row, j-tile).
+    // The S28 conv rung: the k-split record cashed as an unrolled (kq, kr) tap
+    // nest. S31 (plan-s31-deduced-blocking item 2) moved the constant-TJ MAIN
+    // tile onto `<TJ x elem>` SSA values; the runtime-`tj` remainder still uses
+    // the flat [TJ] scratch, so the alloca remains — for the remainder alone.
     assert!(
         tiled_fn
             .lines()
             .any(|line| line.trim_start().starts_with("%s")
                 && line.contains(" = alloca [16 x float]")),
-        "conv tile accumulator must be an entry-block [TJ=16] scratch alloca:\n{tiled_fn}"
+        "the remainder tile keeps the [TJ=16] scratch alloca:\n{tiled_fn}"
+    );
+    // THE property this rung buys: the main tile touches no accumulator memory
+    // at all. Every `[16 x float]` GEP is an accumulator access, and 11 of the
+    // 22 (one seed + 9 taps + one store, per tile body) are gone with the main
+    // body's — what remains is exactly the remainder tile's.
+    assert_eq!(
+        tiled_fn.matches("getelementptr [16 x float]").count(),
+        11,
+        "only the remainder tile may address accumulator memory:\n{tiled_fn}"
+    );
+    // Conv has no runtime k loop — the taps are unrolled at emission — so the
+    // main tile's accumulator is a straight SSA chain, not even a phi: one
+    // splat of the seed, then one fmul/fadd pair per tap.
+    assert_eq!(
+        tiled_fn.matches(" = fmul <16 x float> ").count(),
+        9,
+        "9 unrolled taps on vector accumulators in the main tile:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn.matches(" = fadd <16 x float> ").count(),
+        9,
+        "9 vector accumulations in the main tile:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn.matches(" = load <16 x float>, ").count(),
+        9,
+        "one contiguous b vector load per tap:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn.matches("store <16 x float> ").count(),
+        1,
+        "the main tile stores its accumulator once:\n{tiled_fn}"
+    );
+    assert_eq!(
+        tiled_fn.matches(" = insertelement <16 x float> ").count(),
+        10,
+        "the seed splat plus one w[k] splat per tap:\n{tiled_fn}"
+    );
+    // Element alignment, never the vector type's ABI alignment — j0 is
+    // arbitrary and <16 x float> would claim 64 (S30 composition rule 3).
+    assert!(
+        !tiled_fn.contains("<16 x float>, ptr %t") || tiled_fn.contains(", align 4"),
+        "vector accesses must carry the element alignment:\n{tiled_fn}"
     );
     assert!(
         !tiled_fn.contains(" = call float @fn"),
@@ -1040,8 +1085,8 @@ fn golden_tile_map_shape_conv() {
     );
     assert_eq!(
         tiled_fn.matches(" = fmul float ").count(),
-        18,
-        "9 unrolled tap FMAs per tile body:\n{tiled_fn}"
+        9,
+        "the scalar tap FMAs are now the REMAINDER tile's alone:\n{tiled_fn}"
     );
     // The tap offsets (cq·kq + cr·kr) fold to constants: offsets 18..38 by
     // kq row appear once per tile body (offset 0 needs no add, 1/2 collide
@@ -1061,6 +1106,8 @@ fn golden_tile_map_shape_conv() {
     // Constant-TJ lane loops everywhere on the main path: seed + 9 taps +
     // store = 11 per main tile body; the remainder tile body alone is
     // bounded by the runtime `tj` (one select in the whole nest).
+    // The main tile has NO lane loops left — seed, taps and store are all one
+    // vector operation each. (Was 11: seed + 9 taps + store.)
     assert_eq!(
         tiled_fn
             .lines()
@@ -1069,8 +1116,8 @@ fn golden_tile_map_shape_conv() {
                 line.contains(" = icmp uge i64 %t") && line.ends_with(", 16")
             })
             .count(),
-        11,
-        "main-path lane loops must be bounded by the constant TJ=16:\n{tiled_fn}"
+        0,
+        "the main tile must have no constant-TJ lane loops left:\n{tiled_fn}"
     );
     assert_eq!(
         tiled_fn
