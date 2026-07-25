@@ -24,29 +24,40 @@ cat docs/performance/matmul/s29.md        # the KC verdict + the shape tables
 
 ## The S30 queue
 
-1. **The box leg — this is the one that decides the KC question.** Every S29 number is M4 Pro.
-   The KC k-panel nest was designed against box-scale traffic (16 GB of A re-reads at 4096 on
-   zen3) and measured a 3× loss at 1024 on a machine with a huge SLC. Run `matmul1024/2048/4096
-   × {f32,f64} × {kc on, kc off}` on an on-demand EPYC instance and either (a) turn `kc_nest` on
-   by default with the number that justifies it, (b) take the parking-free variant recorded in
-   plan-s29 Ceilings, or (c) delete the nest and keep the finding. Protocol in the S28 log §4:
-   on-demand (no `--bid_price`), incremental log pulls, destroy after (~$0.45). **`kc_nest` is an
-   API flag, not a CLI flag — the box driver must call `emit_with_opts`.**
-2. **conv2d row blocking** (backend-llvm suggestions #11, now MEASURED not predicted): conv2d
+1. **Promotable accumulators — this is the one that decides the KC question, and it
+   gates the whole ladder.** S29 diagnosed the KC nest's 3× loss: it is NOT traffic
+   (a `TILE_KC` sweep varies parking 4× and moves the clock 1.3%). `clang` register-
+   promotes the `[64 x float]` accumulator alloca across the k loop in the jt-outer leg
+   and fails to in the KC leg — **92 `str q…,[sp]` vs 0**, plus 8 runtime alias checks
+   and a dead scalar fallback — so every FMA round-trips the stack (109 instructions per
+   2-k body vs 51). Fix: emit the accumulator tile as SSA values or a fixed-width vector
+   type instead of an alloca indexed by an induction variable, plus `noalias` on the
+   emitted task's panel/frame pointers so LLVM stops versioning the loop. Evidence and
+   the exact instruction sequences: `docs/performance/matmul/s29.md` §1, suggestions #16.
+   Note the exact LLVM blocker is NOT pinned — a hand-applied `!noalias` on the panel
+   pointer did not restore promotion; start by pinning it (`-Rpass-missed`, `opt` with
+   AA remarks) rather than guessing.
+2. **The box leg — now worth running on its merits, not as the tiebreak.** Every S29
+   number is M4 Pro. Once the accumulator is promotable, re-measure the KC order on an
+   on-demand EPYC zen3 (`kc on/off × {1024,2048,4096} × {f32,f64}`) — its own traversal
+   costs are ~3% locally, so the box may well like it. Protocol in the S28 log §4:
+   on-demand (no `--bid_price`), incremental log pulls, destroy after (~$0.45).
+   **`kc_nest` is an API flag; the emit example now also takes `--kc`.**
+3. **conv2d row blocking** (backend-llvm suggestions #11, now MEASURED not predicted): conv2d
    beats cpp-mt at 512 and loses 3.4× at 1024. TI over output rows (img-row reuse ×3), or #12
    (im2col) which reaches the whole matmul ladder instead of one rung.
-3. **Finish the FLOW_PERF retirement.** `benches/shapes/` self-times; `benches/matmul/`
+4. **Finish the FLOW_PERF retirement.** `benches/shapes/` self-times; `benches/matmul/`
    (`tile_ab.sh`, `runner.py`) does not, so its totals still include data generation. Migrating
    it means the matmul legs become cross-language-comparable for the first time.
-4. **The effect-predicate refactor** (lower suggestions #3): "is this stage an effect?" is asked
+5. **The effect-predicate refactor** (lower suggestions #3): "is this stage an effect?" is asked
    at four independent sites. S29 taught all four about `time` after two of them silently
    hoisted a loop-body clock read; the structural fix is one `stage_is_effect` helper so a fifth
    effect builtin cannot miss a seam.
-5. **Heap lowering, second half** (backend-llvm BL9): entry function only today. A big array
+6. **Heap lowering, second half** (backend-llvm BL9): entry function only today. A big array
    local to a Named fn or a Map/Fold body still `alloca`s, so a matmul2048 written with its
    kernel in a helper fn still hits the wall. Needs `flow_rt_free(ptr)` + `LastUsePlan` free
    points.
-6. **Standing:** cuda consumes `tile_plan` (incl. ksplit/window/KC in the design); P7; ADR rows;
+7. **Standing:** cuda consumes `tile_plan` (incl. ksplit/window/KC in the design); P7; ADR rows;
    `exp`. ADR-0032 (precision contracts vs backend config) is accepted and unimplemented.
 
 ## Standing direction (Sapir — unchanged)
@@ -67,6 +78,9 @@ cat docs/performance/matmul/s29.md        # the KC verdict + the shape tables
   `docs/suggestions.md`. S29's three commits deliberately exclude those paths. `git status` will
   look dirty — check whose work a file is before touching it.
 - **`kc_nest` defaults OFF.** A measurement that forgets to opt in is measuring the S27b nest.
+- **The KC verdict's REASON was corrected after the fact.** The first write-up blamed parking
+  traffic; the control sweep refuted it. If you read an older doc claiming that, it is wrong —
+  s29.md §1 carries the diagnosis.
 - **`time` is source-order-sensitive by design.** `t1 - t0` measures the work *written* between
   the two reads. Moving a `() -> time` line changes what is measured — that is the semantic, not
   a bug. A clock read inside a loop body runs per iteration (pinned).

@@ -57,6 +57,14 @@ A traffic the nest removes. Per-cell accumulation order is unchanged (kc outer,
 k inner ascending) ⟹ bit-exact vs the S27 nest — the differential suite
 enforces.
 
+**Measured outcome (S29, after the build).** The traffic model above is sound and
+irrelevant: the nest is 3× SLOWER at 1024 f32, and the cause is not traffic at all.
+A `TILE_KC` sweep varies parking traffic 4× and moves the clock 1.3%; disassembly shows
+the `[64 x float]` accumulator alloca is register-promoted in the jt-outer leg and NOT in
+this one (92 `str q…,[sp]` vs 0). The traversal's own costs — parking, the A-pack, the
+extra loop levels — total ~3%. See `docs/performance/matmul/s29.md` §1 and suggestions
+#16; the follow-up is a codegen fix (promotable accumulators), not a re-tune.
+
 **Composition rules.**
 1. The jb/kc nest applies only to packed sites with `site.k > TILE_KC`; smaller
    K keeps the S27b nest byte-for-byte (negative control).

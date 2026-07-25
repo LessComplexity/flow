@@ -1,5 +1,5 @@
 //! Emit textual LLVM IR for a `.flow` file (ADR-0020; dev tool — the future
-//! `flow build` embryo). Usage: `cargo run -p flow-backend-llvm --example emit -- <file.flow> [-] [--perf] [--no-tile] [--no-pack] [--contract] [--rewrite]`
+//! `flow build` embryo). Usage: `cargo run -p flow-backend-llvm --example emit -- <file.flow> [-] [--perf] [--no-tile] [--no-pack] [--kc] [--contract] [--rewrite]`
 //! (writes `<file>.ll` next to the source, `<file>_perf.ll` with `--perf`, or
 //! stdout with `-`; `--rewrite` rewrites the lowered IR before emission).
 
@@ -9,7 +9,7 @@ fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let Some(path) = args.next() else {
         eprintln!(
-            "usage: emit <file.flow> [-] [--perf] [--no-tile] [--no-pack] [--contract] [--rewrite]"
+            "usage: emit <file.flow> [-] [--perf] [--no-tile] [--no-pack] [--kc] [--contract] [--rewrite]"
         );
         return ExitCode::from(2);
     };
@@ -22,11 +22,14 @@ fn main() -> ExitCode {
             "--perf" => opts.perf_timing = true,
             "--no-tile" => opts.tiling = false,
             "--no-pack" => opts.packing = false,
+            // The KC k-panel nest is default-OFF (a measured 3x loss locally at
+            // 1024 f32, S29); this is how a box run opts in.
+            "--kc" => opts.kc_nest = true,
             "--contract" => opts.contract = true,
             "--rewrite" => rewrite = true,
             other => {
                 eprintln!(
-                    "unknown flag: {other} (usage: emit <file.flow> [-] [--perf] [--no-tile] [--no-pack] [--contract] [--rewrite])"
+                    "unknown flag: {other} (usage: emit <file.flow> [-] [--perf] [--no-tile] [--no-pack] [--kc] [--contract] [--rewrite])"
                 );
                 return ExitCode::from(2);
             }
