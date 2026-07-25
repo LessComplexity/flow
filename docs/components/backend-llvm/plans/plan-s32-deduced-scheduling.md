@@ -86,6 +86,8 @@ splits: **geometry from the graph, constants from the profile.**
 | `Dispatch` | `Dat` | `{ task, width : ℕ, grain : ℕ, lanes : 𝒫(Loc) }` — the reified scheduling decision. `width` and `grain` are **independent**, which is the structural fix of §1(d) |
 | `schedule : (PathPlan × TargetProfile) → Task ⇀ Dispatch` | `Trn`, **deduced**, emitter-local | the compile-time scheduler. Total on `Split` tasks, undefined on `Seq`/pinned ones (they are host-spine by construction) |
 | `levels : PathPlan → (𝒫(Task))*` | `Trn`, deduced | the DAG's antichains — the sets of tasks that may run **concurrently**. This is the object rung 3 needs and `path_plan.deps` already determines |
+| `RegionPlan : Task ⇀ Granularity` | `Dat`, **deduced**, emitted as data | the whole granularity nest for one region — `{tile_i, tile_j, kc, nc, slice_elems, width, lane_pref}` — computed at emission and read by the pool. The levels travel together because they constrain each other (§2.5) |
+| `halo : (TileRead, ℕ) → ℕ` | `Trn`, deduced | the reuse a slice boundary re-pays, from `reuse::distinct_runs` one level up. The floor under `slice_elems` (§2.6) |
 | `Loc` — worker lane | `Loc` | a pool lane, with its core class (P or E) from the profile. Lanes are physical sites; that a lane is "slow" is a machine fact |
 
 **Composition rules.**
@@ -107,11 +109,89 @@ splits: **geometry from the graph, constants from the profile.**
    calls. No runtime search, no adaptive feedback: a build is reproducible, and the same
    program on the same profile emits the same schedule (ADR-0034 D3's spirit).
 
+## 2.5 The granularity nest — one record per region, sizes at compile time
+
+Sapir, S32: *"we must know from the DAG to notate per graph area (subgraph) the parameters for
+good parallelism — from tile, panels and now even slices — so the backend can structure it in a
+way the runtime can do the optimal assignment."* That is the unifying statement this plan is
+really about, and it reorganises the three rungs into one artifact.
+
+**There are three nested granularities. Only two are derived.**
+
+| level | sized so that… | derived from | today |
+| --- | --- | --- | --- |
+| tile (`TI`×`TJ`) | the accumulator block fits the **register file** | `vec_regs`, `vec_bytes` | ✅ S31 (`TargetProfile::tile_i/tile_j`) |
+| panel (`KC`×`NC`) | the packed window stays **L2-resident** | `l2_bytes` | ✅ S31 (`TargetProfile::tile_kc/nc`) |
+| **slice** | a worker's working set stays hot for the slice's duration | **nothing** | ❌ `GRAIN = 4096`, one number for every kernel on every machine |
+| **width** | the dispatch is worth spreading | **nothing** | ❌ `configured_threads()`, one number per process |
+
+`GRAIN` is the same hand-set literal `TILE_J` and `TILE_KC` were, and ADR-0034 already names it
+— *"the same disease at the runtime placement"*. S31 skipped it under rule 4 because it lives
+in flow-rt rather than the emitter. **That placement split is the actual obstacle**: the
+emitter knows the graph's reuse structure and cannot reach the pool; the pool knows the
+machine's runtime state and knows nothing about the graph. So neither can size a slice, and a
+constant sits in the gap.
+
+**The fix is one deduced record per region, emitted as data.**
+
+```
+RegionPlan : Task ⇀ Granularity
+Granularity = { tile_i, tile_j, kc, nc, slice_elems, width, lane_pref }
+```
+
+computed at emission from (graph facts × `TargetProfile`), baked into the emitted dispatch,
+and read by the pool. The whole nest travels together because the levels are not independent —
+a slice that is smaller than the panel it re-packs is incoherent, and a width that exceeds the
+slice count is idle lanes by construction.
+
+**The principle that decides what goes where:**
+
+> **Compile time decides the SIZES. Runtime decides the ASSIGNMENT.**
+
+The compiler cannot know which core a slice will land on, whether that core is a P or an E,
+what else is resident, or how the machine is loaded — so it must not try to assign. The
+runtime cannot know the reuse structure, the halo cost of a boundary, or the working-set
+footprint — so it must not try to size. Each decides exactly what it can see, and the
+`RegionPlan` is the interface between them. That also states R0's job precisely: the pool
+stops *inventing* sizes and starts *receiving* them.
+
+## 2.6 Grain is bounded on both sides, and both bounds are computable
+
+The slice is not a free parameter sitting between two vague preferences. It has a floor and a
+ceiling, and this plan claims both are deducible today.
+
+**Ceiling — load balance.** `slices ≥ width × oversubscription`, or the deques have nothing to
+steal (§1(c)). This is the truck problem and it is pure counting.
+
+**Floor — the halo.** A slice boundary re-pays whatever reuse crossed it. For a read that
+slides across rows, adjacent output rows share all but `q` of their tap-rows, so **every extra
+boundary costs `(k/div − 1)·q` re-read rows**. That is `distinct_runs`' arithmetic
+(`crates/backends/llvm/src/reuse.rs`, shipped in S31 for register blocking) evaluated one level
+up: the same query prices a block of rows and a slice of rows.
+
+The consequence is a **falsifiable prediction, and it already has two data points**:
+
+| read classification | halo per boundary | predicted response to finer slicing | measured |
+| --- | --- | --- | --- |
+| `Invariant` (matmul `b`, `ci == 0`) | **0** | free — slice as fine as balance wants | matmul512 **+68%** at 14t under 8× oversubscription |
+| `Sliding{q}` (conv2d `b`, `ci == cq`) | `(k/div − 1)·q` rows | costly — every boundary re-reads the window overlap | conv2d **−13…20%** under the same change |
+
+**One recorded fact — `i_reuse` — predicts both signs.** The implementation must reproduce
+that: a site whose sliding read has zero halo may be sliced to the balance ceiling, and a site
+with halo must trade halo against imbalance rather than take a global constant. matmul1024's
+31% regression at 14t under oversubscription is the third case and the harder one — its `b` is
+`Invariant`, so the halo term does not explain it; the panel-residence term does (fewer rows
+per slice amortising the same pack), which is why `slice_elems` and `kc`/`nc` must be decided
+**together in one record** rather than by two independent rules.
+
 ## 3. The rungs — all three committed
 
-### R0 — the pool gains the two knobs (necessary, not sufficient)
+### R0 — the pool stops inventing sizes and starts receiving them
 
-`flow_par_task` carries `width` and `grain` per task; `slice_ranges` stops collapsing them.
+`flow_par_task` carries the region's `Granularity` — at minimum `width` and `slice_elems` —
+and `slice_ranges` stops collapsing them. This is the §2.5 principle made concrete: the pool
+no longer derives sizes from `GRAIN` and `configured_threads()`, it applies the ones the
+compiler computed, and keeps only what it alone can see — which lane, when, and who steals.
 Stealing becomes live: with `grain > width` there is finally something to steal, which is what
 lets an E-core take fewer pieces without anyone deciding it should.
 
