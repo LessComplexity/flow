@@ -21,3 +21,5 @@ Machine-tag rule (S26, Sapir — standing): every results CSV carries a machine-
 | arena allocation | **8 → 1 cudaMalloc/free** (capture matmul) | smart arenas v1.0; structural, CI-asserted |
 | correctness | interp = flow-cuda = naive CUDA = numpy at every N | outputs byte-checked |
 | peak measured anywhere | cuBLAS **58.8 TF/s** (N=4096) | the tiling ceiling, untouched by language |
+
+- [conv2d-per-core-gap.md](conv2d-per-core-gap.md) — **OPEN.** conv2d is 1.55x slower per core than naive C++; five causes eliminated by measurement (register pressure, splats, arithmetic intensity, heap aliasing, alias metadata). The gap is stalls, not instruction mix: we issue 30% fewer instructions and half the loads. Needs PMU counters, which need a repeat-loop bench first.
