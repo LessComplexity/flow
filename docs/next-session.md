@@ -24,6 +24,58 @@ cat docs/performance/matmul/s29.md        # the KC verdict, the shape tables, an
 
 ## The S30 queue
 
+## The road to "lead everywhere, then CUDA" (Sapir, S30)
+
+Sequencing is Sapir's and already recorded in ADR-0033: **CPU to full advantage first, then
+GPU.** What S30 measured turns that into a concrete order, because it shows exactly which
+part of the numpy gap is reachable and which is not.
+
+**The roofline says the single-thread fight is nearly over.** At 4096 f32 (2·N³ FLOP):
+
+| leg | GFLOP/s | against the NEON roofline |
+| --- | ---: | --- |
+| flow-fma-1t | 105.5 | **75%** of one P-core's peak (~141) |
+| flow-fma-par | 795.1 | **46%** of all-core peak (~1741) |
+| numpy-1t | 1,594 | **11× one core's peak** |
+| numpy-threaded | 3,143 | **1.81× the whole machine's peak** |
+
+A single-threaded numpy call exceeding one core's vector peak by 11× is not a tuned kernel
+— it is a different execution unit. **No NEON code can close that**, ever. Accelerate is on
+Apple's AMX matrix coprocessor.
+
+So the order is forced:
+
+1. **Parallel efficiency — free money, no new silicon.** 46% of the all-core roofline
+   against 75% single-thread means roughly 2× is being lost to scheduling, not to
+   arithmetic. Suspects, in order: `GRAIN` quantization on P/E asymmetric cores (the
+   runtime slices uniformly across cores with ~2.3× different throughput), memory
+   bandwidth at 4096, and thread count vs the P-core count. Cheapest large win available,
+   and it needs no new emission.
+2. **`TargetProfile`** (item 0 below) — the prerequisite for everything after it, because
+   "does this target have a matrix unit" is a profile field, exactly like "how big is L2".
+3. **A matrix-unit rung.** This machine reports `FEAT_SME = 1`, `FEAT_SME2 = 1` — ARM's
+   **standardized** Scalable Matrix Extension, which is documented and LLVM can target
+   (unlike Apple's AMX, which is undocumented and reachable only through Apple's own
+   libraries). The rung is the CPU twin of the CUDA `mma` story already recorded in
+   `tile-ladder-direction.md`: a matrix unit fixes its own accumulation order, so it
+   **breaks bit-parity with the interp oracle and lands product-face only** — ADR-0032
+   D1/D3, the same call as tf32 tensor cores.
+   Honest uncertainty: whether SME2 reaches AMX's throughput on this chip is unknown.
+   Accelerate may well be on AMX, which we cannot emit. Matching numpy on Apple silicon
+   for GEMM is therefore **not** guaranteed by this route.
+4. **The box is the more winnable fight.** zen3 has *no* matrix unit — OpenBLAS there is
+   hand-tuned AVX2, which is a fair fight the ladder plus tuned constants can actually
+   win. "Lead in all implementations" is a more realistic bar on x86 than on a chip with
+   dedicated matrix silicon.
+5. **Then CUDA** (ADR-0033's exit condition). Note the sequencing pays off twice: the SME
+   rung and the tensor-core rung are the *same* problem — a matrix unit with a fixed
+   accumulation order, gated behind a precision contract. Doing SME first makes the CUDA
+   `mma` rung mostly a re-targeting rather than a new design.
+
+Where the shapes stand meanwhile: Flow is already **4–16× ahead of numpy on fir and
+conv2d**, where no hand-written BLAS kernel exists. The gap is one shape on one unit, not
+a general deficit.
+
 0. **`TargetProfile` — architecture selection instead of hardcoded constants**
    (`plans/plan-s31-target-profiles.md`, written pre-build; Sapir's directive). Six machine
    facts are literals in the emitter today (`tile_j_for`, `TILE_I`, `TILE_KC`, `tile_nc_for`,
