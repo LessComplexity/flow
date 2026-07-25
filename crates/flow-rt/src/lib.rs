@@ -207,11 +207,18 @@ fn slice_override() -> i64 {
 }
 
 fn slice_ranges(def: TaskDef, threads: usize) -> Vec<(i64, i64)> {
-    let slice_elems = match slice_override() {
-        0 => def.slice_elems,
-        forced => forced,
+    // The lever forces an EXACT slice size, bypassing the floor/oversub rule —
+    // that is what makes it a probe of the sizing model rather than of the rule.
+    let forced = slice_override();
+    let def = if forced > 0 {
+        TaskDef {
+            slice_elems: forced,
+            oversub: u32::MAX,
+            ..def
+        }
+    } else {
+        def
     };
-    let def = TaskDef { slice_elems, ..def };
     let slices = if def.kind == 0 {
         1
     } else if def.n == 0 {
@@ -232,10 +239,29 @@ fn slice_ranges(def: TaskDef, threads: usize) -> Vec<(i64, i64)> {
             .unwrap_or(usize::MAX)
             .min(threads)
     };
+    // Cut on the region's quantum, not on equal element counts.
+    //
+    // Equal division is what the count-first rule did, and it silently destroys
+    // whatever alignment the size asked for: 1048576 over 52 slices is 20164.9
+    // elements, so every boundary lands mid-row, every slice starts with a
+    // partial register block, and the blocked kernel degenerates at both ends of
+    // every piece. Measured on matmul1024 at 14 lanes: slice counts that happen
+    // to divide n evenly (32, 64, 128) run 2.5-2.6 ms, while neighbouring counts
+    // that do not (43, 52, 57) run 4.4-5.8 — a 2x swing with no relation to how
+    // many pieces there are. `slice_elems` carries the quantum (TI * c, one
+    // whole register block of rows), so honour it.
+    let quantum = def.slice_elems.max(1);
     let mut ranges = Vec::with_capacity(slices);
     let mut lo = 0;
-    for slice in 0..slices {
-        let hi = lo + def.n / slices as i64 + i64::from((slice as i64) < def.n % slices as i64);
+    for slice in 1..=slices {
+        let hi = if slice == slices {
+            def.n
+        } else {
+            let target = (slice as i64).saturating_mul(def.n) / slices as i64;
+            (target / quantum * quantum).clamp(lo, def.n)
+        };
+        // Every slice is emitted, empty ones included: a `Seq` task carries
+        // n = 0 and must still run exactly once.
         ranges.push((lo, hi));
         lo = hi;
     }
@@ -1466,6 +1492,89 @@ mod tests {
         unsafe { &*frame.cast::<PinnedFrame>() }
             .dependent_calls
             .fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn def_of(n: i64, slice_elems: i64, oversub: u32) -> TaskDef {
+        extern "C" fn noop(_: i64, _: i64, _: *mut u8) {}
+        TaskDef {
+            kind: 1,
+            f: noop,
+            n,
+            rank: 0,
+            slice_elems,
+            oversub,
+            width: 0,
+        }
+    }
+
+    /// Every slice boundary must land on the region's quantum, and the ranges
+    /// must still tile `[0, n)` exactly.
+    ///
+    /// The bug this pins: deriving a COUNT and then equal-dividing `n` destroys
+    /// whatever alignment the size asked for. 1048576 over 52 slices is 20164.9
+    /// elements, so every boundary lands mid-row and every piece starts with a
+    /// partial register block. Measured on matmul1024 at 14 lanes, counts that
+    /// happen to divide n evenly (32/64/128) ran 2.5-2.6 ms while neighbouring
+    /// counts that do not (43/52/57) ran 4.4-5.8 — a 2x swing with no relation
+    /// to how many pieces there are.
+    #[test]
+    fn slices_are_cut_on_the_quantum_and_tile_the_range() {
+        let n = 1_048_576;
+        let quantum = 4096; // TI=4 rows of c=1024
+        for threads in [1usize, 4, 8, 14] {
+            for oversub in [1u32, 4, 8] {
+                let ranges = slice_ranges(def_of(n, quantum, oversub), threads);
+                assert!(!ranges.is_empty(), "threads={threads} oversub={oversub}");
+                assert_eq!(ranges[0].0, 0, "must start at 0");
+                assert_eq!(ranges[ranges.len() - 1].1, n, "must cover n");
+                for window in ranges.windows(2) {
+                    assert_eq!(window[0].1, window[1].0, "ranges must be contiguous");
+                }
+                for &(lo, hi) in &ranges {
+                    assert!(lo <= hi, "ranges must be ordered");
+                    assert_eq!(lo % quantum, 0, "every start is on the quantum: {lo}");
+                }
+                // Only the final boundary may be short of a whole quantum, and
+                // here n is an exact multiple so none may be.
+                for &(lo, hi) in &ranges {
+                    assert_eq!((hi - lo) % quantum, 0, "whole blocks only: {lo}..{hi}");
+                }
+            }
+        }
+    }
+
+    /// The floor is a coherence constraint: a slice below one register block
+    /// drops the dispatch onto the TI=1 fallback (7x on matmul1024). No
+    /// requested over-decomposition may cut below it.
+    #[test]
+    fn over_decomposition_never_cuts_below_one_block() {
+        let n = 16_384;
+        let quantum = 4096; // only four blocks exist
+        let ranges = slice_ranges(def_of(n, quantum, 64), 14);
+        assert!(
+            ranges.len() <= 4,
+            "cannot make more pieces than blocks: {ranges:?}"
+        );
+        for &(lo, hi) in &ranges {
+            assert!(
+                hi - lo >= quantum || hi == n,
+                "no sub-block slice: {lo}..{hi}"
+            );
+        }
+    }
+
+    /// A `Seq` task carries `n = 0` and must still run exactly once — the
+    /// quantised slicer must not optimise its empty range away. An empty
+    /// `Split`, by contrast, has genuinely nothing to run.
+    #[test]
+    fn sequential_tasks_still_get_exactly_one_range() {
+        let mut seq = def_of(0, 0, 1);
+        seq.kind = 0;
+        assert_eq!(slice_ranges(seq, 14), vec![(0, 0)], "Seq runs once");
+        assert!(
+            slice_ranges(def_of(0, 0, 1), 14).is_empty(),
+            "an empty Split has no work"
+        );
     }
 
     #[test]
