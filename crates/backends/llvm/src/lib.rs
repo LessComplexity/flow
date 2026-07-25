@@ -15,7 +15,10 @@
 mod func;
 mod loops;
 mod module;
+mod profile;
 mod ty;
+
+pub use crate::profile::TargetProfile;
 
 use flow_ir::{CategoryIr, FuncId, MorphismId, Operation, PathPlan, SourceLoc, TaskKind};
 use slotmap::SecondaryMap;
@@ -59,6 +62,16 @@ pub struct EmitOpts {
     /// performance tailor in ADR-0032's sense: bit-exact either way, which the
     /// differential suite enforces.
     pub kc_nest: bool,
+    /// The machine facts the emitter tiles against, selected **by name**
+    /// (plan-s31-target-profiles): `generic` (the default — today's literals,
+    /// byte-identical), `apple-m`, `zen3`. Nothing probes the host; a box run
+    /// names `zen3` rather than inheriting whatever machine the build happened
+    /// on, so emission stays reproducible and cross-compilable.
+    ///
+    /// A pure ADR-0032 D4 performance tailor: every profile field is
+    /// value-invariant, which the differential suite enforces by running under
+    /// a non-default profile.
+    pub target: &'static str,
 }
 
 impl Default for EmitOpts {
@@ -69,6 +82,7 @@ impl Default for EmitOpts {
             packing: true,
             contract: false,
             kc_nest: false,
+            target: "generic",
         }
     }
 }
@@ -81,6 +95,18 @@ pub fn emit(ir: &CategoryIr) -> Result<String, EmitError> {
 
 /// [`emit`] with options (see [`EmitOpts`]).
 pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitError> {
+    // Machine facts, by name (plan-s31-target-profiles rule 3). An unknown name
+    // is an error, never a silent fall back to `generic` — a typo that quietly
+    // emits the default profile's numbers is the exact failure the table exists
+    // to remove.
+    let Some(profile) = profile::resolve(opts.target) else {
+        return Err(EmitError::Internal(format!(
+            "unknown target profile `{}`; known: {}",
+            opts.target,
+            profile::names()
+        )));
+    };
+
     // Capability gate (L3): canonical loops only — every SCC has exactly one
     // merge and a well-formed `loop_plan`. Same predicate as rewrite's
     // `is_canonical` / interp M1 (BL6/BL7).
@@ -159,6 +185,7 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
                 opts.packing,
                 opts.contract,
                 opts.kc_nest,
+                profile,
             ));
         } else {
             let mut fe = FnEmit::new(
@@ -171,6 +198,7 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
                 opts.packing,
                 opts.contract,
                 opts.kc_nest,
+                profile,
             );
             if id == entry {
                 fe.set_perf_timing(opts.perf_timing);

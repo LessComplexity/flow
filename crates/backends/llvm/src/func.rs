@@ -10,6 +10,7 @@ use flow_ir::{
 use slotmap::SecondaryMap;
 
 use crate::module::StrGlobal;
+use crate::profile::TargetProfile;
 use crate::ty::{
     erased_index, lower_body_input_ty, lower_named_input_ty, lower_ty, residual_arity,
 };
@@ -312,6 +313,11 @@ pub(crate) struct FnEmit<'a> {
     /// Split deep packed sites into k-panels (the KC nest). Default OFF — a
     /// measured 3x loss locally at 1024 f32 (S29); see `EmitOpts::kc_nest`.
     kc_nest: bool,
+    /// The machine facts every tile factor derives from (plan-s31-target-
+    /// profiles): vector width and register count, L2 budget, stack ceiling.
+    /// Geometry comes from the record, constants come from here — flow-ir never
+    /// learns any of it (the backend-genericity contract).
+    profile: &'static TargetProfile,
     /// This emitter's entry block runs **exactly once per program**, so a block
     /// it allocates may live in the `flow_rt_alloc` arena and be released by
     /// one `flow_rt_free_all` before its `ret` (plan-s29 composition rule 4).
@@ -323,22 +329,6 @@ pub(crate) struct FnEmit<'a> {
     /// This emitter lowered at least one block to the arena ⟹ it owes a
     /// teardown.
     heap_used: bool,
-}
-
-/// Register micro-kernel tile factors: per-width j lanes and four rows per
-/// i-block. These are backend emission widths, not language constants.
-fn tile_j_for(elem: &Ty) -> u64 {
-    match elem {
-        Ty::Float { bits: 64 } => 8,
-        _ => 16,
-    }
-}
-
-/// The KC rung's j-block width in lanes (NC): 32 j-tiles per block — f32 512 /
-/// f64 256. A kc×jb packed-b window is TILE_KC×NC×elem = 256 KB (the L2 budget
-/// that keeps the panel resident across the i sweep).
-fn tile_nc_for(elem: &Ty) -> u64 {
-    tile_j_for(elem) * 32
 }
 
 pub(crate) fn packing_site(site: &TileSite) -> bool {
@@ -367,7 +357,19 @@ pub(crate) fn conv_site(site: &TileSite) -> bool {
         && site.b.clane == 1
 }
 
-const TILE_I: u64 = 4;
+/// The FIR window rung's lane-block multiplier: full blocks step
+/// `WINDOW_SUBROWS × TJ` lanes, subrow `r` living at accumulator offset
+/// `r · TJ`.
+///
+/// **This is NOT `TargetProfile::tile_i`, despite sharing its value today.**
+/// That one counts rows of `phi <TJ x elem>` accumulators and is bounded by the
+/// vector register file. This one multiplies a `[TI·TJ x elem]` **memory**
+/// accumulator (`emit_tile_trio_vec` is unreachable from
+/// `emit_tile_window_block`), so no register budget binds it, and deriving it
+/// from one would be deriving it from a constraint that does not apply here.
+/// Unjustified at 4 — swept once alongside the matmul rung and never
+/// separately (plan-s31-target-profiles work item 2; ADR-0034 would search it).
+const WINDOW_SUBROWS: u64 = 4;
 
 /// The vector accumulator type of one j-tile: `<TJ x elem>`, deliberately the
 /// FULL tile width rather than the target's vector width — LLVM legalizes it
@@ -379,14 +381,19 @@ fn tile_vec_llt(ctx: &TileCtx) -> String {
 
 /// Heap-lowering threshold (plan-s29 emission item 4): an entry-block block of
 /// at least this many bytes is placed in the `flow_rt_alloc` arena instead of
-/// the stack. A backend emission constant like `TILE_J`/`TILE_KC` — the stack
-/// ceiling is a target fact, not a language one (macOS caps the main thread at
-/// 64 MB hard, so 2048² f32 ×3 plus the packed panel cannot live there).
+/// the stack. A target fact, not a language one (macOS caps the main thread at
+/// 64 MB hard, so 2048² f32 ×3 plus the packed panel cannot live there) — since
+/// S31 it is `TargetProfile::heap_min_bytes` rather than a literal here.
 ///
-/// 256 KB sits far above every tile scratch the emitter mints (the largest is
-/// the TI×KC a-panel pack at 2 KB) and far below anything that threatens a
-/// stack, so no program that fits today changes a byte.
-const HEAP_MIN_BYTES: u64 = 256 * 1024;
+/// 256 KB sits far below anything that threatens a stack, so no program that
+/// fits today changes a byte. It also sits above every tile scratch the emitter
+/// mints — but that headroom is **profile-dependent, not the flat 2 KB the S29
+/// note claimed**: the KC a-panel is `tile_i × tile_kc × sizeof`, which reduces
+/// to `2 · l2_bytes / nc_tiles` — 2 KB under `generic`'s 512 KB L2, but 64 KB
+/// under `apple-m`'s 16 MB. It grows linearly with the profile's L2, so a
+/// profile past ~64 MB of L2 would push the a-panel over this threshold. No
+/// shipped profile is close, and `scratch()` bypasses `entry_alloc` anyway, so
+/// this is a bound to know rather than a bug to fix.
 
 /// The size in bytes of an emitted LLVM type text, under the LLVM data layout
 /// (`StructLayout`: each field at its own ABI alignment, tail-padded to the
@@ -467,7 +474,6 @@ fn llt_fields(inner: &str) -> Vec<&str> {
 /// into [kc, kc+TILE_KC) panels so the per-panel b slice (TILE_KC×TJ lanes)
 /// and the packed a block stay L1-resident. Shallower sites keep the j-outer
 /// nest byte-for-byte (the negative control).
-const TILE_KC: u64 = 128;
 
 #[derive(Clone)]
 struct PackedBuffer {
@@ -493,6 +499,14 @@ struct TileCtx {
     k_ctr: String,
     lane_ctr: String,
     tile_j: u64,
+    /// The rung's block factor. Matmul: `TargetProfile::tile_i` — rows of
+    /// vector accumulators, bounded by the register file. FIR window rung:
+    /// [`WINDOW_SUBROWS`] — a lane-block multiplier over a memory accumulator.
+    /// Same number today, different quantities; each is set at its own source.
+    tile_i: u64,
+    /// The KC rung's k-panel depth (`TargetProfile::tile_kc`), sized against
+    /// half of L2 at this site's element width.
+    tile_kc: u64,
     packed: Option<PackedBuffer>,
     contract_flag: &'static str,
 }
@@ -528,6 +542,7 @@ impl<'a> FnEmit<'a> {
         packing: bool,
         contract: bool,
         kc_nest: bool,
+        profile: &'static TargetProfile,
     ) -> Self {
         FnEmit {
             ir,
@@ -557,6 +572,7 @@ impl<'a> FnEmit<'a> {
             packing,
             contract,
             kc_nest,
+            profile,
             heap_ok: false,
             heap_used: false,
         }
@@ -754,14 +770,14 @@ impl<'a> FnEmit<'a> {
     /// Does a block of `bytes` belong in the arena rather than the stack
     /// (plan-s29 emission item 4)? Records the teardown debt when it does.
     fn heap_block(&mut self, bytes: u64) -> bool {
-        let heap = self.heap_ok && bytes >= HEAP_MIN_BYTES;
+        let heap = self.heap_ok && bytes >= self.profile.heap_min_bytes;
         self.heap_used |= heap;
         heap
     }
 
     /// One named entry-block allocation of `llt`: today's `alloca` (with the
     /// explicit `align` when the site wants one), or an arena block once it
-    /// crosses [`HEAP_MIN_BYTES`]. An `alloca` and a `flow_rt_alloc` result are
+    /// crosses [`TargetProfile::heap_min_bytes`]. An `alloca` and a `flow_rt_alloc` result are
     /// both just a `ptr`, so every `getelementptr {llt}, ptr …` consumer is
     /// unchanged — the swap is invisible below this line.
     fn entry_alloc(&mut self, name: &str, llt: &str, align: Option<u64>) {
@@ -786,8 +802,8 @@ impl<'a> FnEmit<'a> {
         }
     }
 
-    fn packed_type(site: &TileSite) -> String {
-        let tile_j = tile_j_for(&site.elem);
+    fn packed_type(profile: &TargetProfile, site: &TileSite) -> String {
+        let tile_j = profile.tile_j(&site.elem);
         let tiles = site.c.div_ceil(tile_j);
         let elems = site
             .k
@@ -801,7 +817,7 @@ impl<'a> FnEmit<'a> {
     }
 
     fn packed_buffer(&mut self, m: MorphismId, site: &TileSite) -> PackedBuffer {
-        let llt = Self::packed_type(site);
+        let llt = Self::packed_type(self.profile, site);
         if let Some(field) = self
             .frame
             .as_ref()
@@ -835,7 +851,7 @@ impl<'a> FnEmit<'a> {
             .map(|(m, field)| (m, field.clone(), plan.sites[m].clone()))
             .collect::<Vec<_>>();
         for (_, field, site) in packs {
-            let llt = Self::packed_type(&site);
+            let llt = Self::packed_type(self.profile, &site);
             let ptr = format!("%pack{}", field.ordinal);
             let slot = format!("%pack_field{}", field.ordinal);
             self.entry_alloc(&ptr, &llt, Some(64));
@@ -860,7 +876,7 @@ impl<'a> FnEmit<'a> {
         let b_ptr = self
             .array_operand_ptr(source, Some(site.b.slot))
             .expect("tile b ptr");
-        let tile_j = tile_j_for(&site.elem);
+        let tile_j = self.profile.tile_j(&site.elem);
         let tiles = site.c.div_ceil(tile_j);
         let panel_elems = site.k * tile_j;
         let jt_ctr = self.scratch("i64");
@@ -1416,9 +1432,10 @@ impl<'a> FnEmit<'a> {
         packing: bool,
         contract: bool,
         kc_nest: bool,
+        profile: &'static TargetProfile,
     ) -> String {
         let mut host = FnEmit::new(
-            ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest,
+            ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, profile,
         );
         host.perf_timing = perf_timing;
         // The host runs once per program, so its blocks may go to the arena.
@@ -1662,7 +1679,7 @@ impl<'a> FnEmit<'a> {
         for (task_id, task) in plan.tasks.iter().enumerate() {
             out.push_str(&Self::emit_task(
                 ir, f, fnames, strings, attrs, &frame, task_id, task, tiling, packing, contract,
-                kc_nest,
+                kc_nest, profile,
             ));
             out.push('\n');
         }
@@ -1692,6 +1709,7 @@ impl<'a> FnEmit<'a> {
         packing: bool,
         contract: bool,
         kc_nest: bool,
+        profile: &'static TargetProfile,
     ) -> String {
         if let TaskKind::Split { site: m, n } = &task.kind
             && let Some(site) = tiling
@@ -1701,7 +1719,7 @@ impl<'a> FnEmit<'a> {
             && packing_site(&site)
         {
             let mut slice = FnEmit::new(
-                ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest,
+                ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, profile,
             );
             slice.guard_flavor = GuardFlavor::Task;
             slice.split_range = true;
@@ -1717,7 +1735,7 @@ impl<'a> FnEmit<'a> {
             );
 
             let mut emit = FnEmit::new(
-                ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest,
+                ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, profile,
             );
             emit.guard_flavor = GuardFlavor::Task;
             emit.prepare_storage();
@@ -1744,7 +1762,7 @@ impl<'a> FnEmit<'a> {
         }
 
         let mut emit = FnEmit::new(
-            ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest,
+            ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, profile,
         );
         emit.guard_flavor = GuardFlavor::Task;
         emit.split_range = matches!(task.kind, TaskKind::Split { .. });
@@ -2687,7 +2705,7 @@ impl<'a> FnEmit<'a> {
         let seed = const_literal(&site.seed);
         let mul_op = if is_float(&site.elem) { "fmul" } else { "mul" };
         let add_op = if is_float(&site.elem) { "fadd" } else { "add" };
-        let tile_j = tile_j_for(&site.elem);
+        let tile_j = self.profile.tile_j(&site.elem);
         let contract_flag = if self.contract && is_float(&site.elem) {
             " contract"
         } else {
@@ -2997,7 +3015,13 @@ impl<'a> FnEmit<'a> {
         let elem_llt = lower_ty(&site.elem).expect("tile element lowers");
         let mul_op = if is_float(&site.elem) { "fmul" } else { "mul" };
         let add_op = if is_float(&site.elem) { "fadd" } else { "add" };
-        let tile_j = tile_j_for(&site.elem);
+        let tile_j = self.profile.tile_j(&site.elem);
+        let tile_i = self.profile.tile_i();
+        // The k-panel depth is derived from half of L2 at this element width,
+        // so the KC gate below closes by DERIVATION on a machine whose L2 is
+        // deep enough to hold the panel the nest exists to avoid re-reading —
+        // S29/S30's measured verdict, deduced instead of hardcoded default-off.
+        let tile_kc = self.profile.tile_kc(&site.elem);
 
         let a_ptr = self
             .array_operand_ptr(source, Some(site.a.slot))
@@ -3012,14 +3036,14 @@ impl<'a> FnEmit<'a> {
         // block, so nothing survives in scratch across a panel) — so only the
         // j-tile currently being computed is ever live, exactly as in the
         // j-outer nest. A TI×NC block would be 32× dead space.
-        let kc_nest = self.kc_nest && packed.is_some() && site.k > TILE_KC;
-        let acc_lanes = TILE_I * tile_j;
+        let kc_nest = self.kc_nest && packed.is_some() && site.k > tile_kc;
+        let acc_lanes = tile_i * tile_j;
         let acc_llt = format!("[{acc_lanes} x {elem_llt}]");
         let acc = self.scratch(&acc_llt);
         // The a-panel pack scratch: TI strided source rows × one k-panel,
         // copied contiguous (align 64) per (i-block, kc) visit.
         let apack = kc_nest.then(|| {
-            let llt = format!("[{} x {elem_llt}]", TILE_I * TILE_KC);
+            let llt = format!("[{} x {elem_llt}]", tile_i * tile_kc);
             let ptr = format!("%s{}", self.fresh());
             self.allocas
                 .push_str(&format!("  {ptr} = alloca {llt}, align 64\n"));
@@ -3045,6 +3069,8 @@ impl<'a> FnEmit<'a> {
             k_ctr,
             lane_ctr,
             tile_j,
+            tile_i,
+            tile_kc,
             packed,
             contract_flag: if self.contract && is_float(&site.elem) {
                 " contract"
@@ -3115,7 +3141,7 @@ impl<'a> FnEmit<'a> {
         let elem_llt = lower_ty(&site.elem).expect("tile element lowers");
         let mul_op = if is_float(&site.elem) { "fmul" } else { "mul" };
         let add_op = if is_float(&site.elem) { "fadd" } else { "add" };
-        let tile_j = tile_j_for(&site.elem);
+        let tile_j = self.profile.tile_j(&site.elem);
 
         let a_ptr = self
             .array_operand_ptr(source, Some(site.a.slot))
@@ -3124,7 +3150,7 @@ impl<'a> FnEmit<'a> {
             .array_operand_ptr(source, Some(site.b.slot))
             .expect("tile b ptr");
         let out_ptr = self.slot(target).expect("tile output slot");
-        let acc_llt = format!("[{} x {elem_llt}]", TILE_I * tile_j);
+        let acc_llt = format!("[{} x {elem_llt}]", WINDOW_SUBROWS * tile_j);
         let acc = self.scratch(&acc_llt);
         let j_ctr = self.scratch("i64");
         let k_ctr = self.scratch("i64");
@@ -3145,6 +3171,9 @@ impl<'a> FnEmit<'a> {
             k_ctr,
             lane_ctr,
             tile_j,
+            // The window rung blocks LANES, not rows (see `WINDOW_SUBROWS`).
+            tile_i: WINDOW_SUBROWS,
+            tile_kc: self.profile.tile_kc(&site.elem),
             packed: None,
             contract_flag: if self.contract && is_float(&site.elem) {
                 " contract"
@@ -3162,7 +3191,10 @@ impl<'a> FnEmit<'a> {
         let jb = self.tmp();
         self.line(format!("{jb} = load i64, ptr {j_ctr}"));
         let jb_end = self.tmp();
-        self.line(format!("{jb_end} = add i64 {jb}, {}", TILE_I * tile_j));
+        self.line(format!(
+            "{jb_end} = add i64 {jb}, {}",
+            WINDOW_SUBROWS * tile_j
+        ));
         let block_fits = self.tmp();
         self.line(format!("{block_fits} = icmp ule i64 {jb_end}, {hi}"));
         self.line(format!(
@@ -3198,7 +3230,7 @@ impl<'a> FnEmit<'a> {
         a_base: &Option<String>,
     ) {
         // Seed splat: one constant-TJ lane loop per subrow.
-        for r in 0..TILE_I {
+        for r in 0..ctx.tile_i {
             let (seed_head, seed_body, seed_done) = (self.label(), self.label(), self.label());
             self.line(format!("store i64 0, ptr {}", ctx.lane_ctr));
             self.line(format!("br label %{seed_head}"));
@@ -3287,7 +3319,7 @@ impl<'a> FnEmit<'a> {
         self.label_line(&k_done);
 
         // Stores: one constant-TJ lane loop per subrow at out[jb + r·TJ + lane].
-        for r in 0..TILE_I {
+        for r in 0..ctx.tile_i {
             let out_base_r = if r == 0 {
                 jb.to_owned()
             } else {
@@ -3374,7 +3406,7 @@ impl<'a> FnEmit<'a> {
             "{a_value} = load {}, ptr {a_elem_ptr}",
             ctx.elem_llt
         ));
-        for r in 0..TILE_I {
+        for r in 0..ctx.tile_i {
             let b_base_r = site.b.base + r * ctx.tile_j;
             let b_start = self
                 .emit_tile_index(
@@ -3475,7 +3507,7 @@ impl<'a> FnEmit<'a> {
         let (_, n) = array_parts(&out_ty);
         debug_assert_eq!(n, site.rows * site.c);
         let elem_llt = lower_ty(&site.elem).expect("tile element lowers");
-        let tile_j = tile_j_for(&site.elem);
+        let tile_j = self.profile.tile_j(&site.elem);
 
         let a_ptr = self
             .array_operand_ptr(source, Some(site.a.slot))
@@ -3939,7 +3971,7 @@ impl<'a> FnEmit<'a> {
         i_fw_hi: &str,
         apack: &PackedBuffer,
     ) {
-        let nc = tile_nc_for(&site.elem);
+        let nc = self.profile.nc(&site.elem);
         let jb_ctr = self.scratch("i64");
         let kc_ctr = self.scratch("i64");
         let (jb_head, jb_body, jb_done) = (self.label(), self.label(), self.label());
@@ -3969,7 +4001,7 @@ impl<'a> FnEmit<'a> {
         ));
 
         // The peeled kc == 0 panel: seed splat + compute + spill.
-        let k_hi0 = TILE_KC.to_string();
+        let k_hi0 = ctx.tile_kc.to_string();
         self.emit_tile_kc_i_regions(
             site, ctx, i_ctr, j_ctr, lo, hi, i_lo, i_hi, i_fw_lo, i_fw_hi, apack, &jb0, &jb_end,
             "0", &k_hi0, true,
@@ -3977,7 +4009,7 @@ impl<'a> FnEmit<'a> {
 
         // Panels [TILE_KC, K): reload + compute + spill; the last panel is
         // runtime-short (k_hi = min(kc + TILE_KC, K)).
-        self.line(format!("store i64 {TILE_KC}, ptr {kc_ctr}"));
+        self.line(format!("store i64 {}, ptr {kc_ctr}", ctx.tile_kc));
         self.line(format!("br label %{kc_head}"));
         self.label_line(&kc_head);
         let kc = self.tmp();
@@ -3989,7 +4021,7 @@ impl<'a> FnEmit<'a> {
         ));
         self.label_line(&kc_body);
         let kc_plus = self.tmp();
-        self.line(format!("{kc_plus} = add i64 {kc}, {TILE_KC}"));
+        self.line(format!("{kc_plus} = add i64 {kc}, {}", ctx.tile_kc));
         let kc_over = self.tmp();
         self.line(format!("{kc_over} = icmp ugt i64 {kc_plus}, {}", site.k));
         let k_hi = self.tmp();
@@ -4002,7 +4034,7 @@ impl<'a> FnEmit<'a> {
             &kc, &k_hi, false,
         );
         let kc_next = self.tmp();
-        self.line(format!("{kc_next} = add i64 {kc}, {TILE_KC}"));
+        self.line(format!("{kc_next} = add i64 {kc}, {}", ctx.tile_kc));
         self.line(format!("store i64 {kc_next}, ptr {kc_ctr}"));
         self.line(format!("br label %{kc_head}"));
         self.label_line(&kc_done);
@@ -4071,7 +4103,7 @@ impl<'a> FnEmit<'a> {
         let i_blk = self.tmp();
         self.line(format!("{i_blk} = load i64, ptr {i_ctr}"));
         let i_blk_end = self.tmp();
-        self.line(format!("{i_blk_end} = add i64 {i_blk}, {TILE_I}"));
+        self.line(format!("{i_blk_end} = add i64 {i_blk}, {}", ctx.tile_i));
         let block_fits = self.tmp();
         self.line(format!(
             "{block_fits} = icmp ule i64 {i_blk_end}, {i_fw_hi}"
@@ -4082,8 +4114,8 @@ impl<'a> FnEmit<'a> {
         self.label_line(&blk_i_body);
         let row0 = self.tmp();
         self.line(format!("{row0} = mul i64 {i_blk}, {}", site.c));
-        let mut a_rows = Vec::with_capacity(TILE_I as usize);
-        for r in 0..TILE_I {
+        let mut a_rows = Vec::with_capacity(ctx.tile_i as usize);
+        for r in 0..ctx.tile_i {
             let base_r = site.a.base + site.a.ci * r;
             a_rows.push(self.emit_tile_index(
                 (base_r != 0).then(|| base_r.to_string()),
@@ -4092,7 +4124,7 @@ impl<'a> FnEmit<'a> {
         }
         self.emit_tile_kc_apack(site, ctx, apack, &a_rows, k_lo, k_hi);
         self.emit_tile_kc_j_split(
-            site, ctx, j_ctr, jb0, jb_end, &row0, TILE_I, apack, k_lo, k_hi, first,
+            site, ctx, j_ctr, jb0, jb_end, &row0, ctx.tile_i, apack, k_lo, k_hi, first,
         );
         self.line(format!("store i64 {i_blk_end}, ptr {i_ctr}"));
         self.line(format!("br label %{blk_i_head}"));
@@ -4425,7 +4457,10 @@ impl<'a> FnEmit<'a> {
                 koff
             } else {
                 let index = self.tmp();
-                self.line(format!("{index} = add i64 {koff}, {}", r as u64 * TILE_KC));
+                self.line(format!(
+                    "{index} = add i64 {koff}, {}",
+                    r as u64 * ctx.tile_kc
+                ));
                 index
             };
             let apack_ptr = self.tmp();
@@ -4473,7 +4508,7 @@ impl<'a> FnEmit<'a> {
         // plan-s30: same carve-out as the j-outer trio — the constant-width
         // main tile runs on phi-carried `<TJ x elem>` accumulators. The
         // reload/park still touch `out`, once per panel, outside the k loop.
-        if main && rows == TILE_I && bound.parse::<u64>().ok() == Some(ctx.tile_j) {
+        if main && rows == ctx.tile_i && bound.parse::<u64>().ok() == Some(ctx.tile_j) {
             self.emit_tile_kc_trio_vec(
                 site, ctx, apack, j0, row0, rows, panel_base, k_lo, k_hi, first,
             );
@@ -4546,7 +4581,7 @@ impl<'a> FnEmit<'a> {
 
         // Only the full TI-blocked, constant-width body unrolls k. Boundary,
         // tail-row, and remainder bodies retain the single-k loop.
-        let unroll = main && rows == TILE_I;
+        let unroll = main && rows == ctx.tile_i;
         let (k_head, k_body, k_done) = (self.label(), self.label(), self.label());
         self.line(format!("store i64 {k_lo}, ptr {}", ctx.k_ctr));
         self.line(format!("br label %{k_head}"));
@@ -4739,7 +4774,7 @@ impl<'a> FnEmit<'a> {
                     koff.to_owned()
                 } else {
                     let offset = self.tmp();
-                    self.line(format!("{offset} = add i64 {koff}, {}", r * TILE_KC));
+                    self.line(format!("{offset} = add i64 {koff}, {}", r * ctx.tile_kc));
                     offset
                 };
                 let ptr = self.tmp();
@@ -4803,7 +4838,7 @@ impl<'a> FnEmit<'a> {
         let i_blk = self.tmp();
         self.line(format!("{i_blk} = load i64, ptr {i_ctr}"));
         let i_blk_end = self.tmp();
-        self.line(format!("{i_blk_end} = add i64 {i_blk}, {TILE_I}"));
+        self.line(format!("{i_blk_end} = add i64 {i_blk}, {}", ctx.tile_i));
         let block_fits = self.tmp();
         self.line(format!(
             "{block_fits} = icmp ule i64 {i_blk_end}, {i_fw_hi}"
@@ -4814,8 +4849,8 @@ impl<'a> FnEmit<'a> {
         self.label_line(&blk_i_body);
         let row0 = self.tmp();
         self.line(format!("{row0} = mul i64 {i_blk}, {}", site.c));
-        let mut a_rows = Vec::with_capacity(TILE_I as usize);
-        for r in 0..TILE_I {
+        let mut a_rows = Vec::with_capacity(ctx.tile_i as usize);
+        for r in 0..ctx.tile_i {
             let base_r = site.a.base + site.a.ci * r;
             a_rows.push(self.emit_tile_index(
                 (base_r != 0).then(|| base_r.to_string()),
@@ -5101,12 +5136,12 @@ impl<'a> FnEmit<'a> {
 
         // plan-s30: the constant-width main tile carries its accumulators as
         // `<TJ x elem>` SSA phis instead of the acc scratch. Gated to exactly
-        // the ×2-unrolled body (`main && rows == TILE_I`, which is the only
+        // the ×2-unrolled body (`main && rows == ctx.tile_i`, which is the only
         // caller shape whose lane count is the compile-time `TILE_J`) — every
         // remainder tile, boundary row, TI=1 rung and runtime-`tj` tile keeps
         // the memory form byte for byte, which is the negative control.
         if main
-            && rows == TILE_I
+            && rows == ctx.tile_i
             && bound.parse::<u64>().ok() == Some(ctx.tile_j)
             && panel_lane0.is_none()
             && (ctx.packed.is_none() || panel_base.is_some())
@@ -5161,7 +5196,7 @@ impl<'a> FnEmit<'a> {
 
         // Only the full TI-blocked, constant-width body unrolls k. Boundary,
         // tail-row, and remainder bodies retain the single-k loop.
-        let unroll = main && rows == TILE_I;
+        let unroll = main && rows == ctx.tile_i;
         let (k_head, k_body, k_done) = (self.label(), self.label(), self.label());
         self.line(format!("store i64 0, ptr {}", ctx.k_ctr));
         self.line(format!("br label %{k_head}"));

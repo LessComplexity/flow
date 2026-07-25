@@ -91,6 +91,31 @@ fn main() {
 }
 "#;
 
+/// A K=300 packed matmul — deep enough that the KC k-panel nest applies under
+/// the `generic` profile (kc = 128) and shallow enough that it does NOT under
+/// `apple-m` (kc = 4096). Shared by the KC golden and the profile-gate test.
+const KC_SRC: &str = r#"
+fn matmul(a: [f32; 2400], b: [f32; 9600]) -> [f32; 256] {
+    256 -> iota -> cells;
+    300 -> iota -> ks;
+    cells -> map { cell ->
+        cell / 32 -> i;
+        cell % 32 -> j;
+        (0.0, ks) -> fold { acc, k -> acc + a[i * 300 + k] * b[k * 32 + j] }
+    } -> c;
+    c -> ret;
+}
+fn main() {
+    2400 -> iota -> ta;
+    ta -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    9600 -> iota -> tb;
+    tb -> map { t -> (t * 7 + 57) % 101 - 50 -> widen_f32 } -> b;
+    (a, b) -> matmul -> c;
+    c[0] -> println;
+    c[255] -> println;
+}
+"#;
+
 fn lower_src(src: &str) -> CategoryIr {
     let po = flow_syntax::parse(src);
     assert!(po.diagnostics.is_empty(), "parse: {:?}", po.diagnostics);
@@ -700,27 +725,7 @@ fn golden_tile_map_shapes() {
 /// (the tile_nest_shape / tile_nest_shape_f64 goldens above are unmoved).
 #[test]
 fn golden_tile_map_shape_kc() {
-    let src = r#"
-fn matmul(a: [f32; 2400], b: [f32; 9600]) -> [f32; 256] {
-    256 -> iota -> cells;
-    300 -> iota -> ks;
-    cells -> map { cell ->
-        cell / 32 -> i;
-        cell % 32 -> j;
-        (0.0, ks) -> fold { acc, k -> acc + a[i * 300 + k] * b[k * 32 + j] }
-    } -> c;
-    c -> ret;
-}
-fn main() {
-    2400 -> iota -> ta;
-    ta -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
-    9600 -> iota -> tb;
-    tb -> map { t -> (t * 7 + 57) % 101 - 50 -> widen_f32 } -> b;
-    (a, b) -> matmul -> c;
-    c[0] -> println;
-    c[255] -> println;
-}
-"#;
+    let src = KC_SRC;
     let ir = flow_rewrite::rewrite(lower_src(src)).ir;
     // The KC nest is a default-OFF performance tailor (EmitOpts::kc_nest —
     // measured a 3x loss locally at 1024 f32, S29); opt in to pin its shape.
@@ -1680,5 +1685,82 @@ fn main() { 4 -> f -> r; r -> println; }
         ll.matches("12345").count(),
         1,
         "exit-only payload must be emitted exactly once (driver-owned):\n{ll}"
+    );
+}
+
+/// plan-s31-target-profiles, the headline property: the KC nest turns itself
+/// off **by derivation**, not by a default-off flag.
+///
+/// `apple-m` differs from `generic` in exactly one machine fact — a 16 MB L2
+/// instead of 512 KB — so its k-panel is `(l2/2) / (nc x sizeof) = 4096`, which
+/// is deeper than this site's K=300. The gate `site.k > tile_kc` therefore never
+/// opens, and asking for `--kc` on this machine is a no-op. That is S29/S30's
+/// measured verdict (the nest is a 3x loss on M4 Pro) reproduced as arithmetic.
+///
+/// The strong form of the assertion: apple-m WITH the nest requested is
+/// byte-equal to generic WITHOUT it — the fallback is the real j-outer nest,
+/// not a differently-shaped near-miss.
+#[test]
+fn profile_closes_the_kc_gate_by_derivation() {
+    let ir = flow_rewrite::rewrite(lower_src(KC_SRC)).ir;
+    let kc_on = |target| {
+        emit_with_opts(
+            &ir,
+            &EmitOpts {
+                kc_nest: true,
+                contract: true,
+                target,
+                ..EmitOpts::default()
+            },
+        )
+        .expect("emits")
+    };
+
+    // TI x KC = 4 x 128 — the a-panel pack scratch, present only in the nest.
+    let apack = "alloca [512 x float], align 64";
+    assert!(
+        kc_on("generic").contains(apack),
+        "generic (512 KB L2) must still open the KC gate at K=300"
+    );
+    assert!(
+        !kc_on("apple-m").contains(apack),
+        "apple-m (16 MB L2) must close the KC gate by derivation at K=300"
+    );
+
+    let generic_kc_off = emit_with_opts(
+        &ir,
+        &EmitOpts {
+            contract: true,
+            ..EmitOpts::default()
+        },
+    )
+    .expect("emits");
+    assert_eq!(
+        kc_on("apple-m"),
+        generic_kc_off,
+        "a closed gate must fall back to the j-outer nest byte-for-byte"
+    );
+}
+
+/// An unknown profile name is an error, never a silent fall back to `generic`:
+/// a typo that quietly emits the default numbers is the failure the table
+/// exists to remove (plan rule 3).
+#[test]
+fn unknown_profile_is_an_error_not_a_silent_default() {
+    let ir = lower_src(KC_SRC);
+    let err = emit_with_opts(
+        &ir,
+        &EmitOpts {
+            target: "apple_m",
+            ..EmitOpts::default()
+        },
+    )
+    .expect_err("unknown profile must not emit");
+    let EmitError::Internal(msg) = err else {
+        panic!("expected Internal, got {err:?}");
+    };
+    assert!(
+        msg.contains("apple_m") && msg.contains("generic, apple-m, zen3"),
+        "{msg}"
     );
 }
