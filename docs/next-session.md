@@ -24,6 +24,67 @@ cat docs/performance/matmul/s29.md        # the KC verdict, the shape tables, an
 
 ## The S30 queue
 
+## S31 focus (Sapir, S30 close): close both gaps, and DEDUCE the thread count
+
+Sapir: *"maybe on much bigger sizes using more threads is correct, we need to deduce the
+threads accordingly, and ensure we achieve optimal execution every time — we see the graph,
+and know divergence of flow, nothing is stopping us from deducing this too."*
+
+That is the thesis applied to scheduling, and the S30 measurements say it is not theoretical
+— **the default (every core) is the wrong choice for three of our four benchmarks.**
+
+Thread sweep, min-of-3, same conditions (ms):
+
+| threads | conv2d 1024 | fir 1M | matmul 1024 f32 | matmul 4096 f32 |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 0.506 | 2.785 | 18.33 | 1254 |
+| 2 | 0.337 | 0.961 | 9.71 | 824 |
+| 4 | **0.218** | 0.504 | 5.46 | 373 |
+| 8 | 0.321 | **0.341** | **3.25** | 202 |
+| 14 (default) | 0.461 | 0.441 | 3.69 | **173** |
+
+Read it: conv2d wants 4 threads and is **2.1× slower on 14**; fir wants 8; matmul 1024 wants
+8; only matmul 4096 wants all of them. Sapir's intuition is exactly right — the correct
+width rises with size, and we currently pick one number for everything.
+
+**This is not purely a Flow defect** — a C++ control degrades too (conv2d 8t 0.107 → 14t
+0.153) because the chip is 10 P-cores + 4 E-cores and a uniform split makes every wave wait
+on the slow ones. But Flow degrades harder (2.1× vs 1.4×), and Flow is the one claiming to
+choose for you.
+
+### The shape of the fix
+
+Everything needed is already deduced or already a machine fact:
+
+| input | where it comes from |
+| --- | --- |
+| element count `n` of the bulk site | `path_plan` (already recorded per task) |
+| work per element | the body's op count — a graph fact, not yet extracted |
+| bytes touched per element | the recorded `TileRead` strides |
+| core count, P/E split and their throughput ratio | `TargetProfile` (plan-s31-target-profiles.md) |
+
+So the width is a *deduced* function of (graph facts × machine facts) — the same split the
+whole project rests on. Geometry from the graph, constants from the profile. It also
+subsumes backend-llvm suggestion #15 (adaptive `GRAIN`), which is the same question one
+level down: how big is a slice, rather than how many workers.
+
+Note the E-core problem needs more than a count: with 10 fast and 4 slow cores, equal slices
+finish unequally. Either the width excludes the E-cores, or the slicing is uneven, or the
+pool stops handing the tail to a slow core. Measure before choosing.
+
+### The two gaps, located
+
+S30 measured where each one actually is — neither is where it was assumed to be:
+
+- **Single core.** matmul is at ~75% of an assumed roofline, so there is little left there.
+  The real single-core gap is **conv2d, 2× off C++ at every thread count** (1t: 0.692 vs
+  0.353). Cause is diagnosed: the conv kernel is `TI=1`, so each output row re-loads all
+  three image rows — 24 vector loads per 36 FMAs against matmul's 4 per 32. Fix is
+  suggestion #11, row blocking, and it is the highest-value single item in the queue.
+- **Multi core.** matmul 4096 scales 7.25× against an ideal ~12.4×. Composed with the 75%
+  single-core figure that reproduces the measured 46% of whole-chip peak. Half of it is the
+  thread-count problem above; the rest is scheduling on asymmetric cores.
+
 ## The road to "lead everywhere, then CUDA" (Sapir, S30)
 
 Sequencing is Sapir's and already recorded in ADR-0033: **CPU to full advantage first, then
