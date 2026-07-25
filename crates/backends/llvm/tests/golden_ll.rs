@@ -536,9 +536,10 @@ fn golden_tile_map_shapes() {
             && tiled_fn.contains(" = udiv i64 %hi, 4"),
         "tile nest must contain the row bounds, incl. the interior full-window end:\n{tiled_fn}"
     );
-    // The jt-outer main body has one emitted set of TI=4 constant-TJ lane
-    // loops, reused across all main panels; the remainder body stays runtime
-    // bounded.
+    // plan-s30: the jt-outer main body is the vector-accumulator path — its
+    // TI=4 seed/lane/store loops are replaced by `<TJ x float>` phis, so NO
+    // lane loop is bounded by the constant TJ=16 any more. The loops that
+    // remain (remainder tile, boundary rows) are all runtime bounded.
     assert_eq!(
         tiled_fn
             .lines()
@@ -547,8 +548,39 @@ fn golden_tile_map_shapes() {
                 line.contains(" = icmp uge i64 %t") && line.ends_with(", 16")
             })
             .count(),
-        10,
-        "main-body lane loops must be bounded by the constant TJ=16:\n{tiled_fn}"
+        0,
+        "the main tile must have no constant-TJ lane loop left:\n{tiled_fn}"
+    );
+    // The main tile's accumulator state lives only in SSA: 4 header phis + 4
+    // exit phis, one contiguous b vector load per k step (×2 unrolled + the
+    // odd tail) and one vector store per subrow — no accumulator load, store
+    // or GEP anywhere in the k loop.
+    assert_eq!(
+        (
+            tiled_fn.matches("phi <16 x float>").count(),
+            tiled_fn.matches("load <16 x float>").count(),
+            tiled_fn.matches("store <16 x float>").count(),
+        ),
+        (8, 3, 4),
+        "main tile: 4 header + 4 exit phis, 3 b loads, 4 subrow stores:\n{tiled_fn}"
+    );
+    // Composition rule 3: vector memory ops carry the ELEMENT alignment, never
+    // the `<16 x float>` ABI's 64 — `j0` offsets are arbitrary.
+    assert!(
+        tiled_fn
+            .lines()
+            .filter(|line| line.contains("<16 x float>") && line.contains(", ptr "))
+            .all(|line| line.trim_end().ends_with(", align 4")),
+        "vector accumulator memory must be element-aligned:\n{tiled_fn}"
+    );
+    // The acc scratch is now addressed only by the tiles that kept the memory
+    // form (remainder + boundary rows); it was 44 GEPs before S30.
+    assert_eq!(
+        tiled_fn
+            .matches("getelementptr [64 x float], ptr %s0")
+            .count(),
+        24,
+        "only the non-vector tiles may address the acc scratch:\n{tiled_fn}"
     );
     // The outer main and remainder bodies each compute their packed-panel
     // base once, then reuse it across head/interior/tail row groups.
@@ -768,18 +800,51 @@ fn main() {
         1,
         "the last kc panel must clip k_hi = min(kc + TILE_KC, K):\n{tiled_fn}"
     );
-    // The acc discipline: seed splat only in the peeled kc==0 sweep (12
-    // subrow seed loops); an out spill at every panel end (2 panels × 12) and
-    // a reload only in the post-kc0 sweep (12) — 36 out-array GEPs total.
+    // The acc discipline: seed splat only in the peeled kc==0 sweep — 8 scalar
+    // subrow seed loops (remainder + boundary trios) now that the two main
+    // trios splat into a vector instead; an out spill at every panel end and a
+    // reload only in the post-kc0 sweep — 32 out-array GEPs total (the main
+    // trios' 12 scalar lane-loop GEPs collapse to 4 vector ones per sweep).
     assert_eq!(
         tiled_fn.matches("store float 0x0000000000000000").count(),
-        12,
+        8,
         "seed splat belongs to the kc==0 sweep only:\n{tiled_fn}"
     );
     assert_eq!(
         tiled_fn.matches("getelementptr [256 x float]").count(),
-        36,
+        32,
         "2 spills + 1 reload per (i-block, j-tile) across the two sweeps:\n{tiled_fn}"
+    );
+    // plan-s30, the point of the rung: the KC k loop carries its accumulators
+    // in phis, so nothing of the acc tile round-trips memory between panels.
+    // Both main trios (the peeled kc==0 sweep and the [128, K) sweep) get 4
+    // header + 4 exit phis; the 10 vector loads are 3 packed-b loads per trio
+    // plus the post-kc0 sweep's 4 partial-sum reloads; the 8 vector stores are
+    // the two sweeps' panel-end parks.
+    assert_eq!(
+        (
+            tiled_fn.matches("phi <16 x float>").count(),
+            tiled_fn.matches("load <16 x float>").count(),
+            tiled_fn.matches("store <16 x float>").count(),
+        ),
+        (16, 10, 8),
+        "KC main tiles must carry vector accumulators across the k loop:\n{tiled_fn}"
+    );
+    assert!(
+        tiled_fn
+            .lines()
+            .filter(|line| line.contains("<16 x float>") && line.contains(", ptr "))
+            .all(|line| line.trim_end().ends_with(", align 4")),
+        "vector accumulator memory must be element-aligned:\n{tiled_fn}"
+    );
+    // The acc scratch is addressed only by the tiles that kept the memory form
+    // (remainder + boundary rows); it was 88 GEPs before S30.
+    assert_eq!(
+        tiled_fn
+            .matches("getelementptr [64 x float], ptr %s0")
+            .count(),
+        48,
+        "only the non-vector tiles may address the acc scratch:\n{tiled_fn}"
     );
     // The kernel keeps the packed-b panel addressing, the ×2 k unroll, and
     // the next-k-line prefetch.
