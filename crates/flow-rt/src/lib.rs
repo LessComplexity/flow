@@ -98,6 +98,13 @@ struct TaskDef {
     /// Elements per slice, decided at COMPILE TIME (plan-s32 §2.5: the compiler
     /// sizes, the runtime assigns). `0` = none supplied, keep the legacy rule.
     slice_elems: i64,
+    /// How many pieces per lane the compiler wants, given the region's reuse
+    /// structure. `0` = none supplied. A read that is row-invariant pays nothing
+    /// at a slice boundary and wants over-decomposition so stealing can balance;
+    /// a sliding read re-pays its window overlap at every boundary and does not.
+    /// The compiler knows which from the recorded coefficients; only the runtime
+    /// knows how many lanes exist, so the two multiply here.
+    oversub: u32,
     /// Lanes this dispatch should spread across, decided at compile time.
     /// `0` = none supplied, use the whole pool. Stealing is deliberately NOT
     /// confined to them: an idle lane helping is the runtime's assignment
@@ -210,9 +217,16 @@ fn slice_ranges(def: TaskDef, threads: usize) -> Vec<(i64, i64)> {
     } else if def.n == 0 {
         0
     } else if def.slice_elems > 0 {
-        usize::try_from((def.n as u64).div_ceil(def.slice_elems as u64))
+        // `slice_elems` is a FLOOR, not an exact size: cutting below it drops
+        // the dispatch off the register-blocked path onto the TI=1 fallback,
+        // which measured 7x on matmul1024 (plan-s32 §2.6). Within that floor the
+        // runtime picks the count, because lane count is the one input the
+        // compiler does not have.
+        let ceiling = usize::try_from((def.n as u64).div_ceil(def.slice_elems as u64))
             .unwrap_or(usize::MAX)
-            .max(1)
+            .max(1);
+        let wanted = threads.saturating_mul(def.oversub.max(1) as usize).max(1);
+        wanted.min(ceiling)
     } else {
         usize::try_from((def.n as u64).div_ceil(GRAIN as u64))
             .unwrap_or(usize::MAX)
@@ -738,6 +752,7 @@ pub unsafe extern "C" fn flow_par_task(
     n: i64,
     rank: u32,
     slice_elems: i64,
+    oversub: u32,
     width: u32,
 ) {
     let run = &unsafe { run_handle(handle) }.run;
@@ -756,6 +771,7 @@ pub unsafe extern "C" fn flow_par_task(
         n,
         rank,
         slice_elems,
+        oversub,
         width,
     });
 }
@@ -1213,7 +1229,7 @@ mod tests {
         });
         let handle = test_run(1, 4);
         unsafe {
-            flow_par_task(handle, 0, 1, hit_slice, n as i64, 0, 0, 0);
+            flow_par_task(handle, 0, 1, hit_slice, n as i64, 0, 0, 0, 0);
             flow_par_launch(handle, frame_ptr(&*frame));
             flow_par_finish(handle);
         }
@@ -1230,8 +1246,8 @@ mod tests {
         });
         let handle = test_run(2, 4);
         unsafe {
-            flow_par_task(handle, 0, 1, zero_split, 0, 0, 0, 0);
-            flow_par_task(handle, 1, 0, zero_dependent, 0, 0, 0, 0);
+            flow_par_task(handle, 0, 1, zero_split, 0, 0, 0, 0, 0);
+            flow_par_task(handle, 1, 0, zero_dependent, 0, 0, 0, 0, 0);
             flow_par_dep(handle, 0, 1);
             flow_par_launch(handle, frame_ptr(&*zero));
             flow_par_finish(handle);
@@ -1271,8 +1287,8 @@ mod tests {
         });
         let handle = test_run(2, 4);
         unsafe {
-            flow_par_task(handle, 0, 1, dep_producer, n as i64, 0, 0, 0);
-            flow_par_task(handle, 1, 0, dep_consumer, 0, u32::MAX, 0, 0);
+            flow_par_task(handle, 0, 1, dep_producer, n as i64, 0, 0, 0, 0);
+            flow_par_task(handle, 1, 0, dep_consumer, 0, u32::MAX, 0, 0, 0);
             flow_par_dep(handle, 0, 1);
             flow_par_launch(handle, frame_ptr(&*frame));
             flow_par_finish(handle);
@@ -1296,9 +1312,9 @@ mod tests {
         });
         let handle = test_run(3, 1);
         unsafe {
-            flow_par_task(handle, 2, 0, record_order, 12, 100, 0, 0);
-            flow_par_task(handle, 0, 0, record_order, 10, 0, 0, 0);
-            flow_par_task(handle, 1, 0, record_order, 11, 50, 0, 0);
+            flow_par_task(handle, 2, 0, record_order, 12, 100, 0, 0, 0);
+            flow_par_task(handle, 0, 0, record_order, 10, 0, 0, 0, 0);
+            flow_par_task(handle, 1, 0, record_order, 11, 50, 0, 0, 0);
             flow_par_launch(handle, frame_ptr(&*frame));
         }
         assert!(lock(&frame.calls).is_empty(), "launch must only seed");
@@ -1322,8 +1338,8 @@ mod tests {
         });
         let handle = test_run(2, 2);
         unsafe {
-            flow_par_task(handle, 0, 0, trap_after_barrier, 50, 0, 0, 0);
-            flow_par_task(handle, 1, 0, trap_after_barrier, 7, 0, 0, 0);
+            flow_par_task(handle, 0, 0, trap_after_barrier, 50, 0, 0, 0, 0);
+            flow_par_task(handle, 1, 0, trap_after_barrier, 7, 0, 0, 0, 0);
             flow_par_launch(handle, frame_ptr(&*frame));
             let entries = [completion_entry(0), completion_entry(1)];
             flow_par_wait(handle, entries.as_ptr(), entries.len() as u32);
@@ -1359,8 +1375,8 @@ mod tests {
         });
         let handle = test_run(2, 1);
         unsafe {
-            flow_par_task(handle, 0, 0, trapping_task, 0, 0, 0, 0);
-            flow_par_task(handle, 1, 0, dependent_after_trap, 0, 0, 0, 0);
+            flow_par_task(handle, 0, 0, trapping_task, 0, 0, 0, 0, 0);
+            flow_par_task(handle, 1, 0, dependent_after_trap, 0, 0, 0, 0, 0);
             flow_par_dep(handle, 0, 1);
             flow_par_launch(handle, frame_ptr(&*frame));
             let entries = [completion_entry(1)];
@@ -1398,7 +1414,7 @@ mod tests {
         });
         let handle = test_run(1, 2);
         unsafe {
-            flow_par_task(handle, 0, 0, publish_then_wait, 0, 0, 0, 0);
+            flow_par_task(handle, 0, 0, publish_then_wait, 0, 0, 0, 0, 0);
             flow_par_launch(handle, frame_ptr(&*frame));
         }
 
@@ -1462,8 +1478,8 @@ mod tests {
         });
         let handle = allocate_run(2, Pool::with_workers(4, 0));
         unsafe {
-            flow_par_task(handle, 0, 1, pinned_slice, n, 0, 0, 0);
-            flow_par_task(handle, 1, 0, pinned_dependent, 0, 0, 0, 0);
+            flow_par_task(handle, 0, 1, pinned_slice, n, 0, 0, 0, 0);
+            flow_par_task(handle, 1, 0, pinned_dependent, 0, 0, 0, 0, 0);
             flow_par_dep(handle, 0, 1);
             flow_par_pin(handle, 0);
             flow_par_launch(handle, frame_ptr(&*frame));
@@ -1495,8 +1511,8 @@ mod tests {
         });
         let handle = allocate_run(2, Pool::with_workers(4, 4));
         unsafe {
-            flow_par_task(handle, 0, 0, pinned_slice, 1, 0, 0, 0);
-            flow_par_task(handle, 1, 0, pinned_dependent, 0, 0, 0, 0);
+            flow_par_task(handle, 0, 0, pinned_slice, 1, 0, 0, 0, 0);
+            flow_par_task(handle, 1, 0, pinned_dependent, 0, 0, 0, 0, 0);
             flow_par_pin(handle, 0);
             flow_par_launch(handle, frame_ptr(&*frame));
             // Workers finish the normal sibling; the pinned task stays untouched.
@@ -1558,7 +1574,7 @@ mod tests {
         });
         let blocker_run = allocate_run(1, Arc::clone(&pool));
         unsafe {
-            flow_par_task(blocker_run, 0, 0, blocking_task, 0, 0, 0, 0);
+            flow_par_task(blocker_run, 0, 0, blocking_task, 0, 0, 0, 0, 0);
             flow_par_launch(blocker_run, frame_ptr(&*blocker));
         }
 
@@ -1577,7 +1593,7 @@ mod tests {
         });
         let helped_run = allocate_run(1, pool);
         unsafe {
-            flow_par_task(helped_run, 0, 0, helped_task, 0, 0, 0, 0);
+            flow_par_task(helped_run, 0, 0, helped_task, 0, 0, 0, 0, 0);
             flow_par_launch(helped_run, frame_ptr(&*help));
             let entries = [completion_entry(0)];
             flow_par_wait(helped_run, entries.as_ptr(), 1);
@@ -1607,7 +1623,7 @@ mod tests {
         let nested = unsafe { &*frame.cast::<NestedFrame>() };
         let inner = test_run(1, 1);
         unsafe {
-            flow_par_task(inner, 0, 0, nested_inner, 0, 0, 0, 0);
+            flow_par_task(inner, 0, 0, nested_inner, 0, 0, 0, 0, 0);
             flow_par_launch(inner, frame);
             let entries = [completion_entry(0)];
             flow_par_wait(inner, entries.as_ptr(), 1);
@@ -1625,7 +1641,7 @@ mod tests {
         });
         let outer = test_run(1, 1);
         unsafe {
-            flow_par_task(outer, 0, 0, nested_outer, 0, 0, 0, 0);
+            flow_par_task(outer, 0, 0, nested_outer, 0, 0, 0, 0, 0);
             flow_par_launch(outer, frame_ptr(&*frame));
             let entries = [completion_entry(0)];
             flow_par_wait(outer, entries.as_ptr(), 1);
@@ -1698,6 +1714,7 @@ mod tests {
                         dag_task,
                         task as i64,
                         lcg(&mut seed) as u32,
+                        0,
                         0,
                         0,
                     );

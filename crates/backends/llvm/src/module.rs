@@ -61,7 +61,7 @@ pub(crate) const PREFETCH_DECL: &str =
 /// The parallel scheduler ABI, emitted only for a parallel `flow_main`.
 pub(crate) const PAR_DECLS: &str = "\
 declare ptr @flow_par_begin(i32)\n\
-declare void @flow_par_task(ptr, i32, i32, ptr, i64, i32, i64, i32)\n\
+declare void @flow_par_task(ptr, i32, i32, ptr, i64, i32, i64, i32, i32)\n\
 declare void @flow_par_pin(ptr, i32)\n\
 declare void @flow_par_dep(ptr, i32, i32)\n\
 declare void @flow_par_launch(ptr, ptr)\n\

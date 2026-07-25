@@ -1603,8 +1603,20 @@ impl<'a> FnEmit<'a> {
                 TaskKind::Split { n, .. } => (1, *n),
                 TaskKind::Seq { morphisms } => (0, morphisms.len().max(1) as u64),
             };
+            // plan-s32 step 2: the region's slice sizing, decided here because
+            // both inputs are compile-time facts — the recorded reuse structure
+            // and the profile's tile factors. The lane count is NOT an input;
+            // the runtime multiplies `oversub` by however many lanes it has.
+            let (min_slice, oversub) = match &task.kind {
+                TaskKind::Split { site, .. } => host
+                    .tile_plan
+                    .as_ref()
+                    .and_then(|plan| plan.sites.get(*site))
+                    .map_or((0, 0), |site| host.slice_sizing(site)),
+                TaskKind::Seq { .. } => (0, 0),
+            };
             host.line(format!(
-                "call void @flow_par_task(ptr %h, i32 {task_id}, i32 {kind}, ptr @task{task_id}, i64 {n}, i32 {}, i64 0, i32 0)",
+                "call void @flow_par_task(ptr %h, i32 {task_id}, i32 {kind}, ptr @task{task_id}, i64 {n}, i32 {}, i64 {min_slice}, i32 {oversub}, i32 0)",
                 task.rank
             ));
         }
@@ -1755,8 +1767,12 @@ impl<'a> FnEmit<'a> {
             emit.emit_pack_copy(source, &site, &packed);
             let handle = emit.tmp();
             emit.line(format!("{handle} = call ptr @flow_par_begin(i32 1)"));
+            // The packed flavor slices HERE, in the nested dispatch — the outer
+            // task is the pack wrapper and is never split — so this is the call
+            // the region's sizing belongs on.
+            let (min_slice, oversub) = emit.slice_sizing(&site);
             emit.line(format!(
-                "call void @flow_par_task(ptr {handle}, i32 0, i32 1, ptr @task{task_id}_slice, i64 {n}, i32 {}, i64 0, i32 0)",
+                "call void @flow_par_task(ptr {handle}, i32 0, i32 1, ptr @task{task_id}_slice, i64 {n}, i32 {}, i64 {min_slice}, i32 {oversub}, i32 0)",
                 task.rank
             ));
             emit.line(format!(
@@ -3722,6 +3738,46 @@ impl<'a> FnEmit<'a> {
     /// `b[b_row + (cq·kq + cr·kr) + j0 + lane]` — the parenthesized tap
     /// offset folds to a compile-time constant — FMA into the acc vector,
     /// respecting the recorded operand orders.
+    /// The region's slice sizing (plan-s32 step 2): a **floor** on slice size
+    /// and a per-lane over-decomposition factor. Both are compile-time facts;
+    /// the lane count is deliberately not one, so the runtime supplies it.
+    ///
+    /// **The floor is a coherence constraint, not a preference.** A slice
+    /// holding fewer than `TI` output rows cannot run the register-blocked
+    /// kernel at all — every piece falls onto the TI=1 fallback. Measured cost
+    /// of crossing it: matmul1024 2.45 ms → 17.97 ms at 2 rows per slice, and
+    /// matmul512 0.436 → 2.41. This is the granularity nest being coupled: the
+    /// slice must contain at least the block the tile rung is built from.
+    ///
+    /// **The factor comes from the reuse structure**, the same `i_reuse` that
+    /// drives row blocking one level down. A row-invariant read (`ci == 0`,
+    /// matmul's `b`) pays nothing at a slice boundary, so over-decomposing is
+    /// free and gives work stealing something to steal — without it a dispatch
+    /// is one piece per lane and a fast lane cannot help a slow one. A sliding
+    /// read (conv2d's `b`) re-pays its window overlap at every boundary, so it
+    /// keeps one piece per lane. Measured, sweeping slice size at 14 lanes:
+    /// matmul512 0.750 → 0.429 and matmul1024 3.627 → 2.452 with
+    /// over-decomposition, while conv2d degrades monotonically with it.
+    fn slice_sizing(&self, site: &TileSite) -> (u64, u32) {
+        if site.rows <= 1 || site.c == 0 {
+            return (0, 0);
+        }
+        let floor = self.profile.tile_i().saturating_mul(site.c);
+        // OVER-DECOMPOSITION IS NOT SHIPPED YET, and the reason is recorded
+        // rather than hidden. Forcing slice size directly with the FLOW_SLICE
+        // lever, over-decomposing an `Invariant` site is worth 1.46-1.78x
+        // (matmul512 0.750 -> 0.429, matmul1024 3.627 -> 2.452 at 14 lanes).
+        // Routing the SAME slice counts through this deduction instead made
+        // matmul1024 34% WORSE (3.58 -> 4.80) while matmul512 gained only 10%.
+        // The difference is not the count, so it is something about the nested
+        // dispatch a packed site performs — the outer task packs and then opens
+        // its own run, and that path is not the one the lever exercised.
+        // Until that is explained, `1` reproduces today's slicing exactly and
+        // the floor below is the only behaviour change (plan-s32 §2.6).
+        let oversub = 1;
+        (floor, oversub)
+    }
+
     /// TI interior rows at a time (plan-s31-deduced-blocking item 4). Entered
     /// only where the record says the sliding read shares across rows, and only
     /// for full-window rows, so there is no per-row jw clip inside.
