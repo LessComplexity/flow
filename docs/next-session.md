@@ -1,7 +1,7 @@
-# Next Session (S30)
+# Next Session (S31)
 
-Written: 2026-07-25 · end of Session 29 · by: Claude (orchestrator; category-architect skill)
-S29 CLOSED clean: workspace green, docs reconciled, nothing half-built.
+Written: 2026-07-25 · end of Session 30 · by: Claude (orchestrator; category-architect skill)
+S29 + S29b + S30 CLOSED clean: workspace green, docs reconciled, nothing half-built.
 
 ## Where things stand (≤6 lines)
 
@@ -16,39 +16,46 @@ Everything is local-only — **the box leg was not run**.
 ## FIRST commands (resume checks, in order)
 
 ```sh
-git log --oneline -4                      # S29 should be 3 commits: feat / bench / docs
+git log --oneline -6                      # S29 feat/bench/docs, S29b diagnosis, S30 accumulators
 git status --short                        # see "Concurrent session" below before judging dirt
 cargo test --workspace --release 2>&1 | grep -c "test result: ok"   # expect 72, 0 failures
-cat docs/performance/matmul/s29.md        # the KC verdict + the shape tables
+cat docs/performance/matmul/s29.md        # the KC verdict, the shape tables, and the S30 addendum
 ```
 
 ## The S30 queue
 
-1. **Promotable accumulators — this is the one that decides the KC question, and it
-   gates the whole ladder.** S29 diagnosed the KC nest's 3× loss: it is NOT traffic
-   (a `TILE_KC` sweep varies parking 4× and moves the clock 1.3%). `clang` register-
-   promotes the `[64 x float]` accumulator alloca across the k loop in the jt-outer leg
-   and fails to in the KC leg — **92 `str q…,[sp]` vs 0**, plus 8 runtime alias checks
-   and a dead scalar fallback — so every FMA round-trips the stack (109 instructions per
-   2-k body vs 51). Fix: emit the accumulator tile as SSA values or a fixed-width vector
-   type instead of an alloca indexed by an induction variable, plus `noalias` on the
-   emitted task's panel/frame pointers so LLVM stops versioning the loop. Evidence and
-   the exact instruction sequences: `docs/performance/matmul/s29.md` §1, suggestions #16.
-   Note the exact LLVM blocker is NOT pinned — a hand-applied `!noalias` on the panel
-   pointer did not restore promotion; start by pinning it (`-Rpass-missed`, `opt` with
-   AA remarks) rather than guessing.
-2. **The box leg — now worth running on its merits, not as the tiebreak.** Every S29
-   number is M4 Pro. Once the accumulator is promotable, re-measure the KC order on an
-   on-demand EPYC zen3 (`kc on/off × {1024,2048,4096} × {f32,f64}`) — its own traversal
-   costs are ~3% locally, so the box may well like it. Protocol in the S28 log §4:
-   on-demand (no `--bid_price`), incremental log pulls, destroy after (~$0.45).
-   **`kc_nest` is an API flag; the emit example now also takes `--kc`.**
-3. **conv2d row blocking** (backend-llvm suggestions #11, now MEASURED not predicted): conv2d
-   beats cpp-mt at 512 and loses 3.4× at 1024. TI over output rows (img-row reuse ×3), or #12
-   (im2col) which reaches the whole matmul ladder instead of one rung.
-4. **Finish the FLOW_PERF retirement.** `benches/shapes/` self-times; `benches/matmul/`
-   (`tile_ab.sh`, `runner.py`) does not, so its totals still include data generation. Migrating
-   it means the matmul legs become cross-language-comparable for the first time.
+0. **`TargetProfile` — architecture selection instead of hardcoded constants**
+   (`plans/plan-s31-target-profiles.md`, written pre-build; Sapir's directive). Six machine
+   facts are literals in the emitter today (`tile_j_for`, `TILE_I`, `TILE_KC`, `tile_nc_for`,
+   `HEAP_MIN_BYTES`, plus `GRAIN` in flow-rt). The plan replaces them with one named profile
+   table (`generic`/`apple-m`/`zen3`/`native`, selected by name — `native` probes the host only
+   when asked) and derives the constants from it. The key property: `tile_kc = (l2_bytes/2) /
+   (nc × sizeof(elem))` reproduces today's 128 on a 512 KB L2 and yields `kc ≥ K` on this
+   machine's 16 MB — so **the KC nest disables itself by derivation** instead of by a
+   default-off flag. Implements the unbuilt half of ADR-0032 D4; prerequisite for ADR-0034.
+   Rule 1 is the safety property: the default profile must emit byte-identical text.
+1. **The box leg — now a FAIR test of the (jc, kc, ic) order.** S30 landed the promotable
+   accumulators (item 1 of the old queue — done): tile accumulators are `<TJ x elem>` SSA
+   values carried by `phi`, the KC leg's stack spills went 92 → 0 and its hot loop is now
+   instruction-for-instruction the baseline's. KC-on 1024 f32 59.9 → 21.7 ms, 4096 4097 →
+   1564. **But the traversal still loses on M4 Pro at every size, and the deficit GROWS
+   with N (+5% @1024 → +14% @4096)** — the opposite of the traffic prediction, because a
+   16 MB shared L2 absorbs the A re-reads the nest exists to remove. So the question is
+   now purely about a machine with a small per-core L2: run `kc on/off × {1024,2048,4096}
+   × {f32,f64}` on an on-demand EPYC zen3 and settle `kc_nest`'s default with a number
+   from the machine it was designed for. Protocol in the S28 log §4: on-demand (no
+   `--bid_price`), incremental log pulls, destroy after (~$0.45). The emit example takes
+   `--kc`; the API flag is `EmitOpts::kc_nest`.
+2. **conv2d row blocking** (suggestions #11) — the mechanism is now measured, not guessed:
+   conv2d's hot loop is **operand**-bound, not accumulator-bound (24 vector loads per 36
+   FMAs, FMA:mem 1.29 against matmul's 8.00), because TI=1 re-loads all three image rows
+   per output row and re-seeds the accumulator in-loop. TI over output rows makes six
+   image rows serve four output rows. This is the measured cause of conv2d winning at 512
+   and losing 3.4× at 1024.
+4. ~~**Finish the FLOW_PERF retirement.**~~ **DONE (S30)** — `gen_flow_capture.py` brackets the
+   kernel and the new `benches/matmul/matmul_ab.sh` runs the full CPU comparison off `iter ms=`.
+   `runner.py` and `tile_ab.sh` still use FLOW_PERF and are now the legacy path; retire or
+   migrate them when next touched.
 5. **The effect-predicate refactor** (lower suggestions #3): "is this stage an effect?" is asked
    at four independent sites. S29 taught all four about `time` after two of them silently
    hoisted a loop-body clock read; the structural fix is one `stage_is_effect` helper so a fifth
@@ -78,6 +85,9 @@ cat docs/performance/matmul/s29.md        # the KC verdict + the shape tables
   `docs/suggestions.md`. S29's three commits deliberately exclude those paths. `git status` will
   look dirty — check whose work a file is before touching it.
 - **`kc_nest` defaults OFF.** A measurement that forgets to opt in is measuring the S27b nest.
+- **Remainder/boundary tiles and both TI=1 rungs still keep the memory accumulator form.** Only
+  the constant-width main tile is phi-carried. fir/conv2d emissions are byte-identical to S29 —
+  they were never victims (verified, not assumed).
 - **The KC verdict's REASON was corrected after the fact.** The first write-up blamed parking
   traffic; the control sweep refuted it. If you read an older doc claiming that, it is wrong —
   s29.md §1 carries the diagnosis.
