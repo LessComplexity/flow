@@ -63,7 +63,7 @@ Resume command/check: `docs/next-session.md`; `docs/performance/matmul/s27.md` (
   nest (k-ascending = R1), compile-time tap offsets, ZERO sdiv/srem; TI=1 (row blocking a
   recorded ceiling).
 - **Gate v1 failure diagnosed as environmental, not code:** flow-syntax example tests
-  ENOENT — the repo MOVED (`/Users/lesscomplex/...` → `/Volumes/LessComplex/...`) and stale
+  ENOENT — the repo MOVED (`/path/to/...` → `/path/to/...`) and stale
   fingerprints baked `env!("CARGO_MANIFEST_DIR")` with the old path. Fix: `cargo clean -p`
   of the six path-baking packages. Gate v2: 69/69 green. Gotcha recorded.
 - **Measurements (local M4 Pro, clean idle, min-of-3; box EPYC 7B13):** see §3.

@@ -15,7 +15,7 @@ with measured wins; one diagnosis is **OPEN** with eight hypotheses eliminated.
 Next step: the conv2d per-core gap, using the Arch i9 box where `perf` works
 (`docs/performance/conv2d-per-core-gap.md` §"What is left").
 Resume command/check: `docs/next-session.md`; then
-`ssh -o BatchMode=yes lesscomplex@100.81.226.103` (key auth installed, no password).
+`ssh -o BatchMode=yes <perf-box>` (key auth installed, no password).
 
 ## 1. Work completed
 
@@ -154,7 +154,7 @@ outside the timed region), or a `main` calling the kernel fn N times with differ
 | branch | `main` @ `b6a1663` | **clean**, 16 commits this session | `git status --short` |
 | worktrees | none | `s31-deduced-blocking` merged and removed | `git worktree list` |
 | vast.ai | account | **0 instances**, credit **$13.845** (spent $0.0188) | `vastai show instances` |
-| arch box | `lesscomplex@100.81.226.103` | idle; `~/flowbench` left in place with built binaries | `ssh -o BatchMode=yes …` |
+| arch box | `<perf-box>` | idle; `~/flowbench` left in place with built binaries | `ssh -o BatchMode=yes …` |
 | processes | none | — | `pgrep -fl conv2d` |
 | artifacts | session scratchpad | disposable — every number is in the perf docs | — |
 

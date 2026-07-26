@@ -78,7 +78,7 @@ Design highlights:
 
 ```lua
 {
-  dir = "/Users/lesscomplex/Personal/Flow/editors/nvim",
+  dir = "/path/to/flow/editors/nvim",
   name = "flow.nvim",
   ft = "flow",
 }
@@ -87,11 +87,11 @@ Design highlights:
 ### (b) Plain `runtimepath` append in `init.lua`
 
 ```lua
-vim.opt.runtimepath:append("/Users/lesscomplex/Personal/Flow/editors/nvim")
+vim.opt.runtimepath:append("/path/to/flow/editors/nvim")
 ```
 
 (Equivalent Vimscript for `init.vim`:
-`set runtimepath+=/Users/lesscomplex/Personal/Flow/editors/nvim`.)
+`set runtimepath+=/path/to/flow/editors/nvim`.)
 
 > **lazy.nvim users: use (a), not (b).** lazy.nvim resets `runtimepath` during
 > startup, silently discarding manual appends (and `--cmd 'set rtp+=…'` from the
@@ -101,9 +101,9 @@ vim.opt.runtimepath:append("/Users/lesscomplex/Personal/Flow/editors/nvim")
 ### (c) Quick try-out (no config changes)
 
 ```sh
-nvim -u NONE --cmd 'set rtp+=/Users/lesscomplex/Personal/Flow/editors/nvim' \
+nvim -u NONE --cmd 'set rtp+=/path/to/flow/editors/nvim' \
   --cmd 'filetype on' --cmd 'syntax on' \
-  /Users/lesscomplex/Personal/Flow/examples/sepia.flow
+  /path/to/flow/examples/sepia.flow
 ```
 
 (`-u NONE` skips your config but also disables filetype detection, hence the

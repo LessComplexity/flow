@@ -20,7 +20,7 @@ git log --oneline -6                       # S31/S32; HEAD should be b6a1663
 git status --short                         # expect empty
 cargo test --workspace --release 2>&1 | grep -c "test result: ok"   # expect 72
 cat docs/performance/conv2d-per-core-gap.md          # the OPEN diagnosis
-ssh -o BatchMode=yes lesscomplex@100.81.226.103 'nproc'   # the perf box, key auth
+ssh -o BatchMode=yes <perf-box> 'nproc'   # the perf box, key auth
 ```
 
 ## S33 focus: finish the diagnosis, then finish the plan
@@ -84,7 +84,7 @@ Missing:
 
 ## Gotchas / warnings
 
-- **The Arch i9 is the measurement machine**: `lesscomplex@100.81.226.103`, **SSH key auth
+- **The Arch i9 is the measurement machine**: `<perf-box>`, **SSH key auth
   installed — no password needed**. No clang there: cross-compile `.ll` on the Mac
   (`clang -target x86_64-unknown-linux-gnu -march=raptorlake -c`) and link with gcc.
   `flow-rt` needs a standalone `Cargo.toml` (the repo's uses workspace inheritance).
