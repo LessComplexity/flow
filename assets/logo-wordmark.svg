@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 80" width="240" height="80"
+     role="img" aria-labelledby="flow-wordmark-title">
+  <title id="flow-wordmark-title">Flow</title>
+  <!-- Mark + wordmark. Colour baked in for the same reason as logo.svg: a GitHub
+       markdown image cannot inherit the page colour. -->
+  <g fill="none" stroke="#14B8A6" stroke-width="5"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 20 H40" />
+    <path d="M20 60 H40" />
+    <path d="M40 20 V60" />
+    <path d="M40 40 H60" />
+    <circle cx="12" cy="20" r="7" />
+    <circle cx="12" cy="60" r="7" />
+    <circle cx="68" cy="40" r="7" fill="#14B8A6" />
+  </g>
+  <text x="94" y="55" fill="#14B8A6"
+        font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="44" font-weight="600" letter-spacing="2">flow</text>
+</svg>

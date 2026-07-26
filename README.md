@@ -1,6 +1,11 @@
+<img src="assets/logo.svg" alt="" width="72" height="70" align="left">
+
 # Flow
 
 **A language where you describe _what_ to compute, and the compiler works out _how_.**
+
+<br clear="left">
+
 
 Flow programs are dataflow graphs. You write a chain of steps; the compiler reads the graph
 and figures out the rest — what can run in parallel, what can be vectorised, how to block a
@@ -179,17 +184,35 @@ kernel for a chip with no AVX-512, but not hand-selected for it. And we verified
 does use all 32 threads by default (1.5036 ms default vs 1.5055 forced), so the threaded comparison
 is not us quietly using more cores.
 
-**Why threaded closes what single-threaded does not** — and this one is a hypothesis, not a result.
-Scaling from 1 thread to 32, Flow gets 9.2–9.8× where OpenBLAS gets 7.1–8.1×. This chip is
-*hybrid*: 8 fast P-cores and 16 slow E-cores. OpenBLAS partitions statically, so every panel waits
-on whichever thread drew an E-core; Flow uses work stealing over deliberately over-decomposed
-pieces, so a finished core just takes more work. Supporting evidence: OpenBLAS's own scaling is
-non-monotonic here — 8 threads (1.70 ms) beats 16 threads (2.44 ms). If that explanation is right,
-the advantage should shrink on a homogeneous machine, and **we have not tested one.** Until we do,
-this is "better on this chip", not "a better scheduler".
+**Why threaded closes what single-threaded does not — and it is *not* that our scheduler is
+better.** Scaling 1 thread to 32, Flow gets 9.2–9.8× where OpenBLAS gets 7.1–8.1×, which invites
+exactly that conclusion. We tested it instead, and it is wrong.
 
-The flat 20% single-threaded gap, on the same units with no hardware excuse, is the honest
-remaining target.
+Same machine, same binaries, **8 threads in every row** — only the uniformity of the 8 CPUs
+changes. This chip has 8 fast P-cores and 16 slower E-cores:
+
+| 8 threads on… | Flow | NumPy | winner |
+| --- | ---: | ---: | --- |
+| 8 E-cores (uniform) | 5.89 ms | 5.59 | NumPy by 5% |
+| 8 P-cores (uniform) | 2.44 ms | 1.72 | **NumPy by 41%** |
+| 4 P + 4 E (mixed) | 3.38 ms | 5.57 | **Flow by 65%** |
+
+**On uniform cores OpenBLAS beats us. Flow only wins when the cores are mixed.** The mechanism is
+plain in NumPy's own column: going from 8 E-cores to 4 P + 4 E — swapping four cores for four that
+are 35% faster — bought OpenBLAS **nothing** (5.59 → 5.57), because it partitions work statically
+and every panel waits on the slowest thread. Flow went 5.89 → 3.38 on the same change, because
+work stealing lets the fast cores absorb the slack.
+
+So what we have is **heterogeneity tolerance, not a better scheduler.** The full-machine parity
+above exists because 16 of that machine's 32 threads are E-cores. On homogeneous server hardware
+the honest expectation is that OpenBLAS leads both single- and multi-threaded.
+
+That is still worth having — nearly every consumer CPU is hybrid now (Intel client since Alder
+Lake, Apple silicon, ARM big.LITTLE), and on those our dispatch extracts throughput a statically
+partitioned BLAS cannot. It is just not a claim about beating BLAS on a server.
+
+The flat 20% single-threaded kernel gap, on the same units with no hardware excuse, remains the
+honest target.
 
 ### Two builds, and which one the table used
 

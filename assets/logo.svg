@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 82 80" width="82" height="80"
+     role="img" aria-labelledby="flow-logo-title">
+  <title id="flow-logo-title">Flow</title>
+  <!-- Two inputs join and flow into one output: a dataflow graph, which is what a
+       Flow program literally is.
+
+       The colour is baked in rather than `currentColor` on purpose. GitHub renders
+       markdown images in an <img>, which is a separate document — `currentColor`
+       there does not inherit the page's colour, it falls back to black and all but
+       vanishes on the dark theme. #14B8A6 has enough luminance to read on white
+       and on GitHub's #0d1117 alike. For embedding inline in HTML or docs where it
+       *can* inherit, use logo-mono.svg instead. -->
+  <g fill="none" stroke="#14B8A6" stroke-width="5"
+     stroke-linecap="round" stroke-linejoin="round">
+    <!-- input edges -->
+    <path d="M20 20 H40" />
+    <path d="M20 60 H40" />
+    <!-- the join -->
+    <path d="M40 20 V60" />
+    <!-- output edge -->
+    <path d="M40 40 H60" />
+    <!-- input nodes -->
+    <circle cx="12" cy="20" r="7" />
+    <circle cx="12" cy="60" r="7" />
+    <!-- output node, filled: the value that leaves -->
+    <circle cx="68" cy="40" r="7" fill="#14B8A6" />
+  </g>
+</svg>
