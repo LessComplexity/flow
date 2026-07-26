@@ -10,7 +10,7 @@ machine too. To validate performance on ALL tasks."*
 ## 0. Continuation brief
 
 Current state: **the S36 fix is validated A/B on all seven shapes on both machines — 8,400 timed
-runs.** Pre-fix, 11 of 42 shape-cells reported speedups the hardware cannot deliver; post-fix,
+runs.** Pre-fix, 11 of 21 shape-machine pairs (7 shapes x 3 configurations) reported speedups the hardware cannot deliver; post-fix,
 **zero on either machine, pinned or unpinned**. `17e10b3` is pushed to `main` and CI is green.
 Next step: the published `par` tables still carry pre-S36 numbers. `benches/results-s36/` now holds
 correct ones for seven shapes on two machines — folding them into `shape-ladder-v2.md` and the

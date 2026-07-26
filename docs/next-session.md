@@ -14,7 +14,7 @@ be dispatched until the read fires. fir 65 536 at `MAPAL_PAR=14`: **6/100 readin
 0/100**, values byte-identical, total wall time unchanged. It landed entirely in `mapal-ir` —
 `crates/mapal-rt/` has a zero-line diff and the emitter needed no new code, because the pinned-task
 machinery from S24 already carried it. **Validated A/B on seven shapes and two machines (M4 Pro and
-the i9), 8,400 runs: pre-fix 11 of 42 cells reported speedups the hardware cannot deliver, post-fix
+the i9), 8,400 runs: pre-fix 11 of 21 shape-machine pairs reported speedups the hardware cannot deliver, post-fix
 zero — `benches/results-s36/`.** Every `par` number published before S36 is biased fast; republishing
 them is now P0. Gate: 972 passed; `17e10b3` pushed, CI green.
 
