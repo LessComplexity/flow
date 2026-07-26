@@ -6,11 +6,14 @@ use std::time::Instant;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let path = args.next().expect("usage: stage_timing <file.mapal> [iters]");
+    let path = args
+        .next()
+        .expect("usage: stage_timing <file.mapal> [iters]");
     let iters: u32 = args.next().map_or(20, |s| s.parse().unwrap());
     let src = std::fs::read_to_string(&path).expect("read");
 
-    let (mut parse_us, mut lower_us, mut rewrite_us, mut emit_us) = (f64::MAX, f64::MAX, f64::MAX, f64::MAX);
+    let (mut parse_us, mut lower_us, mut rewrite_us, mut emit_us) =
+        (f64::MAX, f64::MAX, f64::MAX, f64::MAX);
     let mut ll_bytes = 0usize;
     for _ in 0..iters {
         let t = Instant::now();
@@ -30,10 +33,16 @@ fn main() {
         emit_us = emit_us.min(t.elapsed().as_secs_f64() * 1e6);
         ll_bytes = ll.len();
     }
-    println!("{path}  (min of {iters}, source {} bytes, emitted {ll_bytes} bytes)", src.len());
+    println!(
+        "{path}  (min of {iters}, source {} bytes, emitted {ll_bytes} bytes)",
+        src.len()
+    );
     println!("  lex+parse   {parse_us:9.1} us   <- the AST is built here");
     println!("  lower       {lower_us:9.1} us   <- AST -> graph");
     println!("  rewrite     {rewrite_us:9.1} us");
     println!("  emit        {emit_us:9.1} us");
-    println!("  front end   {:9.1} us   (parse+lower)", parse_us + lower_us);
+    println!(
+        "  front end   {:9.1} us   (parse+lower)",
+        parse_us + lower_us
+    );
 }
