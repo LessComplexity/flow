@@ -17,27 +17,25 @@
 </div>
 <!-- markdownlint-enable MD033 -->
 
-# Mapal
-
 <!--toc:start-->
 
-- [Mapal](#flow)
-  - [The idea](#the-idea)
-    - [What the compiler works out for you](#what-the-compiler-works-out-for-you)
-    - [Why category theory](#why-category-theory)
-  - [Results](#results)
-    - [Matrix multiply, f32 — M4 Pro](#matrix-multiply-f32-m4-pro)
-    - [Other shapes — M4 Pro](#other-shapes-m4-pro)
-    - [Against a hand-tuned BLAS, on equal hardware](#against-a-hand-tuned-blas-on-equal-hardware)
-    - [Two builds](#two-builds)
-  - [Status](#status)
-  - [Scope](#scope)
-  - [Trying it](#trying-it)
-    - [Editor support](#editor-support)
-  - [What is next](#what-is-next)
-  - [How the project works](#how-the-project-works)
-  - [License](#license)
-  <!--toc:end-->
+- [The idea](#the-idea)
+  - [What the compiler works out for you](#what-the-compiler-works-out-for-you)
+  - [Why category theory](#why-category-theory)
+- [Results](#results)
+  - [Matrix multiply, f32 — M4 Pro](#matrix-multiply-f32--m4-pro)
+  - [Other shapes — M4 Pro](#other-shapes--m4-pro)
+  - [Against a hand-tuned BLAS, on equal hardware](#against-a-hand-tuned-blas-on-equal-hardware)
+  - [Two builds](#two-builds)
+- [Status](#status)
+- [Scope](#scope)
+- [Trying it](#trying-it)
+  - [Editor support](#editor-support)
+- [What is next](#what-is-next)
+- [How the project works](#how-the-project-works)
+- [License](#license)
+
+<!--toc:end-->
 
 **A parallel-first language: you describe _what_ to compute, the compiler works out _how_.**
 
@@ -135,7 +133,7 @@ Full method, machine specs and raw logs: [`docs/performance/`](docs/performance/
 
 ### Matrix multiply, f32 — M4 Pro
 
-|    N |        Mapal | C++ naive-mt | Rust naive-mt | NumPy 1t | NumPy mt |
+|    N |       Mapal | C++ naive-mt | Rust naive-mt | NumPy 1t | NumPy mt |
 | ---: | ----------: | -----------: | ------------: | -------: | -------: |
 | 1024 | **2.23 ms** |          140 |           133 |     1.30 |     0.68 |
 | 4096 |  **151 ms** |       33,065 |        33,548 |     84.6 |     44.1 |
@@ -145,7 +143,7 @@ that number is about the hardware.
 
 ### Other shapes — M4 Pro
 
-| workload               |         Mapal | C++ naive-mt | NumPy 1t |
+| workload               |        Mapal | C++ naive-mt | NumPy 1t |
 | ---------------------- | -----------: | -----------: | -------: |
 | FIR filter, 1M samples |  **0.27 ms** |         1.42 |     6.10 |
 | conv2d 3×3, 1024×1024  | **0.089 ms** |         0.14 |     1.55 |
@@ -164,10 +162,10 @@ a Python loop over nine array slices), so that column is not like-for-like.
 On the M4, NumPy's matmul runs on the AMX coprocessor. Rerun on an i9-14900F, where NumPy
 goes through OpenBLAS on the same AVX2 units Mapal targets, and the gap is hardware:
 
-| 1024² f32 | Mapal vs NumPy 1t  | Mapal vs NumPy threaded | NumPy backend    |
-| --------- | ----------------- | ---------------------- | ---------------- |
-| M4 Pro    | NumPy 13.5× ahead | NumPy 3.3× ahead       | Accelerate → AMX |
-| i9-14900F | NumPy 1.21× ahead | **tie** (1.53 / 1.51)  | OpenBLAS → AVX2  |
+| 1024² f32 | Mapal vs NumPy 1t | Mapal vs NumPy threaded | NumPy backend    |
+| --------- | ----------------- | ----------------------- | ---------------- |
+| M4 Pro    | NumPy 13.5× ahead | NumPy 3.3× ahead        | Accelerate → AMX |
+| i9-14900F | NumPy 1.21× ahead | **tie** (1.53 / 1.51)   | OpenBLAS → AVX2  |
 
 Across all four sizes on the i9: single-threaded a **flat 1.20× behind** (146 vs 174
 GFLOP/s, both size-invariant — a steady micro-kernel deficit, not a blocking failure);
@@ -176,11 +174,11 @@ threaded within **±10%**, ahead only at 2048². On the **untuned `generic`** pr
 The threaded parity is **not** a better scheduler. Same box, 8 threads per row, only CPU
 uniformity varying:
 
-| 8 threads on…       |    Mapal | NumPy | winner           |
+| 8 threads on…       |   Mapal | NumPy | winner           |
 | ------------------- | ------: | ----: | ---------------- |
 | 8 E-cores (uniform) | 5.89 ms |  5.59 | NumPy by 5%      |
 | 8 P-cores (uniform) | 2.44 ms |  1.72 | **NumPy by 41%** |
-| 4 P + 4 E (mixed)   | 3.38 ms |  5.57 | **Mapal by 65%**  |
+| 4 P + 4 E (mixed)   | 3.38 ms |  5.57 | **Mapal by 65%** |
 
 Swapping four E-cores for four 35%-faster ones bought OpenBLAS nothing (5.59 → 5.57): it
 partitions statically, so every panel waits on the slowest thread. Mapal went 5.89 → 3.38.
@@ -194,7 +192,7 @@ The flat 20% single-threaded kernel gap is the honest remaining target.
 | face                        | guarantee                                       | speed                                       |
 | --------------------------- | ----------------------------------------------- | ------------------------------------------- |
 | **conformance** (default)   | bit-identical to the interpreter, always        | 50–75% slower at ≥1024², up to 2.2× at 512² |
-| **contract** (`--contract`) | relative tolerance; single-rounding FMA allowed | **every Mapal number above**                 |
+| **contract** (`--contract`) | relative tolerance; single-rounding FMA allowed | **every Mapal number above**                |
 
 At 4096² the default is 226 ms parallel / 2,203 ms single-threaded, against 151 / 1,256.
 Clone and run the default emitter and you get the slower pair.
@@ -210,7 +208,7 @@ Clone and run the default emitter and you get the slower pair.
 | CPU backend (LLVM)     | working — automatic threading, vectorisation, cache blocking                                                                  |
 | GPU backend (CUDA)     | working — 640 compile-and-runs on an RTX 4090, July 2026; **not re-validated on hardware since.** No `time` builtin           |
 | FPGA backend (Verilog) | not started                                                                                                                   |
-| Command-line tool      | **not built** — `mapal` prints "not yet implemented" and exits 1                                                               |
+| Command-line tool      | **not built** — `mapal` prints "not yet implemented" and exits 1                                                              |
 | Tests                  | ~950; 161 are CUDA's and skip without `nvcc`. Green as of the trap-deletion fix below                                         |
 | CI                     | `cargo fmt` + full suite on Linux and macOS, per push. Cannot pass vacuously — a skipped LLVM differential fails the run      |
 
