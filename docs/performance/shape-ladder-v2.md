@@ -1,5 +1,15 @@
 # Shape ladder v2 — algorithm classes beyond matmul/fir/conv2d
 
+> **Superseded numbers (S36/S36c, 2026-07-27).** Every threaded cell recorded below was measured
+> before the clock-read fix and is biased fast; and every Mapal cell is the **conformance** face
+> (zero FMA) against baselines built with `-ffp-contract=fast`. Post-fix numbers for all these
+> shapes, on two machines, in both faces, are in [`benches/results-s36/`](../../benches/results-s36/).
+> The §finding below ("a plain `map` is not a site, and gets scalar code") is also too broad: a
+> plain map over a *contiguous* array emits 4-wide NEON — the scalar cases are maps over a
+> **zipped** array or over an **iota**, and both layouts are self-inflicted. The measured causes
+> are the `%Frame` alias barrier (2.3×) and iota-as-array (3.1×), not tile-site recognition.
+> This document is kept as the recorded S35 plan and result.
+
 Status: **PLAN — S35, 2026-07-26.** Written before any benchmark exists, per FRAMEWORK §6.1.
 Driver (Sapir): *"add more different algorithm types that can be relevant and measure that,
 fir/conv2d are only 2 — I wanna see generalizations in different types of algo (maybe not only
