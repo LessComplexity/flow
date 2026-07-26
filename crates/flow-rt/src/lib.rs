@@ -403,6 +403,9 @@ static ARENA: Mutex<Vec<(usize, Layout)>> = Mutex::new(Vec::new());
 /// storage is not zeroed either, and every emitted consumer writes before it
 /// reads. Aborts on allocation failure (the emitted program has no path to
 /// handle OOM; `flow_trap`'s exit-101 contract is for *language* traps).
+///
+/// The block comes back **resident**: see [`reside`] for why that is part of
+/// the contract and not an optimisation (plan-s33 CR-1).
 #[unsafe(no_mangle)]
 pub extern "C" fn flow_rt_alloc(bytes: i64, align: i64) -> *mut u8 {
     let layout = Layout::from_size_align(bytes as usize, align as usize)
@@ -414,8 +417,49 @@ pub extern "C" fn flow_rt_alloc(bytes: i64, align: i64) -> *mut u8 {
     if ptr.is_null() {
         alloc::handle_alloc_error(layout);
     }
+    unsafe { reside(ptr, layout.size()) };
     lock(&ARENA).push((ptr as usize, layout));
     ptr
+}
+
+/// Force physical residence of `[ptr, ptr + bytes)` — plan-s33's `reside`
+/// morphism, and the reason `flow_rt_alloc`'s result is a *materialised* block
+/// rather than only a reserved address range.
+///
+/// A large `alloc` is served by `mmap`, which delivers **no** physical memory —
+/// only a promise that touching the range will produce zeroed pages. The first
+/// store to each page therefore traps, and the kernel must find and zero a page
+/// (2 MiB at a time under transparent huge pages) before the store completes.
+/// The emitter allocates in the entry-block prologue but the tasks store later,
+/// so without this those faults land inside whatever region happens to write
+/// first — including a `() -> time` bracket, which then charges page-zeroing to
+/// the kernel it was meant to be timing. Measured at ~0.10 ms warm / 0.30 ms
+/// cold per 4 MB, which is what made conv2d look 1.55x slower than naive C++
+/// when its kernel is in fact faster (`docs/performance/conv2d-per-core-gap.md`).
+///
+/// This costs the program nothing overall: the same pages are faulted and zeroed
+/// either way. It only decides *when*, and so what a clock can see.
+///
+/// # Safety
+/// `ptr` must be valid for writes over `bytes`, and uninitialised — every byte
+/// written here is a `0` into a page the kernel has just zeroed anyway, so no
+/// caller-visible value changes.
+unsafe fn reside(ptr: *mut u8, bytes: usize) {
+    // ponytail: one byte per 4 KiB, NOT a memset. The fault's own zeroing IS
+    // the initialisation, so a memset would zero every page a second time —
+    // 2x the memory traffic, ~15 ms wasted on a 64 MB matmul frame. Under 2 MiB
+    // huge pages this touches ~512x more often than strictly needed, which is
+    // ~4k stores per 16 MB: not worth probing the page size to avoid.
+    // Ceiling: assumes pages are at least 4 KiB (true on every target we emit
+    // for). On a multi-socket host this also pins every page to the touching
+    // thread's NUMA node; if a parallel leg ever regresses there, the fix is to
+    // make this lane-aware rather than to drop it (plan-s33 §5).
+    let mut offset = 0usize;
+    while offset < bytes {
+        // `write_volatile` so LLVM cannot discard the loop as dead stores.
+        unsafe { ptr.add(offset).write_volatile(0) };
+        offset += 4096;
+    }
 }
 
 /// Release every arena block. Emitted once per entry function, after the last
@@ -1080,19 +1124,41 @@ mod tests {
     /// The arena hands out usable, distinct storage and releases it. Writing
     /// the whole block is the point: a short allocation would corrupt the heap
     /// silently, which is exactly what the emitter's size arithmetic risks.
+    ///
+    /// The third block covers `reside` (plan-s33 CR-1): it is larger than one
+    /// page and deliberately **not** a page multiple, so the pre-touch loop has
+    /// to walk many pages and stop inside the final partial one. A stride or
+    /// bound slip there writes past the block and corrupts the allocator, which
+    /// the writes-then-free below turn into a hard failure. Residence *itself*
+    /// is not observable from Rust — it is pinned on the box by differencing
+    /// `perf stat -e page-faults` (plan-s33 acceptance 1).
     #[test]
     fn arena_alloc_is_usable_and_freed() {
         let a = flow_rt_alloc(4096, 64);
         let b = flow_rt_alloc(4096, 64);
-        assert!(!a.is_null() && !b.is_null() && a != b);
+        let big_bytes = 1024 * 1024 + 1; // > 1 page, not a page multiple
+        let c = flow_rt_alloc(big_bytes as i64, 64);
+        assert!(!a.is_null() && !b.is_null() && !c.is_null());
+        assert!(a != b && b != c && a != c);
         assert_eq!(a as usize % 64, 0, "requested alignment honoured");
+        assert_eq!(c as usize % 64, 0, "requested alignment honoured");
         unsafe {
+            // `reside` writes a 0 per page, so a freshly handed-out block reads
+            // as zero at every page boundary it touched, including the last one.
+            assert_eq!(*c, 0);
+            assert_eq!(*c.add(big_bytes - 1 - (big_bytes - 1) % 4096), 0);
             ptr::write_bytes(a, 0xAB, 4096);
             ptr::write_bytes(b, 0xCD, 4096);
+            ptr::write_bytes(c, 0xEF, big_bytes);
             assert_eq!(*a.add(4095), 0xAB);
             assert_eq!(*b.add(4095), 0xCD);
+            assert_eq!(
+                *c.add(big_bytes - 1),
+                0xEF,
+                "last byte of the block is ours"
+            );
         }
-        assert!(lock(&ARENA).len() >= 2);
+        assert!(lock(&ARENA).len() >= 3);
         flow_rt_free_all();
         assert!(lock(&ARENA).is_empty());
     }
