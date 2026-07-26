@@ -1,7 +1,7 @@
 # syntax — implementation map
 
 > The functor DESIGN.md ("Categorical model") → code. Each categorical object/morphism →
-> the file:symbol that realises it. Keep in sync WITH the code (FRAMEWORK §6.3):
+> the file:symbol that realizes it. Keep in sync WITH the code (FRAMEWORK §6.3):
 > a new morphism gets a row here in the same change that adds its code.
 
 Firewall (ADR-0014, Level B only): every row below names one of the **compiler's own**
@@ -10,7 +10,7 @@ Rust types/passes. Nothing here describes a Mapal program as a category — `Cha
 category.
 
 ## Objects (Dat) → code
-| Object | Form / shape | Realised at | State |
+| Object | Form / shape | Realized at | State |
 | --- | --- | --- | --- |
 | `𝕊` (source) | primitive string set | the `source: &str` parameter of `crates/mapal-syntax/src/lexer.rs:lex` / `crates/mapal-syntax/src/parser.rs:parse` | built |
 | `Token` | product `TokenKind × SourceLoc`, `Copy` | `crates/mapal-syntax/src/token.rs:Token` | built |
@@ -35,7 +35,7 @@ category.
 | `ParseOutput` | product `Program × Diagnostic*` | `crates/mapal-syntax/src/ast.rs:ParseOutput` | built |
 
 ## Morphisms (Trn / relations) → code
-| Morphism | Signature | Realising code | State |
+| Morphism | Signature | Realizing code | State |
 | --- | --- | --- | --- |
 | `kind` | `Token → TokenKind` | `crates/mapal-syntax/src/token.rs:Token` (field `kind`) | built |
 | `span` | `Token → SourceLoc` | `crates/mapal-syntax/src/token.rs:Token` (field `span`) | built |
@@ -73,7 +73,7 @@ category.
 | J4 — eight `examples/*.mapal` parse with zero diagnostics (+zip_demo, +vector_add per ADR-0018) | `crates/mapal-syntax/src/parser.rs:parse` | `tests/golden_trees.rs::tree_abs` … `::tree_seq_demo` (the nine example goldens; `::tree_unit_time_head` is the S29 inline-source golden, not an example) |
 | J5 — presentation-free: no `Display` anywhere in crate | `crates/mapal-syntax/src/ast.rs`, `diag.rs` (only `Debug`) | grep/review |
 | J6 — `parse(s).diagnostics ⊇ lex(s).diagnostics` (same values) | `crates/mapal-syntax/src/parser.rs:parse` (seeds `Parser` with lex diags, then stable-sorts) | `tests/proptest_parser.rs::flow_soup_total` |
-| Pipe-weld — `t_to(lex) = t_from(parse_program) = Token*` (Coherence Law 1, specialised) | `crates/mapal-syntax/src/parser.rs:parse` (`lex` → `Parser::new(&lexed.tokens)`) | `tests/golden_trees.rs` (end-to-end), `tests/out_of_core.rs::full_surface_exact_pcode_multiset` |
+| Pipe-weld — `t_to(lex) = t_from(parse_program) = Token*` (Coherence Law 1, specialized) | `crates/mapal-syntax/src/parser.rs:parse` (`lex` → `Parser::new(&lexed.tokens)`) | `tests/golden_trees.rs` (end-to-end), `tests/out_of_core.rs::full_surface_exact_pcode_multiset` |
 
 ## Notes / divergences
 Per FRAMEWORK §6.6 — where code carries structure the model's diagram abstracts over, or
@@ -83,7 +83,7 @@ vice versa.
   DESIGN §1 sketches `LineIndex { /* sorted line-start offsets */ }` — offsets only; the
   code additionally holds `source: &'a str` (a borrow of the caller's buffer, not a copy)
   so `line_col` can count columns char-aware. It is the `line_col` deduced morphism's
-  realising machinery, not a `Dat` object. The earlier owned-`String` copy (a §5
+  realizing machinery, not a `Dat` object. The earlier owned-`String` copy (a §5
   duplication smell) was dropped in Session 09 — source is now single-sourced in the
   caller's buffer.
 - **The §15 AST sub-node zoo is intentionally below the diagram's abstraction level, not a
@@ -96,7 +96,7 @@ vice versa.
   diagram deliberately elides them. No row above per variant — the parent object's row
   covers them. Recorded so their absence from the tables reads as intent.
 - **`unescape_string` and `Diagnostic::error`/`with_fix` are bridge/constructor helpers, not
-  core `Dat` morphisms.** `unescape_string` (`crates/mapal-syntax/src/token.rs`) realises the
+  core `Dat` morphisms.** `unescape_string` (`crates/mapal-syntax/src/token.rs`) realizes the
   `𝕊 → 𝕊` "materialise `Str` value" bridge to `mapal-lower::emit` (DESIGN Bridges table), off
   the core diagram. `Diagnostic::error`/`with_fix` (`crates/mapal-syntax/src/diag.rs`) are the
   single-source diagnostic constructors reused by the parser (C15) — one-source-of-truth

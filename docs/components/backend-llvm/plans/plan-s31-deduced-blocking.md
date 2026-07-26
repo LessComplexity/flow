@@ -98,7 +98,7 @@ constant.
 
 ## Work items
 
-1. **Name the three quantities apart, zero behaviour change.** `TILE_I` → `tile_i_for(&Ty)` for
+1. **Name the three quantities apart, zero behavior change.** `TILE_I` → `tile_i_for(&Ty)` for
    the matmul rung (row block, register-budget-derived), `WINDOW_SUBROWS = 4` for the FIR rung
    (lane block, unjustified constant, marked so), and the KC a-panel keeps `tile_i · TILE_KC`.
    Seed `VEC_REGS = 32` / `VEC_BYTES = 16` next to `tile_j_for`, documented as the two

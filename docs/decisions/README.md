@@ -15,7 +15,7 @@ Authority order for anything about the language (`HANDOFF.md` §2.2, fixed by AD
 
 1. **Accepted ADRs in this directory** — newest wins where two overlap;
 2. the v0.2 spec corpus as patched by errata E1–E5 and living corrections LC-1–5;
-3. and above all of it, **the interpreter's behaviour is the final arbiter** — if an ADR and
+3. and above all of it, **the interpreter's behavior is the final arbiter** — if an ADR and
    the oracle disagree, the oracle is what the language *is*, and the gap is a bug in one of
    them.
 

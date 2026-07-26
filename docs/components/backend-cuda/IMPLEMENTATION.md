@@ -2,11 +2,11 @@
 
 Written: 2026-07-21 · Session 15 · State: **built + M3 green** (the §6 sweep oracle-equal on an RTX 4090 — 640 nvcc compile-and-runs, zero divergences). Updated 2026-07-21 (emitter-quality wave: suggestions #17/#12/#13/#14 discharged — 129 tests; optimization-marathon W2: suggestions #18 arena v1.0 + #19a kernel-time instrumentation discharged — 144 tests: 111 lib + 13 differential + 4 gate + 16 golden) and 2026-07-22 (last-use wave: suggestions #2 back-edge freeing + the BC5 in-place Update amendment discharged — 151 tests: 113 lib + 13 differential + 4 gate + 21 golden; S20 guard wave: proven-Index guard elision + the `TrapCaps` bounds-proof refinement discharged — 153 tests: 115 lib + 13 differential + 4 gate + 21 golden) and 2026-07-25 (**S29 `time` builtin, cuda half**: `Operation::TimeMs` recorded as a new `Unsupported` cell — 5 cells now; no emitter change, no new cuda tests — **163 green** unchanged: 118 lib + 15 differential + 4 gate + 26 golden).
 
-Maps the DESIGN's model (`DESIGN.md` §"Categorical model (Dat + Trn)" + §1–§6) to the realizing code (FRAMEWORK's "realising code" column; drift here is the earliest signal, §6.3). As-built deltas vs the S14 design text are marked **(S15)** and reconciled in DESIGN §"As-built (S15)"; the W2 rows are marked **(W2)** and reconciled in DESIGN §"As-built (2026-07-21 smart arenas + #19a)"; the last-use rows are marked **(LU)** and reconciled in DESIGN §"As-built (2026-07-22 last-use)"; the S20 rows are marked **(S20)** and reconciled in DESIGN §"As-built (2026-07-22 S20 guard wave)"; the S29 rows are marked **(S29)** and reconciled in DESIGN §5 (cell 5) + the L3 rider.
+Maps the DESIGN's model (`DESIGN.md` §"Categorical model (Dat + Trn)" + §1–§6) to the realizing code (FRAMEWORK's "realizing code" column; drift here is the earliest signal, §6.3). As-built deltas vs the S14 design text are marked **(S15)** and reconciled in DESIGN §"As-built (S15)"; the W2 rows are marked **(W2)** and reconciled in DESIGN §"As-built (2026-07-21 smart arenas + #19a)"; the last-use rows are marked **(LU)** and reconciled in DESIGN §"As-built (2026-07-22 last-use)"; the S20 rows are marked **(S20)** and reconciled in DESIGN §"As-built (2026-07-22 S20 guard wave)"; the S29 rows are marked **(S29)** and reconciled in DESIGN §5 (cell 5) + the L3 rider.
 
 ## Dat objects
 
-| Model object | Realised at | State |
+| Model object | Realized at | State |
 | --- | --- | --- |
 | `CuText` (𝕊) | `pub fn emit(&CategoryIr) -> Result<String, EmitError>` — the String IS the `.cu` TU (ADR-0020 §1) — `crates/backends/cuda/src/lib.rs` | built |
 | `EmitError` ⊕ | `pub enum EmitError { Unsupported { feature, loc }, Internal(String) }` — renderer-free (C3) — `src/lib.rs` | built |
@@ -23,7 +23,7 @@ Maps the DESIGN's model (`DESIGN.md` §"Categorical model (Dat + Trn)" + §1–�
 
 ## Trn morphisms (the emitter)
 
-| Model `Trn` | Realised at | State |
+| Model `Trn` | Realized at | State |
 | --- | --- | --- |
 | `emit` | `src/lib.rs:emit` — gate → strings → prod structs → qualifiers → F3/F7 cells → device section → kernels → host section → main | built |
 | L3 capability gate | `src/lib.rs:emit` (≡ `mapal-backend-llvm/src/lib.rs:41–56`, same `mapal_ir::loop_plan` predicate, same `"nested loops"` feature string) | built |
@@ -48,7 +48,7 @@ Maps the DESIGN's model (`DESIGN.md` §"Categorical model (Dat + Trn)" + §1–�
 
 ## Trm — the §2 transfer inventory
 
-| # | Crossing | Realised at | State |
+| # | Crossing | Realized at | State |
 | --- | --- | --- | --- |
 | 1 | H→D literal upload | `src/func.rs:FnEmit::emit_literal` (`cudaMemcpyHostToDevice`, at the construction site, per execution) | built |
 | 2 | H→D launch args | kernel parameter lists (`src/kernel.rs:emit_kernel`) ↔ host launches (`src/func.rs:launch_and_check`) positionally; the trailing `d_trap` rides only trap-capable sites (#14) | built |
@@ -72,7 +72,7 @@ Maps the DESIGN's model (`DESIGN.md` §"Categorical model (Dat + Trn)" + §1–�
 
 ## Recorded `Unsupported` cells (DESIGN §5)
 
-| Cell | Realised at | Pin |
+| Cell | Realized at | Pin |
 | --- | --- | --- |
 | non-canonical loops (multi-merge SCC) | `src/lib.rs:emit` gate | `tests/gate.rs` |
 | arrays embedded in products on device **(S15)** | `src/kernel.rs:check_device_product_arrays` (+ `src/ty.rs:{residual_contains_array, tree_contains_product_with_array}`; transient operand aggregates + input parameter excluded — provably per-thread) | `kernel::tests::*_is_unsupported` (×4) + `product_array_cell_does_not_fire_on_supported_shapes` |
@@ -82,7 +82,7 @@ Maps the DESIGN's model (`DESIGN.md` §"Categorical model (Dat + Trn)" + §1–�
 
 ## Bridges (model → code)
 
-| Bridge | Realised at | State |
+| Bridge | Realized at | State |
 | --- | --- | --- |
 | IR intake (`&CategoryIr`, raw or rewritten) | `src/lib.rs:emit` param; differential runs both | built |
 | `mapal-rt` extern C (7 prints + `mapal_trap`, host-only) | `src/module.rs` PRELUDE `extern "C"` block (exact signatures; `mapal_trap` `[[noreturn]]` **(S15)**); linked `libmapal_rt.a` + `-lpthread -ldl -lm` (verified as-built, S15) | built |

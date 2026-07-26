@@ -63,7 +63,7 @@ what Law 1 exists to surface.
 
 CR-2 is the property the shapes benches have always claimed and never had, and it is what
 makes them comparable to `shapes_baseline.cpp`, whose `std::vector<float> out(n)`
-value-initialises — i.e. performs `reside` — before `run_iters`.
+value-initializes — i.e. performs `reside` — before `run_iters`.
 
 ## 2. The change
 
@@ -88,7 +88,7 @@ In `crates/mapal-rt/src/lib.rs:mapal_rt_alloc`, after the null check:
 // inside whatever `() -> time` region happens to write first. One touch per
 // page moves it here, where it belongs.
 // ponytail: one byte per 4 KiB, not a memset — the fault's own zeroing IS the
-// initialisation, so memset would zero every page twice (15 ms on a 64 MB
+// initialization, so memset would zero every page twice (15 ms on a 64 MB
 // matmul frame). Ceiling: assumes >= 4 KiB pages; a 16 KiB-page host just
 // touches 4x more often than it needs to, which is harmless.
 let mut off = 0usize;
@@ -101,7 +101,7 @@ while off < layout.size() {
 `write_volatile` so LLVM cannot delete the loop as dead stores.
 
 Contract note for the doc comment above `mapal_rt_alloc`: the block is still documented as
-uninitialised, and stays honest — every large block comes from a fresh zero-filled mapping,
+uninitialized, and stays honest — every large block comes from a fresh zero-filled mapping,
 so writing `0` observes and changes nothing. Consumers still write before they read.
 
 ### Rejected: pre-touch only the arrays the timed region writes
@@ -124,7 +124,7 @@ The baseline's zero-fill is the wasteful version of `reside`. The kernel **alrea
 every page while faulting it (mandatory, or you would read another process's data), so a
 memset writes zeros over zeros — 2× the memory traffic, ~15 ms of pure waste on a 64 MB
 matmul frame. One byte per 4 KiB triggers the identical faults and lets the kernel's own
-zeroing be the initialisation. We match the baseline's *boundary*, not its method.
+zeroing be the initialization. We match the baseline's *boundary*, not its method.
 
 ## 3. What this does and does not claim
 
@@ -210,7 +210,7 @@ min-of-30, recorded figure → post-fix figure:
 | conv2d_512 | 0.083 | **0.052** | 1.60× |
 | fir_65536 | 0.2156 | **0.104** | 2.07× |
 
-Every one of these **understated Mapal**, so the corrections all move in Mapal's favour — which
+Every one of these **understated Mapal**, so the corrections all move in Mapal's favor — which
 is precisely why they must not be published until re-measured properly through the harness
 rather than read off this table. matmul at large N is expected to be near-immune (its kernel
 is ~20 ms against the same 4 MB output, so the boundary is well under 1%) but is **unverified**.

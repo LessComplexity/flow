@@ -71,7 +71,7 @@ tile_kc(elem) = panel_budget / (nc(elem) × sizeof(elem))
 The last line is the point. On a 512 KB-per-core L2 it yields `TILE_KC = 128` — today's
 literal, reproduced. On this M4 Pro (`hw.perflevel0.l2cachesize` = 16 MB) it yields
 `kc ≈ 4096 ≥ K`, so `site.k > tile_kc` is false and **the KC nest disables itself**. The
-measured behaviour falls out of the model instead of being hardcoded as a default-off flag.
+measured behavior falls out of the model instead of being hardcoded as a default-off flag.
 
 **Composition rules.**
 1. The default profile emits **byte-identical** text to today for every shape. This is
@@ -148,7 +148,7 @@ measured behaviour falls out of the model instead of being hardcoded as a defaul
   and until then `zen3` must stay explicitly untested rather than shipping as "the AVX2 answer".
 - `GRAIN` (mapal-rt) stays hand-set — different placement, same disease (rule 4).
 - The `zen3` profile's values are read off documentation, not measured. The box leg is
-  what validates them, and until then the profile is labelled untested.
+  what validates them, and until then the profile is labeled untested.
 - Autotuning (ADR-0034) is explicitly out of scope. This plan builds the table the
   autotuner would write into; whether the values are searched or set is that ADR's call,
   and it is still a candidate owned by another session.
@@ -207,7 +207,7 @@ differently-shaped near-miss.
    and regressing S30's measured +5…14%. What *auto* was reaching for is delivered instead by
    the profile joining the existing gate — `self.kc_nest && packed.is_some() && site.k >
    tile_kc` — so `--kc` on `apple-m` correctly does nothing. The tri-state was complexity for
-   a behaviour the derivation already provides.
+   a behavior the derivation already provides.
 3. **`TILE_I` split in two, not renamed once** (revised work item 2). `TargetProfile::tile_i`
    is the matmul rung's row block; `func.rs:WINDOW_SUBROWS` is the FIR window rung's lane
    block over a **memory** accumulator, which no register budget bounds. Same value today,

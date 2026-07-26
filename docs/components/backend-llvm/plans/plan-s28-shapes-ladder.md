@@ -42,7 +42,7 @@ one walker extension.
 | `TileRead.ksplit? : TileRead → TileKSplit` | `Dat` morphism, **Partial** | §3 consolidation: NOT a new site type — the same `TileRead` with one more morphism. `None` = affine-in-raw-k (today's sites, bit-identical); `Some` = derived-var site. Doubles as the emitter-gate discriminator. |
 | fold-body k-split detection | `Trn` (recognizer) | the `tile_split` move (`algo.rs:654-671`) one level down: scan fold morphisms for `Div`/`Mod` of the fold element proj (slot `captures+1`) with one shared literal `div`; bind the two target objects as the `kq`/`kr` axes — the same axis-binding-by-identity the map body gets for `(t÷C, t%C)` → `(i, lane)`. |
 | `conv_site(site)` gate predicate | `Trn` (emitter-local) | rung doctrine (S26/S27): gates are emitter-local predicates cashing record facts; zero mapal-ir change beyond the record. |
-| `emit_tiled_map_conv` | `TrnLoc` (strategy, §4.4) | parallel realisation of the site's `t_from→t_to` contract, selected by the record. Unrolls the (kq,kr) taps: `div`,`cq`,`cr` compile-time ⇒ per-tap constant offsets; div/mod vanish. |
+| `emit_tiled_map_conv` | `TrnLoc` (strategy, §4.4) | parallel realization of the site's `t_from→t_to` contract, selected by the record. Unrolls the (kq,kr) taps: `div`,`cq`,`cr` compile-time ⇒ per-tap constant offsets; div/mod vanish. |
 | `window1d_site(site)` + `emit_tiled_map_blocked_1d` | `Trn` + `TrnLoc` | FIR dual of rung 2: TI blocks over the LANE axis (rows==1); one scalar `a` load per k shared across TI subrows (a is the invariant read — roles swapped vs matmul); constant-TJ everywhere on the main path. |
 | `acc [TI·TJ x elem]` | `DataLoc` | register-resident accumulators, TI independent chains (ILP) — same placement as rung 2. |
 

@@ -11,7 +11,7 @@ measurement or an argument from the model and it gets taken seriously regardless
 are. Several of this project's own published claims were refuted this way, and the refutations
 are still in the repo.
 
-**Being right is not a licence to be unpleasant.** A correct critique delivered as contempt
+**Being right is not a license to be unpleasant.** A correct critique delivered as contempt
 gets the same response as an incorrect one: it is asked to be restated. Attack the claim, never
 the person holding it. "This number is wrong, here is the control that refutes it" is welcome.
 "Only an idiot would measure it that way" is not, and the fact that the first half was correct
@@ -75,7 +75,7 @@ decisions when appropriate.
 
 This Code of Conduct applies within all community spaces, and also applies when
 an individual is officially representing the community in public spaces.
-Examples of representing our community include using an official email address,
+Examples of representing our community include using an official e-mail address,
 posting via an official social media account, or acting as an appointed
 representative at an online or offline event.
 

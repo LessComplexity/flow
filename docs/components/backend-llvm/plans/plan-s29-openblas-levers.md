@@ -42,7 +42,7 @@ policy item (product face, S24b precedent). This plan's items are all (b).
 | Item | Kind | Model |
 | --- | --- | --- |
 | `TILE_KC = 128`, `NC = TILE_J × 32` | emitter const table | k-panel depth / j-block width: the (kc × jb) B working set = 256KB f32 / 128KB f64 — sized to L2 (zen3 512K, M4 larger) |
-| jb → kc → ib → jt nest | `TrnLoc` (strategy) | new parallel realisation of the packed-site contract; per-cell k stays ascending (R1 bit-exactness) |
+| jb → kc → ib → jt nest | `TrnLoc` (strategy) | new parallel realization of the packed-site contract; per-cell k stays ascending (R1 bit-exactness) |
 | `acc [TI×TJ x elem]` (1KB) | `DataLoc` | the live j-tile's accumulators — the SAME width as the jt-outer nest's. **Amended in build (S29):** this was first sized `TI×NC` to hold a whole jb block across the kc loop. With `kc` OUTSIDE `ib`, other i-blocks run between two panels of the same block, so nothing survives in scratch; partial sums park in `out` instead (next row) and 31/32 of a `TI×NC` block would be dead space |
 | partial-sum parking in `out` | `DataLoc` | what the (jc, kc, ic) order costs: each j-tile spills its acc to `out` at every panel end and reloads at the next; the peeled `kc==0` panel seeds instead of reloading. Value-preserving, per-cell k stays ascending ⇒ R1 |
 | `apack [TI×KC x elem]` (2KB) | `DataLoc` | the A-panel pack: strided rows → contiguous 64-aligned scratch, packed per **(jb, kc, ib)** — not once per (ib,kc): with `jb` outermost every block re-packs, C/NC times per element |
@@ -99,7 +99,7 @@ extra loop levels — total ~3%. See `docs/performance/matmul/s29.md` §1 and su
    result and a `mapal_rt_alloc` result are both a `ptr`, so no `getelementptr`
    consumer changes. Teardown per composition rule 4. `mapal-rt` gains
    `mapal_rt_alloc`/`mapal_rt_free_all` (a `Mutex<Vec<(addr, Layout)>>` registry
-   over `std::alloc`; uninitialised, like the `alloca` it replaces — every
+   over `std::alloc`; uninitialized, like the `alloca` it replaces — every
    emitted consumer writes before it reads). The `module.rs:HEAP_DECLS` block
    is gated on the **emitted text** containing the call, not on a re-derived
    predicate: the call is the requirement, so the two cannot drift, and a

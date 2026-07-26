@@ -1,7 +1,7 @@
 # System implementation map
 
 > Whole-system functor [`architecture-map.md`](architecture-map.md) → code, deduced
-> from the component IMPLEMENTATION.md files (FRAMEWORK §4.3 — summarise and point,
+> from the component IMPLEMENTATION.md files (FRAMEWORK §4.3 — summarize and point,
 > never fork). System-level rows only; per-morphism detail lives in the linked maps.
 > Keep in sync WITH the code (FRAMEWORK §6.3).
 
@@ -26,7 +26,7 @@
 The three cross-component bridges — each an *audited, justified* shape; do not "fix"
 them (detail: [categorical-model.md §6–§7](architecture/categorical-model.md)):
 
-| Object / bridge | Signature | Realised at | Stored? |
+| Object / bridge | Signature | Realized at | Stored? |
 | --- | --- | --- | --- |
 | `SourceLoc` duality (D8) | `mapal_syntax::SourceLoc → mapal_ir::SourceLoc` | seam: `crates/mapal-lower/src/tys.rs:ir_loc` | stored copy at one declared seam (keeps `mapal-ir` zero-dep) |
 | type-resolution functor | `mapal_syntax::TyKind ⇀ mapal_ir::Ty` (partial) | `crates/mapal-lower/src/tys.rs:resolve_ty` / `tys.rs:TypeTable::resolve` | deduced (a pass) |

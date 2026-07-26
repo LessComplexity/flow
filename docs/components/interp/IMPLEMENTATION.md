@@ -1,14 +1,14 @@
 # interp — implementation map
 
 > The functor DESIGN.md ("Categorical model") → code. Each categorical object/morphism →
-> the file:symbol that realises it. Keep in sync WITH the code (FRAMEWORK §6.3):
+> the file:symbol that realizes it. Keep in sync WITH the code (FRAMEWORK §6.3):
 > a new morphism gets a row here in the same change that adds its code.
 
 Firewall (ADR-0014): **Level B only** — these are the interpreter's own Rust types and its
 one `eval` pass. Mapal programs are *not* modeled as categories here.
 
 ## Objects (Dat) → code
-| Object | Form / shape | Realised at | State |
+| Object | Form / shape | Realized at | State |
 | --- | --- | --- | --- |
 | `RValue` | the runtime value domain (`Dat`) | `crates/mapal-interp/src/value.rs:RValue` | built |
 | `Scalar(mapal_ir::Value)` | scalar payload (i32/i64/u8/f32/f64/bool/str) | `crates/mapal-interp/src/value.rs:RValue` (variant `Scalar`) | built |
@@ -26,7 +26,7 @@ one `eval` pass. Mapal programs are *not* modeled as categories here.
 | `RunResult` | `{ outcome, output }` (§7) | `crates/mapal-interp/src/lib.rs:RunResult` | built |
 
 ## Morphisms (Trn / relations) → code
-| Morphism | Signature | Realising code | State |
+| Morphism | Signature | Realizing code | State |
 | --- | --- | --- | --- |
 | `scalar?` | `RValue → mapal_ir::Value` | `crates/mapal-interp/src/eval.rs:scalar` | built |
 | `tuple?` | `RValue → RValue*` | `crates/mapal-interp/src/eval.rs:component` | built |
@@ -94,7 +94,7 @@ Resolution per FRAMEWORK §6.6 (the model is a specification, not a transcript).
 - **In-SCC representation diverges from DESIGN §2.** §2 prescribes folding `loop_structure`
   into `SecondaryMap<ObjectId, ObjectId>` (object → its merge). The code instead keeps
   membership-only (`SecondaryMap<ObjectId, ()>` in `build_in_scc`) and re-derives the merge via
-  `mapal_ir::loop_plan`. Behaviourally equivalent for M1's single-merge SCCs; the object→merge fold is
+  `mapal_ir::loop_plan`. Behaviorally equivalent for M1's single-merge SCCs; the object→merge fold is
   the more efficient shape the model intends. Recorded as a **deduce-don't-store seam**, see
   `suggestions.md` S1. Resolution: code is correct, model shape is the target — no invariant
   violated.

@@ -61,7 +61,7 @@ review → implementation gate (Sapir). The plan artifact for P6 is
 
 ## Stage 2 — adversarial design review (stage-gate, after DESIGN lands)
 
-4 lenses (plan-type, read-only): oracle fidelity · CUDA/hardware realism · contract
+4 lenses (plan-type, read-only): oracle fidelity · CUDA/hardware realizm · contract
 coherence (ADR-0020 duties + Level-B section quality) · harness practicality.
 Then: fixer applies confirmed findings; review record → `docs/components/backend-cuda/reviews/`.
 

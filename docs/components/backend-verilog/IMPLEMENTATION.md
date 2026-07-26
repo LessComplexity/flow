@@ -6,7 +6,7 @@
 > change (FRAMEWORK §6.3).
 
 ## Objects (Dat) → code
-| Object | Form / shape | Realised at | State |
+| Object | Form / shape | Realized at | State |
 | --- | --- | --- | --- |
 | crate root | stub | `crates/backends/verilog/src/lib.rs` | planned |
 

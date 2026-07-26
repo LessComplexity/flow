@@ -437,7 +437,7 @@ flowchart LR
 
 The Pair operation's metadata records *which projections* of the ambient environment to bundle — in this case, the morphisms for `a` and `b`. Every morphism is single-source, single-target; the invariant holds.
 
-> **Erratum LC-4 applied — see docs/spec/ERRATA.md and ADR-0013.** Pair carries no dataflow metadata: each component arrives on its own in-edge (`Pair { slot, arity }` from the component's object), and constants enter the graph as `Constant`-kind source objects (`value: Some`, §3.2) rather than riding in payloads. The compact tables above elide those component edges; the realized graph contains them explicitly — which is what §5.1's merge detection and the §9/§10 analyses read.
+> **Erratum LC-4 applied — see docs/spec/ERRATA.md and ADR-0013.** Pair carries no dataflow metadata: each component arrives on its own in-edge (`Pair { slot, arity }` from the component's object), and constants enter the graph as `Constant`-kind source objects (`value: Some`, §3.2) rather than riding in payloads. The compact tables above elide those component edges; the realized graph contains them explicitly — which is what §5.1's merge detection and the §9/§10 analyzes read.
 
 ### 4.2 Array access
 
@@ -895,7 +895,7 @@ The pass carries a table of polymorphic functions together with their naturality
 
 Each rule is an axiom about a specific primitive operation. They are stored in a rewrite table and applied by local graph pattern matching.
 
-### 9.4 Layer 4 — Graph analyses (no categorical law needed)
+### 9.4 Layer 4 — Graph analyzes (no categorical law needed)
 
 - **Dead-code elimination.** An object with no outgoing edges (and not a return) cannot affect the output. Remove the unique morphism producing it; the object then has no uses either. Iterate to fixpoint.
 - **Common subexpression elimination.** Two morphisms with the same `op` and the same `source` denote the same morphism; their targets can be merged.
@@ -1010,7 +1010,7 @@ fn lower(pt: ParseNode, b: &mut IRBuilder, env: ObjectId) -> ObjectId {
 }
 ```
 
-### 11.2 Phase 2 — analyses
+### 11.2 Phase 2 — analyzes
 
 - Type check (verify each morphism's op is compatible with its source/target types).
 - Escape analysis (what's returned, stored, or sent).
@@ -1121,7 +1121,7 @@ define i32 @process(i32 %data) {
 - Barr, M. & Wells, C. (1990). *Category Theory for Computing Science.*
 
 **Graph IRs.**
-- Click, C. (1995). *Combining Analyses, Combining Optimizations.* (Sea of Nodes.)
+- Click, C. (1995). *Combining Analyzes, Combining Optimizations.* (Sea of Nodes.)
 - Reissmann, N. et al. (2020). *RVSDG: An Intermediate Representation for Optimizing Compilers.*
 - Lattner, C. et al. (2021). *MLIR: Scaling Compiler Infrastructure for Domain-Specific Computation.*
 

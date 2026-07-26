@@ -91,7 +91,7 @@ flowchart TD
     wasm --> webout[WASM module]
 ```
 
-The parse tree is minimal and transient: it exists only long enough for the IR builder to consume it, and is discarded before type checking runs. All analyses and optimizations operate on the graph IR directly — there is no separate typed-AST phase.
+The parse tree is minimal and transient: it exists only long enough for the IR builder to consume it, and is discarded before type checking runs. All analyzes and optimizations operate on the graph IR directly — there is no separate typed-AST phase.
 
 ### 2.2 Compiler components
 
@@ -122,7 +122,7 @@ Runs on the graph. For each morphism, checks that its operation is well-typed fo
 
 #### 2.2.5 Lifetime and escape analysis
 
-Graph analyses:
+Graph analyzes:
 
 - **Last-use frontier.** For each heap-allocated object, compute the set of morphisms with it as source. The topologically-last members are the frontier; a `Free` is scheduled after the frontier synchronizes.
 - **Escape analysis.** An object escapes if it is a source of a `Return`, `Store`, or `ChannelSend` morphism. Escaped objects get no local free — ownership transfers.

@@ -125,7 +125,7 @@ direction; ADR-0035) and displaces O1 as the north star — see §7.
 
    **Amendment, 2026-07-25 (S25–S28 evidence; ADR-0034, `docs/notes/2026-07-25-thesis-review.md`).**
    Caveat (a) is sharper than "the schedule is not portable," and the sharper form
-   is *more* favourable to the thesis. The schedule decomposes into two parts with
+   is *more* favorable to the thesis. The schedule decomposes into two parts with
    different portability:
    - **Geometry** — which reads broadcast vs. stride, which axes split, the nest
      order, what is legally interleavable. **Deduced** from the graph, exact,
@@ -186,7 +186,7 @@ new option beside them.**
   closed compiler it cannot inspect or fork. Permissive open source de-risks the
   exact adoption O5 needs.
 - **Distributed performance work.** Backends, optimizers, and autotuning
-  databases get community + vendor contributions — the only realistic way to fund
+  databases get community + vendor contributions — the only realiztic way to fund
   *portable performance* across many targets.
 - **A neutral "Switzerland."** Open governance lets competing vendors trust one
   layer none of them controls — what an anti-monopoly standard requires.
@@ -255,7 +255,7 @@ flowchart LR
 ```
 
 - **Now (≤ M5):** O2 (beachhead) as the framing, O3 (kernel-lib) as the adoption
-  mechanism, O4 (deduced-and-verified cross-target behaviour) as the
+  mechanism, O4 (deduced-and-verified cross-target behavior) as the
   differentiator — all over an **open-source (Apache-2.0) base** (§6). All fit
   the current roadmap without changing scope.
 - **The CPU phase, in flight:** take full advantage of the geometry ladder on one

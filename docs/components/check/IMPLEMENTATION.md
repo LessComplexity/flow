@@ -1,12 +1,12 @@
 # check — implementation map
 
 > The functor DESIGN.md ("Categorical model") → code. Every model object/morphism maps
-> to the `file:symbol` that realises it (FRAMEWORK §6.3 — rows updated WITH the code).
+> to the `file:symbol` that realizes it (FRAMEWORK §6.3 — rows updated WITH the code).
 > Last reconciled: 2026-07-25 · S29 (`time` joins the effectful-builtin set; 30 tests).
 
 ## Objects (Dat) → code
 
-| Object | Form / shape | Realised at | State |
+| Object | Form / shape | Realized at | State |
 | --- | --- | --- | --- |
 | `Src` | `&str` (borrowed source text) | `mapal-check/src/lib.rs:check` param | built |
 | `Program` | `&mapal_syntax::Program` (borrowed tree) | `mapal-check/src/lib.rs:check` param | built |
@@ -20,7 +20,7 @@
 
 ## Morphisms (Trn / relations) → code
 
-| Morphism | Signature | Realised at | State |
+| Morphism | Signature | Realized at | State |
 | --- | --- | --- | --- |
 | `check` | `Src × Program × CategoryIr → Diagnostic*` | `mapal-check/src/lib.rs:check` | built |
 | `exclusivity` | `CategoryIr → Diagnostic*` | `mapal-check/src/exclusivity.rs:check` | built |
@@ -35,7 +35,7 @@
 
 ## Tests → plan rows
 
-| DESIGN §7 row | Realised at | Count |
+| DESIGN §7 row | Realized at | Count |
 | --- | --- | --- |
 | §7.1 acceptance (9 examples + determinism + cross-pass order) | `mapal-check/tests/acceptance.rs` | 12 |
 | §7.2/§7.4 exclusivity (incl. token-bearing loop) | `mapal-check/tests/exclusivity.rs` | 6 |

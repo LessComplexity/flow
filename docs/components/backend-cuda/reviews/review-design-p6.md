@@ -5,7 +5,7 @@ Date: 2026-07-18 · Session 14, plan.md Phase 2 Stage 2 · Subject: `docs/compon
 ## The four lenses and what they attacked
 
 - **Oracle fidelity (OF)** — attacked the byte-parity claim: the fn-level walk's driver-ownership rule vs the llvm exit-only-payload miscompile class, the freeing rule vs handle aliasing, bounds-guard width semantics (the S13 u8 class), the fold's operand assembly, array-typed accumulators in device local memory.
-- **CUDA/hardware realism (HW)** — attacked everything that must actually compile and run on sm_89 under nvcc: qualifier legality (CDP/rdc), the absence of CUDA error checking, thread-index width vs `Ty::Array { size: u64 }`, host-vs-device float contraction, the trap-flag storage mechanism, the Linux link tail, and the §6 recipe's operability.
+- **CUDA/hardware realizm (HW)** — attacked everything that must actually compile and run on sm_89 under nvcc: qualifier legality (CDP/rdc), the absence of CUDA error checking, thread-index width vs `Ty::Array { size: u64 }`, host-vs-device float contraction, the trap-flag storage mechanism, the Linux link tail, and the §6 recipe's operability.
 - **Contract coherence (CC)** — attacked the DESIGN against its own authority stack: the ADR-0022 D1 authority order, the D2 keep-test (the §2 transfer inventory's completeness — the test the doc itself proposed), the "sanctioned exception" framing, trap-visibility attribution, the erasure summary.
 - **Harness practicality (H)** — attacked the §6 vast.ai recipe as an operator runbook: image class, access/transfer shape, preflight, wall-time budget and parallelism, timeouts, reproducibility mechanism, cleanup and billing accounting.
 

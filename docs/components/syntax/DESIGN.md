@@ -23,7 +23,7 @@ Level-B AST nodes that *represent* Mapal-Cat (Level-A) constructs — they are d
 *inside* this category, never arrows of it. The Level-A object language lives in
 `docs/spec/category-ir.md` and is not restated here (errata E5: the
 category-keyword collision was already paid for; `category` is reserved-and-
-rejected via L0004 in favour of `type`).
+rejected via L0004 in favor of `type`).
 
 **Why categorical, here.** Two payoffs the diagram makes checkable. (1) The crate
 is the **degenerate pipe-and-filter** case (FRAMEWORK §7.1 final note): an
@@ -159,7 +159,7 @@ not part of the core `Dat` category diagram above):
 The passes are `Trn` objects with `t_from`/`t_to` projections into `Dat`. The
 whole crate is one composable chain in `Alg`: `parse` internally composes
 `lex ; parse_program ; (merge+sort)`, so the pipe-weld equation
-`t_to(lex) = t_from(parse_program) = Token*` holds (Coherence Law 1 specialised:
+`t_to(lex) = t_from(parse_program) = Token*` holds (Coherence Law 1 specialized:
 the pipe carries exactly `Token*`).
 
 | Pass (`Trn`) | `t_from` | `t_to` | Partiality | Semantics |

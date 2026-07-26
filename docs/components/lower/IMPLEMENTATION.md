@@ -1,7 +1,7 @@
 # lower — implementation map
 
 > The functor DESIGN.md ("Categorical model") → code. Each categorical object/morphism →
-> the file:symbol that realises it. Keep in sync WITH the code (FRAMEWORK §6.3):
+> the file:symbol that realizes it. Keep in sync WITH the code (FRAMEWORK §6.3):
 > a new morphism gets a row here in the same change that adds its code.
 
 Firewall (ADR-0014): **Level B only.** Every object/morphism below is one of the
@@ -10,7 +10,7 @@ describes a Mapal *program* as a category (that lives in `docs/architecture/cate
 `mapal_syntax::Program` in and `mapal_ir::CategoryIr` out are opaque typed `Trm` payloads.
 
 ## Objects (Dat) → code
-| Object | Form / shape | Realised at | State |
+| Object | Form / shape | Realized at | State |
 | --- | --- | --- | --- |
 | `𝒮` — surface AST | the parse-clean input category | `mapal_syntax::Program` (opaque `Trm` in) | built |
 | `ℐ` — sealed IR | the codomain category | `mapal_ir::CategoryIr` (opaque `Trm` out) | built |
@@ -24,7 +24,7 @@ describes a Mapal *program* as a category (that lives in `docs/architecture/cate
 | `Diagnostic*` (L1xxx sum) | the `⊕ Diagnostic*` codomain of the partial functor | `crates/mapal-lower/src/diag.rs:LCode` / `diag.rs:diag` | built |
 
 ## Morphisms (Trn / relations) → code
-| Morphism | Signature | Realising code | State |
+| Morphism | Signature | Realizing code | State |
 | --- | --- | --- | --- |
 | `lower` | `𝒮 ⇀ ℐ` | `crates/mapal-lower/src/lib.rs:lower` (orchestration) → `crates/mapal-lower/src/emit.rs:lower_program` | built |
 | `table` (Pass A) | `𝒮 → TypeTable` | `crates/mapal-lower/src/tys.rs:build` | built |

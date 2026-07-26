@@ -5,7 +5,7 @@
 
 | # | Rule (§) | Smell found | Proposed change | Payoff |
 | --- | --- | --- | --- | --- |
-| 1 | §4.4 / §7.4 strategy 2-category | Three backend crates will realise one contract `CategoryIr → TargetText`; no shared contract is declared yet | Fix a shared `Backend` trait + `TargetText` type by ADR **before** the first backend is written (the firm candidate in [categorical-model.md §7.5](../../architecture/categorical-model.md)) | Adding a target = adjoining an object; never edits the core |
+| 1 | §4.4 / §7.4 strategy 2-category | Three backend crates will realize one contract `CategoryIr → TargetText`; no shared contract is declared yet | Fix a shared `Backend` trait + `TargetText` type by ADR **before** the first backend is written (the firm candidate in [categorical-model.md §7.5](../../architecture/categorical-model.md)) | Adding a target = adjoining an object; never edits the core |
 
 ## Detail
 ### 1. Backend strategy 2-category

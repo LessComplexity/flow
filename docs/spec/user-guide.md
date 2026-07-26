@@ -771,7 +771,7 @@ fn read_and_process(path: String) -> Result<Data> {
 
 ### 7.3 Errors in parallel branches
 
-If any branch of a parallel fanout fails, the whole fanout fails. Other branches are either cancelled (if the executor supports it) or their results discarded:
+If any branch of a parallel fanout fails, the whole fanout fails. Other branches are either canceled (if the executor supports it) or their results discarded:
 
 ```flow
 data -> {

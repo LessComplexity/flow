@@ -583,7 +583,7 @@ Cargo: `slotmap = "1.0"` (runtime); dev-deps exactly `insta = "1.47.2"`, `propte
 
 | id | decision | why |
 |---|---|---|
-| D1 | All dataflow is edges; per-slot `Pair{slot,arity}`; constants are objects | LC-4/ADR-0013; analyses read adjacency only |
+| D1 | All dataflow is edges; per-slot `Pair{slot,arity}`; constants are objects | LC-4/ADR-0013; analyzes read adjacency only |
 | D2 | No HashMap in graph storage; SecondaryMap + insertion order | determinism is sacred (E2, HANDOFF §7.3); snapshots/dumps must be stable |
 | D3 | `Trace` not materialized; loops are inline cycles; regions recovered by SCC | CHANGES §1.3 is emphatic; one representation, not two |
 | D4 | `Object.name: Option<String>` added (spec §3.2 lacks it, §11.5 uses it) | dumps/debug; cosmetic reconciliation, recorded here not ERRATA |

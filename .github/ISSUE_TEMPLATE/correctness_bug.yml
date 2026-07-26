@@ -7,7 +7,7 @@ body:
       value: |
         **The interpreter defines the language.** If a backend disagrees with it, the backend is
         wrong — say which side you believe and why. A trap, a divergence, or an out-of-bounds is
-        observable behaviour: a change that deletes one is a bug even when the value is unused.
+        observable behavior: a change that deletes one is a bug even when the value is unused.
 
         Memory unsafety or an unsound proof that removes a check? That is [a private security
         report](https://github.com/LessComplexity/mapal/security/advisories/new), not this form.
@@ -16,7 +16,7 @@ body:
     id: repro
     attributes:
       label: Minimal reproducer
-      description: The smallest `.mapal` source (or IR, or command) that shows it. Smaller beats realistic.
+      description: The smallest `.mapal` source (or IR, or command) that shows it. Smaller beats realiztic.
       render: text
     validations:
       required: true

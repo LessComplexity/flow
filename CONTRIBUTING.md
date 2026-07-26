@@ -53,7 +53,7 @@ has an ADR arguing both sides.
 ## Before you write code: the model comes first
 
 Mapal is built with [`FRAMEWORK.md`](FRAMEWORK.md), and the compiler's own architecture is
-modelled with it (ADR-0014). Read §0–§4 once; it is the shortest path to understanding why
+modeled with it (ADR-0014). Read §0–§4 once; it is the shortest path to understanding why
 the code is shaped the way it is.
 
 The framework says a running system does exactly two things — it **holds and transforms
@@ -76,7 +76,7 @@ change. A morphism table beats three paragraphs of prose, every time.
 **2. No free-floating architecture (the grounding rule).** Every claim in a design names the
 `Dat`/`Trn`/`Loc`/`Trm` it concerns and maps to a real `file:symbol`, a `planned` item, or an
 explicit open question. "We should add a scheduling layer" is not a design. *"`path_plan`
-gains a morphism `grain : Region → ℕ`, deduced not stored, realised in
+gains a morphism `grain : Region → ℕ`, deduced not stored, realized in
 `crates/mapal-ir/src/path_plan.rs`"* is.
 
 Before you open the PR, run the **§4.5 coherence checklist** (FRAMEWORK §8) over what you
@@ -139,12 +139,12 @@ output at `-O0` or `-O2`, on one thread or all of them, and matches the interpre
 - `cargo test --workspace --release` — the whole argument, ~950 tests.
 - The LLVM **differential** suite emits `.ll`, compiles it, runs it and diffs against the
   oracle: 10 examples plus 320 generated programs, raw and rewritten, at both opt levels.
-  New emission behaviour belongs in it. It *skips itself* without `clang` — a skipped run
+  New emission behavior belongs in it. It *skips itself* without `clang` — a skipped run
   proves nothing, which is why CI fails on a skip.
 - Rewriter changes need the property suite (`crates/mapal-rewrite/tests/property.rs`): R1
   (`Done`/`Trapped`/`Diverged` classes never cross, output byte-exact), R2 (validate clean),
   determinism, idempotence.
-- A trap, a divergence and an out-of-bounds are **observable behaviour**. Deleting one is a
+- A trap, a divergence and an out-of-bounds are **observable behavior**. Deleting one is a
   bug even when the value is unused.
 
 ## Proving a performance change
@@ -232,7 +232,7 @@ tests skip without `nvcc`; compiling still catches emitter-wiring breaks).
   what you tried that did not work.
 - **PRs**: fill in the template. It asks for the model, the proof, and the affected numbers —
   the same three things this page is about.
-- Keep unrelated changes out of the diff. Reformatting plus a behaviour change in one PR means
+- Keep unrelated changes out of the diff. Reformatting plus a behavior change in one PR means
   neither can be reviewed.
 - **Licensing**: contributions are accepted under the repo's
   [Apache-2.0 with the LLVM exception](LICENSE) (Apache-2.0 §5, inbound = outbound). No CLA.

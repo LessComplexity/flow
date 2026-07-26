@@ -242,7 +242,7 @@ Deps: `mapal-ir`; dev-deps mirror llvm: `mapal-syntax`, `mapal-lower`, `mapal-in
 
 ## Review ledger
 
-Filled by the Phase 2 Stage 2 adversarial design review, 2026-07-18 — four lenses: **oracle fidelity (OF)** · **CUDA/hardware realism (HW)** · **contract coherence (CC)** · **harness practicality (H)**. 22 findings, all adjudicated CONFIRMED, all fixed in this revision; full record at `reviews/review-design-p6.md`. Two convergences: **HW-2 ≡ CC-1b** (the missing error-checking protocol and the missing error-return crossing are one defect seen from two lenses) and **H1 ≡ HW-6** (the same recipe gap). The D2 keep-test did its job: the review found the §2 inventory incomplete (CC-1a/b/c) — the first finding the Level-B apparatus has produced.
+Filled by the Phase 2 Stage 2 adversarial design review, 2026-07-18 — four lenses: **oracle fidelity (OF)** · **CUDA/hardware realizm (HW)** · **contract coherence (CC)** · **harness practicality (H)**. 22 findings, all adjudicated CONFIRMED, all fixed in this revision; full record at `reviews/review-design-p6.md`. Two convergences: **HW-2 ≡ CC-1b** (the missing error-checking protocol and the missing error-return crossing are one defect seen from two lenses) and **H1 ≡ HW-6** (the same recipe gap). The D2 keep-test did its job: the review found the §2 inventory incomplete (CC-1a/b/c) — the first finding the Level-B apparatus has produced.
 
 | id | lens | severity | claim (one line) | disposition |
 |---|---|---|---|---|
@@ -251,13 +251,13 @@ Filled by the Phase 2 Stage 2 adversarial design review, 2026-07-18 — four len
 | OF-3 | oracle fidelity | major | `Index`/`Update` bounds-guard C++ width rule missing (the S13 u8 class) | fixed — §1 op table + §3 |
 | OF-4 | oracle fidelity | minor | fold operand assembly not pinned verbatim ((acc, e) pair, acc slot 0, in-order) | fixed — §1 fold paragraph |
 | OF-5 | oracle fidelity | minor | array-typed `Fold` acc in device local memory: static bound + fallback unstated | fixed — §5 |
-| HW-1 | hardware realism | major | BC8 qualifier rule can emit illegal CUDA (launch-form op inside a `__device__` instantiation ⇒ CDP/rdc) | fixed — §1 BC8 three-case rule + §9 |
-| HW-2 | hardware realism | major | no CUDA error checking anywhere; error returns an unenumerated D→H crossing | fixed — §3 (exit 102 protocol) + §2 item 7 — ≡ CC-1b |
-| HW-3 | hardware realism | major | thread-index type unstated vs `Ty::Array { size: u64 }` | fixed — §1 (64-bit index arithmetic; guard alternative noted) |
-| HW-4 | hardware realism | minor | `-fmad=false` governs device code only; host contraction flags unpinned | fixed — §4 |
-| HW-5 | hardware realism | minor | `__device__` symbol flag ≠ the stated memcpy mechanism | fixed — Dat table + §3 (cudaMalloc'd flag) |
-| HW-6 | hardware realism | major | §6 recipe not operator-complete (image class, ssh/rsync shape, preflight, fallback, disk, deps) | fixed — §6 steps 1–4 — ≡ H1 |
-| HW-7 | hardware realism | minor | Linux link tail left as an open question | fixed — §6.6 default pinned + §10 closed |
+| HW-1 | hardware realizm | major | BC8 qualifier rule can emit illegal CUDA (launch-form op inside a `__device__` instantiation ⇒ CDP/rdc) | fixed — §1 BC8 three-case rule + §9 |
+| HW-2 | hardware realizm | major | no CUDA error checking anywhere; error returns an unenumerated D→H crossing | fixed — §3 (exit 102 protocol) + §2 item 7 — ≡ CC-1b |
+| HW-3 | hardware realizm | major | thread-index type unstated vs `Ty::Array { size: u64 }` | fixed — §1 (64-bit index arithmetic; guard alternative noted) |
+| HW-4 | hardware realizm | minor | `-fmad=false` governs device code only; host contraction flags unpinned | fixed — §4 |
+| HW-5 | hardware realizm | minor | `__device__` symbol flag ≠ the stated memcpy mechanism | fixed — Dat table + §3 (cudaMalloc'd flag) |
+| HW-6 | hardware realizm | major | §6 recipe not operator-complete (image class, ssh/rsync shape, preflight, fallback, disk, deps) | fixed — §6 steps 1–4 — ≡ H1 |
+| HW-7 | hardware realizm | minor | Linux link tail left as an open question | fixed — §6.6 default pinned + §10 closed |
 | CC-1a | contract coherence | major | transfer inventory incomplete: trap-flag initial zeroing (H→D, once per process) missing | fixed — §2 item 3 |
 | CC-1b | contract coherence | major | transfer inventory incomplete: CUDA error returns (D→H) missing | fixed — §2 item 7 + §3 — ≡ HW-2 |
 | CC-1c | contract coherence | major | transfer inventory incomplete: body-local literal construction cannot run mid-kernel via host-static+memcpy | fixed — §2 item 8 + §2 allocation bullet |
@@ -274,7 +274,7 @@ Filled by the Phase 2 Stage 2 adversarial design review, 2026-07-18 — four len
 
 ## As-built (S15) — implementation-review deltas, all applied pre-GPU
 
-The S15 implementation review (4 lenses: oracle fidelity · CUDA/hardware realism · contract coherence · llvm-parity+memory, over the WP-built crate) adjudicated **2 blockers + 4 majors + 5 minors**, all fixed before the GPU leg; the M3 sweep then ran green on first contact (640 nvcc compile-and-runs, zero divergences — the §6 recipe executed, box destroyed after, ≈$0.25). The deltas, each patched inline where it lives:
+The S15 implementation review (4 lenses: oracle fidelity · CUDA/hardware realizm · contract coherence · llvm-parity+memory, over the WP-built crate) adjudicated **2 blockers + 4 majors + 5 minors**, all fixed before the GPU leg; the M3 sweep then ran green on first contact (640 nvcc compile-and-runs, zero divergences — the §6 recipe executed, box destroyed after, ≈$0.25). The deltas, each patched inline where it lives:
 
 | # | class | delta | where |
 |---|---|---|---|

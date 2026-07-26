@@ -29,7 +29,7 @@ Please include:
 - whether it reproduces through the interpreter, the LLVM backend, the CUDA backend, or all
   three.
 
-This is a small project, currently maintained by one person. Realistic expectations, stated
+This is a small project, currently maintained by one person. Realiztic expectations, stated
 honestly rather than as a service-level promise: an acknowledgement within about a week, an
 assessment after that, and a fix on `main` as soon as one exists. You will be credited in the
 commit and the advisory unless you ask not to be. Please give a fix a reasonable chance to land
@@ -54,7 +54,7 @@ before publishing.
   write is untrusted code in the same sense a `.c` file is; there is no isolation claim to
   break.
 - **A program that traps, diverges, or runs out of memory** — traps and divergence are defined
-  behaviour (the interpreter is the specification).
+  behavior (the interpreter is the specification).
 - **Miscompilation with no memory-safety consequence.** That is a correctness bug, and this
   project takes those extremely seriously — but they belong in a public issue with a
   reproducer, where they can be fixed in the open. Use the *Correctness bug* template.
@@ -65,7 +65,7 @@ before publishing.
 ## No hardening claims
 
 Mapal makes exactly one safety-shaped guarantee, and it is narrow: **the compiled program's
-observable behaviour matches the interpreter's, byte for byte, at any optimisation level or
+observable behavior matches the interpreter's, byte for byte, at any optimization level or
 thread count** — traps included. It makes no claim about sandboxing, isolation, constant-time
 execution, side-channel resistance, or resistance to a hostile input program. Do not deploy it
 where any of those matter.

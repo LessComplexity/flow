@@ -9,7 +9,7 @@ of graph deduction automatically."*
 ## The claim, made precise
 
 An AST is syntax: dataflow, aliasing, effects, and loop dependence must be
-*reconstructed* by analysis, and in pointer languages those analyses are approximate
+*reconstructed* by analysis, and in pointer languages those analyzes are approximate
 or undecidable (alias analysis; the polyhedral dependence industry). In Category-IR
 the properties other compilers fight for are **invariants by construction**:
 

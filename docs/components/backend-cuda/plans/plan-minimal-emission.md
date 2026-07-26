@@ -20,7 +20,7 @@ expected llvm delta is small to none; measured, not assumed).
 
 ## 1. Categorical model (Dat + Trn)
 
-Why category theory buys anything here: the emitter today realises the functor
+Why category theory buys anything here: the emitter today realizes the functor
 `F_CUDA : Mapal-Cat → C-text` morphism-by-morphism — every edge becomes a statement,
 every object a local. But the functor's obligation is only that the **composite**
 agrees with the oracle (R1); the factorisation into statements is an emission

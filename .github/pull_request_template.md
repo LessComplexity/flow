@@ -47,11 +47,11 @@ Re-measure them here, or state plainly that they are now stale. "None" is a vali
 
 - [ ] Docs reconciled **in this PR**, not later — morphism table, `IMPLEMENTATION.md` `file:symbol`
       rows, `STATUS.md` (FRAMEWORK §6.3).
-- [ ] New tests were **negative-controlled**: I broke the behaviour on purpose and watched the
+- [ ] New tests were **negative-controlled**: I broke the behavior on purpose and watched the
       test fail. (A test that passes wrongly is worse than none.)
 - [ ] Ran the §4.5 coherence checklist (FRAMEWORK §8) — no data read where nothing put it, every
       cross-location dependency mediated by a transmission.
-- [ ] Observable behaviour is unchanged where it should be: traps still trap, divergence still
+- [ ] Observable behavior is unchanged where it should be: traps still trap, divergence still
       diverges, output byte-identical at `-O0` and `-O2`, one thread and many.
 - [ ] Any documented rule this violates is either fixed or annotated with an explicit `Note:`
       exception.

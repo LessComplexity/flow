@@ -341,7 +341,7 @@ To run, it must be **placed** at a location. The naive formalization — a funct
 
 - a validation runs in the client _and_ again on the server — one transformation,
   two locations;
-- a render runs server-side, and again client-side under optimistic UI;
+- a render runs server-side, and again client-side under optimiztic UI;
 - a create exists as a function in application RAM _and_ as the statement
   executed inside the database.
 
@@ -380,7 +380,7 @@ graph TB
 of placements projecting to `T`. It may be empty (an unused transformation), a
 singleton, or larger. A transformation placed twice has two `TrnLoc` rows — and
 the two may be _different code_ (a function in one place, a stored procedure in
-another) realising the same `t_from → t_to` signature. That is the strategy shape
+another) realizing the same `t_from → t_to` signature. That is the strategy shape
 (§5). The same holds for data: one type materialised as a DB row, a heap object,
 and bytes on a wire is three `DataLoc`s over one `Dat`; a transmission is the
 bridge between two such `DataLoc`s.
@@ -396,7 +396,7 @@ the wire by design is what we call a **service**. What a component _owns_ is
 | Deduced view   | Definition                                            | Semantics                         |
 | -------------- | ----------------------------------------------------- | --------------------------------- |
 | `data(c)`      | `{ dl : dl_cmp(dl) = c }`                             | its materialised data, with sites |
-| `behaviour(c)` | `{ tl : tl_cmp(tl) = c }`                             | its placed transformations        |
+| `behavior(c)` | `{ tl : tl_cmp(tl) = c }`                             | its placed transformations        |
 | `channels(c)`  | `{ ts : ts_cmp(ts) = c }`                             | its transmissions                 |
 | `locs(c)`      | image of `dl_loc`/`tl_loc` over the above             | the sites it occupies             |
 | `depends-on`   | `c → c'` iff a `TrnLoc` of `c` consumes `c'`'s output | the dependency graph              |
@@ -408,7 +408,7 @@ shared transmission: a port of `A` and a port of `B` naming the same `Trm`
 transmission becomes **internal**. Gluing is associative and unital (the identity
 is the empty pass-through), so components and their interfaces form a category
 **`Comp`**: **objects are interfaces**, **morphisms are components**, composition
-is port-matching. A composite service's data, behaviour, and locations are
+is port-matching. A composite service's data, behavior, and locations are
 _deduced_ from its parts — never re-described.
 
 **Mapping to classical architecture (Fielding).** A configuration of
@@ -437,10 +437,10 @@ parallel functors `F, G`):
   `log : Id ⇒ W`; naturality says wrapping commutes with the dependency graph —
   it applies uniformly and disturbs nothing.
 - **Middleware / decorator.** `m : Id ⇒ Id`; `m_X : X → X` is the decoration;
-  naturality `m_Y ∘ f = f ∘ m_X` is the law that it adds behaviour without
+  naturality `m_Y ∘ f = f ∘ m_X` is the law that it adds behavior without
   changing what any call computes.
 - **Strategy / provider swap.** Two `TrnLoc`s over the _same_ `Trn` are parallel
-  realisations of one `t_from → t_to` contract — parallel arrows fitting one
+  realizations of one `t_from → t_to` contract — parallel arrows fitting one
   slot, the contract their shared boundary. A live implementation vs. a test
   double, interchangeable backends, pluggable algorithms — all this shape.
 
@@ -465,7 +465,7 @@ The architecture is **well-formed** iff these hold. They are the review checklis
    carries the datum. _A cross-location dependency is mediated by a transmission,
    never a direct reach._ Fail ⟹ an unmediated cross-location call.
 5. **Composition soundness.** When `C = A ⋈ B`: `data(C) = data(A) ⊎ data(B)`,
-   `behaviour(C) = behaviour(A) ⊎ behaviour(B)`, `locs(C) = locs(A) ∪ locs(B)`,
+   `behavior(C) = behavior(A) ⊎ behavior(B)`, `locs(C) = locs(A) ∪ locs(B)`,
    and each glued port becomes an internal `TrmCmp`. A composite's views are
    deduced from its parts, not redescribed.
 6. **`runsAt` is a relation.** The map `Trn → 𝒫(Loc)` may be empty, a singleton,
@@ -484,7 +484,7 @@ These are not separate rules bolted on; each is a corollary of the model above.
 - **Isolate effects behind a swappable boundary.** A component's outward
   transmissions should land on a **port** (a `Trm` typed only by its `carries`
   contract), never on a concrete external component. The concrete partner is
-  glued in from outside. Then `behaviour(core)` is _invariant_ under which
+  glued in from outside. Then `behavior(core)` is _invariant_ under which
   adapter is attached — testability and swappability become structural facts, not
   virtues (the hexagonal instantiation, §7.4). This is the strategy shape (§4.4)
   applied to boundary transmissions.
@@ -546,7 +546,7 @@ agreement.
 2. **Read before changing.** Before modifying an area, read its design doc to
    understand the intended structure. Keep implementation aligned with intent.
 3. **Update after changing.** When code changes a documented relationship — a new
-   field (a new morphism), changed behaviour, an added boundary — **update the
+   field (a new morphism), changed behavior, an added boundary — **update the
    model and morphism table in the same change.** A new field is a new morphism:
    write its signature, partiality, and semantics, and decide _stored vs deduced_,
    before writing the migration.
@@ -623,7 +623,7 @@ graph LR
 **The constraint, as a law.** The `depends-on` graph is a linear chain; each
 component holds exactly one `TrnLoc` of one transformation `fᵢ`; and for every
 edge, `t_to(fᵢ) = t_from(fᵢ₊₁)`. That single equation _is_ "pipe-and-filter" —
-and it is Coherence Law 1 specialised: the only thing delivering `fᵢ₊₁`'s input
+and it is Coherence Law 1 specialized: the only thing delivering `fᵢ₊₁`'s input
 is the pipe, so the pipe must carry exactly that type. A filter whose input type
 isn't the upstream output type is a pipe that cannot be welded — rejected before
 anything runs.
@@ -680,7 +680,7 @@ mediation is one-directional; `depends-on` carries no `Server → Client` edge.
 copy is a different placement from the authoritative one, so any `mutate` that
 must produce authoritative data reads against the real store and can only be
 placed at `Server`. _Validation that runs twice is honest_ — `validate` has two
-`TrnLoc`s (snappy client UI, real server enforcement), parallel realisations of
+`TrnLoc`s (snappy client UI, real server enforcement), parallel realizations of
 one contract, not a redundancy to delete. The server bottleneck is structural:
 every client's `depends-on` edge points at it, visible on the diagram before it
 shows up in production. (Lift the initiation constraint and you have
@@ -737,10 +737,10 @@ in no component's placements.
 A domain core that touches the outside world only through abstract **slots**. The
 core never names a database driver or an HTTP client; it declares a **port**, and
 an **adapter** is plugged in from outside to fulfil it. This is the
-canonical realisation of "isolate effects behind a swappable boundary" (§5).
+canonical realization of "isolate effects behind a swappable boundary" (§5).
 
 `Trn` — `decide : Command → Draft` (pure core rule); `save : Draft → Result ⊸`
-is the **port contract**; `pg_save` and `mem_save` are _parallel_ realisations of
+is the **port contract**; `pg_save` and `mem_save` are _parallel_ realizations of
 it — same signature, different code. `Loc` — `Core`, and each adapter's concrete
 site (`Postgres`, `Heap`, a test double). **The port has no `Loc`** — it is an
 interface, not a place.
@@ -752,8 +752,8 @@ graph LR
     PG["PgAdapterCmp<br/>TrnLoc: pg_save"]
     Mem["MemAdapterCmp<br/>TrnLoc: mem_save"]
     Core -->|"t_port : Draft"| Port
-    PG -.->|"realises (2-cell)"| Port
-    Mem -.->|"realises (2-cell)"| Port
+    PG -.->|"realizes (2-cell)"| Port
+    Mem -.->|"realizes (2-cell)"| Port
     style Core fill:#cf7fcf,color:#fff
     style Port fill:#f7c04f,color:#000
     style PG fill:#cf7fcf,color:#fff
@@ -770,7 +770,7 @@ mediating `Trm` is identified by contract, not by partner.
 boundary transmissions: each adapter is a parallel arrow over one contract;
 choosing one is selecting a 2-cell. _Testability is structural_:
 `Core ⋈ TestDouble` is a valid composite with **zero change to the core's
-placements** — `behaviour(Core)` is invariant under which adapter is glued in.
+placements** — `behavior(Core)` is invariant under which adapter is glued in.
 _Extensibility is adjoining a component._ The honest cost: every port needs at
 least one adapter, and each adapter is a real component to maintain — for a system
 with one backend forever, the indirection earns nothing.

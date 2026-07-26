@@ -11,7 +11,7 @@ Built by [`build_mapal_icons.py`](build_mapal_icons.py) with `fontTools`.
 
 ## Why not patch a Nerd Font
 
-Patching redistributes someone else's font under their licence. A separate font we author can
+Patching redistributes someone else's font under their license. A separate font we author can
 be shipped freely, and every modern terminal does font fallback — so this composes with
 whatever Nerd Font you already use instead of replacing it.
 

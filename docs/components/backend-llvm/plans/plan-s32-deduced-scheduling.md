@@ -114,7 +114,7 @@ splits: **geometry from the graph, constants from the profile.**
 Sapir, S32: *"we must know from the DAG to notate per graph area (subgraph) the parameters for
 good parallelism — from tile, panels and now even slices — so the backend can structure it in a
 way the runtime can do the optimal assignment."* That is the unifying statement this plan is
-really about, and it reorganises the three rungs into one artifact.
+really about, and it reorganizes the three rungs into one artifact.
 
 **There are three nested granularities. Only two are derived.**
 

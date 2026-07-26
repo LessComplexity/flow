@@ -67,7 +67,7 @@ morphism set, and the purity notion is the one DCE already uses for the same rea
 
 Deliberately conservative: `Widen`, `Iota` and `Fill` are total and would be admissible, but
 they are absent from `is_pure` and adding them is a separate, testable change. Refusing a
-legal rewrite costs an optimisation; permitting an illegal one costs the guarantee the project
+legal rewrite costs an optimization; permitting an illegal one costs the guarantee the project
 rests on.
 
 ## Acceptance — as built

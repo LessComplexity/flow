@@ -35,7 +35,7 @@ Three payoffs. (1) **§8.5 piecewise correctness is the code shape**: `emit` wal
 
 A recognized `TileSite` (mapal-ir's record: geometry + per-read coefficients +
 the S28 `ksplit` decomposition) carries ONE `t_from→t_to` contract — per-cell
-op/operand/k-order exact (R1). Each rung is a parallel `TrnLoc` realisation of
+op/operand/k-order exact (R1). Each rung is a parallel `TrnLoc` realization of
 that contract, selected by an **emitter-local predicate** cashing facts the
 record already holds (the standing rung doctrine: rungs 2/3/B needed zero
 mapal-ir change; A3 cashes the new `ksplit` morphism). Ladder direction and
@@ -113,7 +113,7 @@ mapal_trap(u32) -> !          // 0 = div_zero, 1 = index_oob; stderr "flow trap:
 mapal_time_ms() -> f64        // the `time` builtin's clock read: ms since one process-lifetime
                              // monotonic epoch (`OnceLock<Instant>`), so two reads are
                              // non-decreasing and their difference is real elapsed ms
-mapal_rt_alloc(i64 bytes, i64 align) -> *mut u8   // the heap-lowering arena (BL9); uninitialised,
+mapal_rt_alloc(i64 bytes, i64 align) -> *mut u8   // the heap-lowering arena (BL9); uninitialized,
 mapal_rt_free_all()                               // like the `alloca` it replaces
 ```
 

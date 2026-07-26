@@ -1,6 +1,6 @@
 # Mapal — VS Code support
 
-Puts the **actual Mapal logo** on `.mapal` files, plus comment and bracket behaviour.
+Puts the **actual Mapal logo** on `.mapal` files, plus comment and bracket behavior.
 
 ```
 package.json                 language registration + the file icon
@@ -95,7 +95,7 @@ identifier itself, so it wins on position however the patterns are ordered. That
 `#binding` and `#call-position` carry an explicit negative lookahead listing every builtin and
 `ret`; without it, `-> println;` scoped `println` as a variable. `scope_test.py` asserts that
 exclusion covers every builtin, so adding one to `#keywords` and forgetting the exclusion fails
-the test rather than quietly mis-colouring.
+the test rather than quietly mis-coloring.
 
 It has the **opposite precedence** to the Neovim file: TextMate takes the *first* matching
 pattern, Vim the *last*. So this file is ordered most-specific first and
@@ -105,7 +105,7 @@ goes at the other end of the other.
 And it is **less capable in one specific way**: `x -> name;` is lexically identical whether
 `name` is a new variable or a call to a no-value function. The Vim file resolves it by scanning
 the buffer for `fn` declarations; TextMate has no way to know what has been declared, so here
-every `-> name;` reads as a binding. A terminal call to your own function will be coloured as a
+every `-> name;` reads as a binding. A terminal call to your own function will be colored as a
 variable.
 
 That divergence is the argument for not maintaining two grammars forever. The real fix is one

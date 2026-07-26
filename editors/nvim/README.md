@@ -8,12 +8,12 @@ non-authoritative: a tree-sitter grammar is deferred until it can be derived fro
 ftdetect/mapal.vim        *.mapal -> filetype=flow
 syntax/mapal.vim          highlighting
 plugin/mapal_icon.lua     registers the file icon automatically, adds :MapalIcon
-lua/mapal/icon.lua        icon module (glyph, colour, diagnostics)
+lua/mapal/icon.lua        icon module (glyph, color, diagnostics)
 test/run.sh              assert the highlighting decisions
 ```
 
 Groups link to standard groups via `hi default link`, so your colorscheme drives the actual
-colours and can override any of them.
+colors and can override any of them.
 
 ## Install
 
@@ -89,8 +89,8 @@ Needs a [Nerd Font](https://www.nerdfonts.com/) either way.
 | `:label { }` and `-> :label;`                                                   | `flowLabel`                  | `Label`                                   |
 | `category`                                                                      | `flowReserved`               | `Error` — reserved-and-rejected (ADR-0006) |
 
-Guard arrows are split-coloured on purpose: the **chrome** (leading `-`, trailing `->`) reads
-as flow plumbing, identical to a plain arrow, while the **discriminant** inside gets the colour
+Guard arrows are split-colored on purpose: the **chrome** (leading `-`, trailing `->`) reads
+as flow plumbing, identical to a plain arrow, while the **discriminant** inside gets the color
 of what it is — `true`/`false` as `Boolean`, `42` as `Number`, `_` as `Special`, `Some` as
 `Type`.
 
@@ -100,7 +100,7 @@ of what it is — `true`/`false` as `Boolean`, `42` as `Number`, `_` as `Special
 no-value function**. Nothing in the token stream separates them. The syntax file resolves it
 by scanning the buffer for `fn <name>` declarations and treating only those as calls;
 everything else is a binding. Re-scanned on `BufEnter`, `BufWritePost`, `TextChanged` and
-`InsertLeave`, so a newly written `fn` starts colouring its call sites immediately.
+`InsertLeave`, so a newly written `fn` starts coloring its call sites immediately.
 
 A correct answer needs the compiler's own name resolution — LSP semantic tokens (ADR-0008).
 This is a heuristic that is right for every program in `examples/`.
@@ -117,6 +117,6 @@ as an error. Exits non-zero on failure.
 
 Worth running after **any** edit to `syntax/mapal.vim`. That file depends on Vim's
 last-match-wins rule and its header warns against reordering; the test pins outcomes rather
-than ordering, so a reorder that changes behaviour fails loudly instead of silently
+than ordering, so a reorder that changes behavior fails loudly instead of silently
 mis-painting code. It has already earned its place twice — it caught `iota` being mis-painted
 as a user function, and a false failure of its own from a substring match.

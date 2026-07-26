@@ -169,7 +169,7 @@ Bend"). Sources: [Bend README](https://github.com/HigherOrderCO/Bend),
 [hvm.cu](https://raw.githubusercontent.com/HigherOrderCO/HVM/main/src/hvm.cu),
 [Futhark PLDI'17](https://hjemmesider.diku.dk/~zgh600/Publications/pldi17.pdf),
 [Munksgaard PhD 2023](https://di.ku.dk/english/research/phd/phd-theses/2023/Philip_Munksgaard_Thesis.pdf),
-[Accelerate ICFP'13](https://benl.ouroborus.net/papers/2013-accoptim/optimising-ICFP2013-sub.pdf),
+[Accelerate ICFP'13](https://benl.ouroborus.net/papers/2013-accoptim/optimizing-ICFP2013-sub.pdf),
 [Dex ICFP'21](https://arxiv.org/abs/2104.05372),
 [folding-floats (Futhark blog)](https://futhark-lang.org/blog/2024-09-05-folding-floats.html),
 [PPoPP'19 incremental flattening](https://elsman.com/pdf/ppopp19.pdf).

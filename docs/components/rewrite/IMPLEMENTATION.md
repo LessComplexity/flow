@@ -5,7 +5,7 @@
 
 ## Objects (Dat) → code
 
-| Object | Form / shape | Realised at | State |
+| Object | Form / shape | Realized at | State |
 | --- | --- | --- | --- |
 | `RewritePlan` (alias?/constify?/drop/fuse?/inline?/lift?) | product of 6 plan channels | `crates/mapal-rewrite/src/plan.rs:RewritePlan` | built |
 | `FusionSpec` | product (f, g) | `plan.rs:FusionSpec` | built |
@@ -19,7 +19,7 @@
 
 ## Morphisms / passes (Trn) → code
 
-| Pass | Signature | Realised at | State |
+| Pass | Signature | Realized at | State |
 | --- | --- | --- | --- |
 | `analyze_const_fold` | `&CategoryIr → RewritePlan` (layer 3: oracle-exact folds, integer/bool identities, proj∘pack, index-of-const, **index∘update L-a (ADR-0021 §3: const equal in-bounds indices ⇒ alias to the Update value operand)**, phi-select; P1/P2 + token guard in `forward`) | `src/equations.rs:analyze_const_fold` | built |
 | `analyze_cse` | `&CategoryIr → RewritePlan` (layer 4: value numbering, BTreeMap string keys, positions not id bits; excludes non-Temporary/token/SCC/internal-pack; **no constant dedup** — P1, headroom) | `src/graph_rewrites.rs:analyze_cse` | built |
@@ -32,7 +32,7 @@
 
 ## Test / harness → code
 
-| Item | Realised at |
+| Item | Realized at |
 | --- | --- |
 | testgen (random Core programs over the public builder; closed+open, default+trap_free; Update, multi-loop, `LiftFold`, `LiftMap` with `K >= 1` — feeds P5–P7) | `tests/testgen/mod.rs` |
 | identity anchor (10 examples, byte-equal + validate + lint; two-loop rewritable pin; RW8 nested-loop decline) | `tests/identity.rs` |
@@ -55,7 +55,7 @@ trap: `Trapped(DivZero)` → `Done(0)`. The two halves of the crate now agree by
 identity law ("does this body denote `id`?") read the same list, because they are the same
 question. Cost: a body containing `Widen`/`Iota`/`Fill` (total, but outside `is_pure`) no
 longer forwards. Admitting them is a separate, testable change; refusing a legal rewrite costs
-an optimisation, allowing an illegal one costs R1. Full account:
+an optimization, allowing an illegal one costs R1. Full account:
 `plans/plan-s34-identity-map-trap.md`.
 
 **S29 — `TimeMs` needed one line of code and no rule.** The clock read is excluded from every

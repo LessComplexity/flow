@@ -88,7 +88,7 @@ Status detail: [`docs/STATUS.md`](STATUS.md) (global roll-up, HANDOFF §7.1.1).
 | `Trn` / `Dat` | Placements | Why it matters |
 | --- | --- | --- |
 | `validate` | debug-assert after seal AND the property-test harness — never a mandatory production pass | the oracle's independence is the point; "seal Ok ⇒ validate empty" is a *tested* law, not a call chain |
-| running a Mapal program | `interp` (built) AND each backend target (planned) | one meaning, many realisations — the differential tests are the commuting squares; the interp fibre is authoritative (HANDOFF §7.3) |
+| running a Mapal program | `interp` (built) AND each backend target (planned) | one meaning, many realizations — the differential tests are the commuting squares; the interp fibre is authoritative (HANDOFF §7.3) |
 | `Print{newline}` effect | interp's writer-style token now; each backend's runtime later | E2: effect order is semantics — every placement must observe the same token order |
 
 ## 5. Coherence checklist (§4.5 / §8) against the implementation

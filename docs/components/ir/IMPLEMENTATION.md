@@ -1,7 +1,7 @@
 # ir — implementation map
 
 > The functor DESIGN.md ("Categorical model") → code. Each categorical object/morphism →
-> the file:symbol that realises it. Keep in sync WITH the code (FRAMEWORK §6.3):
+> the file:symbol that realizes it. Keep in sync WITH the code (FRAMEWORK §6.3):
 > a new morphism gets a row here in the same change that adds its code.
 
 Scope: **Level B only** (ADR-0014) — these rows map the *compiler's own* Rust types (`Dat`)
@@ -11,7 +11,7 @@ model is `Dat` + `Alg` and no placement/transmission rows exist.
 
 ## Objects (Dat) → code
 
-| Object | Form / shape | Realised at | State |
+| Object | Form / shape | Realized at | State |
 | --- | --- | --- | --- |
 | `CategoryIr` | product (sealed graph) | `crates/mapal-ir/src/graph.rs:CategoryIr` | built |
 | `Object` | product (graph node) | `crates/mapal-ir/src/graph.rs:Object` | built |
@@ -27,7 +27,7 @@ model is `Dat` + `Alg` and no placement/transmission rows exist.
 
 ## Morphisms (Trn / relations) → code
 
-| Morphism | Signature | Realising code | State |
+| Morphism | Signature | Realizing code | State |
 | --- | --- | --- | --- |
 | `Object.ty` | `Object → Ty` (total) | `crates/mapal-ir/src/graph.rs:Object` (`ty` field) | built |
 | `Object.kind` | `Object → ObjectKind` (total) | `crates/mapal-ir/src/graph.rs:Object` (`kind` field) | built |
@@ -117,8 +117,8 @@ the categorical model does not name, and the resolution:
   as total morphisms rather than deduced (DESIGN morphism table), so no divergence — recorded for the
   future reader who might otherwise "deduce them away."
 - **§5.1-notation helpers have no standalone model row.** `ty.rs:Ty::is_numeric`/`is_integer`/
-  `is_printable` realise the `N`/`I`/`P` notation of the §5.1 table; `product_arity`/
-  `product_arity_u32`/`component_ty` realise its arity/slot mechanics. `product_arity_u32` also carries
+  `is_printable` realize the `N`/`I`/`P` notation of the §5.1 table; `product_arity`/
+  `product_arity_u32`/`component_ty` realize its arity/slot mechanics. `product_arity_u32` also carries
   an implementation refinement beyond the model (reviewer F4/SND-3): arity is computed as `u64` and a
   product whose arity exceeds `u32::MAX` is rejected as not slot-addressable, because `Pair{arity:u32}`
   cannot name such a slot. These are the machinery *of* the I2/I-RET rows, not separate morphisms.
@@ -126,7 +126,7 @@ the categorical model does not name, and the resolution:
   `has_self_loop`/`object_seq`/`escape_reach`/`TileAffine` (the tile walker's checked coefficient
   accumulator — `add`/`scale` per axis, overflow ⇒ refuse), `validate.rs:reachable`/`build_scc_membership`/`loopback_state_source`/
   `two_tuple`, `builder.rs:mint_object`/`add_edge`/`dest_target`/`emit_to_dest`/`array_size_of`. They
-  realise the deduced-morphism and constructor rows above.
+  realize the deduced-morphism and constructor rows above.
 - **`TimeMs` has a Mermaid label but no golden snapshot.** `mermaid.rs:edge_label` renders it `"TimeMs"`; the §16 golden set is the fixed (a)–(i) graph catalogue and none of them read a clock, so the label is covered only by the lint rules (quoting/one-arrow-style), not by a snapshot. Deliberate — the dump is exercised end-to-end by the lower/llvm `time` tests; add a golden only if a `time` graph shape ever needs pinning.
 - **DESIGN §5's `Operation` listing lags the enum by four items (pre-S29 debt, flagged not fixed).** `graph.rs:Operation` has 34 variants; §5/§5.1 now carry `TimeMs` (added this session, since the model changed) but still omit `Iota`/`Fill` (ADR-0029 stage 1, S20), `Widen` (ADR-0029 amendment, S21) and the ADR-0027 `captures` field on `Map`/`Fold`. The code is the truth for those; the rows in this file are complete. Recorded so a reader does not take §5 as exhaustive.
 - **`loc.rs:SourceLoc` utility methods** (`new`/`empty_at`/`len`/`is_empty`) are datum conveniences,

@@ -73,7 +73,7 @@ human:
 - **`.flow` → `.mp`** was the first choice — short, obvious. It is **MetaPost**. Every Vim and
   Neovim install ships `syntax/mp.vim`, which sources METAFONT's groups and wins the filetype
   race, so `editors/test.sh` failed 29 highlighting assertions with `mfNumeric` leaking in.
-  GitHub's Linguist would have mislabelled all 49 source files the same way. Nobody would have
+  GitHub's Linguist would have mislabeled all 49 source files the same way. Nobody would have
   thought to test "does the extension we picked already belong to someone" — the editor suite
   did it for free.
 - **`.mp` → `.mapal`**, after checking the alternatives against Linguist's `languages.yml`
@@ -124,7 +124,7 @@ lie. This ADR is the pointer that explains why.
 
 The emitter snapshots were the one non-mechanical part: renaming `flow_main` changes every
 golden `.ll` and `.cu`. Those files are *expected output*, so they were re-pinned, and the
-**differential suite is what proves behaviour did not move** — the goldens only prove the text
+**differential suite is what proves behavior did not move** — the goldens only prove the text
 did not move for any other reason.
 
 ## Alternatives rejected
@@ -180,7 +180,7 @@ availability survives only in other languages, precise technical terms, and inve
 
 - [x] `cargo build --workspace --release` clean after every phase of the rename.
 - [ ] `cargo test --workspace --release` green, with the differential proving observable
-      behaviour unchanged (goldens change; behaviour does not).
+      behavior unchanged (goldens change; behavior does not).
 - [ ] `sh editors/test.sh` green with filetype `mapal` and scope `source.mapal`.
 - [ ] No `flow` identifier, symbol, environment variable, extension, crate or scope name left
       in living code or docs — every remaining occurrence is either the dataflow *construct*
