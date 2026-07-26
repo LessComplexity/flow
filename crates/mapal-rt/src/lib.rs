@@ -76,7 +76,7 @@ pub extern "C" fn mapal_trap(kind: u32) -> ! {
     };
     // Flush any buffered stdout first (belt-and-braces; prints already flush).
     let _ = io::stdout().flush();
-    eprintln!("flow trap: {msg}");
+    eprintln!("mapal trap: {msg}");
     std::process::exit(101);
 }
 

@@ -1,0 +1,10 @@
+// Oracle sibling of transpose_1024.mapal — 16x16, interpreter-sized.
+fn main() {
+    256 -> iota -> ia;
+    ia -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    256 -> iota -> ib;
+    ib -> map { t -> a[(t % 16) * 16 + t / 16] } -> b;
+    b[0] -> println;
+    b[255] -> println;
+    b[1] -> println;
+}

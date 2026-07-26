@@ -1,0 +1,17 @@
+// gather / irregular-read class: y[i] = x[idx[i]] over 1M f32.
+// The index is DATA-DEPENDENT, so bounds_proof cannot discharge the check and
+// no affine read record exists: neither tiling nor bounds elision applies.
+// Prefetchers see a scattered stream. This is the shape where the graph
+// deduction has the least to offer, which is exactly why it is measured.
+fn main() {
+    1048576 -> iota -> ix;
+    ix -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> x;
+    ix -> map { t -> (t * 1021 + 12347) % 1048576 } -> idx;
+    () -> time -> t0;
+    idx -> map { j -> x[j] } -> y;
+    () -> time -> t1;
+    y[0] -> println;
+    y[1048575] -> println;
+    "iter ms=" -> print;
+    t1 - t0 -> println;
+}

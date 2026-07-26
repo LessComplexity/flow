@@ -97,9 +97,9 @@ and gave conv2d **−25% at one thread**. A pattern-matching optimizer needs two
 
 **"Good architecture" becomes a check.** The compiler's own design is modeled as data,
 transformations, locations and transmissions, with coherence laws a design either satisfies or
-fails -> a datum read where nothing put it is a _failed law_, not a matter of taste. That is
-how the conv2d measurement bug was found: the timed region contained a transmission (the OS
-handing over physical pages) that the model required to be declared somewhere, and it was not.
+fails -> a datum read where nothing put it is a _failed law_, not a matter of taste. Those laws
+located a live measurement bug: the timed region carried an undeclared transmission, the OS
+handing over physical pages.
 
 Checkable rules, not machine-checked proof. The model is in
 [`docs/architecture/categorical-model.md`](docs/architecture/categorical-model.md) (ADR-0014),
@@ -131,16 +131,25 @@ below.
 
 ### Other shapes — M4 Pro
 
-| workload               |        Mapal | C++ naive-mt | NumPy 1t |
-| ---------------------- | -----------: | -----------: | -------: |
-| FIR filter, 1M samples |  **0.27 ms** |         1.42 |     6.10 |
-| conv2d 3×3, 1024×1024  | **0.089 ms** |         0.14 |     1.55 |
+| workload                     | class           |         Mapal | C++ naive-mt | NumPy 1t |
+| ---------------------------- | --------------- | ------------: | -----------: | -------: |
+| FIR filter, 1M samples       | compute         |   **0.27 ms** |         1.42 |     6.10 |
+| conv2d 3×3, 1024×1024        | compute         |  **0.089 ms** |         0.14 |     1.55 |
+| saxpy, 1M                    | streaming       |       0.17 ms |         0.13 |     0.16 |
+| sum reduction, 1M            | reduction       |       0.58 ms |         0.89 |     0.10 |
+| transpose, 1024²             | data movement   |  **0.229 ms** |         0.25 |     0.78 |
+| gather `x[idx[i]]`, 1M       | irregular reads |  **0.140 ms** |         0.15 |     2.04 |
 
-conv2d read as a 3.2× **loss** for five sessions. Eight in-kernel hypotheses were refuted by
-measurement; the cause was the benchmark -> the timed region included the output array's
-first-touch page-zeroing, which `std::vector`'s zero-fill pre-pays outside the C++ timer. Per
-core it is now 1.21× **ahead** on NEON and AVX2:
+Per core, conv2d is 1.21× ahead of naive C++ on NEON and AVX2:
 [conv2d-per-core-gap.md](docs/performance/conv2d-per-core-gap.md).
+
+The lower four rows are not compute-bound, and they set the honest boundary of the claim.
+Threaded, Mapal takes transpose and gather and loses saxpy. **Single-threaded it loses all
+four**: streaming and permutation kernels are not `tile_plan` sites, so they emit scalar loops
+while matmul/fir/conv2d get the vectorized one — 3.7× on saxpy at one thread. Measured, with the
+disassembly, in [shape-ladder-v2.md](docs/performance/shape-ladder-v2.md). NumPy's `sum` is
+pairwise; a Mapal fold is left-to-right by definition, so that cell is a semantics difference as
+much as a speed one.
 
 NumPy has no threaded kernel for either shape (`np.correlate` is single-threaded C; conv2d is a
 Python loop over nine array slices), so that column is not like-for-like.
@@ -307,14 +316,7 @@ so neither resolves names the way the compiler does (ADR-0008).
 3. ~~**Per-region scheduling**~~ — mostly done and on by default. Remaining: derive the size
    from the _program_, deduce the width, compose plans across a wide DAG
    ([plan-s32](docs/components/backend-llvm/plans/plan-s32-deduced-scheduling.md)).
-4. ~~**The rewriter could delete a trap that must fire**~~ — fixed, and kept on the page as the
-   clearest example of what the tests are for. CI drew a program that traps on division by zero
-   and whose rewritten form returned a value. The rule at fault was `map(id) = id`: it checked
-   what the mapped function _returns_ and called the map a no-op, while the body also computed a
-   trapping division. The interpreter evaluates the whole body, so that map was
-   `identity ∘ trap`, and eliminating it deleted observable behavior. The rule now reads the
-   entire body through the same purity test dead-code elimination uses. Pre-existing, never
-   drawn by a local run, counterexample pinned
+4. ~~**The rewriter could delete a trap that must fire**~~ — fixed
    ([plan-s34](docs/components/rewrite/plans/plan-s34-identity-map-trap.md)).
 5. **A pool race** — measurement bug, not correctness. A waiting thread helps with work past the
    checkpoint it waits on, so a kernel can finish before the clock bracketing it starts. Affects
@@ -344,12 +346,6 @@ arrays, generics, sum types, an external-backend SDK, co-execution, `scan`). Rec
 and closures are not in the language yet and have no ADR -> writing one is the contribution that
 unblocks the code. Forks welcome. One house rule: a change arrives with the evidence of what it
 did, and names the published numbers it moves.
-
-Why that rule exists: a cache-blocking pass measured 3× _slower_ than what it replaced, the
-first published explanation was wrong, and a control refuted it. The real cause was an
-accumulator bouncing through stack memory 92 times per inner loop. Fixing that made it 2.6–3.5×
-faster, it still loses on this machine for an unrelated reason, and it ships off. All four steps
-are in the repo, wrong explanation included.
 
 ---
 

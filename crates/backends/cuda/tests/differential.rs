@@ -940,7 +940,7 @@ mod local {
                 "p",
                 &wo,
                 wc,
-                &exit(101, b"garbage", b"flow trap: div_zero\n")
+                &exit(101, b"garbage", b"mapal trap: div_zero\n")
             ),
             Verdict::Pass
         ));

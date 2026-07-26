@@ -1,0 +1,7 @@
+// Oracle sibling of reduce_1048576.mapal — same shape, interpreter-sized.
+fn main() {
+    256 -> iota -> ix;
+    ix -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> x;
+    (0.0, x) -> fold { acc, v -> acc + v } -> total;
+    total -> println;
+}

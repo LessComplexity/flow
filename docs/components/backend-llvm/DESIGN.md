@@ -107,7 +107,7 @@ Out: nested-loop emission (L3 — `Unsupported`, one increment with interp/rewri
 mapal_print_i32(i32, bool)   mapal_print_i64(i64, bool)   mapal_print_u8(u8, bool)
 mapal_print_bool(bool, bool) mapal_print_f32(f32, bool)   mapal_print_f64(f64, bool)
 mapal_print_str(*const u8, usize, bool)                  // bool = newline
-mapal_trap(u32) -> !          // 0 = div_zero, 1 = index_oob; stderr "flow trap: …"; exit(101)
+mapal_trap(u32) -> !          // 0 = div_zero, 1 = index_oob; stderr "mapal trap: …"; exit(101)
 
 // S29 additions
 mapal_time_ms() -> f64        // the `time` builtin's clock read: ms since one process-lifetime

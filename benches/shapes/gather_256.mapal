@@ -1,0 +1,9 @@
+// Oracle sibling of gather_1048576.mapal — same permutation shape, sized down.
+fn main() {
+    256 -> iota -> ix;
+    ix -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> x;
+    ix -> map { t -> (t * 103 + 41) % 256 } -> idx;
+    idx -> map { j -> x[j] } -> y;
+    y[0] -> println;
+    y[255] -> println;
+}

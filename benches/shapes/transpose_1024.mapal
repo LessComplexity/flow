@@ -1,0 +1,17 @@
+// transpose / data-movement class: B[j][i] = A[i][j] over 1024x1024 f32,
+// flat-indexed. ZERO arithmetic in the kernel — the only cost is cache
+// behaviour. The read is affine in the output index, the write is not, so no
+// blocking rung applies today: this shape exists to measure what the compiler
+// does when its main lever (reuse) is absent.
+fn main() {
+    1048576 -> iota -> ia;
+    ia -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    1048576 -> iota -> ib;
+    () -> time -> t0;
+    ib -> map { t -> a[(t % 1024) * 1024 + t / 1024] } -> b;
+    () -> time -> t1;
+    b[0] -> println;
+    b[1048575] -> println;
+    "iter ms=" -> print;
+    t1 - t0 -> println;
+}

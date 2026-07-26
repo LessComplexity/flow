@@ -1,0 +1,15 @@
+// reduce / reduction class: sum of 1M f32.
+// Chosen because it has NO OUTPUT ARRAY — there is nothing for tile_plan to
+// block and nothing to map over on the way out. It measures the fold path and
+// whether an exact-op fold tree-reduces (ADR-0028) rather than running one
+// serial accumulator chain.
+fn main() {
+    1048576 -> iota -> ix;
+    ix -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> x;
+    () -> time -> t0;
+    (0.0, x) -> fold { acc, v -> acc + v } -> total;
+    () -> time -> t1;
+    total -> println;
+    "iter ms=" -> print;
+    t1 - t0 -> println;
+}

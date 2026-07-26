@@ -1,0 +1,17 @@
+// saxpy / streaming class: y[i] = a*x[i] + y0[i], 1M elements.
+// Chosen for MEMORY BANDWIDTH, not arithmetic: two loads and one store per
+// fused multiply-add, zero reuse. Nothing for tile_plan to block — the honest
+// question is whether the emitted loop reaches the same bandwidth ceiling as a
+// naive C++ loop, which is all any of them can do.
+fn main() {
+    1048576 -> iota -> ix;
+    ix -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> x;
+    ix -> map { t -> (t * 5 + 3) % 31 - 15 -> widen_f32 } -> y0;
+    () -> time -> t0;
+    (x, y0) -> zip -> map { p -> 2.5 * p.0 + p.1 } -> y;
+    () -> time -> t1;
+    y[0] -> println;
+    y[1048575] -> println;
+    "iter ms=" -> print;
+    t1 - t0 -> println;
+}
