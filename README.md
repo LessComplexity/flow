@@ -246,6 +246,51 @@ clang -O2 fir.ll target/release/libflow_rt.a -o fir && ./fir
 Start in [`examples/`](examples/) — `pipeline.flow` for syntax, `sepia.flow` for most of the
 language, `fir.flow` for a loop.
 
+### Editor support
+
+Both editors get highlighting and a file icon. Neither is published to a registry — load from
+disk.
+
+|                   | Neovim                                            | VS Code                                     |
+| ----------------- | ------------------------------------------------- | ------------------------------------------- |
+| Highlighting      | Vimscript syntax file                             | TextMate grammar                            |
+| File icon         | font glyph                                        | the real SVG logo                           |
+| Binding vs call   | resolved by scanning for `fn` declarations        | lexical only — `-> name;` reads as a binding |
+| Details           | [`editors/nvim/`](editors/nvim/)                  | [`editors/vscode/`](editors/vscode/)        |
+
+**Neovim** — with lazy.nvim:
+
+```lua
+{ dir = "/path/to/flow/editors/nvim", ft = "flow" }
+```
+
+or without a plugin manager:
+
+```lua
+vim.opt.runtimepath:append("/path/to/flow/editors/nvim")
+require("flow.icon").setup()          -- optional: nvim-web-devicons / mini.icons
+```
+
+**VS Code / Cursor** — symlink the extension and restart:
+
+```sh
+ln -s /path/to/flow/editors/vscode ~/.vscode/extensions/flow-lang
+```
+
+**The logo as a terminal glyph.** The Rust and C++ marks in a file tree are font glyphs, not
+images — Nerd Fonts ships those brand logos as characters. So Flow's mark ships as a
+single-glyph font, [`assets/font/FlowIcons.ttf`](assets/font/), which you install and add as a
+terminal *fallback* font (rather than us patching and redistributing someone else's Nerd Font).
+Then:
+
+```lua
+local icon = require("flow.icon")
+icon.setup({ glyph = icon.logo })     -- the real mark at U+F8F0
+```
+
+Skip it and you get the closest glyph your Nerd Font already has. Neither editor has an LSP
+yet, so neither resolves names the way the compiler does (ADR-0008).
+
 ---
 
 ## What is next

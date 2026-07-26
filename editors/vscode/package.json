@@ -1,23 +1,39 @@
 {
   "name": "flow-lang",
   "displayName": "Flow",
-  "description": "File icon and editor basics for the Flow dataflow language.",
+  "description": "Syntax highlighting and file icon for the Flow dataflow language.",
   "version": "0.1.0",
   "publisher": "flow-lang",
   "license": "Apache-2.0 WITH LLVM-exception",
-  "engines": { "vscode": "^1.66.0" },
-  "categories": ["Programming Languages"],
+  "engines": {
+    "vscode": "^1.66.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "flow",
-        "aliases": ["Flow", "flow"],
-        "extensions": [".flow"],
+        "aliases": [
+          "Flow",
+          "flow"
+        ],
+        "extensions": [
+          ".flow"
+        ],
         "configuration": "./language-configuration.json",
         "icon": {
           "light": "./icons/flow.svg",
           "dark": "./icons/flow.svg"
         }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "flow",
+        "scopeName": "source.flow",
+        "path": "./syntaxes/flow.tmLanguage.json"
       }
     ]
   }

@@ -1,21 +1,32 @@
 -- File icon for *.flow.
 --
--- Neovim's icon providers take a FONT GLYPH, not an image — nvim-web-devicons and
--- mini.icons both map a filetype to one character from a patched Nerd Font plus a
--- colour. So this cannot be the actual SVG logo; the closest honest thing is a
--- glyph shaped like the mark (edges converging on a node) in the logo's teal.
--- For a real SVG logo in a file tree, see editors/vscode/.
+-- The Rust and C++ logos you see in a file tree are font glyphs: Nerd Fonts ships
+-- those brand marks as characters. Neovim's icon providers take a glyph, not an
+-- image, so the only way to get *Flow's* logo the same way is to put it in a font.
+--
+-- assets/font/FlowIcons.ttf does exactly that — one glyph, the real mark, at
+-- U+F8F0. Add it as a fallback font in your terminal and set `glyph` below to
+-- `M.logo`. Without it, the default is the closest existing Nerd Font glyph, so
+-- this works out of the box either way.
 --
 -- Usage (either provider, or both — each is a no-op if not installed):
---     require("flow.icon").setup()
+--     require("flow.icon").setup()                        -- portable glyph
+--     require("flow.icon").setup({ glyph = require("flow.icon").logo })
 
 local M = {}
 
--- U+F0E8 nf-fa-sitemap: a node-and-edge graph, the nearest glyph to the mark.
--- Present in Nerd Fonts v2 and v3. Alternatives if your font lacks it:
---     "" U+E725 nf-dev-git_branch   (branching lines)
---     "" U+F419 nf-oct-git_merge    (lines converging — closest semantically)
-M.glyph = ""
+-- The real Flow mark, from assets/font/FlowIcons.ttf. Renders as a blank box
+-- unless that font is installed and reachable via fallback.
+M.logo = "\u{F8F0}"
+
+-- Default: U+F0E8 nf-fa-sitemap, a node-and-edge graph — the nearest glyph any
+-- Nerd Font already has. Written as an escape, not a literal: a raw private-use
+-- character does not survive every editor and tool that touches this file, and an
+-- empty string here silently renders as no icon at all.
+-- Alternatives if your font lacks it:
+--     U+E725 nf-dev-git_branch   (branching lines)
+--     U+F419 nf-oct-git_merge    (lines converging — closest semantically)
+M.glyph = "\u{F0E8}"
 M.color = "#14B8A6" -- the logo teal
 M.name = "Flow"
 
