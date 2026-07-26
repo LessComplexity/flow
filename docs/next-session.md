@@ -25,14 +25,15 @@ README said it did not; corrected to "the syntax is a serialization of the execu
 ## FIRST commands (resume checks, in order)
 
 ```sh
-git status --short                    # S36's work may still be UNCOMMITTED — see below
-git log --oneline -3
+git log --oneline -3                  # HEAD is 896fb3c, the S36 fix
+git status --short                    # expect empty
 gh run list --limit 3
 cargo test --workspace --release --no-fail-fast 2>&1 | grep -E "FAILED|panicked|test result"
 gh auth status                        # NOTE: `sapiritur` is active; the repo is LessComplexity's
 ```
 
-**If `git status` is dirty, S36 ended before committing.** The change is five files:
+**S36 is committed at `896fb3c` but NOT pushed** — the active `gh` account cannot write to the repo.
+`gh auth switch --user LessComplexity`, then `git push`. The commit touches:
 `crates/mapal-ir/src/algo.rs`, `crates/mapal-ir/tests/algos.rs`,
 `crates/backends/llvm/tests/golden_ll.rs`, plus the docs listed in the S36 log §9. The gate was
 green at 972 passed before the session closed.

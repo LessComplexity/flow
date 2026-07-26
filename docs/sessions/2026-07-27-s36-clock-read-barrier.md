@@ -14,11 +14,11 @@ Current state: **the S33 P0 is closed. Gate green — 972 passed, 0 failed.** A 
 pinned task in the execution DAG with edges both ways, so a threaded kernel can no longer start —
 let alone finish — before the `time` read that opens its bracket. fir 65 536 at `MAPAL_PAR=14` went
 from **6/100** readings under 0.01 ms to **0/100**, values byte-identical, total wall time unchanged.
-Not yet committed at the time of writing (see §6).
-Next step: **commit, then P1 — the streaming/permutation kernels that emit scalar loops**
-(`shape-ladder-v2.md` §finding). The measurement debt this session unblocks (S32's scheduling
-verdict under a sound statistic) is §7's P1.
-Resume command/check: `docs/next-session.md`, then `git status --short` and
+Committed at `896fb3c`, tree clean, **not pushed** (the active `gh` account cannot write to the repo).
+Next step: **push, then re-measure the published `par` cells** — they all predate the fix and are
+under-reported (§3). Then P1: the streaming/permutation kernels that emit scalar loops
+(`shape-ladder-v2.md` §finding).
+Resume command/check: `docs/next-session.md`, then `git log --oneline -3` and
 `cargo test --workspace --release`.
 
 ## 1. The defect, in one paragraph
@@ -118,7 +118,7 @@ criterion met by ignoring what it measured.
 
 | Type | Handle | State | Inspect | Cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `35fb681` + **uncommitted work** | dirty: `crates/mapal-ir/src/algo.rs`, `crates/mapal-ir/tests/algos.rs`, `crates/backends/llvm/tests/golden_ll.rs`, and the docs in §8 | `git status --short` | commit |
+| branch | `main` @ `896fb3c` | committed, clean, **not pushed** — the active `gh` account cannot write to `LessComplexity/mapal` | `git status --short` | `gh auth switch --user LessComplexity && git push` |
 | gate | full suite | **972 passed, 0 failed** | `cargo test --workspace --release --no-fail-fast` | — |
 | CI | run `30213380577` on `35fb681` | still `in_progress` at session open (cuda job green, macos + ubuntu running); the three runs before it show `cancelled`, each killed by the next push | `gh run view 30213380577 --json status,conclusion` | — |
 | gh auth | `sapiritur` active; repo is LessComplexity's | pushes need `gh auth switch --user LessComplexity` | `gh auth status` | — |
@@ -130,7 +130,7 @@ criterion met by ignoring what it measured.
 
 | Priority | Item | Reference | Next action | Done when |
 | --- | --- | --- | --- | --- |
-| **P0** | Commit this work | §6 | `git add` the five source/test files + the docs, one commit | `git status --short` empty |
+| **P0** | Push `896fb3c` | §6 | `gh auth switch --user LessComplexity`, then `git push`; watch CI with `gh run view --json conclusion` (not `gh run watch \| tail`) | CI green on `896fb3c` |
 | P1 | Streaming/permutation kernels emit scalar loops | `shape-ladder-v2.md` §finding | Decide whether a non-tile `map` gets a vectorization rung; plan first | saxpy 1t within ~1.2× of naive C++ |
 | P1 | Re-confirm S32's scheduling verdict (1.41–1.43×) | plan-s33b §7 check 6; S32 log | Rebuild the pre-S32 A/B leg and re-run under min AND median, now that both are trustworthy | verdict restated on a sound statistic |
 | P1 | Re-measure the published `par` cells | §3 | Every `par` number in S28–S35 predates the fix and is under-reported; re-run through `shapes_ab.sh` before republishing | the ladder tables carry post-S36 numbers |
