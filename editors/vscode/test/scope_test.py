@@ -28,25 +28,45 @@ FIXTURE = ROOT / "editors/nvim/test/fixture.flow"
 
 
 def load_rules(grammar):
-    """Flatten the top-level include list into ordered concrete match rules."""
+    """Flatten the top-level include list into ordered concrete match rules.
+
+    A node carrying its own `match`/`begin` IS the rule; only a pure container is
+    expanded via `patterns`. Getting that backwards drops begin/end regions entirely —
+    the first version expanded the string node into its nested escape pattern and lost
+    the string rule, so `"` matched nothing and the escape passed by accident.
+    """
     repo, rules = grammar["repository"], []
+
+    def add(r):
+        if "match" in r:
+            rules.append({**r, "_rx": re.compile(r["match"])})
+        elif "begin" in r:
+            # Single-line model: the region is begin..end, and its nested patterns are
+            # overlaid inside that span (see tokenize).
+            rules.append({
+                **r,
+                "_rx": re.compile(r["begin"] + r'(?:\\.|[^"\\])*' + r["end"]),
+                "_sub": [{**q, "_rx": re.compile(q["match"])} for q in r.get("patterns", [])
+                         if "match" in q],
+            })
+
     for inc in grammar["patterns"]:
         node = repo[inc["include"][1:]]
-        for r in node.get("patterns", [node]):
-            if "match" in r:
-                rules.append(r)
-            elif "begin" in r:  # strings: good enough for a single-line fixture
-                rules.append({"match": r["begin"] + r'[^"]*' + r["end"], "name": r.get("name")})
-    return [(re.compile(r["match"]), r) for r in rules]
+        if "match" in node or "begin" in node:
+            add(node)
+        else:
+            for r in node.get("patterns", []):
+                add(r)
+    return rules
 
 
 def tokenize(line, rules):
     """TextMate's rule: earliest match wins, ties by listed order. Returns [(start, end, scope)]."""
     out, pos = [], 0
     while pos < len(line):
-        best = None  # (start, end, rule)
-        for rx, rule in rules:
-            m = rx.search(line, pos)
+        best = None
+        for rule in rules:
+            m = rule["_rx"].search(line, pos)
             if m and m.end() > m.start():
                 if best is None or m.start() < best[0]:
                     best = (m.start(), m.end(), rule, m)
@@ -60,23 +80,29 @@ def tokenize(line, rules):
             if gi == 0:
                 continue
             try:
-                s, e = m.span(gi)
-            except (IndexError, error := Exception):  # noqa: F841
+                s_, e_ = m.span(gi)
+            except IndexError:
                 continue
-            if s != -1 and cap.get("name"):
-                out.append((s, e, cap["name"]))
+            if s_ != -1 and cap.get("name"):
+                out.append((s_, e_, cap["name"]))
                 emitted = True
         if not emitted and rule.get("name"):
             out.append((start, end, rule["name"]))
+        # Inside a begin/end region, its own patterns apply and are narrower, so they
+        # win via scope_at's innermost-wins rule.
+        for sub in rule.get("_sub", []):
+            for sm in sub["_rx"].finditer(line, start, end):
+                if sub.get("name"):
+                    out.append((sm.start(), sm.end(), sub["name"]))
         pos = max(end, pos + 1)
     return out
 
 
 def scope_at(line, col, rules):
-    for s, e, name in tokenize(line, rules):
-        if s <= col < e:
-            return name
-    return "«none»"
+    """Innermost (narrowest) covering scope wins — an escape inside a string is the
+    escape, not the string."""
+    covering = [(e - s, name) for s, e, name in tokenize(line, rules) if s <= col < e]
+    return min(covering)[1] if covering else "«none»"
 
 
 # (line, token, expected scope, expected nvim group) — the fourth column is the
@@ -97,6 +123,24 @@ CASES = [
     (21, "Pixel", "entity.name.type.flow", "flowTypeName"),
     (25, ":myloop", "keyword.control.label.flow", "flowLabel"),
     (27, ":myloop", "keyword.control.label.flow", "flowLabelJump"),
+    (32, '"', "string.quoted.double.flow", "flowString"),
+    (32, "\\t", "constant.character.escape.flow", "flowEscape"),
+    (32, "print", "support.function.builtin.flow", "flowBuiltin"),
+    (33, "zip", "support.function.builtin.flow", "flowBuiltin"),
+    (33, "pairs", "variable.other.definition.flow", "flowBinding"),
+    (34, "enumerate", "support.function.builtin.flow", "flowBuiltin"),
+    (35, "<-", "keyword.operator.arrow.flow", "flowArrow"),
+    (38, "0", "constant.numeric.integer.flow", "flowGuardInt"),
+    (40, "_", "variable.language.wildcard.flow", "flowGuardWild"),
+    (41, "Some", "entity.name.type.flow", "flowGuardVariant"),
+    (42, "[", "entity.name.type.flow", "flowGuardVariant"),
+    # Guard CHROME by column (0-based). The discriminant scopes are also produced by the
+    # plain number/boolean/type rules, so they do not test the guard rules at all —
+    # breaking one left this suite passing. The leading `-` does discriminate: it falls
+    # to keyword.operator.flow as soon as the guard rule stops matching.
+    (18, 8, "keyword.operator.arrow.flow", "flowGuardArrow"),
+    (38, 8, "keyword.operator.arrow.flow", "flowGuardArrow"),
+    (41, 8, "keyword.operator.arrow.flow", "flowGuardArrow"),
 ]
 
 # Which nvim group each scope family is allowed to correspond to. Enforces that the two
@@ -110,6 +154,12 @@ FAMILY = {
     "constant.language.boolean.flow": {"flowGuardBool", "flowBoolean"},
     "entity.name.type.flow": {"flowTypeName", "flowGuardVariant"},
     "keyword.control.label.flow": {"flowLabel", "flowLabelJump"},
+    "string.quoted.double.flow": {"flowString"},
+    "constant.character.escape.flow": {"flowEscape"},
+    "keyword.operator.arrow.flow": {"flowArrow", "flowGuardArrow"},
+    "constant.numeric.integer.flow": {"flowGuardInt", "flowNumber"},
+    "variable.language.wildcard.flow": {"flowGuardWild"},
+    "keyword.operator.arrow.flow": {"flowArrow", "flowGuardArrow"},
 }
 
 
@@ -120,9 +170,13 @@ def main():
 
     for lnum, tok, want, nvim_group in CASES:
         line = lines[lnum - 1]
-        # A leading `:` has no word boundary before it, so anchor on the token itself.
-        m = re.search(re.escape(tok) + r"(?![\w])", line)
-        got = scope_at(line, m.start(), rules) if m else "«no token»"
+        if isinstance(tok, int):  # explicit 0-based column
+            got, tok = scope_at(line, tok, rules), f"col{tok}"
+        else:
+            # Word-initial tokens get a boundary; ":myloop", "<-", "[", '"', "\\t" do not.
+            pat = (r"\b" + re.escape(tok) + r"\b") if re.match(r"\w", tok) else re.escape(tok)
+            m = re.search(pat, line)
+            got = scope_at(line, m.start(), rules) if m else "«no token»"
         ok = got == want
         if not ok:
             fails += 1

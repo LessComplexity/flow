@@ -27,3 +27,19 @@ fn labeled() {
         -> :myloop;
     }
 }
+
+fn extras(n: i32, arr: [i32; 4]) -> i32 {
+    "tab\there\n" -> print;
+    (arr, arr) -> zip -> pairs;
+    arr -> enumerate -> indexed;
+    arr[0] <- 7;
+    n -> which;
+    which
+        -0-> zero;
+        -42-> answer;
+        -_-> fallback;
+        -Some(x)-> some_case;
+        -[]-> empty;
+        -[head, ...tail]-> split;
+    n -> ret;
+}
