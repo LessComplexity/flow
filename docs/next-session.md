@@ -1,137 +1,122 @@
-# Next Session (S34)
+# Next Session (S35)
 
-> **S34 UPDATE (2026-07-26, in progress): item 1 below is DONE — the gate is green.** The
-> deleter was the `map(id) → id` arm, not fusion: `is_identity_body` judged a body by its Return
-> writer alone, so `id + dead trapping Div` read as the identity and the whole `Map` was aliased
-> away. Guard now quantifies over the body's whole morphism set via the shared
-> `graph_rewrites::is_pure`. All four entry points were one bug; seed retained; negative-
-> controlled. See `components/rewrite/plans/plan-s34-identity-map-trap.md`. Item 2
-> (`mapal_par_wait` clock race) is untouched and is now the top P0.
-
-Written: 2026-07-26 · end of S33 · by: Claude (orchestrator; category-architect skill)
-Session log: `sessions/2026-07-26-s33-boundary-openblas-parity-open-source.md` — **read §5 and §7
-before touching either P0.**
+Written: 2026-07-26 · end of S34 · by: Claude (orchestrator; category-architect skill)
+Session log: `sessions/2026-07-26-s34-mapal-rename-and-trap-deleting-rewrite.md` — **read §9
+(method notes) before any rename-shaped or measurement-shaped work.**
 
 ## Where things stand (≤6 lines)
 
-S33 closed the S31/S32 P0 by **inverting** it: conv2d was never slow — Mapal's timed window
-included the output array's first-touch page-zeroing, which the C++ baseline pre-pays outside its
-own timer. Shipped `reside`; conv2d is now **1.21× ahead** of naive C++ per core on both NEON and
-AVX2. Second machine measured: on AVX2, where numpy is OpenBLAS rather than AMX, Mapal's generated
-GEMM reaches **parity** (1t a flat 1.20× behind, threaded ±10%). The repo is **public** with CI.
-**Both CI and the local gate are red, correctly** — CI found a rewriter bug on its first run, and
-pinning the seed makes it reproduce locally too. 4 of 9 `mapal-rewrite` property tests fail: one bug,
-four entry points, and the trigger is narrowed to **`MapFusion` in composition** (§1).
+**The project is now `Mapal`; source files are `.mapal` (ADR-0037).** S33's top P0 is closed at the
+root: `map(id) → id` judged a map body by its Return writer alone, so a body that returns its
+parameter *and* computes a dead trapping `Div` read as the identity and the whole `Map` was aliased
+away. The guard now quantifies over the body's entire morphism set via the crate-shared `is_pure`.
+**The gate is green** — full suite, differential 36/36, fmt, 61 editor assertions — and CI went
+green for the first time since it was added, at ~35 min of machine time (was 43). The remaining P0
+is the `mapal_par_wait` clock race: measurement-only, but it flatters us.
 
 ## FIRST commands (resume checks, in order)
 
 ```sh
-git log --oneline -3                  # HEAD is the S33 close commit
+git log --oneline -3                  # HEAD is the S34 close commit
 git status --short                    # expect empty
-gh run list --limit 3                 # expect RED on ubuntu-latest — that is P0 #1
-cargo test -q -p mapal-rewrite --release --test property   # P0 #1: expect 4 FAILED, ~0.4s
+gh run list --limit 3                 # expect success on main
+cargo test -q -p mapal-rewrite --release --test property   # 11 green, ~0.3 s
 sh editors/test.sh                    # 61 assertions, expect green
-ssh -o BatchMode=yes <perf-box> 'cat /proc/loadavg'   # the measurement machine, key auth
+gh auth status                        # NOTE: `sapiritur` is active; the repo is LessComplexity's
 ```
 
-## S34 focus
+**Pushing needs the right account.** `gh` has two logins and the active one cannot write to
+`LessComplexity/mapal`. Either `gh auth switch --user LessComplexity`, or push with an explicit
+token for that account.
 
-### 1. P0 — the rewriter deletes a trap that must fire → **start at `MapFusion`**
+## S35 focus
 
-```
-prefix [Inline, LiftLoops, ConstFold, Cse, Dce, MapFusion]:
-    Trapped(DivZero)  !≈  Done(Scalar(I32(3)))
-```
-
-The original traps on division by zero; after `rewrite()` it returns 3. That breaks the property
-the whole project rests on. `dead_trapping_div_stays_trapped` still passes, so the generated shape
-is one the hand-written guard does not cover.
-
-**Already narrowed — do not re-derive it.** S33 added a pass-composition bisect to `check_open`,
-because the original failure said only `full:`, which is a clue rather than an answer. It
-establishes two things:
-
-- **Every pass is individually trap-preserving** (the pre-existing per-pass loop proves that).
-- **`Inline → LiftLoops → ConstFold → Cse → Dce` preserves the trap; adding `MapFusion` loses
-  it.** Prefixes 1–5 pass; prefix 6 fails.
-
-So it is an **interaction**, and **map fusion is the trigger**. Look at the fusion rule in
-`crates/mapal-rewrite/src/graph_rewrites.rs`, and ask what happens when the two maps being fused
-have a body whose result is unused but whose evaluation traps — the earlier five passes are what
-put the graph into that shape.
-
-**Scope: 4 of 9 property tests fail** — `open_default`, `open_trap_free`, `closed_default`,
-`closed_trap_free`. One bug, four entry points: proptest replays the persisted seed against every
-property in the file, and each uses a different strategy.
-
-```sh
-cargo test -q -p mapal-rewrite --release --test property        # all four, ~0.4s
-```
-
-The counterexample is **not minimal** (proptest hit its 192-iteration shrink limit). If the
-`MapFusion` lead does not resolve it quickly, shrink harder:
-
-```sh
-PROPTEST_MAX_SHRINK_ITERS=1000000 cargo test -p mapal-rewrite --release --test property open_default
-```
-
-**Do not un-pin the seed to get a green build.**
-
-### 2. P0 — `mapal_par_wait` lets workers run ahead of the clock
+### 1. P0 — `mapal_par_wait` lets workers run ahead of the clock
 
 Workers do not stop at checkpoints, so a kernel can finish before the clock meant to bracket it is
 read. 3–4% of threaded runs; one live case read **0.0001 ms** for a 1024² matmul. `MAPAL_PAR=1` is
 0/100, so every single-threaded number in the repo is sound.
 
 **Do NOT retry the runtime-only dispatch ceiling.** It was built, measured and reverted;
-`plan-s33b-clock-read-barrier.md` §4 records both reasons as do-not-retry. Short version: launch
-must dispatch immediately, and **at launch the runtime does not know where the first checkpoint
-is** — only the emitter does. Make the clock read a DAG node with edges both ways.
+`components/backend-llvm/plans/plan-s33b-clock-read-barrier.md` §4 records both reasons as
+do-not-retry. Short version: launch must dispatch immediately, and **at launch the runtime does
+not know where the first checkpoint is** — only the emitter does. Make the clock read a DAG node
+with edges both ways.
 
-The sharp acceptance criterion: `watermark_wait_can_finish_before_task_completion` and
+Sharp acceptance criterion: `watermark_wait_can_finish_before_task_completion` and
 `wait_helps_while_the_background_worker_is_busy` must pass **unmodified** — they are the guard rail
 the first attempt tripped.
 
-### 3. Then the measurement debt this creates
+### 2. The measurement debt this unblocks
 
 - **Re-confirm S32's scheduling verdict** (1.41–1.43×) under a median. Every `par` minimum in
   S28–S32 is suspect.
 - **Re-measure conv2d and fir through `shapes_ab.sh`.** The S33 figures are hand-linked; do not
   publish them as harness numbers.
 - **matmul boundary immunity** is expected <1% but unverified at 4096.
+- Once the race is fixed, the statistic rule reverts: **min for both 1t and par**.
 
-## Rules that bit this session (log §7)
+### 3. One decision waiting on Sapir
 
-1. **Pin, always.** Two unpinned readings on the hybrid i9 produced confident wrong conclusions.
-2. **`ref-cycles`, not `cycles`, separates frequency from time.**
-3. **`cargo test` does not rebuild `target/release/libmapal_rt.a`** — a stale staticlib presents
-   exactly as a fix that does nothing. `cargo build -p mapal-rt --release` before any hand-linked leg.
-4. **`calloc` is not a pre-fault.** Page size is decided by alignment, not request size.
-5. **Compare ratios within one run, never against a recorded baseline.** cpp-1t fir drifted 41%
-   between sessions. I broke this rule once and the A/B refuted me.
-6. **Verify a kill.** An orphan survived a parent-only `kill` and corrupted two measurement rounds
-   (~20% on threaded cells). Assert live-process count and loadavg in the script's own output.
-7. **A test that passes wrongly is worse than none.** Three happened this session, all caught by
-   **negative control** — break the rule on purpose and check the test notices.
-8. **min for 1t, median for par** — inverted from the old rule, because this race makes *fast*
-   outliers. Reverts once P0 #2 is fixed.
+**Halve the per-push differential cross product.** That suite is 1,391 s of a ~1,475 s Ubuntu test
+step — 94%. It runs 320 generated programs × {raw, rewritten} × {`-O0`, `-O2`} = 1,280
+compile-and-runs *per push*. Running raw@`-O0` and rewritten@`-O2` (both forms and both levels
+still exercised every run, just not all four combinations) takes ~12 min more off Ubuntu, with the
+full cross product on a nightly schedule. It changes the README's published "1,280 comparisons per
+run" claim, so it needs a decision plus a doc edit, not a silent change.
+
+## Rules that bit S34 (log §9)
+
+1. **A sweep over `git ls-files` cannot see untracked files.** It skipped the Homset draft, then
+   skipped ADR-0037's own extension references — the document deciding the extension was the one
+   file the extension pass could not touch. Stage first, or walk the filesystem.
+2. **`\bflow_` misses `perf_timing_flow_main`** — `_` is a word character. Word boundaries are the
+   wrong tool for snake_case identifier renames; enumerate symbols and grep for leftovers.
+3. **`gh run watch … | tail` returns `tail`'s exit code.** Two runs looked green and were
+   `cancelled`. Re-read with `gh run view --json conclusion`.
+4. **Do not push on top of a CI change you are measuring** — `cancel-in-progress` kills the run
+   that was producing your number.
+5. **A file extension is a namespace.** Check `$VIMRUNTIME/syntax/` and Linguist's
+   `languages.yml`: `.mp` is MetaPost, `.mpl` is JetBrains MPS, `.ml` is OCaml/SML, `.map` is
+   source maps. Only `.mapal` and `.mal` were free.
+6. **Run `cargo fmt --all` after any mechanical rename** — identifier lengths change and rustfmt
+   re-wraps, failing `--check` for a reason unrelated to the change.
+7. **Renaming text is not renaming a logo.** The wordmark clipped `mapal` silently; render the
+   asset and look at it.
+8. Plus S33's still-standing eight: pin the CPU; `ref-cycles` not `cycles`; ratios inside one run;
+   `cargo test` does not rebuild `libmapal_rt.a` (`cargo build -p mapal-rt --release` first);
+   `calloc` is not a pre-fault; verify a kill; a test that passes wrongly is worse than none; min
+   for 1t, median for par.
 
 ## Gotchas / warnings
 
+- **The extension is provisional** (ADR-0037 D4). `.mal` is the only other free short option; any
+  replacement must be checked against Linguist *and* `$VIMRUNTIME/syntax/` first. Cost of
+  changing: one scripted pass, ~49 files and ~300 references, then re-run the gate.
+- **`docs/sessions/`, `ADR-0001…0036`, `docs/performance/` and recorded `results*.csv` still say
+  "Flow" on purpose** (ADR-0037 D3). Do not "fix" them. Lowercase *flow* also remains the name of
+  the language construct — `a -> b;` is a flow statement, and ADR-0005 holds verbatim.
+- **Old bench CSVs use `flow-llvm-*` leg labels; the harness now writes `mapal-llvm-*`.** Two
+  vocabularies in the results tree, deliberately.
+- **`map(id) → id` now refuses bodies containing `Widen`/`Iota`/`Fill`.** All three are legal to
+  forward; admitting them is its own change with its own pins (rewrite STATUS, "S34 headroom").
+- **User-side leftovers outside the repo:** `~/.config/nvim/lua/plugins/flow.lua` (stale path and
+  `ft = "flow"`, plus a `.bak-flow`), `~/Library/Fonts/FlowIcons.ttf`, and the old `flow-lang` VS
+  Code extension. Rebuild with `python3 editors/vscode/package-vsix.py`.
+- **The local directory is still `/Volumes/LessComplex/Personal/Flow`.** Renaming it means
+  restarting the session there; git does not care.
+- A stale S33 worktree (`…/scratchpad/pre` @ `1daddaa`) is still registered — `git worktree prune`.
 - **The Arch i9 is the measurement machine**, key auth, `<perf-box>`. No clang there:
-  cross-compile `.ll` on the Mac (`-target x86_64-unknown-linux-gnu -march=raptorlake`) and link
-  with gcc. `~/flowbench` (182 MB) and `~/flowbench_pre` (21 MB, the pre-`reside` runtime) are both
-  built and left in place.
+  cross-compile on the Mac (`-target x86_64-unknown-linux-gnu -march=raptorlake`) and link with
+  gcc. `~/flowbench` (182 MB) and `~/flowbench_pre` (21 MB, pre-`reside`) are built and left in
+  place — note they keep their old directory names.
 - **`reside` pins pages to the touching thread's NUMA node.** Irrelevant single-socket, live on a
   dual-socket EPYC. A/B it or make `reside` lane-aware before any multi-socket run.
 - **The scheduler advantage is heterogeneity tolerance, not a better scheduler.** On uniform cores
   OpenBLAS beats us — 41% on 8 P-cores. Do not restate it as a general claim.
 - **The i9 1t gap ran on the untuned `generic` profile** — some of the 20% is probably recoverable.
-- Emitted `.ll`/`.cu` are no longer tracked; `benches/matmul/regen.sh` derives its own worklist and
-  reports CUDA refusals (the `time` builtin has no CUDA seam) instead of aborting.
 - **VS Code extensions must be installed as a `.vsix`** — a copied or symlinked folder is ignored
   *silently*, because VS Code reads `extensions.json` as its registry.
-  `python3 editors/vscode/package-vsix.py`, then `--install-extension`.
 - Editor grammars have **opposite precedence** (Vim last-match-wins, TextMate earliest-match-wins).
   A rule added to one goes at the other end of the other. `sh editors/test.sh` after any edit.
 - **Repo is public.** The perf box address is scrubbed to `<perf-box>`; keep it that way.
@@ -147,3 +132,5 @@ the first attempt tripped.
 - **Type system = precision contracts; backend config = performance tailors.**
 - **Compile time decides the SIZES, runtime decides the ASSIGNMENT.**
 - **Nothing goes in the README that a default build does not deliver.**
+- **Proof over suggestion:** a change arrives with the measurement of what it did, and names the
+  published numbers it moves — now written into `CONTRIBUTING.md` as the house rule.
