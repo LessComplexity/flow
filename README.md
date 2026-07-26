@@ -1,4 +1,6 @@
-<img src="assets/logo.svg" alt="" width="72" height="70" align="left">
+<p align="center">
+  <img src="assets/logo-wordmark.svg" alt="Flow" width="320">
+</p>
 
 # Flow
 
@@ -22,8 +24,6 @@
   <!--toc:end-->
 
 **A language where you describe _what_ to compute, and the compiler works out _how_.**
-
-<br clear="left">
 
 Flow programs are dataflow graphs. You write a chain of steps; the compiler reads the graph
 and figures out the rest — what can run in parallel, what can be vectorised, how to block a

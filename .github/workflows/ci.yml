@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The LLVM backend's differential suite emits .ll, compiles it, runs it, and
+      # diffs the output against the interpreter oracle. It SKIPS ITSELF when clang
+      # is absent, so without this the headline suite passes without testing
+      # anything. macOS runners ship clang already.
+      - name: Install clang (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang
+
+      - name: Report toolchain
+        run: |
+          rustc --version
+          cargo --version
+          clang --version | head -1
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      - name: Test (release)
+        run: cargo test --workspace --release
+
+      # Proves the differential actually ran rather than skipping. `clang` is
+      # installed above, so a skip here means the discovery path broke.
+      - name: Assert the differential was not skipped
+        run: |
+          cargo test --release -p flow-backend-llvm --test differential -- --nocapture 2>&1 | tee out.txt
+          if grep -qi "skip" out.txt; then
+            echo "::error::the LLVM differential suite skipped — clang discovery is broken, so this run proved nothing"
+            exit 1
+          fi
+
+  # The CUDA backend's 161 tests skip themselves without nvcc, which every hosted
+  # runner lacks. Compiling them is still worth gating on: it catches the
+  # emitter-wiring breaks that a skipped test never would.
+  cuda-builds:
+    name: cuda backend compiles
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p flow-backend-cuda
+      - run: cargo test --release -p flow-backend-cuda --no-run
