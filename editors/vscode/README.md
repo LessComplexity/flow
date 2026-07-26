@@ -77,7 +77,18 @@ code --extensionDevelopmentPath="$(pwd)/editors/vscode" .
 as an arrow, discriminant by what it is), labels, `fn` declarations, builtins, bindings, call
 position, arrows, numbers, types, operators, and the reserved-and-rejected `category`.
 
-**Two things to know if you edit it.**
+Run `editors/test.sh` after any edit — it asserts both editors together.
+
+**Three things to know if you edit it.**
+
+The rule that decides outcomes is **earliest match wins**, ties broken by listed order — not
+listed order alone. This bites specifically: a rule like `(?<=->)\s*(ident)` begins its match
+at the *whitespace* after the arrow, one column before the keyword rule that matches the
+identifier itself, so it wins on position however the patterns are ordered. That is why
+`#binding` and `#call-position` carry an explicit negative lookahead listing every builtin and
+`ret`; without it, `-> println;` scoped `println` as a variable. `scope_test.py` asserts that
+exclusion covers every builtin, so adding one to `#keywords` and forgetting the exclusion fails
+the test rather than quietly mis-colouring.
 
 It has the **opposite precedence** to the Neovim file: TextMate takes the *first* matching
 pattern, Vim the *last*. So this file is ordered most-specific first and

@@ -84,7 +84,8 @@ This is a heuristic that is right for every program in `examples/`.
 ## Tests
 
 ```sh
-editors/nvim/test/run.sh
+editors/test.sh              # both editors
+editors/nvim/test/run.sh     # this one only
 ```
 
 Asserts the group each token actually resolves to, and that no file in `examples/` lights up
