@@ -1,0 +1,22 @@
+// Fixture for syntax_test.lua. Line numbers are asserted — do not reflow.
+fn double(x: i32) -> i32 {
+    x * 2 -> ret;
+}
+
+fn shout(x: i32) {
+    x -> println;
+}
+
+fn main() {
+    5 -> a;
+    a -> shout;
+    a -> double -> b;
+    16 -> iota -> ti;
+    3 -> widen_f32 -> f;
+    b -> cmp;
+    cmp
+        -true-> a;
+        -false-> b;
+    16 -> iota -> map { t -> t } -> arr;
+    Pixel { r: 1.0, g: 2.0, b: 3.0 } -> px;
+}

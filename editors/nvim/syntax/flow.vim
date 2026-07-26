@@ -45,9 +45,17 @@ syn case match
 " (`category` is NOT here — it is reserved-and-rejected; see flowReserved.)
 syn keyword flowKeyword fn type loop seq mut void
 
-" Builtins: map/fold are inline-block collection ops; print/println are the
-" effects (ADR-0015 — `print` raw, `println` appends a newline).
-syn keyword flowBuiltin map fold print println
+" Builtins. Kept in sync with the lowerer's builtin dispatch — a name missing
+" here does not merely lose its colour, it falls through to flowFlowFn and gets
+" mis-painted as a user function (that is what happened to `iota`).
+"   map/fold           inline-block collection ops
+"   zip/enumerate      pure collection ops (ADR-0018)
+"   iota/fill          procedural sources (ADR-0029 stage 2)
+"   widen_i64/f32/f64  the widening family (ADR-0029 amendment)
+"   time               clock read (plan-time-builtin); no CUDA seam
+"   print/println      the two effects (ADR-0015 — println appends a newline)
+syn keyword flowBuiltin map fold print println zip enumerate iota fill
+syn keyword flowBuiltin widen_i64 widen_f32 widen_f64 time
 
 " Boolean literals.
 syn keyword flowBoolean true false
@@ -84,6 +92,25 @@ syn match flowFlowFn "\%(->\s*\)\@<=\h\w*\%(\s*->\)\@="
 " Capitalized identifiers are named product types (PascalCase convention,
 " user-guide §10.2). Heuristic: any `\<[A-Z]\w*\>` token.
 syn match flowTypeName "\<[A-Z]\w*\>"
+
+" ---------------------------------------------------------------------------
+" Bindings — `expr -> name;`
+" ---------------------------------------------------------------------------
+" A terminal arrow into a snake_case identifier BINDS it: `5 -> a;` introduces
+" `a`. That is a definition, so it gets Identifier — the same treatment a
+" variable declaration gets in any other language. Uses (`a -> shout;`) are not
+" after an arrow and stay plain, so a definition reads differently from a
+" reference, which is the point.
+"   - Lookbehind starts the match at the identifier; `->` belongs to flowArrow.
+"   - `\ze\s*;` requires a terminal `;`, so call position (`-> f ->`) is left to
+"     flowFlowFn.
+"   - Lowercase-initial only, so a PascalCase tail stays flowTypeName.
+"   - `syn keyword` outranks `syn match` in Vim, so `-> ret;`, `-> println;` and
+"     `-> loop;` keep their keyword groups automatically.
+"   - Defined BEFORE the dynamic flowDeclaredFn (added at the end of this file),
+"     so a terminal call to a fn we declared wins over the binding reading —
+"     which is the one case regex alone cannot distinguish.
+syn match flowBinding "\%(->\s*\)\@<=\<[a-z_]\w*\>\ze\s*;"
 
 " ---------------------------------------------------------------------------
 " Reserved-and-rejected keyword (ADR-0006 / E5)
@@ -227,6 +254,8 @@ hi default link flowReserved   Error
 hi default link flowFnName     Function
 hi default link flowFlowFn     Function
 hi default link flowDeclaredFn Function
+" A binding is a variable definition, not a call.
+hi default link flowBinding    Identifier
 hi default link flowLabel      Label
 hi default link flowLabelJump  Label
 hi default link flowOperator   Operator

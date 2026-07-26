@@ -1,122 +1,97 @@
-# Flow syntax highlighting for Neovim
+# Flow — Neovim support
 
-A self-contained Neovim plugin that adds filetype detection and syntax
-highlighting for Flow source files (`*.flow`).
+Regex syntax highlighting and filetype detection for `*.flow`. Best-effort and
+non-authoritative: a tree-sitter grammar is deferred until it can be derived from the real
+`flow-syntax` parser (ADR-0008).
 
-Flow is the dataflow language whose surface syntax denotes its compiler graph IR
-(`data -> f -> g -> ret;` *is* three nodes and two edges). This plugin highlights
-the Flow-Core surface: flow arrows, guard arrows, the `type`/`fn`/`loop`/`seq`
-keywords, loop labels and label jumps, primitive and named types, builtins
-(`map`/`fold`/`print`/`println`), and the reserved-and-rejected `category`
-keyword.
+```
+ftdetect/flow.vim        *.flow -> filetype=flow
+syntax/flow.vim          highlighting
+lua/flow/icon.lua        file icon registration (optional)
+test/run.sh              assert the highlighting decisions
+```
 
-## What it is
-
-- `ftdetect/flow.vim` — sets the `flow` filetype on `BufRead`/`BufNewFile` for
-  any `*.flow` file.
-- `syntax/flow.vim` — a classic Vimscript syntax file (regex-based).
-
-Highlight groups link to standard groups (`Statement`, `Keyword`, `Type`,
-`Function`, `String`, `Number`, `Float`, `Boolean`, `Operator`, `Comment`,
-`Label`, `Special`, `Error`) via `hi default link`, so your colorscheme drives
-the actual colors and can override any of them.
-
-Design highlights:
-
-- **`->` / `<-`** (`flowArrow`) link to `Statement` — composition *is* the
-  language, so flow arrows are deliberately prominent.
-- **Guard arrows** — split coloring. The **chrome** (the leading `-` and the
-  trailing `->`, group `flowGuardArrow`) links to `Statement`, identical to a
-  plain flow arrow, so a guard reads as flow plumbing. The **discriminant**
-  inside gets the color of *what it is*, via contained overlay groups:
-  `true`/`false` (`flowGuardBool`) → `Boolean`; integer guards `-0->`/`-42->`
-  (`flowGuardInt`) → `Number`; the default `_` (`flowGuardWild`) → `Special`;
-  variant and destructuring pattern heads `-Some(x)->`/`-None->`/`-[…]->`
-  (`flowGuardVariant`) → `Type` (inner binder names stay plain). Guards are
-  defined *after* the plain arrows and the `-` operator so Vim's "last match
-  wins" rule lets the full guard win; the contained groups overlay only the
-  discriminant span.
-- **Functions in flows** — an identifier that sits *between two arrows*
-  (`-> clamp ->`, `data -> f -> g ->`; group `flowFlowFn`) links to `Function`.
-  This is a lexical heuristic: `syn keyword` builtins/keywords (`map`, `fold`,
-  `print`, `println`, `ret`, `loop`, …) outrank it automatically, and it is
-  defined before `flowTypeName` so a PascalCase head still wins as `Type`.
-  Terminal bindings and sinks (`-> nr;`, `-> total_r;`) have no trailing `->`,
-  so this rule does *not* fire on them.
-- **Terminal calls to no-value functions** (`flowDeclaredFn`) — a no-value
-  function `fn somefn() { … }` (no `-> Ret`) is invoked terminally as
-  `data -> somefn;`, which is lexically identical to a terminal binding
-  `-> result;`, so the rule above leaves both uncolored. To color the *call*
-  without painting every binding, the plugin scans the buffer for `fn <name>`
-  declarations and highlights only those names in call position (after `->`),
-  covering both `-> somefn;` and `-> somefn ->`. It re-runs on load and edits
-  (`BufEnter`/`TextChanged`/`InsertLeave`/`BufWritePost`) so new functions are
-  picked up — the same buffer-scan shape labels used before sigils. A true
-  call-vs-binding answer still awaits LSP semantic tokens (ADR-0008).
-- **`ret`** links to `Special` (the graph sink); **labeled blocks and jumps**
-  (ADR-0012) link to `Label`. Labels carry a prefix `:` sigil on both ends —
-  declaration `:outer { … }`, jump `-> :outer;` — so both forms are
-  self-identifying by regex alone: a terminal binding `-> out;` has no sigil
-  and stays unhighlighted, and the whole `:ident` (sigil included) is the
-  Label. The buffer-scanning "known-label narrowing" hack this plugin used to
-  need (un-sigiled jumps were lexically identical to bindings) is gone — the
-  sigil killed the ambiguity it worked around. Un-sigiled `outer {` is no
-  longer a label form (the compiler reads statement-initial `Ident {` as a
-  struct literal and hints at the sigiled spelling). The back-edge `-> loop;`
-  stays a keyword and `-> ret;` stays the `ret` sink. Labels are Core+1
-  surface (rejected with P0110 today) but are the decided spelling, exhibited
-  by the LC-3-patched spec.
-- **`category`** links to `Error` — it is reserved-and-rejected under ADR-0006
-  (errata E5: the type keyword is `type`). The editor teaches E5 by flagging it.
-
-> **Note.** Highlighting is regex-based today. A tree-sitter grammar is deferred
-> until it can be derived from the real `flow-syntax` parser (ADR-0008).
+Groups link to standard groups via `hi default link`, so your colorscheme drives the actual
+colours and can override any of them.
 
 ## Install
 
-### (a) lazy.nvim (local plugin)
+**lazy.nvim**
 
 ```lua
-{
-  dir = "/path/to/flow/editors/nvim",
-  name = "flow.nvim",
-  ft = "flow",
-}
+{ dir = "/path/to/flow/editors/nvim", ft = "flow" }
 ```
 
-### (b) Plain `runtimepath` append in `init.lua`
+**packer**
+
+```lua
+use { "/path/to/flow/editors/nvim" }
+```
+
+**No plugin manager** — add the directory to your runtimepath:
 
 ```lua
 vim.opt.runtimepath:append("/path/to/flow/editors/nvim")
 ```
 
-(Equivalent Vimscript for `init.vim`:
-`set runtimepath+=/path/to/flow/editors/nvim`.)
+## File icon
 
-> **lazy.nvim users: use (a), not (b).** lazy.nvim resets `runtimepath` during
-> startup, silently discarding manual appends (and `--cmd 'set rtp+=…'` from the
-> command line, for the same reason). The `dir =` plugin spec in (a) is the
-> supported path.
+Neovim's icon providers take a **font glyph, not an image**, so this is a Nerd Font character
+in the logo's teal rather than the actual SVG. For the real logo on `.flow` files, see
+[`../vscode/`](../vscode/).
 
-### (c) Quick try-out (no config changes)
+```lua
+require("flow.icon").setup()                 -- nvim-web-devicons and/or mini.icons
+require("flow.icon").setup({ glyph = "" })  -- override if your font lacks U+F0E8
+```
+
+Needs a [Nerd Font](https://www.nerdfonts.com/). Each provider is skipped silently when not
+installed, so this is safe to call unconditionally.
+
+## What gets highlighted
+
+| Construct                                                                       | Group                        | Links to                                  |
+| ------------------------------------------------------------------------------- | ---------------------------- | ----------------------------------------- |
+| `fn` `type` `loop` `seq` `mut` `void`                                           | `flowKeyword`                | `Keyword`                                 |
+| `map` `fold` `zip` `enumerate` `iota` `fill` `widen_*` `time` `print` `println` | `flowBuiltin`                | `Function`                                |
+| `ret`                                                                           | `flowRet`                    | `Special`                                 |
+| `i32 i64 u8 f32 f64 bool`, `PascalCase`                                         | `flowPrimType`/`flowTypeName` | `Type`                                    |
+| name after `fn`                                                                 | `flowFnName`                 | `Function`                                |
+| **`x -> name;`** — binds a variable                                             | **`flowBinding`**            | `Identifier`                              |
+| **`x -> myfn;`** / **`-> myfn ->`** — calls a declared `fn`                     | **`flowDeclaredFn`**         | `Function`                                |
+| `-> f ->` — call position                                                       | `flowFlowFn`                 | `Function`                                |
+| `->` `<-`                                                                       | `flowArrow`                  | `Statement` — composition *is* the language |
+| `-true->` `-42->` `-Some(x)->`                                                  | `flowGuardArrow` + contained | chrome `Statement`, discriminant by kind  |
+| `:label { }` and `-> :label;`                                                   | `flowLabel`                  | `Label`                                   |
+| `category`                                                                      | `flowReserved`               | `Error` — reserved-and-rejected (ADR-0006) |
+
+Guard arrows are split-coloured on purpose: the **chrome** (leading `-`, trailing `->`) reads
+as flow plumbing, identical to a plain arrow, while the **discriminant** inside gets the colour
+of what it is — `true`/`false` as `Boolean`, `42` as `Number`, `_` as `Special`, `Some` as
+`Type`.
+
+### The one genuinely ambiguous case
+
+`x -> name;` is lexically identical whether `name` is a **new variable** or a **call to a
+no-value function**. Nothing in the token stream separates them. The syntax file resolves it
+by scanning the buffer for `fn <name>` declarations and treating only those as calls;
+everything else is a binding. Re-scanned on `BufEnter`, `BufWritePost`, `TextChanged` and
+`InsertLeave`, so a newly written `fn` starts colouring its call sites immediately.
+
+A correct answer needs the compiler's own name resolution — LSP semantic tokens (ADR-0008).
+This is a heuristic that is right for every program in `examples/`.
+
+## Tests
 
 ```sh
-nvim -u NONE --cmd 'set rtp+=/path/to/flow/editors/nvim' \
-  --cmd 'filetype on' --cmd 'syntax on' \
-  /path/to/flow/examples/sepia.flow
+editors/nvim/test/run.sh
 ```
 
-(`-u NONE` skips your config but also disables filetype detection, hence the
-explicit `filetype on` / `syntax on`.) Run `:set filetype?` inside nvim — it
-should report `filetype=flow`.
+Asserts the group each token actually resolves to, and that no file in `examples/` lights up
+as an error. Exits non-zero on failure.
 
-## Layout
-
-```
-editors/nvim/
-├── README.md
-├── ftdetect/
-│   └── flow.vim     # *.flow -> filetype=flow
-└── syntax/
-    └── flow.vim     # regex syntax definitions
-```
+Worth running after **any** edit to `syntax/flow.vim`. That file depends on Vim's
+last-match-wins rule and its header warns against reordering; the test pins outcomes rather
+than ordering, so a reorder that changes behaviour fails loudly instead of silently
+mis-painting code. It has already earned its place twice — it caught `iota` being mis-painted
+as a user function, and a false failure of its own from a substring match.
