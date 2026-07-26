@@ -1,4 +1,4 @@
-# Contributing to Flow
+# Contributing to Mapal
 
 Fork it, work on what interests you, and **bring the evidence**. Modules, recursion, sum
 types, a new backend, a better packing kernel, a different scheduling algorithm — all of it
@@ -52,7 +52,7 @@ has an ADR arguing both sides.
 
 ## Before you write code: the model comes first
 
-Flow is built with [`FRAMEWORK.md`](FRAMEWORK.md), and the compiler's own architecture is
+Mapal is built with [`FRAMEWORK.md`](FRAMEWORK.md), and the compiler's own architecture is
 modelled with it (ADR-0014). Read §0–§4 once; it is the shortest path to understanding why
 the code is shaped the way it is.
 
@@ -61,7 +61,7 @@ data**, and it **transmits data between physical sites** — and decomposes into
 
 | Atom | Is | In this repo |
 | --- | --- | --- |
-| `Dat` | data types and their relations | `flow_ir::Ty`, `RValue`, the graph's objects |
+| `Dat` | data types and their relations | `mapal_ir::Ty`, `RValue`, the graph's objects |
 | `Trn` | transformations | passes, emitters, kernels, interp arms |
 | `Loc` | physical execution sites | thread, core, register file, cache, RAM, GPU SM |
 | `Trm` | a typed move between two sites | a task handoff, a DMA, a host↔device copy |
@@ -77,7 +77,7 @@ change. A morphism table beats three paragraphs of prose, every time.
 `Dat`/`Trn`/`Loc`/`Trm` it concerns and maps to a real `file:symbol`, a `planned` item, or an
 explicit open question. "We should add a scheduling layer" is not a design. *"`path_plan`
 gains a morphism `grain : Region → ℕ`, deduced not stored, realised in
-`crates/flow-ir/src/path_plan.rs`"* is.
+`crates/mapal-ir/src/path_plan.rs`"* is.
 
 Before you open the PR, run the **§4.5 coherence checklist** (FRAMEWORK §8) over what you
 built. The one that catches the most real bugs is **placement honesty**: every transformation's
@@ -86,7 +86,7 @@ nothing put there is a *failed law*, not a style opinion — that is how the con
 was finally located (the OS handing over physical pages was an undeclared `Trm` inside the
 timed region).
 
-**The interpreter defines the language.** `crates/flow-interp` is the oracle. If a backend
+**The interpreter defines the language.** `crates/mapal-interp` is the oracle. If a backend
 disagrees with it, the backend is wrong — unless you can argue the oracle is, in which case
 that argument is an ADR.
 
@@ -112,7 +112,7 @@ implementing what survives.
 
 **Not in the language at all yet**, and wanted: recursion, modules, closures, pattern
 matching, strings beyond printing. None has an ADR — writing one *is* the contribution that
-unblocks the code. See [`HANDOFF.md`](HANDOFF.md) §4 for what Flow-Core deliberately excludes
+unblocks the code. See [`HANDOFF.md`](HANDOFF.md) §4 for what Mapal-Core deliberately excludes
 and why.
 
 **Smaller, sharper items:** `docs/suggestions.md` (improvements derived from the model, each
@@ -141,7 +141,7 @@ output at `-O0` or `-O2`, on one thread or all of them, and matches the interpre
   oracle: 10 examples plus 320 generated programs, raw and rewritten, at both opt levels.
   New emission behaviour belongs in it. It *skips itself* without `clang` — a skipped run
   proves nothing, which is why CI fails on a skip.
-- Rewriter changes need the property suite (`crates/flow-rewrite/tests/property.rs`): R1
+- Rewriter changes need the property suite (`crates/mapal-rewrite/tests/property.rs`): R1
   (`Done`/`Trapped`/`Diverged` classes never cross, output byte-exact), R2 (validate clean),
   determinism, idempotence.
 - A trap, a divergence and an out-of-bounds are **observable behaviour**. Deleting one is a
@@ -166,7 +166,7 @@ not pedantry; every one of them was learned by publishing something wrong first
    slower clock from more work.
 6. **Same machine, both legs, stamped.** Machine specs go on the results, not in the PR prose.
 7. **Rebuild everything the leg links.** `cargo test` does not rebuild
-   `target/release/libflow_rt.a`; a stale static library presents exactly like a fix that does
+   `target/release/libmapal_rt.a`; a stale static library presents exactly like a fix that does
    nothing.
 8. **Say what your change does *not* improve**, and include the cells where it loses.
 
@@ -214,10 +214,10 @@ cargo test --workspace --release           # CI gate 2 — the correctness argum
 sh editors/test.sh                         # if you touched editors/
 
 # the differential must actually run, not skip:
-cargo test --release -p flow-backend-llvm --test differential -- --nocapture
+cargo test --release -p mapal-backend-llvm --test differential -- --nocapture
 ```
 
-`crates/flow-rewrite/tests/property.proptest-regressions` pins counterexamples CI has drawn.
+`crates/mapal-rewrite/tests/property.proptest-regressions` pins counterexamples CI has drawn.
 **Never delete a seed to get a green build** — a pinned seed is the only thing stopping a
 randomised suite from passing on a lucky draw. If a pinned seed fails for you, that is the
 finding, not the obstacle.

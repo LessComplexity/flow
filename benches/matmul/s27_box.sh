@@ -4,8 +4,8 @@
 # only — S28 rule): flow cap f32/f64 par+1t + their _fma twins, cpp naive+mt,
 # rust naive+mt, chapel mc+1t, numpy threaded+1t. No cuda legs (=> any minimal
 # ubuntu:22.04 image; the S27 .cu artifacts are byte-identical to S26's).
-# Protocol as s26b_box.sh: rsync benches/matmul -> /root/bench, flow-rt
-# lib.rs -> /root/bench/flow_rt.rs; runner.py stamps machine specs on the CSV.
+# Protocol as s26b_box.sh: rsync benches/matmul -> /root/bench, mapal-rt
+# lib.rs -> /root/bench/mapal_rt.rs; runner.py stamps machine specs on the CSV.
 # S27 vs s26b: fma builds (contract flags live IN the _fma.ll — same clang
 # recipe), sizes to 4096 (ulimit probe below; runner wraps every flow run),
 # disasm checks split by face (conformance: zero vfmadd; fma: zero vmulps).
@@ -30,9 +30,9 @@ cat /sys/fs/cgroup/cpu.max 2>/dev/null || cat /sys/fs/cgroup/cpu/cpu.cfs_quota_u
 echo "== S27 ulimit probe (4096 f64 ~700 MB stack: 3 arrays + packed panel) =="
 ulimit -s unlimited && echo "ulimit -s unlimited: OK" || echo "ulimit -s unlimited: REFUSED — 4096 flow legs will show the wall (heap lowering is the recorded enabler)"
 cd /root/bench
-echo "== flow-rt staticlib =="
-rustc --edition 2024 --crate-type=staticlib -O flow_rt.rs -o libflow_rt.a
-echo "== flow-llvm builds (clang -O2 -march=native -ffp-contract=fast — conformance + fma faces, same flags; the flags differ IN the .ll) =="
+echo "== mapal-rt staticlib =="
+rustc --edition 2024 --crate-type=staticlib -O mapal_rt.rs -o libmapal_rt.a
+echo "== mapal-llvm builds (clang -O2 -march=native -ffp-contract=fast — conformance + fma faces, same flags; the flags differ IN the .ll) =="
 pids=()
 for n in 16 64 128 256 512 1024 2048 4096; do
   for v in "cap" "cap_f32"; do
@@ -42,7 +42,7 @@ for n in 16 64 128 256 512 1024 2048 4096; do
                 "matmul${n}_${v}_fma_perf:mm_ll_fma_perf_${v}_$n"; do
       src="${stem%%:*}.ll"; bin="${stem##*:}"
       if [ -f "$src" ] && [ ! -f "$bin" ]; then
-        clang -O2 -march=native -ffp-contract=fast "$src" libflow_rt.a -o "$bin" -lpthread -ldl -lm &
+        clang -O2 -march=native -ffp-contract=fast "$src" libmapal_rt.a -o "$bin" -lpthread -ldl -lm &
         pids+=($!)
       fi
     done
@@ -70,10 +70,10 @@ echo "conformance vfmadd=$CONF_FUSED (expect 0) | fma vfmadd=$FMA_FUSED (expect 
 objdump -d mm_ll_fma_cap_f32_512 | grep -m1 -oE "%[yz]mm[0-9]+" | head -1 || true
 echo "== runs (leg filter — CPU tables only) =="
 python3 runner.py \
-  flow-llvm-cap-compute-f64 flow-llvm-cap-compute-f32 \
-  flow-llvm-cap-compute-f64-1t flow-llvm-cap-compute-f32-1t \
-  flow-llvm-cap-fma-compute-f64 flow-llvm-cap-fma-compute-f32 \
-  flow-llvm-cap-fma-compute-f64-1t flow-llvm-cap-fma-compute-f32-1t \
+  mapal-llvm-cap-compute-f64 mapal-llvm-cap-compute-f32 \
+  mapal-llvm-cap-compute-f64-1t mapal-llvm-cap-compute-f32-1t \
+  mapal-llvm-cap-fma-compute-f64 mapal-llvm-cap-fma-compute-f32 \
+  mapal-llvm-cap-fma-compute-f64-1t mapal-llvm-cap-fma-compute-f32-1t \
   cpp-naive-f32 cpp-naive-f64 cpp-mt-f32 cpp-mt-f64 rust-naive rust-mt \
   chapel-f32 chapel-f64 chapel-1t-f32 chapel-1t-f64 numpy numpy-1t 2>&1 | tee /root/runner.log
 echo "S27 BOX DONE"

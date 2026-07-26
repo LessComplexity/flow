@@ -1,12 +1,12 @@
 #!/bin/bash
 # S24 box driver: the parallel-orchestrator CPU leg — full same-box sweep.
-# flow-llvm legs now run the flow-rt scheduler (FLOW_PAR unset = all cores);
+# mapal-llvm legs now run the mapal-rt scheduler (MAPAL_PAR unset = all cores);
 # the -1t rows are the same binaries pinned to one thread (runner.py S24 rows).
 # No cargo, no differential: emitters were hardware-verified S23 and the .cu
 # text is byte-identical this wave; .ll artifacts are pre-emitted (regen.sh)
 # and rsync'd in. Expects /root/bench populated from the workstation:
 #   rsync benches/matmul/ -> /root/bench/
-#   rsync crates/flow-rt/src/lib.rs -> /root/bench/flow_rt.rs
+#   rsync crates/mapal-rt/src/lib.rs -> /root/bench/mapal_rt.rs
 set -e
 export DEBIAN_FRONTEND=noninteractive
 export PATH="$HOME/.cargo/bin:$PATH"

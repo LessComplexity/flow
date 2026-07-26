@@ -17,7 +17,7 @@ model — the `region_plan` principle, here instantiated for iteration-space str
   current matmul emission has ZERO fold-body guards (6 `icmp` = loop conditions only,
   verified on regenerated `matmul512_cap.ll` ≡ committed). s24.md reading 6's gap
   attribution is stale; corrected this session.
-- Local M-series A/B @512 f32: flow `FLOW_PAR=1` ≈ 80 ms ≈ cpp single-thread 89 ms —
+- Local M-series A/B @512 f32: flow `MAPAL_PAR=1` ≈ 80 ms ≈ cpp single-thread 89 ms —
   **scalar parity already holds**; the box ≤512 gap = spawn floor + 8× oversubscription
   (plan-s25-pool-timer), not instruction residue.
 - Disassembly: both flow and cpp are scalar-FMA (no vector registers). The per-cell
@@ -86,7 +86,7 @@ No ISA knowledge in the emitter (textual LLVM, clang vectorizes) — project sty
 
 ## Work packages
 
-- **WP-T1 (flow-ir):** `tile_plan` + tests: matmul shape recognized (512/1024, f32/f64);
+- **WP-T1 (mapal-ir):** `tile_plan` + tests: matmul shape recognized (512/1024, f32/f64);
   refusals pinned (post-processed output, unproven index, j-stride≠1, no div/mod pair,
   captured-expression seed ok). Property: recognition never fires on testgen programs
   unless conditions hold (spot via targeted builders, not the random suite).

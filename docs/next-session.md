@@ -6,7 +6,7 @@
 > away. Guard now quantifies over the body's whole morphism set via the shared
 > `graph_rewrites::is_pure`. All four entry points were one bug; seed retained; negative-
 > controlled. See `components/rewrite/plans/plan-s34-identity-map-trap.md`. Item 2
-> (`flow_par_wait` clock race) is untouched and is now the top P0.
+> (`mapal_par_wait` clock race) is untouched and is now the top P0.
 
 Written: 2026-07-26 · end of S33 · by: Claude (orchestrator; category-architect skill)
 Session log: `sessions/2026-07-26-s33-boundary-openblas-parity-open-source.md` — **read §5 and §7
@@ -14,13 +14,13 @@ before touching either P0.**
 
 ## Where things stand (≤6 lines)
 
-S33 closed the S31/S32 P0 by **inverting** it: conv2d was never slow — Flow's timed window
+S33 closed the S31/S32 P0 by **inverting** it: conv2d was never slow — Mapal's timed window
 included the output array's first-touch page-zeroing, which the C++ baseline pre-pays outside its
 own timer. Shipped `reside`; conv2d is now **1.21× ahead** of naive C++ per core on both NEON and
-AVX2. Second machine measured: on AVX2, where numpy is OpenBLAS rather than AMX, Flow's generated
+AVX2. Second machine measured: on AVX2, where numpy is OpenBLAS rather than AMX, Mapal's generated
 GEMM reaches **parity** (1t a flat 1.20× behind, threaded ±10%). The repo is **public** with CI.
 **Both CI and the local gate are red, correctly** — CI found a rewriter bug on its first run, and
-pinning the seed makes it reproduce locally too. 4 of 9 `flow-rewrite` property tests fail: one bug,
+pinning the seed makes it reproduce locally too. 4 of 9 `mapal-rewrite` property tests fail: one bug,
 four entry points, and the trigger is narrowed to **`MapFusion` in composition** (§1).
 
 ## FIRST commands (resume checks, in order)
@@ -29,7 +29,7 @@ four entry points, and the trigger is narrowed to **`MapFusion` in composition**
 git log --oneline -3                  # HEAD is the S33 close commit
 git status --short                    # expect empty
 gh run list --limit 3                 # expect RED on ubuntu-latest — that is P0 #1
-cargo test -q -p flow-rewrite --release --test property   # P0 #1: expect 4 FAILED, ~0.4s
+cargo test -q -p mapal-rewrite --release --test property   # P0 #1: expect 4 FAILED, ~0.4s
 sh editors/test.sh                    # 61 assertions, expect green
 ssh -o BatchMode=yes <perf-box> 'cat /proc/loadavg'   # the measurement machine, key auth
 ```
@@ -56,7 +56,7 @@ establishes two things:
   it.** Prefixes 1–5 pass; prefix 6 fails.
 
 So it is an **interaction**, and **map fusion is the trigger**. Look at the fusion rule in
-`crates/flow-rewrite/src/graph_rewrites.rs`, and ask what happens when the two maps being fused
+`crates/mapal-rewrite/src/graph_rewrites.rs`, and ask what happens when the two maps being fused
 have a body whose result is unused but whose evaluation traps — the earlier five passes are what
 put the graph into that shape.
 
@@ -65,22 +65,22 @@ put the graph into that shape.
 property in the file, and each uses a different strategy.
 
 ```sh
-cargo test -q -p flow-rewrite --release --test property        # all four, ~0.4s
+cargo test -q -p mapal-rewrite --release --test property        # all four, ~0.4s
 ```
 
 The counterexample is **not minimal** (proptest hit its 192-iteration shrink limit). If the
 `MapFusion` lead does not resolve it quickly, shrink harder:
 
 ```sh
-PROPTEST_MAX_SHRINK_ITERS=1000000 cargo test -p flow-rewrite --release --test property open_default
+PROPTEST_MAX_SHRINK_ITERS=1000000 cargo test -p mapal-rewrite --release --test property open_default
 ```
 
 **Do not un-pin the seed to get a green build.**
 
-### 2. P0 — `flow_par_wait` lets workers run ahead of the clock
+### 2. P0 — `mapal_par_wait` lets workers run ahead of the clock
 
 Workers do not stop at checkpoints, so a kernel can finish before the clock meant to bracket it is
-read. 3–4% of threaded runs; one live case read **0.0001 ms** for a 1024² matmul. `FLOW_PAR=1` is
+read. 3–4% of threaded runs; one live case read **0.0001 ms** for a 1024² matmul. `MAPAL_PAR=1` is
 0/100, so every single-threaded number in the repo is sound.
 
 **Do NOT retry the runtime-only dispatch ceiling.** It was built, measured and reverted;
@@ -104,8 +104,8 @@ the first attempt tripped.
 
 1. **Pin, always.** Two unpinned readings on the hybrid i9 produced confident wrong conclusions.
 2. **`ref-cycles`, not `cycles`, separates frequency from time.**
-3. **`cargo test` does not rebuild `target/release/libflow_rt.a`** — a stale staticlib presents
-   exactly as a fix that does nothing. `cargo build -p flow-rt --release` before any hand-linked leg.
+3. **`cargo test` does not rebuild `target/release/libmapal_rt.a`** — a stale staticlib presents
+   exactly as a fix that does nothing. `cargo build -p mapal-rt --release` before any hand-linked leg.
 4. **`calloc` is not a pre-fault.** Page size is decided by alignment, not request size.
 5. **Compare ratios within one run, never against a recorded baseline.** cpp-1t fir drifted 41%
    between sessions. I broke this rule once and the A/B refuted me.
@@ -142,8 +142,8 @@ the first attempt tripped.
 
 - **Compute-only legs; numpy in every verdict table; scale everything up.**
 - **Parallel-first by construction.**
-- **Backend-genericity contract (ADR-0032):** a rung is either a generic graph fact in a flow-ir
-  query or emitter-local cashing with zero flow-ir change. flow-ir never learns machine facts.
+- **Backend-genericity contract (ADR-0032):** a rung is either a generic graph fact in a mapal-ir
+  query or emitter-local cashing with zero mapal-ir change. mapal-ir never learns machine facts.
 - **Type system = precision contracts; backend config = performance tailors.**
 - **Compile time decides the SIZES, runtime decides the ASSIGNMENT.**
 - **Nothing goes in the README that a default build does not deliver.**

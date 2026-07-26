@@ -35,7 +35,7 @@ across that variable" — reuse is fanout the graph can see:
 
 ## Per-backend width (correcting v1)
 
-flow-ir records geometry only; **the backend owns tile factors** (region-plan
+mapal-ir records geometry only; **the backend owns tile factors** (region-plan
 principle). llvm's TILE_J=16 is a v1 constant, not doctrine: per-target +
 per-element-width (f64 wants half; AVX-512 vs NEON differ; cuda wants warp-shaped
 factors; Verilog its own). The fixed-width split (compile-time-constant inner
@@ -43,9 +43,9 @@ loop + scalar tail) is about *known* length — compilers fully vectorize known
 lengths — whatever the number is.
 
 **The backend-genericity contract (Sapir, S29).** Every optimization rung lands
-as either (a) a generic graph fact in a flow-ir query (e.g. `TileRead.ksplit` —
-no machine constants) or (b) emitter-local cashing with zero flow-ir change
-(gates, emission, backend-owned constants). flow-ir never learns machine facts;
+as either (a) a generic graph fact in a mapal-ir query (e.g. `TileRead.ksplit` —
+no machine constants) or (b) emitter-local cashing with zero mapal-ir change
+(gates, emission, backend-owned constants). mapal-ir never learns machine facts;
 backends never re-derive graph analysis. CUDA/Verilog consume the SAME record:
 smem tiles = the pack `DataLoc` at another location, `mma` = another parallel
 `TrnLoc` (tf32 parity split = the one policy item, S24b precedent).
@@ -61,7 +61,7 @@ different portability, and conflating them is what makes the ladder read as
 - **Geometry** — which reads broadcast vs. stride, which axes split, the nest
   order, what is legally interleavable. **Deduced**, exact, backend-independent.
   **Proven portable across shapes**: one affine rule, no matrix concept, and S28
-  carried the matmul ladder to a FIR window rung (zero flow-ir change) and a
+  carried the matmul ladder to a FIR window rung (zero mapal-ir change) and a
   conv2d micro-kernel in a single session, both winning.
 - **Constants** — TJ/TI/KC/NC, unroll depth, prefetch distance, `GRAIN`. Facts
   about a cache hierarchy and a register file, **not** about the program. Today

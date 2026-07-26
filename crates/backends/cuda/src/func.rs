@@ -46,11 +46,11 @@
 //! set, every launch is wrapped in CUDA events (`fev{i}_start/stop`, one
 //! fn-scope pair per launch site, created once) — `Record(start)` before
 //! the launch, `Record(stop)`+`Synchronize`+`ElapsedTime` after (the stop
-//! BEFORE the trap check) — printing `FLOW_PERF launch=<kernel> ms=` per
-//! execution, plus `FLOW_PERF total ms=` at fn end. Default off: the text
+//! BEFORE the trap check) — printing `MAPAL_PERF launch=<kernel> ms=` per
+//! execution, plus `MAPAL_PERF total ms=` at fn end. Default off: the text
 //! is byte-identical to the pre-options emitter.
 
-use flow_ir::{
+use mapal_ir::{
     CategoryIr, FuncId, LastUsePlan, LoopPlan, MorphismId, ObjectId, ObjectKind, Operation, Ty,
     Value,
 };
@@ -123,8 +123,8 @@ pub(crate) struct FnEmit<'a> {
     /// order, and trap behavior are unchanged.
     pub last_use: LastUsePlan,
     /// Kernel-time instrumentation (suggestions.md #19a): when set, every
-    /// launch is wrapped in CUDA events (`FLOW_PERF launch=` per execution,
-    /// `FLOW_PERF total ms=` at fn end). Default off — the text is then
+    /// launch is wrapped in CUDA events (`MAPAL_PERF launch=` per execution,
+    /// `MAPAL_PERF total ms=` at fn end). Default off — the text is then
     /// byte-identical to the pre-options emitter. Set post-construction by
     /// the [`crate::emit_with_opts`] path (keeps `new` at its W1 arity).
     pub perf: bool,
@@ -134,9 +134,9 @@ pub(crate) struct FnEmit<'a> {
     pub ev_ord: HashMap<MorphismId, usize>,
     /// Minimal-emission classification (plan-minimal-emission WP-C — the
     /// host/`__host__ __device__` lane of the same mechanism as `DevEmit`).
-    pub plan: flow_ir::EmissionPlan,
+    pub plan: mapal_ir::EmissionPlan,
     /// Backend-forced Named on top of the plan: `Call` targets (host callees
-    /// trap via `flow_trap` inside — call position is semantic), every
+    /// trap via `mapal_trap` inside — call position is semantic), every
     /// bulk-op target (launch/readback machinery needs an lvalue local),
     /// and product-typed Inline (local-name fallback).
     pub force_named: SecondaryMap<ObjectId, ()>,
@@ -212,11 +212,11 @@ impl<'a> FnEmit<'a> {
 
     /// The effective class (WP-C): deduced plan, overridden Named where the
     /// host statement protocol demands it.
-    fn cls(&self, o: ObjectId) -> flow_ir::EmissionClass {
+    fn cls(&self, o: ObjectId) -> mapal_ir::EmissionClass {
         if self.force_named.contains_key(o) {
-            return flow_ir::EmissionClass::Named;
+            return mapal_ir::EmissionClass::Named;
         }
-        self.plan.class(o).unwrap_or(flow_ir::EmissionClass::Named)
+        self.plan.class(o).unwrap_or(mapal_ir::EmissionClass::Named)
     }
 
     fn dissolved(&self, o: ObjectId) -> bool {
@@ -634,7 +634,7 @@ impl<'a> FnEmit<'a> {
                     .push_str(&format!("  cudaEvent_t fev{i}_start, fev{i}_stop;\n"));
             }
             self.decls
-                .push_str("  float flow_perf_total = 0.0f;\n  float flow_perf_ms = 0.0f;\n");
+                .push_str("  float mapal_perf_total = 0.0f;\n  float mapal_perf_ms = 0.0f;\n");
         }
 
         // Prologue: the arena malloc, the event creates, then the parameter
@@ -659,11 +659,11 @@ impl<'a> FnEmit<'a> {
         // driver-ownership skip routes loop bodies to loops.rs's quartet).
         self.walk()?;
 
-        // Epilogue: the FLOW_PERF total + event destroys (#19a), then free
+        // Epilogue: the MAPAL_PERF total + event destroys (#19a), then free
         // this fn's device buffers (value-guarded for an array return — see
         // emit_frees), then return the output local.
         if ev_count > 0 {
-            self.line("printf(\"FLOW_PERF total ms=%.4f\\n\", flow_perf_total);");
+            self.line("printf(\"MAPAL_PERF total ms=%.4f\\n\", mapal_perf_total);");
             for i in 0..ev_count {
                 self.line(format!(
                     "cu_check(cudaEventDestroy(fev{i}_start), \"cudaEventDestroy\");"
@@ -824,7 +824,7 @@ impl<'a> FnEmit<'a> {
             Operation::Call(g) => self.emit_call(source, target, g),
             Operation::Print { newline } => self.emit_print(source, newline),
             // plan-time-builtin: the clock read has no CUDA seam yet (the llvm
-            // backend owns `flow_time_ms`). The ✋ cell, not a silent host-clock
+            // backend owns `mapal_time_ms`). The ✋ cell, not a silent host-clock
             // substitute — a device-side timing story is its own design.
             Operation::TimeMs => {
                 return Err(EmitError::Unsupported {
@@ -920,12 +920,12 @@ impl<'a> FnEmit<'a> {
                         self.line4("#ifdef __CUDA_ARCH__");
                         self.line4(format!("*d_trap = 1u; {ret}"));
                         self.line4("#else");
-                        self.line4("flow_trap(0);");
+                        self.line4("mapal_trap(0);");
                         self.line4("#endif");
                         self.line("}");
                     } else {
-                        // Zero guard → flow_trap(div_zero) on the host (kind 0).
-                        self.line(format!("if ({b} == 0) {{ flow_trap(0); }}"));
+                        // Zero guard → mapal_trap(div_zero) on the host (kind 0).
+                        self.line(format!("if ({b} == 0) {{ mapal_trap(0); }}"));
                     }
                 }
                 if signed && !matches!(const_div, Some(v) if v != -1) {
@@ -977,7 +977,7 @@ impl<'a> FnEmit<'a> {
         };
         // BC8 (iv): a `__host__ __device__` callee that CAN TRAP (#14)
         // takes the threaded trap pointer; host callers pass the host global
-        // (unused on the host pass — its guards call flow_trap directly,
+        // (unused on the host pass — its guards call mapal_trap directly,
         // §3). A trap-free callee's signature has no trap parameter, so the
         // call passes nothing.
         if self.quals.get(g) == FnQual::HostDevice && self.caps.get(g) {
@@ -1009,7 +1009,7 @@ impl<'a> FnEmit<'a> {
             let len = g.bytes.len();
             let name = g.name.clone();
             self.line(format!(
-                "flow_print_str((const uint8_t*){name}, {len}, {nl});"
+                "mapal_print_str((const uint8_t*){name}, {len}, {nl});"
             ));
             return;
         }
@@ -1077,7 +1077,7 @@ impl<'a> FnEmit<'a> {
     /// `Record(start)` before it, `Record(stop)` + `Synchronize` +
     /// `ElapsedTime` after — the stop is recorded BEFORE the trap check, so
     /// the §3 convention is unchanged — printing one machine-readable
-    /// `FLOW_PERF launch=<kernel> ms=<%.4f>` line per EXECUTION (a cone
+    /// `MAPAL_PERF launch=<kernel> ms=<%.4f>` line per EXECUTION (a cone
     /// launch prints per iteration). The elapsed sync is the only added
     /// host sync, and only where #14 had skipped the readback.
     fn launch_and_check(
@@ -1106,11 +1106,11 @@ impl<'a> FnEmit<'a> {
                 "cu_check(cudaEventSynchronize(fev{i}_stop), \"cudaEventSynchronize\");"
             ));
             self.line(format!(
-                "cu_check(cudaEventElapsedTime(&flow_perf_ms, fev{i}_start, fev{i}_stop), \"cudaEventElapsedTime\");"
+                "cu_check(cudaEventElapsedTime(&mapal_perf_ms, fev{i}_start, fev{i}_stop), \"cudaEventElapsedTime\");"
             ));
-            self.line("flow_perf_total += flow_perf_ms;");
+            self.line("mapal_perf_total += mapal_perf_ms;");
             self.line(format!(
-                "printf(\"FLOW_PERF launch={kname} ms=%.4f\\n\", flow_perf_ms);"
+                "printf(\"MAPAL_PERF launch={kname} ms=%.4f\\n\", mapal_perf_ms);"
             ));
         } else {
             self.line(launch);
@@ -1657,7 +1657,7 @@ pub(crate) fn fn_signature(
 // --- free helpers ---------------------------------------------------------
 
 /// In-place `Update` legality (plan-last-use §2 rule 4 + the consumer
-/// composition pinned by flow-ir's `last_use_borrowed_init_is_never_dead`):
+/// composition pinned by mapal-ir's `last_use_borrowed_init_is_never_dead`):
 /// `Update(s, …)` may write into the source's buffer iff
 ///
 /// 1. `dead_after(s, position(update))` — the plan's predicate: no use of
@@ -1765,7 +1765,7 @@ fn merge_family_dead(
 }
 
 /// The borrowed/extra-used init veto ([`in_place_update`]'s consumer half —
-/// flow-ir's pin: "a loop's borrowed init is never written in place"). Walks
+/// mapal-ir's pin: "a loop's borrowed init is never written in place"). Walks
 /// the init's assembly cone (the init object plus everything it packs,
 /// source-ward through `Pair` edges): every buffer in it must be fn-owned
 /// and read nowhere but the ONE entry copy — a `Parameter` (borrowed), a
@@ -1795,7 +1795,7 @@ fn owned_loop_init(ir: &CategoryIr, f: FuncId, merge: ObjectId) -> bool {
     for (o, _) in cone.iter() {
         let obj = ir.object(o).expect("object resolves");
         if obj.kind == ObjectKind::Parameter {
-            return false; // the borrowed handle (flow-ir's pin)
+            return false; // the borrowed handle (mapal-ir's pin)
         }
         let buffer_bearing = matches!(obj.ty, Ty::Array { .. } | Ty::Tuple(_) | Ty::Struct { .. });
         if matches!(obj.ty, Ty::Array { .. }) && !fresh_owned_buffer(ir, o) {
@@ -1906,7 +1906,7 @@ fn int_min(ct: &str) -> &'static str {
 /// `MIN` (the bare decimal `-…8` literal doesn't fit the C++ literal's type —
 /// the `<cstdint>` macros instead). Floats render as round-tripping
 /// scientific literals: Rust `{:e}` prints the shortest digits that
-/// round-trip (the same value flow-rt's `Display` parity prints), and the
+/// round-trip (the same value mapal-rt's `Display` parity prints), and the
 /// exponent keeps huge values like 1e300 floating literals (plain `Display`
 /// would print 300 digits with no point — an *integer* literal, ill-formed).
 /// f32 gets the `f` suffix (no double-rounding); NaN/±inf use the `<cmath>`
@@ -1955,14 +1955,14 @@ fn float_literal(is_nan: bool, neg: bool, is_inf: bool, digits: String, suffix: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flow_ir::{Dest, FuncKind, IrBuilder, SourceLoc};
+    use mapal_ir::{Dest, FuncKind, IrBuilder, SourceLoc};
 
     const L: SourceLoc = SourceLoc { start: 0, end: 0 };
 
     fn lower_src(src: &str) -> CategoryIr {
-        let po = flow_syntax::parse(src);
+        let po = mapal_syntax::parse(src);
         assert!(po.diagnostics.is_empty(), "parse: {:?}", po.diagnostics);
-        flow_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
+        mapal_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
     }
 
     fn emit_src(src: &str) -> String {
@@ -1998,8 +1998,8 @@ mod tests {
         let src = "fn f(a: i32, b: i32) -> i32 {\n    a / b -> q;\n    a % b -> r;\n    \
                    q + r -> ret;\n}\nfn main() {\n    (7, 3) -> f -> v;\n    v -> println;\n}\n";
         let cu = emit_src(src);
-        // Zero guard → direct host flow_trap(0) (DESIGN §3).
-        assert_eq!(cu.matches("== 0) { flow_trap(0); }").count(), 2, "{cu}");
+        // Zero guard → direct host mapal_trap(0) (DESIGN §3).
+        assert_eq!(cu.matches("== 0) { mapal_trap(0); }").count(), 2, "{cu}");
         // MIN/-1 value guards: Div ⇒ MIN, Mod ⇒ 0.
         assert_eq!(cu.matches("== -1) && (").count(), 2, "{cu}");
         // The overflow arms: Div stores INT32_MIN, Mod stores 0 (both inside
@@ -2018,7 +2018,7 @@ mod tests {
                    fn main() {\n    200 -> x: u8;\n    3 -> y: u8;\n    \
                    (x, y) -> f -> v;\n    v -> println;\n}\n";
         let cu = emit_src(src);
-        assert!(cu.contains("== 0) { flow_trap(0); }"), "{cu}");
+        assert!(cu.contains("== 0) { mapal_trap(0); }"), "{cu}");
         // Unsigned: no MIN/-1 guard anywhere.
         assert!(!cu.contains("== -1"), "{cu}");
     }
@@ -2032,7 +2032,7 @@ mod tests {
         let src = "fn f(a: i32) -> i32 {\n    a / 4 -> q;\n    a % 4 -> r;\n    \
                    q + r -> ret;\n}\nfn main() {\n    7 -> f -> v;\n    v -> println;\n}\n";
         let cu = emit_src(src);
-        assert!(!cu.contains("flow_trap(0)"), "{cu}");
+        assert!(!cu.contains("mapal_trap(0)"), "{cu}");
         assert!(!cu.contains("== -1"), "{cu}");
         assert!(cu.contains(" / "), "{cu}");
         assert!(cu.contains(" % "), "{cu}");
@@ -2045,7 +2045,7 @@ mod tests {
         let src = "fn f(a: i32) -> i32 {\n    a / 0 -> ret;\n}\n\
                    fn main() {\n    7 -> f -> v;\n    v -> println;\n}\n";
         let cu = emit_src(src);
-        assert!(cu.contains("== 0) { flow_trap(0); }"), "{cu}");
+        assert!(cu.contains("== 0) { mapal_trap(0); }"), "{cu}");
     }
 
     #[test]
@@ -2055,7 +2055,7 @@ mod tests {
         let src = "fn f(a: i32) -> i32 {\n    a / -1 -> ret;\n}\n\
                    fn main() {\n    7 -> f -> v;\n    v -> println;\n}\n";
         let cu = emit_src(src);
-        assert!(!cu.contains("flow_trap(0)"), "{cu}");
+        assert!(!cu.contains("mapal_trap(0)"), "{cu}");
         assert!(cu.contains("== -1) && ("), "{cu}");
         assert!(cu.contains("= INT32_MIN;"), "{cu}");
     }
@@ -2088,9 +2088,9 @@ mod tests {
             "fn main() {\n    7.5 / 2.0 -> d;\n    7.5 % 2.0 -> m;\n    \
                            d + m -> t;\n    t -> println;\n}\n",
         );
-        // No guard CALLS (the prelude's flow_trap declaration is always
+        // No guard CALLS (the prelude's mapal_trap declaration is always
         // present).
-        assert!(!cu.contains("flow_trap(0);"), "{cu}");
+        assert!(!cu.contains("mapal_trap(0);"), "{cu}");
         assert!(!cu.contains("== 0) {"), "{cu}");
         assert!(cu.contains(" / "), "{cu}");
         assert!(cu.contains("fmod("), "{cu}");
@@ -2102,12 +2102,12 @@ mod tests {
         // f64 Mod → fmod; WP-C: operands and result inline (the wrapper
         // product dissolved, the single-consumer chain nests into print).
         assert!(cu.contains("fmod(7.5e0, 2e0)"), "{cu}");
-        assert!(cu.contains("flow_print_f64("), "{cu}");
+        assert!(cu.contains("mapal_print_f64("), "{cu}");
         let src = "fn main() {\n    7.5 -> x: f32;\n    2.0 -> y: f32;\n    \
                    x % y -> m;\n    m -> println;\n}\n";
         let cu = emit_src(src);
         assert!(cu.contains("fmodf("), "{cu}");
-        assert!(cu.contains("flow_print_f32("), "{cu}");
+        assert!(cu.contains("mapal_print_f32("), "{cu}");
     }
 
     #[test]
@@ -2166,7 +2166,7 @@ mod tests {
         // The (IoToken, i32) print pair is residual-1: a bare int32_t local —
         // no FlowProd type anywhere in the module.
         assert!(!cu.contains("FlowProd"), "{cu}");
-        assert!(cu.contains("flow_print_i32(o"), "{cu}");
+        assert!(cu.contains("mapal_print_i32(o"), "{cu}");
     }
 
     #[test]
@@ -2187,10 +2187,10 @@ mod tests {
     #[test]
     fn u8_print_routes_to_flow_print_u8() {
         let cu = emit_src("fn main() {\n    200 -> x: u8;\n    x -> println;\n}\n");
-        // A call (not the prelude's decl): flow_print_u8 on a local.
-        assert!(cu.contains("flow_print_u8(o"), "{cu}");
+        // A call (not the prelude's decl): mapal_print_u8 on a local.
+        assert!(cu.contains("mapal_print_u8(o"), "{cu}");
         // No i32 print CALL (the prelude declares every print fn).
-        assert!(!cu.contains("flow_print_i32(o"), "{cu}");
+        assert!(!cu.contains("mapal_print_i32(o"), "{cu}");
     }
 
     #[test]
@@ -2198,7 +2198,7 @@ mod tests {
         let cu = emit_src("fn main() {\n    \"hi\" -> print;\n}\n");
         assert!(cu.contains("static const char str0[] = \"hi\";"), "{cu}");
         assert!(
-            cu.contains("flow_print_str((const uint8_t*)str0, 2, false);"),
+            cu.contains("mapal_print_str((const uint8_t*)str0, 2, false);"),
             "{cu}"
         );
     }
@@ -2248,7 +2248,7 @@ mod tests {
     #[test]
     fn array_bulk_ops_emit_wp3() {
         let path = format!(
-            "{}/../../../examples/vector_add.flow",
+            "{}/../../../examples/vector_add.mapal",
             env!("CARGO_MANIFEST_DIR")
         );
         let src = std::fs::read_to_string(&path).unwrap();
@@ -2276,7 +2276,7 @@ mod tests {
         }
         let ir = b.seal(f).unwrap();
         let mut fnames: SecondaryMap<FuncId, String> = SecondaryMap::new();
-        fnames.insert(ir.entry(), "flow_main".to_string());
+        fnames.insert(ir.entry(), "mapal_main".to_string());
         let strings: SecondaryMap<ObjectId, StrGlobal> = SecondaryMap::new();
         let quals = crate::kernel::Qualifiers::analyze(&ir);
         let caps = crate::kernel::TrapCaps::analyze(&ir);
@@ -2456,7 +2456,7 @@ mod tests {
             cu.contains("= (int32_t*)(arena0 + 0ULL);"),
             "the full-copy target buffer (a zone member) stays:\n{cu}"
         );
-        let def = fn_def(&cu, "flow_main(int32_t* in) {");
+        let def = fn_def(&cu, "mapal_main(int32_t* in) {");
         // No in-place handle copy: the launch's out/src stay distinct
         // handles (the parameter's slot is only read, never aliased into).
         let launch = def
@@ -2500,7 +2500,7 @@ mod tests {
         }
         let ir = b.seal(f).unwrap();
         let cu = crate::emit(&ir).unwrap();
-        let def = fn_def(&cu, "flow_main() {");
+        let def = fn_def(&cu, "mapal_main() {");
         let launch = def
             .lines()
             .find(|l| l.contains("<<<"))

@@ -3,7 +3,7 @@
 //! native (`-O0` and `-O2`) vs the interpreter. Numbers are printed for STATUS
 //! recording (HANDOFF §8 P5).
 //!
-//! Run: `cargo test -p flow-backend-llvm --test perf_baseline -- --ignored --nocapture`
+//! Run: `cargo test -p mapal-backend-llvm --test perf_baseline -- --ignored --nocapture`
 //!
 //! The array is a literal (N `Pair` stores) — Core has no array-fill, so very
 //! large N produces a large `.ll`; the `map`/`fold` themselves stay compact
@@ -15,8 +15,8 @@ use std::process::Command;
 use std::sync::Once;
 use std::time::Instant;
 
-use flow_interp::{Outcome, run};
-use flow_ir::{CategoryIr, Dest, FuncKind, IrBuilder, Operation, SourceLoc, Ty, Value};
+use mapal_interp::{Outcome, run};
+use mapal_ir::{CategoryIr, Dest, FuncKind, IrBuilder, Operation, SourceLoc, Ty, Value};
 
 const L: SourceLoc = SourceLoc { start: 0, end: 0 };
 
@@ -51,7 +51,7 @@ fn build_sepia(n: usize) -> CategoryIr {
         let r = fb.proj(p, 0, Dest::Fresh(None), L).unwrap();
         let g = fb.proj(p, 1, Dest::Fresh(None), L).unwrap();
         let bl = fb.proj(p, 2, Dest::Fresh(None), L).unwrap();
-        let chan = |fb: &mut flow_ir::FnBuilder, r, g, bl, c0, c1, c2| {
+        let chan = |fb: &mut mapal_ir::FnBuilder, r, g, bl, c0, c1, c2| {
             let k0 = fb.constant(Value::F32(c0), L).unwrap();
             let k1 = fb.constant(Value::F32(c1), L).unwrap();
             let k2 = fb.constant(Value::F32(c2), L).unwrap();
@@ -124,12 +124,12 @@ fn rt_lib() -> PathBuf {
     static BUILD: Once = Once::new();
     BUILD.call_once(|| {
         Command::new("cargo")
-            .args(["build", "-p", "flow-rt"])
+            .args(["build", "-p", "mapal-rt"])
             .status()
             .unwrap();
     });
     PathBuf::from(format!(
-        "{}/../../../target/debug/libflow_rt.a",
+        "{}/../../../target/debug/libmapal_rt.a",
         env!("CARGO_MANIFEST_DIR")
     ))
 }
@@ -155,7 +155,7 @@ fn compile(ll: &str, opt: &str, dir: &std::path::Path) -> PathBuf {
 }
 
 /// Run `exe` under a raised stack limit. The alloca-slot scheme (BL1) keeps
-/// whole array aggregates in the frame — at N = 262144 sepia's `flow_main` holds
+/// whole array aggregates in the frame — at N = 262144 sepia's `mapal_main` holds
 /// ~9 MB of `[Pixel; N]` allocas, over the 8 MB default; the perf shape is the
 /// only place that exceeds it (examples/testgen arrays are tiny). In-place /
 /// heap lowering is the recorded headroom that lifts this ceiling.
@@ -188,7 +188,7 @@ fn sepia_perf_baseline() {
             "N={n}: interp not Done"
         );
 
-        let ll = flow_backend_llvm::emit(&ir).unwrap();
+        let ll = mapal_backend_llvm::emit(&ir).unwrap();
         let dir = tempfile::tempdir().unwrap();
 
         let mut native = Vec::new();

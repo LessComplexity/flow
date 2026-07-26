@@ -1,12 +1,12 @@
 # ADR-0036: `scan` — the loop/fold middle class as a first-class Core op (candidate)
 
-Date: 2026-07-25 · Status: **candidate — NOT decided; Sapir flagged the surrounding question open ("on loops-maps I need to think about it because not even loop is a map")** · number provisional · changes nothing until accepted. Related: ADR-0009 (collection-operator syntax), ADR-0018 (`zip`/`enumerate`), ADR-0028 (tree reduction / exact op folds), ADR-0027 (capture), S27b `LiftLoops` (R-LF/R-LM), `docs/notes/graph-advantage.md`, `docs/notes/2026-07-25-thesis-review.md`.
+Date: 2026-07-25 · Status: **candidate — NOT decided; Sapir flagged the surrounding question open ("on loop-maps I need to think about it because not every loop is a map")** · number provisional · changes nothing until accepted. Related: ADR-0009 (collection-operator syntax), ADR-0018 (`zip`/`enumerate`), ADR-0028 (tree reduction / exact op folds), ADR-0027 (capture), S27b `LiftLoops` (R-LF/R-LM), `docs/notes/graph-advantage.md`, `docs/notes/2026-07-25-thesis-review.md`.
 
 ## Context (what forced the decision)
 
 S27b shipped `PassId::LiftLoops`: loops whose bodies are recognizably map- or
-fold-shaped are lifted (R-LM / R-LF) and then inline, tile and vectorize — *"even
-loop naive implementations enjoy the perf boost automatically."* `matmul4`'s loop
+fold-shaped are lifted (R-LM / R-LF) and then inline, tile and vectorize — _"even
+loop naive implementations enjoy the perf boost automatically."_ `matmul4`'s loop
 form now reaches the tiled emitter byte-exact; `fir`'s loop fold-lifts.
 
 That success exposes the gap precisely. **Not every loop is a map or a fold, and
@@ -20,7 +20,7 @@ loop { (i < n) -> { -true-> { a + b -> t; b -> a; t -> b; i + 1 -> i; -> loop; }
 Two carried values, each iteration's output feeding the next, no associative
 combine to reassociate over. It is neither `map` (outputs are not independent)
 nor `fold` (it is not "reduce an array to one value" — it is a state machine over
-a counted range, and the *intermediate* states are the point). It cannot lift,
+a counted range, and the _intermediate_ states are the point). It cannot lift,
 so it stays opaque to every deduced query the ladder depends on: no `tile_plan`
 site, no lane analysis, no reuse-as-fanout reading.
 
@@ -40,7 +40,7 @@ array work that Flow claims as its beachhead (VISION O2):
 And the payoff is not merely "it becomes a recognized site." **Scan has a known
 parallel geometry** (Blelloch / Hillis–Steele work-efficient tree scan): a
 declared `scan` over an associative combine is parallelizable in `O(log n)`
-depth, on *every* backend — the same "deduce the shape once, place it per `Loc`"
+depth, on _every_ backend — the same "deduce the shape once, place it per `Loc`"
 move as tiling (CPU: SIMD prefix + per-thread block scan + carry pass; CUDA: warp
 shuffle scan then block scan — the standard primitive; FPGA: a pipelined chain,
 which is its most natural form of all). Written as a `loop`, none of that is
@@ -48,7 +48,7 @@ available, because associativity is not recoverable from the graph. Written as
 `scan` with a declared combine, it is.
 
 This is the same argument as ADR-0028's tree reduction, one shape over: the
-language must *state* the algebraic property, because deducing associativity from
+language must _state_ the algebraic property, because deducing associativity from
 arbitrary arithmetic is not sound (and for floats it is not even true — hence
 ADR-0032's reassociation contract, which is exactly the machinery this needs).
 
@@ -71,7 +71,7 @@ token-free, must produce a tail value, arity enforced.
 gated on a declared combine.** The interpreter defines `scan` left-to-right,
 period — that is the meaning, and it makes `scan` immediately usable and
 bit-exact everywhere with zero new theory. A backend may use the log-depth tree
-realization **only** when the body is recognized associative *and* the site's
+realization **only** when the body is recognized associative _and_ the site's
 precision contract admits reassociation (ADR-0032: `exact` forbids it for floats;
 integer combines and the `contract`/`tf32-class` faces admit it). Recognition
 reuses ADR-0028's machinery — the exact-op fold set — rather than inventing a
@@ -83,22 +83,23 @@ covering the deducible shapes, `loop` is the **escape hatch for genuinely
 sequential, non-uniform iteration** — variable trip counts, early exit on a data
 condition, state machines whose step is not uniform over a range. It is not
 deprecated and should not be: E1's guarded trace is what gives Flow honest
-partiality, and `LiftLoops` keeps rescuing the loops that *are* secretly
+partiality, and `LiftLoops` keeps rescuing the loops that _are_ secretly
 map/fold/scan. What changes is the guidance: **`loop` is where you land when no
 bulk op fits, and landing there means opting out of the ladder** — which should
 be documented, since today it is an invisible performance cliff.
 
 **D4 — `LiftLoops` gains an R-LS rule.** The lifter already recognizes map- and
 fold-shaped loop bodies off `loop_plan` facts; scan-shaped bodies (carried state
-+ per-iteration store into an array indexed by the counter) are the third
-pattern, so naive loop-written prefix code reaches the ladder automatically —
-the same "naive implementations enjoy the boost" property S27b established.
-Every rejection pinned, as with R-LF/R-LM.
+
+- per-iteration store into an array indexed by the counter) are the third
+  pattern, so naive loop-written prefix code reaches the ladder automatically —
+  the same "naive implementations enjoy the boost" property S27b established.
+  Every rejection pinned, as with R-LF/R-LM.
 
 **D5 — Sequencing.** `scan` is small and self-contained: one IR op, one interp
 arm, one lower builtin, backend arms that may start as the trivially-correct
 sequential emission. It does **not** need coproducts, modules, or dynamic arrays.
-It can therefore land inside the CPU phase without disturbing it, and it *adds*
+It can therefore land inside the CPU phase without disturbing it, and it _adds_
 to the ladder's evidence rather than competing with it — a fourth shape (after
 matmul/FIR/conv2d) that the geometry story has to cover, and the first one whose
 parallel form is a tree rather than a tiling.
@@ -110,7 +111,7 @@ parallel form is a tree rather than a tiling.
   optimize at all. For a language positioning on signal/image work, that is the
   gap that would be noticed first.
 - **Adds a second geometry family** (tree/prefix) beside the tiling family,
-  which is a *strengthening* of the genericity thesis: the claim becomes "the
+  which is a _strengthening_ of the genericity thesis: the claim becomes "the
   graph carries enough to deduce the right realization" rather than "the graph
   carries enough to tile."
 - **Cost:** small for the sequential version, moderate for the parallel one, and
@@ -121,7 +122,7 @@ parallel form is a tree rather than a tiling.
 - **Interacts with ADR-0028**: same associativity recognizer, two consumers —
   which is the rule-of-three trigger for factoring it out properly.
 - **Risk:** op-set creep. The counter-argument is that `scan` is not a
-  convenience — it is the *only* way to make an entire class of program visible
+  convenience — it is the _only_ way to make an entire class of program visible
   to the optimizer, which is the same justification `map`/`fold` themselves have.
 
 ## Open questions
@@ -133,14 +134,14 @@ parallel form is a tree rather than a tiling.
   returning the final state (so it subsumes `fold`)? That would make `fold` a
   projection of `scan` — categorically tidy, one more thing to lower.
 - **Q3** — Is the associativity recognizer (ADR-0028) strong enough as-is, or
-  does the body need a *declared* combine (an annotation / a restricted body
+  does the body need a _declared_ combine (an annotation / a restricted body
   grammar) to be parallel-eligible?
 - **Q4** — Sapir's open question upstream of this: given `LiftLoops`, is `loop`
-  still wanted in the *surface*, or does it become IR-only with map/fold/scan as
+  still wanted in the _surface_, or does it become IR-only with map/fold/scan as
   the sole surface forms? D3 recommends keeping it; the counter-case is that
   every surface `loop` is a cliff, and cliffs are better removed than documented.
   **This ADR does not decide that** — it only argues that removing `loop` is
-  *safer* once `scan` exists, because the residue that genuinely needs it shrinks.
+  _safer_ once `scan` exists, because the residue that genuinely needs it shrinks.
 
 ## Spec impact
 

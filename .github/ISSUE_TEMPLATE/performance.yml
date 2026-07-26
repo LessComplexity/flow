@@ -20,7 +20,7 @@ body:
       options:
         - A number in this repo does not reproduce for me
         - A number in this repo is measured wrongly
-        - Flow is slower than X on this shape
+        - Mapal is slower than X on this shape
         - A change I want to propose, with measurements
     validations:
       required: true
@@ -76,4 +76,4 @@ body:
         - label: The CPU was pinned (or I say below why it could not be).
         - label: Single-threaded cells are minima; threaded cells are medians.
         - label: Both legs ran on the same machine in the same session.
-        - label: I rebuilt everything the legs link (`cargo build -p flow-rt --release` for a hand-linked leg — `cargo test` does not rebuild it).
+        - label: I rebuilt everything the legs link (`cargo build -p mapal-rt --release` for a hand-linked leg — `cargo test` does not rebuild it).

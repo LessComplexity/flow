@@ -1,9 +1,9 @@
 {
-  "name": "flow-lang",
-  "displayName": "Flow",
-  "description": "Syntax highlighting and file icon for the Flow dataflow language.",
+  "name": "mapal-lang",
+  "displayName": "Mapal",
+  "description": "Syntax highlighting and file icon for the Mapal dataflow language.",
   "version": "0.1.0",
-  "publisher": "flow-lang",
+  "publisher": "mapal-lang",
   "license": "Apache-2.0 WITH LLVM-exception",
   "engines": {
     "vscode": "^1.66.0"
@@ -14,26 +14,26 @@
   "contributes": {
     "languages": [
       {
-        "id": "flow",
+        "id": "mapal",
         "aliases": [
-          "Flow",
+          "Mapal",
           "flow"
         ],
         "extensions": [
-          ".flow"
+          ".mapal"
         ],
         "configuration": "./language-configuration.json",
         "icon": {
-          "light": "./icons/flow.svg",
-          "dark": "./icons/flow.svg"
+          "light": "./icons/mapal.svg",
+          "dark": "./icons/mapal.svg"
         }
       }
     ],
     "grammars": [
       {
         "language": "flow",
-        "scopeName": "source.flow",
-        "path": "./syntaxes/flow.tmLanguage.json"
+        "scopeName": "source.mapal",
+        "path": "./syntaxes/mapal.tmLanguage.json"
       }
     ]
   }

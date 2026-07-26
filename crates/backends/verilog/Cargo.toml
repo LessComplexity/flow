@@ -1,4 +1,4 @@
 [package]
-name = "flow-backend-verilog"
+name = "mapal-backend-verilog"
 version.workspace = true
 edition.workspace = true

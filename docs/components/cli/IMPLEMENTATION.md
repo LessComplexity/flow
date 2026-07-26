@@ -8,7 +8,7 @@
 ## Objects (Dat) → code
 | Object | Form / shape | Realised at | State |
 | --- | --- | --- | --- |
-| crate root | stub | `crates/flow-cli/src/main.rs` | planned |
+| crate root | stub | `crates/mapal-cli/src/main.rs` | planned |
 
 ## Morphisms (Trn / relations) → code
 _None mapped — awaits DESIGN.md's `## Categorical model (Dat + Trn)` section (ADR-0014);

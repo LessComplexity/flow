@@ -3,7 +3,7 @@
 //! object; a morphism loads its operand slots, computes, stores its target slot
 //! — the piecewise functor application (§8.5).
 
-use flow_ir::{
+use mapal_ir::{
     BoundsProof, CategoryIr, FuncId, FuncKind, LastUsePlan, MorphismId, ObjectId, ObjectKind,
     Operation, PathPlan, TaskKind, TilePlan, TileSite, Ty, Value, WaitEntry,
 };
@@ -17,11 +17,11 @@ use crate::ty::{
 
 /// Truthful fn attributes (trap-aware; suggestions #7): the conservative
 /// syntactic capability set. A fn is **clean** — pure by construction — when it
-/// has no integer `Div`/`Mod` (zero/`MIN/-1` guards call `flow_trap`), no
+/// has no integer `Div`/`Mod` (zero/`MIN/-1` guards call `mapal_trap`), no
 /// trap-capable `Index`/`Update` (an unproven `Index`'s bounds guard calls
-/// `flow_trap`; an S20 `bounds_proof`-proven `Index` can never fire — its guard
+/// `mapal_trap`; an S20 `bounds_proof`-proven `Index` can never fire — its guard
 /// is elided, so it does not count), no `Print`/token use (the token-threaded
-/// `flow_print_*` externs are not readonly), and — transitively, callerward
+/// `mapal_print_*` externs are not readonly), and — transitively, callerward
 /// over `Call` and `Map`/`Fold` body edges — every callee is equally clean (the
 /// spirit of the CUDA backend's `kernel.rs:TrapCaps` fixpoint).
 ///
@@ -90,7 +90,7 @@ impl FnAttrs {
                 }
             }
             // Token use without a `Print` (a token threaded through in/out or a
-            // product): conservative — the fn may reach `flow_print_*` through
+            // product): conservative — the fn may reach `mapal_print_*` through
             // any path, so it stays attribute-free.
             if !unclean {
                 unclean = ir
@@ -274,7 +274,7 @@ pub(crate) struct FnEmit<'a> {
     /// the single source of dead/escape/carried facts for the `Update` memcpy
     /// elision (suggestions #2); never re-derived locally.
     lup: LastUsePlan,
-    /// The fn's bounds-proof plan (flow-ir `algo.rs:bounds_proof`, S20) — the
+    /// The fn's bounds-proof plan (mapal-ir `algo.rs:bounds_proof`, S20) — the
     /// provably-in-bounds `Index` set backing the guard elision: a proven
     /// `Index` can never fire, so `emit_index` drops its trap guard (just the
     /// GEP+load); everything unproven keeps today's guard byte-identical.
@@ -290,7 +290,7 @@ pub(crate) struct FnEmit<'a> {
     /// `frame_geps`; the host resolves every field once in its prologue.
     frame: Option<FrameLayout>,
     frame_geps: String,
-    /// Host guards call `flow_trap`; task/body guards record into the run.
+    /// Host guards call `mapal_trap`; task/body guards record into the run.
     guard_flavor: GuardFlavor,
     /// Split-task collection loops use `%lo..%hi`; every other loop keeps
     /// today's `0..n`.
@@ -302,7 +302,7 @@ pub(crate) struct FnEmit<'a> {
     /// A task-flavor body only loses readonly attributes if it actually emits a
     /// runtime-state write.
     runtime_write: bool,
-    /// Opt-in flow_main compute timer; task and body functions stay untouched.
+    /// Opt-in mapal_main compute timer; task and body functions stay untouched.
     perf_timing: bool,
     /// Matmul-shaped map sites recognized once for this function.
     tile_plan: Option<TilePlan>,
@@ -315,14 +315,14 @@ pub(crate) struct FnEmit<'a> {
     kc_nest: bool,
     /// The machine facts every tile factor derives from (plan-s31-target-
     /// profiles): vector width and register count, L2 budget, stack ceiling.
-    /// Geometry comes from the record, constants come from here — flow-ir never
+    /// Geometry comes from the record, constants come from here — mapal-ir never
     /// learns any of it (the backend-genericity contract).
     profile: &'static TargetProfile,
     /// This emitter's entry block runs **exactly once per program**, so a block
-    /// it allocates may live in the `flow_rt_alloc` arena and be released by
-    /// one `flow_rt_free_all` before its `ret` (plan-s29 composition rule 4).
+    /// it allocates may live in the `mapal_rt_alloc` arena and be released by
+    /// one `mapal_rt_free_all` before its `ret` (plan-s29 composition rule 4).
     /// True only for the entry function's own emitter — the sequential
-    /// `flow_main` and the parallel host. Task/slice/body/named functions run
+    /// `mapal_main` and the parallel host. Task/slice/body/named functions run
     /// an unbounded number of times and keep their `alloca`s, which is also why
     /// the teardown can free everything: nobody else registers a block.
     heap_ok: bool,
@@ -386,7 +386,7 @@ fn vec_llt(elem_llt: &str, tile_j: u64) -> String {
 }
 
 /// Heap-lowering threshold (plan-s29 emission item 4): an entry-block block of
-/// at least this many bytes is placed in the `flow_rt_alloc` arena instead of
+/// at least this many bytes is placed in the `mapal_rt_alloc` arena instead of
 /// the stack. A target fact, not a language one (macOS caps the main thread at
 /// 64 MB hard, so 2048² f32 ×3 plus the packed panel cannot live there) — since
 /// S31 it is `TargetProfile::heap_min_bytes` rather than a literal here.
@@ -787,14 +787,14 @@ impl<'a> FnEmit<'a> {
 
     /// One named entry-block allocation of `llt`: today's `alloca` (with the
     /// explicit `align` when the site wants one), or an arena block once it
-    /// crosses [`TargetProfile::heap_min_bytes`]. An `alloca` and a `flow_rt_alloc` result are
+    /// crosses [`TargetProfile::heap_min_bytes`]. An `alloca` and a `mapal_rt_alloc` result are
     /// both just a `ptr`, so every `getelementptr {llt}, ptr …` consumer is
     /// unchanged — the swap is invisible below this line.
     fn entry_alloc(&mut self, name: &str, llt: &str, align: Option<u64>) {
         let bytes = llt_bytes(llt);
         let text = if self.heap_block(bytes) {
             let align = align.unwrap_or_else(|| llt_align(llt));
-            format!("  {name} = call ptr @flow_rt_alloc(i64 {bytes}, i64 {align})\n")
+            format!("  {name} = call ptr @mapal_rt_alloc(i64 {bytes}, i64 {align})\n")
         } else {
             match align {
                 Some(align) => format!("  {name} = alloca {llt}, align {align}\n"),
@@ -808,7 +808,7 @@ impl<'a> FnEmit<'a> {
     /// the last point that can read arena memory (plan-s29 composition rule 4).
     fn heap_teardown(&mut self) {
         if self.heap_used {
-            self.line("call void @flow_rt_free_all()");
+            self.line("call void @mapal_rt_free_all()");
         }
     }
 
@@ -1138,7 +1138,7 @@ impl<'a> FnEmit<'a> {
         let cont = self.label();
         self.line(format!("br i1 {cond}, label %{trap}, label %{cont}"));
         self.label_line(&trap);
-        self.line(format!("call void @flow_trap(i32 {kind})"));
+        self.line(format!("call void @mapal_trap(i32 {kind})"));
         self.line("unreachable");
         self.label_line(&cont);
     }
@@ -1158,7 +1158,7 @@ impl<'a> FnEmit<'a> {
 
     fn record_trap(&mut self, m: MorphismId, kind: u32) {
         let topo = self.task_site(m);
-        self.line(format!("call void @flow_par_trap(i64 {topo}, i32 {kind})"));
+        self.line(format!("call void @mapal_par_trap(i64 {topo}, i32 {kind})"));
         self.runtime_write = true;
     }
 
@@ -1176,7 +1176,7 @@ impl<'a> FnEmit<'a> {
 
     fn emit_watermark(&mut self, m: MorphismId) {
         let topo = self.task_site(m);
-        self.line(format!("call void @flow_par_watermark(i64 {topo})"));
+        self.line(format!("call void @mapal_par_watermark(i64 {topo})"));
         self.runtime_write = true;
     }
 
@@ -1380,7 +1380,7 @@ impl<'a> FnEmit<'a> {
                 let v = self.tmp();
                 self.line(format!("{v} = load {t}, ptr {os}"));
                 if self.perf_timing {
-                    self.line("call void @flow_perf_end()");
+                    self.line("call void @mapal_perf_end()");
                 }
                 self.heap_teardown();
                 self.line(format!("ret {t} {v}"));
@@ -1388,7 +1388,7 @@ impl<'a> FnEmit<'a> {
             }
             None => {
                 if self.perf_timing {
-                    self.line("call void @flow_perf_end()");
+                    self.line("call void @mapal_perf_end()");
                 }
                 self.heap_teardown();
                 self.line("ret void");
@@ -1420,7 +1420,7 @@ impl<'a> FnEmit<'a> {
             ""
         };
         let perf_begin = if self.perf_timing {
-            "  call void @flow_perf_begin()\n"
+            "  call void @mapal_perf_begin()\n"
         } else {
             ""
         };
@@ -1462,7 +1462,7 @@ impl<'a> FnEmit<'a> {
         if host.heap_block(frame_bytes) {
             let align = llt_align(&frame.struct_llt());
             host.allocas.push_str(&format!(
-                "  %frame = call ptr @flow_rt_alloc(i64 {frame_bytes}, i64 {align})\n"
+                "  %frame = call ptr @mapal_rt_alloc(i64 {frame_bytes}, i64 {align})\n"
             ));
         } else {
             host.allocas.push_str("  %frame = alloca %Frame\n");
@@ -1585,7 +1585,7 @@ impl<'a> FnEmit<'a> {
             host.line(format!("store {t} %arg, ptr {slot}"));
         }
         host.line(format!(
-            "%h = call ptr @flow_par_begin(i32 {})",
+            "%h = call ptr @mapal_par_begin(i32 {})",
             plan.tasks.len()
         ));
         for (task_id, task) in plan.tasks.iter().enumerate() {
@@ -1616,25 +1616,25 @@ impl<'a> FnEmit<'a> {
                 TaskKind::Seq { .. } => (0, 0),
             };
             host.line(format!(
-                "call void @flow_par_task(ptr %h, i32 {task_id}, i32 {kind}, ptr @task{task_id}, i64 {n}, i32 {}, i64 {min_slice}, i32 {oversub}, i32 0)",
+                "call void @mapal_par_task(ptr %h, i32 {task_id}, i32 {kind}, ptr @task{task_id}, i64 {n}, i32 {}, i64 {min_slice}, i32 {oversub}, i32 0)",
                 task.rank
             ));
         }
         for (task_id, task) in plan.tasks.iter().enumerate() {
             if task.pinned {
-                host.line(format!("call void @flow_par_pin(ptr %h, i32 {task_id})"));
+                host.line(format!("call void @mapal_par_pin(ptr %h, i32 {task_id})"));
             }
         }
         for (after, task) in plan.tasks.iter().enumerate() {
             for &before in &task.deps {
                 host.line(format!(
-                    "call void @flow_par_dep(ptr %h, i32 {before}, i32 {after})"
+                    "call void @mapal_par_dep(ptr %h, i32 {before}, i32 {after})"
                 ));
             }
         }
-        host.line("call void @flow_par_launch(ptr %h, ptr %frame)");
+        host.line("call void @mapal_par_launch(ptr %h, ptr %frame)");
         host.walk_filtered(&assigned, false);
-        host.line("call void @flow_par_finish(ptr %h)");
+        host.line("call void @mapal_par_finish(ptr %h)");
 
         let ret_ty = host.obj_ty(fd.output);
         let sig_ret = match lower_ty(&ret_ty) {
@@ -1643,7 +1643,7 @@ impl<'a> FnEmit<'a> {
                 let value = host.tmp();
                 host.line(format!("{value} = load {t}, ptr {slot}"));
                 if host.perf_timing {
-                    host.line("call void @flow_perf_end()");
+                    host.line("call void @mapal_perf_end()");
                 }
                 host.heap_teardown();
                 host.line(format!("ret {t} {value}"));
@@ -1651,7 +1651,7 @@ impl<'a> FnEmit<'a> {
             }
             None => {
                 if host.perf_timing {
-                    host.line("call void @flow_perf_end()");
+                    host.line("call void @mapal_perf_end()");
                 }
                 host.heap_teardown();
                 host.line("ret void");
@@ -1706,7 +1706,7 @@ impl<'a> FnEmit<'a> {
             out.push('\n');
         }
         let perf_begin = if host.perf_timing {
-            "  call void @flow_perf_begin()\n"
+            "  call void @mapal_perf_begin()\n"
         } else {
             ""
         };
@@ -1726,7 +1726,7 @@ impl<'a> FnEmit<'a> {
         attrs: &'a FnAttrs,
         frame: &FrameLayout,
         task_id: usize,
-        task: &flow_ir::Task,
+        task: &mapal_ir::Task,
         tiling: bool,
         packing: bool,
         contract: bool,
@@ -1766,19 +1766,19 @@ impl<'a> FnEmit<'a> {
             let packed = emit.packed_buffer(*m, &site);
             emit.emit_pack_copy(source, &site, &packed);
             let handle = emit.tmp();
-            emit.line(format!("{handle} = call ptr @flow_par_begin(i32 1)"));
+            emit.line(format!("{handle} = call ptr @mapal_par_begin(i32 1)"));
             // The packed flavor slices HERE, in the nested dispatch — the outer
             // task is the pack wrapper and is never split — so this is the call
             // the region's sizing belongs on.
             let (min_slice, oversub) = emit.slice_sizing(&site);
             emit.line(format!(
-                "call void @flow_par_task(ptr {handle}, i32 0, i32 1, ptr @task{task_id}_slice, i64 {n}, i32 {}, i64 {min_slice}, i32 {oversub}, i32 0)",
+                "call void @mapal_par_task(ptr {handle}, i32 0, i32 1, ptr @task{task_id}_slice, i64 {n}, i32 {}, i64 {min_slice}, i32 {oversub}, i32 0)",
                 task.rank
             ));
             emit.line(format!(
-                "call void @flow_par_launch(ptr {handle}, ptr %frame)"
+                "call void @mapal_par_launch(ptr {handle}, ptr %frame)"
             ));
-            emit.line(format!("call void @flow_par_finish(ptr {handle})"));
+            emit.line(format!("call void @mapal_par_finish(ptr {handle})"));
             emit.line("ret void");
             let wrapper_fn = format!(
                 "define internal void @task{task_id}(i64 %lo, i64 %hi, ptr %frame) {{\nentry:\n{}{}{}}}\n",
@@ -1904,15 +1904,15 @@ impl<'a> FnEmit<'a> {
                 .cloned()
             {
                 self.line(format!(
-                    "call void @flow_par_wait(ptr %h, ptr @pin{}_entries, i32 {})",
+                    "call void @mapal_par_wait(ptr %h, ptr @pin{}_entries, i32 {})",
                     pin.task, pin.len
                 ));
                 self.line(format!(
-                    "call void @flow_par_check(ptr %h, i64 {})",
+                    "call void @mapal_par_check(ptr %h, i64 {})",
                     pin.topo
                 ));
                 self.line(format!(
-                    "call void @flow_par_run_pinned(ptr %h, i32 {})",
+                    "call void @mapal_par_run_pinned(ptr %h, i32 {})",
                     pin.task
                 ));
             }
@@ -1931,10 +1931,13 @@ impl<'a> FnEmit<'a> {
                     {
                         for c in &list {
                             self.line(format!(
-                                "call void @flow_par_wait(ptr %h, ptr @ckpt{}_entries, i32 {})",
+                                "call void @mapal_par_wait(ptr %h, ptr @ckpt{}_entries, i32 {})",
                                 c.ordinal, c.len
                             ));
-                            self.line(format!("call void @flow_par_check(ptr %h, i64 {})", c.topo));
+                            self.line(format!(
+                                "call void @mapal_par_check(ptr %h, i64 {})",
+                                c.topo
+                            ));
                         }
                     }
                     crate::loops::emit_loop(self, morph.target)
@@ -1963,11 +1966,11 @@ impl<'a> FnEmit<'a> {
             return;
         };
         self.line(format!(
-            "call void @flow_par_wait(ptr %h, ptr @ckpt{}_entries, i32 {})",
+            "call void @mapal_par_wait(ptr %h, ptr @ckpt{}_entries, i32 {})",
             checkpoint.ordinal, checkpoint.len
         ));
         self.line(format!(
-            "call void @flow_par_check(ptr %h, i64 {})",
+            "call void @mapal_par_check(ptr %h, i64 {})",
             checkpoint.topo
         ));
     }
@@ -2174,7 +2177,7 @@ impl<'a> FnEmit<'a> {
                     return;
                 }
                 if !zero_dead {
-                    // Zero guard → flow_trap(div_zero).
+                    // Zero guard → mapal_trap(div_zero).
                     let z = self.tmp();
                     self.line(format!("{z} = icmp eq {llt} {b}, 0"));
                     self.trap_if(&z, 0);
@@ -2329,7 +2332,7 @@ impl<'a> FnEmit<'a> {
 
     /// A Named call (BL5 amendment, suggestions #8): top-level Array
     /// (components of the) argument go **by reference** — array parameters are
-    /// observably read-only (Flow value semantics; functional `Update` copies
+    /// observably read-only (Mapal value semantics; functional `Update` copies
     /// to a fresh alloca), so the address is observably the inline array, and
     /// no array bytes cross the call boundary. The lowering is per-signature
     /// (`lower_named_input_ty`), so every call site agrees with the callee's
@@ -2391,7 +2394,7 @@ impl<'a> FnEmit<'a> {
             let len = g.bytes.len();
             let name = g.name.clone();
             self.line(format!(
-                "call void @flow_print_str(ptr {name}, i64 {len}, i1 zeroext {nl})"
+                "call void @mapal_print_str(ptr {name}, i64 {len}, i1 zeroext {nl})"
             ));
             return;
         }
@@ -2413,7 +2416,7 @@ impl<'a> FnEmit<'a> {
     /// the token models.
     fn emit_time_ms(&mut self, target: ObjectId) {
         let r = self.tmp();
-        self.line(format!("{r} = call double @flow_time_ms()"));
+        self.line(format!("{r} = call double @mapal_time_ms()"));
         self.store_obj(target, "double", &r);
     }
 
@@ -3764,7 +3767,7 @@ impl<'a> FnEmit<'a> {
         }
         let floor = self.profile.tile_i().saturating_mul(site.c);
         // OVER-DECOMPOSITION IS NOT SHIPPED YET, and the reason is recorded
-        // rather than hidden. Forcing slice size directly with the FLOW_SLICE
+        // rather than hidden. Forcing slice size directly with the MAPAL_SLICE
         // lever, over-decomposing an `Invariant` site is worth 1.46-1.78x
         // (matmul512 0.750 -> 0.429, matmul1024 3.627 -> 2.452 at 14 lanes).
         // Routing the SAME slice counts through this deduction instead made
@@ -6863,13 +6866,13 @@ fn const_int_operand(ir: &CategoryIr, source: ObjectId, k: u32) -> Option<i128> 
     let obj = ir
         .object(pair_source_ir(ir, source, k)?)
         .expect("object resolves");
-    if obj.kind != flow_ir::ObjectKind::Constant {
+    if obj.kind != mapal_ir::ObjectKind::Constant {
         return None;
     }
     match &obj.value {
-        Some(flow_ir::Value::I32(n)) => Some(*n as i128),
-        Some(flow_ir::Value::I64(n)) => Some(*n as i128),
-        Some(flow_ir::Value::U8(n)) => Some(*n as i128),
+        Some(mapal_ir::Value::I32(n)) => Some(*n as i128),
+        Some(mapal_ir::Value::I64(n)) => Some(*n as i128),
+        Some(mapal_ir::Value::U8(n)) => Some(*n as i128),
         _ => None,
     }
 }
@@ -6920,15 +6923,15 @@ fn int_min(llt: &str) -> &'static str {
     }
 }
 
-/// `(flow_rt_func, needs_zeroext, llvm_ty)` for a printable scalar.
+/// `(mapal_rt_func, needs_zeroext, llvm_ty)` for a printable scalar.
 fn print_dispatch(ty: &Ty) -> (&'static str, bool, &'static str) {
     match ty {
-        Ty::Int { bits: 32, .. } => ("flow_print_i32", false, "i32"),
-        Ty::Int { bits: 64, .. } => ("flow_print_i64", false, "i64"),
-        Ty::Int { bits: 8, .. } => ("flow_print_u8", true, "i8"),
-        Ty::Bool => ("flow_print_bool", true, "i1"),
-        Ty::Float { bits: 32 } => ("flow_print_f32", false, "float"),
-        Ty::Float { bits: 64 } => ("flow_print_f64", false, "double"),
+        Ty::Int { bits: 32, .. } => ("mapal_print_i32", false, "i32"),
+        Ty::Int { bits: 64, .. } => ("mapal_print_i64", false, "i64"),
+        Ty::Int { bits: 8, .. } => ("mapal_print_u8", true, "i8"),
+        Ty::Bool => ("mapal_print_bool", true, "i1"),
+        Ty::Float { bits: 32 } => ("mapal_print_f32", false, "float"),
+        Ty::Float { bits: 64 } => ("mapal_print_f64", false, "double"),
         _ => unreachable!("non-printable Print operand"),
     }
 }

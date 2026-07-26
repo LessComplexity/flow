@@ -1,0 +1,35 @@
+---
+source: crates/mapal-ir/tests/golden_mermaid.rs
+expression: dump
+---
+flowchart LR
+    subgraph f0["fn vmatch"]
+        f0o0(("i32"))
+        f0o1(("ret: i32"))
+        f0o2(("100: i32"))
+        f0o3(("200: i32"))
+        f0o4(("999: i32"))
+        f0o5(("0: i32"))
+        f0o6(("1: i32"))
+        f0o7(("(i32, i32)"))
+        f0o8(("c0: bool"))
+        f0o9(("(i32, i32)"))
+        f0o10(("c1: bool"))
+        f0o11(("(i32, i32, bool)"))
+        f0o12(("inner: i32"))
+        f0o13(("(i32, i32, bool)"))
+        f0o0 -- "Pair 0/2" --> f0o7
+        f0o5 -- "Pair 1/2" --> f0o7
+        f0o7 -- "Eq" --> f0o8
+        f0o0 -- "Pair 0/2" --> f0o9
+        f0o6 -- "Pair 1/2" --> f0o9
+        f0o9 -- "Eq" --> f0o10
+        f0o3 -- "Pair 0/3" --> f0o11
+        f0o4 -- "Pair 1/3" --> f0o11
+        f0o10 -- "Pair 2/3" --> f0o11
+        f0o11 -- "Phi" --> f0o12
+        f0o2 -- "Pair 0/3" --> f0o13
+        f0o12 -- "Pair 1/3" --> f0o13
+        f0o8 -- "Pair 2/3" --> f0o13
+        f0o13 -- "Phi" --> f0o1
+    end

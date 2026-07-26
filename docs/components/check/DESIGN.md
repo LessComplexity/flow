@@ -1,17 +1,17 @@
 # Component: check — DESIGN
 
-Written: 2026-07-16 · Session 10 · Status of this doc: increment 1 (P3 completion) — authoritative for `crates/flow-check`
-Spec authority: ADR-0003 (E2: no effects in parallel fanout; the effect checker is flow-check's) > ADR-0004 (E3: memory guarantee scoped to the first-order non-cyclic core) > ir/DESIGN §9/§17 (I-RET permits ≥1 full-value Return writers; exclusivity is check's) > lower/DESIGN §12 (the deferral ledger) > architecture.md §2.2.4/§2.2.5 (per-morphism type predicate; frontier/escape) > user-guide §5–§7. Check consumes the **sealed, `validate()`-clean** `flow_ir::CategoryIr` **plus the `flow_syntax::Program` tree** (CK1, §1) and emits structured diagnostics only; it discharges exactly the obligations interp assumes (interp/DESIGN §9, IN3).
+Written: 2026-07-16 · Session 10 · Status of this doc: increment 1 (P3 completion) — authoritative for `crates/mapal-check`
+Spec authority: ADR-0003 (E2: no effects in parallel fanout; the effect checker is mapal-check's) > ADR-0004 (E3: memory guarantee scoped to the first-order non-cyclic core) > ir/DESIGN §9/§17 (I-RET permits ≥1 full-value Return writers; exclusivity is check's) > lower/DESIGN §12 (the deferral ledger) > architecture.md §2.2.4/§2.2.5 (per-morphism type predicate; frontier/escape) > user-guide §5–§7. Check consumes the **sealed, `validate()`-clean** `mapal_ir::CategoryIr` **plus the `mapal_syntax::Program` tree** (CK1, §1) and emits structured diagnostics only; it discharges exactly the obligations interp assumes (interp/DESIGN §9, IN3).
 
 ## Categorical model (Dat + Trn)
 
-**Firewall.** These are the compiler's own Level-B `Dat` types, not Flow-Cat arrows. The crate holds two Level-A-adjacent constructs **as data only**: the `Program` tree and the sealed `CategoryIr` graph. Nothing here restates `category-ir.md`.
+**Firewall.** These are the compiler's own Level-B `Dat` types, not Mapal-Cat arrows. The crate holds two Level-A-adjacent constructs **as data only**: the `Program` tree and the sealed `CategoryIr` graph. Nothing here restates `category-ir.md`.
 
 **Physical pair.** Degenerate (FRAMEWORK §7.1) — `Dat` + `Alg` only (categorical-model.md §3: check is a frontend filter in the single-process pipeline).
 
 ### Why (one paragraph)
 
-The categorical lens makes three things exact that prose would blur. (1) **Check is the completion of the pipeline's partial functor**: `lower/check : 𝒮 ⇀ Core` (categorical-model.md §7.3) — lower's domain restriction is "what can be built at all"; check restricts further to "what is legal", and *accept = empty diagnostic word*, so the domain of the composite is precisely Flow-Core. (2) **Effectfulness is composition, not annotation**: a fanout branch is a Kleisli composite, and the composite is effectful iff any factor is — which is why E2 is checked through the *lowered signatures* (`token ∈ sig`) rather than re-inferred: the token-in⇒token-out synthesis (ir §8) already computed the closure. (3) **The two real checks are fibre computations**: Return writers are the fibre `in_edges(ret)` (deduced from adjacency, never stored), and per-function effectfulness is deduced through `ty_contains_token` — both are §5 "deduce, don't store" applied literally.
+The categorical lens makes three things exact that prose would blur. (1) **Check is the completion of the pipeline's partial functor**: `lower/check : 𝒮 ⇀ Core` (categorical-model.md §7.3) — lower's domain restriction is "what can be built at all"; check restricts further to "what is legal", and *accept = empty diagnostic word*, so the domain of the composite is precisely Mapal-Core. (2) **Effectfulness is composition, not annotation**: a fanout branch is a Kleisli composite, and the composite is effectful iff any factor is — which is why E2 is checked through the *lowered signatures* (`token ∈ sig`) rather than re-inferred: the token-in⇒token-out synthesis (ir §8) already computed the closure. (3) **The two real checks are fibre computations**: Return writers are the fibre `in_edges(ret)` (deduced from adjacency, never stored), and per-function effectfulness is deduced through `ty_contains_token` — both are §5 "deduce, don't store" applied literally.
 
 ### Core category
 
@@ -82,9 +82,9 @@ Both are total folds over deterministic iterators; `check` is their concatenatio
 | Bridge | Signature | Stored? | Semantics |
 | ------ | --------- | ------- | --------- |
 | source intake | `&str → (this crate)` | borrowed `&` | identifier text — `Name` nodes are spans; text is `&source[span]` (same reason `lower(source, &program)` takes it) |
-| tree intake | `flow_syntax::Program → (this crate)` | borrowed `&` | fanout-block shape + the `Fanout`-vs-`SeqBlock` node-kind distinction (ADR-0019) — the facts the sealed graph cannot carry (§4, CK1; lower/DESIGN §0-B obligation 5 pins that the tree keeps them *because* they change E2 legality) |
-| IR intake | `flow_ir::CategoryIr → (this crate)` | borrowed `&` | read API only (`funcs`/`object`/`in_edges`/`ty_contains_token`); never mutates; same intake as interp |
-| diagnostics out | `(this crate) → flow_syntax::Diagnostic*` | owned `Vec` | structured, render-free (C3 / ADR-0008); `flow-cli` is the lone renderer |
+| tree intake | `mapal_syntax::Program → (this crate)` | borrowed `&` | fanout-block shape + the `Fanout`-vs-`SeqBlock` node-kind distinction (ADR-0019) — the facts the sealed graph cannot carry (§4, CK1; lower/DESIGN §0-B obligation 5 pins that the tree keeps them *because* they change E2 legality) |
+| IR intake | `mapal_ir::CategoryIr → (this crate)` | borrowed `&` | read API only (`funcs`/`object`/`in_edges`/`ty_contains_token`); never mutates; same intake as interp |
+| diagnostics out | `(this crate) → mapal_syntax::Diagnostic*` | owned `Vec` | structured, render-free (C3 / ADR-0008); `mapal-cli` is the lone renderer |
 
 ---
 
@@ -94,17 +94,17 @@ In: the two passes (§3, §4); the T-code catalogue (§2); the E3 vacuity record
 
 **What check does NOT do (and why that is the design, not a gap):**
 
-- **No typing pass.** Builder I2 (per-call) and `validate::edge_type_ok` (independent re-derivation) already certify the §5.1 table for every sealed graph; lower's contract guarantees validate-clean output (lower §1). The typing obligation is discharged **by construction** — the residual on the sealed graph is empty; re-walking §5.1 here would be a third copy of the one table (FRAMEWORK §5, one source of truth). **This supersedes lower/DESIGN §12's "flow-check re-walks the sealed graph (§11.2 phase-2)" clause**, which predates the builder-I2 + `edge_type_ok` discharge argument (and whose "§11.2" pointer was dangling); lower §12 is amended to point here in the same change (§6.3 reconcile-with-the-change).
+- **No typing pass.** Builder I2 (per-call) and `validate::edge_type_ok` (independent re-derivation) already certify the §5.1 table for every sealed graph; lower's contract guarantees validate-clean output (lower §1). The typing obligation is discharged **by construction** — the residual on the sealed graph is empty; re-walking §5.1 here would be a third copy of the one table (FRAMEWORK §5, one source of truth). **This supersedes lower/DESIGN §12's "mapal-check re-walks the sealed graph (§11.2 phase-2)" clause**, which predates the builder-I2 + `edge_type_ok` discharge argument (and whose "§11.2" pointer was dangling); lower §12 is amended to point here in the same change (§6.3 reconcile-with-the-change).
 - **No name/recursion/token checks.** L11xx (lower), I6 acyclic references (validate), I4/I4b/I5 token linearity (validate) — all upstream.
 - **No runtime policing.** Exclusivity is enforced *statically* (§3); interp keeps trusting (IN3) — now soundly.
 
 ## 1. Contract & boundary
 
 ```rust
-pub fn check(source: &str, program: &flow_syntax::Program, ir: &CategoryIr) -> Vec<Diagnostic>
+pub fn check(source: &str, program: &mapal_syntax::Program, ir: &CategoryIr) -> Vec<Diagnostic>
 ```
 
-- Empty vec = accept. Non-empty = reject; diagnostics are `flow_syntax::Diagnostic` with `severity: Error`, `fix: None` (v1, same as lower).
+- Empty vec = accept. Non-empty = reject; diagnostics are `mapal_syntax::Diagnostic` with `severity: Error`, `fix: None` (v1, same as lower).
 - **Why the tree + source parameters (CK1):** E2 is not decidable on the graph lower emits — lower token-threads a fanout branch and a `seq` block identically (a fanout branch carries no kind marker in the graph, and `seq` has **no IR footprint at all** — ADR-0019 pin d — its ordering *is* the token thread), so print-in-fanout and print-in-seq seal to indistinguishable graphs; the node-kind distinction (`StageKind::Fanout` vs `StageKind::SeqBlock`) exists only in the tree (and lower/DESIGN §0-B obligation 5 pins that the tree keeps it *because* it changes E2 legality). `source` rides along because `Name` nodes carry spans, not strings — identifier text is `&source[span]`, the same reason `lower(source, &program)` takes both. Effect truth lives in the graph signatures. Check reads all three, invents nothing. Rejected alternatives: IR fanout annotation (new IR surface + ADR for one consumer — ir §17 says escalate only when genuinely needed as data); E2 inside lower (contradicts ADR-0003's assignment); tree-side effect inference (duplicates lower Pass B).
 - **Caller contract:** `source`, `program`, `ir` must be the same source's parse/lower (the standard pipeline `parse → lower → check`: `let po = parse(src); let ir = lower(src, &po.program)?; check(src, &po.program, &ir)`). Mismatched inputs are a caller bug (debug-territory, like cross-builder id mixing in ir).
 - **Boundary (CK2):** `debug_assert!(validate(ir).is_empty())`. No release-mode re-validation, no T-code for dirty input: a dirty sealed graph is unconstructible through the public builder, and interp set the precedent of trusting the same boundary (interp §9).
@@ -112,7 +112,7 @@ pub fn check(source: &str, program: &flow_syntax::Program, ir: &CategoryIr) -> V
 
 ## 2. Diagnostics — the T-code catalogue
 
-Check owns the **`T####`** code space (reserved in flow-syntax diag.rs). Mirror of lower's pattern: `enum TCode` + `fn code(self) -> &'static str` + one free `fn diag(code, span, message) -> Diagnostic`.
+Check owns the **`T####`** code space (reserved in mapal-syntax diag.rs). Mirror of lower's pattern: `enum TCode` + `fn code(self) -> &'static str` + one free `fn diag(code, span, message) -> Diagnostic`.
 
 | Code | Name | Trigger | Span |
 | ---- | ---- | ------- | ---- |
@@ -144,7 +144,7 @@ Message shape (ADR-0003:37-38): `` `print` is not permitted in a parallel fanout
 
 ## 5. E3 — vacuous for Core (the proof, and the reopen trigger)
 
-The lifetime/escape obligation (ADR-0004, category-ir §10, architecture §2.2.5) is **vacuously discharged** for Flow-Core as realized, and check ships **zero lifetime code** (CK6):
+The lifetime/escape obligation (ADR-0004, category-ir §10, architecture §2.2.5) is **vacuously discharged** for Mapal-Core as realized, and check ships **zero lifetime code** (CK6):
 
 1. The realized op set has no heap operation: `Load/Store/Alloc/Free` were omitted from Core IR by ADR-0013 ("no heap in Core — E3 scope", ir/DESIGN §5). The frontier algorithm's input — "each heap-allocated object" (architecture §2.2.5) — is the empty set on every constructible graph.
 2. `Ty` has no reference/pointer/borrow variant (ir ty.rs); Core data is fixed-size value-semantics (I9 whitelist; `Array.size` mandatory). Escape analysis has no *subject*, not no *sites*: `Return` remains a real escape site (architecture §2.2.5 — "source of Return/Store/ChannelSend"), but with the heap-object set empty (point 1) there is nothing that can escape through it; `Store`/`ChannelSend` additionally don't exist as ops. (When heap ops arrive, Return is an escape site from day one — the reopen trigger below covers it.)
@@ -160,7 +160,7 @@ C-check-5: no `HashMap`; `funcs()` insertion order; tree walk order; two runs on
 
 1. **Acceptance (the green line).** All nine in-Core examples — abs, sum_to_n, pipeline, fanout, fir, sepia, zip_demo, vector_add, **calc** — run `parse → lower → check` and assert **zero diagnostics**. *(Resolved S10: calc — previously never tested through lower — parses, lowers, and checks clean; no upstream defect.)*
 2. **T0101 rejections (IrBuilder, hand-built).** Two unconditional full-value writers → exactly one T0101 (at the second writer); three writers → two T0101s; slot-form Pair writers (one per slot) → clean; single writer → clean.
-3. **T0201 rejections (parse → lower → check).** `print` in a `Plain` fanout branch → T0201 naming `seq`; **`() -> time` inside a `seq` in a `Plain` branch → T0201 naming `time`** (S29 — the print twin; the *reachable* shape is inside a branch `seq` because `time` is wire-less: a bare `-> time` branch stage never reaches check, lower rejects it as L1302, so this case rides the same sticky context as `seq_inside_plain_branch_still_t0201`); effectful *call* in a branch (fn that prints transitively) → T0201 (the closure case); nested fanout, inner print → T0201; `seq { print }` **inside** a `Plain` branch → **still** T0201 (CK5, now a theorem — the sticky context, not a pin); a **pure** `seq` inside a `Plain` branch → **clean** (OQ-C1 closed by ADR-0019, free by construction); the reverse nesting — a `Fanout` **inside** a top-level `seq` → T0201 per branch (the inner `Fanout` node forces the context though the enclosing `seq` is sequential); a `loop`+rebind carrying an in-loop `print` **inside** a `seq` in a `Plain` branch → T0201 (composition rule 2 reaches the seq body's statement forms, sticky context through the loop); top-level `seq { print; print }` → **clean** (its own `SeqBlock` node never opens the context — node-kind discrimination, no same-node-kind trap); prints in linear chains → clean; pure fanout (`fanout.flow`) → clean; a local binding shadowing an effectful fn name, used as a bare stage in a `Plain` branch → *(resolved S10: lower rejects the shape upstream as L1105 FunctionAsValue; the test documents that rejection. Check's scope-aware resolution is defense-in-depth — the clean-shadow path is reachable only via a hand-built tree, not the standard pipeline.)*
+3. **T0201 rejections (parse → lower → check).** `print` in a `Plain` fanout branch → T0201 naming `seq`; **`() -> time` inside a `seq` in a `Plain` branch → T0201 naming `time`** (S29 — the print twin; the *reachable* shape is inside a branch `seq` because `time` is wire-less: a bare `-> time` branch stage never reaches check, lower rejects it as L1302, so this case rides the same sticky context as `seq_inside_plain_branch_still_t0201`); effectful *call* in a branch (fn that prints transitively) → T0201 (the closure case); nested fanout, inner print → T0201; `seq { print }` **inside** a `Plain` branch → **still** T0201 (CK5, now a theorem — the sticky context, not a pin); a **pure** `seq` inside a `Plain` branch → **clean** (OQ-C1 closed by ADR-0019, free by construction); the reverse nesting — a `Fanout` **inside** a top-level `seq` → T0201 per branch (the inner `Fanout` node forces the context though the enclosing `seq` is sequential); a `loop`+rebind carrying an in-loop `print` **inside** a `seq` in a `Plain` branch → T0201 (composition rule 2 reaches the seq body's statement forms, sticky context through the loop); top-level `seq { print; print }` → **clean** (its own `SeqBlock` node never opens the context — node-kind discrimination, no same-node-kind trap); prints in linear chains → clean; pure fanout (`fanout.mapal`) → clean; a local binding shadowing an effectful fn name, used as a bare stage in a `Plain` branch → *(resolved S10: lower rejects the shape upstream as L1105 FunctionAsValue; the test documents that rejection. Check's scope-aware resolution is defense-in-depth — the clean-shadow path is reachable only via a hand-built tree, not the standard pipeline.)*
 4. **Exclusivity clean-under-loops.** `sum_to_n`/`countdown`-shaped IR (loop exit → Output → ret; token-bearing variants) → clean (|W| = 1 by construction).
 5. **Determinism + cross-pass order.** Byte-identical diagnostic Vec across two runs on a two-violation program; the exclusivity-then-effects order pin is covered by a dedicated fixture pairing a hand-built multi-writer IR with an effect-in-fanout tree (`["T0101","T0201","T0201"]` exact) — no single real-pipeline source can violate both rules (lower is always single-writer), so the pair is composed.
 6. **Boundary.** debug_assert path exercised implicitly by every test (all fixtures are builder-sealed); no dirty-graph test (unconstructible — CK2).
@@ -168,18 +168,18 @@ C-check-5: no `HashMap`; `funcs()` insertion order; tree walk order; two runs on
 ## 8. Module layout
 
 ```
-crates/flow-check/src/
+crates/mapal-check/src/
   lib.rs          // pub fn check(source, program, ir); orchestration + boundary debug_assert
   diag.rs         // TCode + code() + diag() (mirror of lower's)
   exclusivity.rs  // §3
   effects.rs      // §4 (node-kind-keyed tree walk, scope stack, the two deduced maps; text via &source[span])
-crates/flow-check/tests/
+crates/mapal-check/tests/
   acceptance.rs   // §7.1 nine examples + §7.5 determinism
   exclusivity.rs  // §7.2/§7.4
   effects.rs      // §7.3
 ```
 
-Cargo: `[dependencies] flow-ir, flow-syntax` (Program + Diagnostic); `[dev-dependencies] flow-lower` (parse→lower fixtures, interp's pattern). No slotmap (no per-object secondary state), no insta (assert on codes/messages directly), no criterion (CK8). Tree recursion in `effects.rs` mirrors the parser's depth-128-bounded tree (J1 precedent; `debug_assert!` depth counter like lower).
+Cargo: `[dependencies] mapal-ir, mapal-syntax` (Program + Diagnostic); `[dev-dependencies] mapal-lower` (parse→lower fixtures, interp's pattern). No slotmap (no per-object secondary state), no insta (assert on codes/messages directly), no criterion (CK8). Tree recursion in `effects.rs` mirrors the parser's depth-128-bounded tree (J1 precedent; `debug_assert!` depth counter like lower).
 
 ## 9. Decision ledger (CK1–CK8 — decided once, do not re-litigate)
 

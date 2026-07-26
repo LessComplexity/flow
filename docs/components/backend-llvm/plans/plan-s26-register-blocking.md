@@ -17,7 +17,7 @@ it). Original text below.
 Predecessor: `plan-tile-emission.md` (shipped rung 1). Direction:
 `docs/notes/tile-ladder-direction.md` ("the emitter cashes a fact the record
 already holds" — verified S26: `TileSite.b.ci == 0` IS the row-invariance fact;
-**no flow-ir change**).
+**no mapal-ir change**).
 
 ## Why (evidence)
 
@@ -100,7 +100,7 @@ exactly those paths, so new shapes are part of the change, not a follow-up:
 
 - Local A/B script (S25's was ad-hoc; make it repeatable): emit tiled/`--no-tile` via
   stdout redirect (the emit example's `_perf.ll` naming keys on `--perf` only),
-  `clang -O2 -march=native -ffp-contract=fast`, `FLOW_PAR=1`, `FLOW_PERF total` parse,
+  `clang -O2 -march=native -ffp-contract=fast`, `MAPAL_PAR=1`, `MAPAL_PERF total` parse,
   stdout byte-equality asserted, disasm vector-FMA presence check (a shape that
   recognizes but fails to vectorize is a finding, not a pass — rung-1 directive).
 - TILE_I sweep 2/4/8 on matmul 512 f32/f64; shapes corpus (fir/attn) oracle pins hold.

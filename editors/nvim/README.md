@@ -1,14 +1,14 @@
-# Flow — Neovim support
+# Mapal — Neovim support
 
-Regex syntax highlighting and filetype detection for `*.flow`. Best-effort and
+Regex syntax highlighting and filetype detection for `*.mapal`. Best-effort and
 non-authoritative: a tree-sitter grammar is deferred until it can be derived from the real
-`flow-syntax` parser (ADR-0008).
+`mapal-syntax` parser (ADR-0008).
 
 ```
-ftdetect/flow.vim        *.flow -> filetype=flow
-syntax/flow.vim          highlighting
-plugin/flow_icon.lua     registers the file icon automatically, adds :FlowIcon
-lua/flow/icon.lua        icon module (glyph, colour, diagnostics)
+ftdetect/mapal.vim        *.mapal -> filetype=flow
+syntax/mapal.vim          highlighting
+plugin/mapal_icon.lua     registers the file icon automatically, adds :MapalIcon
+lua/mapal/icon.lua        icon module (glyph, colour, diagnostics)
 test/run.sh              assert the highlighting decisions
 ```
 
@@ -22,9 +22,9 @@ colours and can override any of them.
 ```lua
 {
   dir = "/path/to/flow/editors/nvim",
-  lazy = false, -- NOT ft = "flow": the icon must register at startup, see below
+  lazy = false, -- NOT ft = "mapal": the icon must register at startup, see below
   -- optional, for the real logo instead of a stock glyph:
-  -- config = function() local i = require("flow.icon"); i.setup({ glyph = i.logo }) end,
+  -- config = function() local i = require("mapal.icon"); i.setup({ glyph = i.logo }) end,
 }
 ```
 
@@ -45,11 +45,11 @@ vim.opt.runtimepath:append("/path/to/flow/editors/nvim")
 **Registers itself** — no `setup()` call needed. Works with `mini.icons` (the LazyVim default)
 and `nvim-web-devicons`; whichever is present.
 
-**`lazy = false` is required**, not optional. A file tree showing a `.flow` file has no `.flow`
-buffer open, so an `ft = "flow"` spec never loads the plugin and the icon never appears.
+**`lazy = false` is required**, not optional. A file tree showing a `.mapal` file has no `.mapal`
+buffer open, so an `ft = "mapal"` spec never loads the plugin and the icon never appears.
 
 ```vim
-:FlowIcon
+:MapalIcon
 ```
 
 reports what actually registered, which glyph, whether the font is installed, and — if nothing
@@ -58,12 +58,12 @@ registered — the likely reason.
 ### Getting the real logo, not an approximation
 
 The Rust and C++ marks in a file tree are **font glyphs**: Nerd Fonts ships those brand logos as
-characters. Providers take a glyph, not an image, so the only way to get Flow's own mark is to
+characters. Providers take a glyph, not an image, so the only way to get Mapal's own mark is to
 put it in a font — which [`../../assets/font/`](../../assets/font/) does, one glyph at U+F8F0.
 
 ```lua
-local icon = require("flow.icon")
-icon.setup({ glyph = icon.logo })   -- needs FlowIcons.ttf + a terminal fallback mapping
+local icon = require("mapal.icon")
+icon.setup({ glyph = icon.logo })   -- needs MapalIcons.ttf + a terminal fallback mapping
 ```
 
 Install steps and per-terminal fallback config are in
@@ -115,7 +115,7 @@ editors/nvim/test/run.sh     # this one only
 Asserts the group each token actually resolves to, and that no file in `examples/` lights up
 as an error. Exits non-zero on failure.
 
-Worth running after **any** edit to `syntax/flow.vim`. That file depends on Vim's
+Worth running after **any** edit to `syntax/mapal.vim`. That file depends on Vim's
 last-match-wins rule and its header warns against reordering; the test pins outcomes rather
 than ordering, so a reorder that changes behaviour fails loudly instead of silently
 mis-painting code. It has already earned its place twice — it caught `iota` being mis-painted

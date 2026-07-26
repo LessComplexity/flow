@@ -11,7 +11,7 @@ set -x
 # Wait for the standalone cap_128 build (survives the killed finish.sh).
 while pgrep -x clang > /dev/null; do sleep 30; done
 if [ -f matmul128_cap_f32.ll ] && [ ! -f mm_ll_cap_f32_128 ]; then
-  clang -O2 -march=native matmul128_cap_f32.ll libflow_rt.a -o mm_ll_cap_f32_128 -lpthread -ldl -lm || echo "BUILD-FAILED mm_ll_cap_f32_128"
+  clang -O2 -march=native matmul128_cap_f32.ll libmapal_rt.a -o mm_ll_cap_f32_128 -lpthread -ldl -lm || echo "BUILD-FAILED mm_ll_cap_f32_128"
 fi
 [ -x naive_cuda ] || nvcc -O3 -arch=sm_89 naive_cuda.cu -o naive_cuda || echo "BUILD-FAILED naive_cuda"
 [ -x cublas_gemm ] || nvcc -O3 -arch=sm_89 cublas_gemm.cu -lcublas -o cublas_gemm || echo "BUILD-FAILED cublas_gemm"

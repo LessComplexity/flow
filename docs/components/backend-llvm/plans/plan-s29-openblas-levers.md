@@ -20,7 +20,7 @@ hard stack ceiling (flow 2048/4096 rows absent locally).
 ## Categorical model
 
 Both levers are the rung doctrine again — the emitter cashes facts the record
-already holds; **zero flow-ir change**. The recorded `TileSite` carries the
+already holds; **zero mapal-ir change**. The recorded `TileSite` carries the
 full address formula per read (`base + ci·i + clane·lane + ck·k`); depth `k`,
 strides `ci`, and panel geometry ARE the blocking inputs. The loop-nest
 transformation is placement-level (`TrnLoc`): same per-cell morphism chain,
@@ -29,10 +29,10 @@ a `DataLoc` change: the same `Dat` array placed in a heap arena instead of the
 stack frame — the model's "one type, three `DataLoc`s" made literal.
 
 **Backend-genericity rule (Sapir, S29 — the CUDA contract).** Every rung lands
-as either (a) a *generic* graph fact added to a flow-ir query (like
+as either (a) a *generic* graph fact added to a mapal-ir query (like
 `TileRead.ksplit` — no machine constants, no backend vocabulary), or (b)
-emitter-local cashing with **zero flow-ir change** (gates + emission +
-backend-owned constants). flow-ir never learns machine facts; backends never
+emitter-local cashing with **zero mapal-ir change** (gates + emission +
+backend-owned constants). mapal-ir never learns machine facts; backends never
 re-derive graph analysis. Consequence: the cuda backend's smem/mma path is
 pure consumption of the same `tile_plan` — lane independence → thread lanes,
 broadcast/unit-stride → smem broadcast/coalesced, `k` depth → the k-panel
@@ -46,7 +46,7 @@ policy item (product face, S24b precedent). This plan's items are all (b).
 | `acc [TI×TJ x elem]` (1KB) | `DataLoc` | the live j-tile's accumulators — the SAME width as the jt-outer nest's. **Amended in build (S29):** this was first sized `TI×NC` to hold a whole jb block across the kc loop. With `kc` OUTSIDE `ib`, other i-blocks run between two panels of the same block, so nothing survives in scratch; partial sums park in `out` instead (next row) and 31/32 of a `TI×NC` block would be dead space |
 | partial-sum parking in `out` | `DataLoc` | what the (jc, kc, ic) order costs: each j-tile spills its acc to `out` at every panel end and reloads at the next; the peeled `kc==0` panel seeds instead of reloading. Value-preserving, per-cell k stays ascending ⇒ R1 |
 | `apack [TI×KC x elem]` (2KB) | `DataLoc` | the A-panel pack: strided rows → contiguous 64-aligned scratch, packed per **(jb, kc, ib)** — not once per (ib,kc): with `jb` outermost every block re-packs, C/NC times per element |
-| `flow_rt_alloc` arena | `DataLoc` (heap) | the **entry function's** big blocks (≥ `HEAP_MIN_BYTES` = 256 KB) placed in a runtime arena, freed after `flow_par_finish`/fn end; everything smaller, and every non-entry function, keeps `alloca`. **Amended in build (S29):** the plan said "big arrays", but in the parallel flavor there are no per-array allocas — `build_frame_layout` packs them all into ONE `%Frame` and the entry emits `alloca %Frame`, so the block that blows the stack IS the frame (67 MB at 2048² f32). The gate is therefore on any entry-block block: frame, packed panel, or (sequential flavor) per-object slot |
+| `mapal_rt_alloc` arena | `DataLoc` (heap) | the **entry function's** big blocks (≥ `HEAP_MIN_BYTES` = 256 KB) placed in a runtime arena, freed after `mapal_par_finish`/fn end; everything smaller, and every non-entry function, keeps `alloca`. **Amended in build (S29):** the plan said "big arrays", but in the parallel flavor there are no per-array allocas — `build_frame_layout` packs them all into ONE `%Frame` and the entry emits `alloca %Frame`, so the block that blows the stack IS the frame (67 MB at 2048² f32). The gate is therefore on any entry-block block: frame, packed panel, or (sequential flavor) per-object slot |
 
 **Traffic math (the point).** Per A element, reads drop from C/TJ (once per
 j-tile) to K/KC adjusted — A traffic ÷ ~16 at 4096. Each (kc,jt) B slice is
@@ -74,9 +74,9 @@ extra loop levels — total ~3%. See `docs/performance/matmul/s29.md` §1 and su
    amended from "stored at the last kc" when the nest order fixed it); j
    remainder tiles get the same treatment inside their jb block.
 4. Heap arena frees happen only after all tasks that can read the arrays
-   finished (after `flow_par_finish` in the par flavor). Realized as ONE
-   `flow_rt_free_all()` immediately before the entry fn's `ret` — which is
-   past `flow_par_finish` and past the return value's load, so it satisfies the
+   finished (after `mapal_par_finish` in the par flavor). Realized as ONE
+   `mapal_rt_free_all()` immediately before the entry fn's `ret` — which is
+   past `mapal_par_finish` and past the return value's load, so it satisfies the
    rule in both flavors with a single emission point. Only the entry fn
    registers blocks, so "free everything" is exactly "free mine".
 
@@ -96,9 +96,9 @@ extra loop levels — total ~3%. See `docs/performance/matmul/s29.md` §1 and su
    over the emitted type text (the closed `ptr`/`float`/`double`/`iN`/`[n x
    T]`/`{ … }` grammar `ty.rs` produces); it is exact, checked against
    `ptrtoint (ptr getelementptr (%Frame, ptr null, i32 1) to i64)`. An `alloca`
-   result and a `flow_rt_alloc` result are both a `ptr`, so no `getelementptr`
-   consumer changes. Teardown per composition rule 4. `flow-rt` gains
-   `flow_rt_alloc`/`flow_rt_free_all` (a `Mutex<Vec<(addr, Layout)>>` registry
+   result and a `mapal_rt_alloc` result are both a `ptr`, so no `getelementptr`
+   consumer changes. Teardown per composition rule 4. `mapal-rt` gains
+   `mapal_rt_alloc`/`mapal_rt_free_all` (a `Mutex<Vec<(addr, Layout)>>` registry
    over `std::alloc`; uninitialised, like the `alloca` it replaces — every
    emitted consumer writes before it reads). The `module.rs:HEAP_DECLS` block
    is gated on the **emitted text** containing the call, not on a re-derived
@@ -108,7 +108,7 @@ extra loop levels — total ~3%. See `docs/performance/matmul/s29.md` §1 and su
 ## Tests
 
 - differential (byte-equal vs untiled + interp oracle, -O0/-O2): K % KC ≠ 0,
-  C % NC ≠ 0, rows % TI ≠ 0, FLOW_PAR splits mid-jb and mid-kc.
+  C % NC ≠ 0, rows % TI ≠ 0, MAPAL_PAR splits mid-jb and mid-kc.
 - golden: packed-nest goldens re-pinned DELIBERATELY (structural: jb/kc loops,
   apack scratch, acc shape); small-K packed golden byte-stable.
 - heap lowering: 2048/4096 flow legs run locally on macOS (the stack wall
@@ -137,9 +137,9 @@ extra loop levels — total ~3%. See `docs/performance/matmul/s29.md` §1 and su
   unbounded number of times, so arena placement without a per-call free would
   grow without bound — and a per-call free needs a last-use point the emitter
   does not compute yet. Consequence: a `matmul2048` written with the kernel in
-  a named fn still hits the stack wall; `matmul2048_cap_f32.flow` (all in
-  `main`) does not. Upgrade path: `flow_rt_free(ptr)` + `LastUsePlan`-driven
-  free points, at which stage `flow_rt_free_all` becomes the fallback.
+  a named fn still hits the stack wall; `matmul2048_cap_f32.mapal` (all in
+  `main`) does not. Upgrade path: `mapal_rt_free(ptr)` + `LastUsePlan`-driven
+  free points, at which stage `mapal_rt_free_all` becomes the fallback.
 - The arena is one global `Mutex<Vec<…>>` with a free-everything teardown —
   sound because allocation happens a handful of times in the entry prologue and
   never in a hot loop. Per-allocation lifetimes only matter alongside the row

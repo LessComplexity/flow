@@ -1,8 +1,8 @@
-# Flow — Development Handoff
+# Mapal — Development Handoff
 
 **Version:** 1.0 · **Date:** 2026-06-11 · **Status:** Canonical bootstrap document for compiler implementation.
 
-This document is the single entry point for developing the Flow compiler. Every development session — human or AI — starts here (or at `docs/next-session.md` once it exists). It consolidates the v0.2 specification corpus, records the accepted errata and pre-made technical decisions, defines the implementation subset (Flow-Core), and specifies the documentation-driven workflow that every session must follow.
+This document is the single entry point for developing the Mapal compiler. Every development session — human or AI — starts here (or at `docs/next-session.md` once it exists). It consolidates the v0.2 specification corpus, records the accepted errata and pre-made technical decisions, defines the implementation subset (Mapal-Core), and specifies the documentation-driven workflow that every session must follow.
 
 ---
 
@@ -16,9 +16,9 @@ This document is the single entry point for developing the Flow compiler. Every 
 
 ## 1. Project summary
 
-Flow is a general-purpose dataflow language whose surface syntax directly denotes the compiler's graph IR: `data -> f -> g -> ret;` _is_ three nodes and two edges. The IR has a category-theoretic semantics (**Flow-Cat**): graphs denote morphisms, optimizations are justified by categorical laws (functor laws, naturality, algebraic equations, graph rewrites), and each backend (LLVM/CPU, CUDA/GPU, Verilog/FPGA, WASM) is modeled as a functor out of Flow-Cat. Parallelism is structural and default; `seq` opts into ordering. Memory is reclaimed at the graph's last-use frontier — no GC, no ownership annotations.
+Mapal is a general-purpose dataflow language whose surface syntax directly denotes the compiler's graph IR: `data -> f -> g -> ret;` _is_ three nodes and two edges. The IR has a category-theoretic semantics (**Mapal-Cat**): graphs denote morphisms, optimizations are justified by categorical laws (functor laws, naturality, algebraic equations, graph rewrites), and each backend (LLVM/CPU, CUDA/GPU, Verilog/FPGA, WASM) is modeled as a functor out of Mapal-Cat. Parallelism is structural and default; `seq` opts into ordering. Memory is reclaimed at the graph's last-use frontier — no GC, no ownership annotations.
 
-**The thesis artifact (Milestone M5):** one source file (`examples/sepia.flow`), demonstrably the same program, running correctly on CPU, GPU, and FPGA simulation — with the compiler's correctness argument being functoriality, and the dataflow graph rendered alongside. Everything in this handoff serves that demo. Scope beyond it is deferred by default.
+**The thesis artifact (Milestone M5):** one source file (`examples/sepia.mapal`), demonstrably the same program, running correctly on CPU, GPU, and FPGA simulation — with the compiler's correctness argument being functoriality, and the dataflow graph rendered alongside. Everything in this handoff serves that demo. Scope beyond it is deferred by default.
 
 **Strategic frame (decided previously, restated here):** validate in one domain — real-time image/signal processing — before generalizing. A 2-year checkpoint evaluates viability. The single biggest project risk is another year of specification without an implementation; the spec's authority is the ADR-0022 D1 order — v0.2 + errata E1–E5 + living corrections LC-1–5 + ADRs, newest wins, oracle behavior final arbiter ("frozen" retired 2026-07-18) — and all further design happens as ADRs driven by implementation feedback.
 
@@ -32,18 +32,18 @@ All spec files live in `docs/spec/` (copied there during bootstrap, §10).
 
 | File                                  | Version   | Role                                                                                                                                                                                                                                                         |
 | ------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `docs/spec/category-ir.md`            | v0.2      | **Primary formal spec.** Flow-Cat definition (§2), IR data structures (§3), lowering rules (§4), graph representation (§5), functors (§6), natural transformations (§7), backends-as-functors (§8), optimization framework (§9), implementation guide (§10). |
+| `docs/spec/category-ir.md`            | v0.2      | **Primary formal spec.** Mapal-Cat definition (§2), IR data structures (§3), lowering rules (§4), graph representation (§5), functors (§6), natural transformations (§7), backends-as-functors (§8), optimization framework (§9), implementation guide (§10). |
 | `docs/spec/user-guide.md`             | v0.2      | **Primary language reference.** Full syntax, conditionals/guards, loops, parallelism model (§5), memory model (§6), error handling (§7), complete examples (§8).                                                                                             |
 | `docs/spec/architecture.md`           | v0.2      | Compiler pipeline, component responsibilities, backend architectures, tooling, runtime.                                                                                                                                                                      |
 | `docs/spec/getting-started.md`        | v0.2      | 10-minute intro. Useful as the "what a new user sees" test surface.                                                                                                                                                                                          |
 | `docs/spec/CHANGES.md`                | v0.1→v0.2 | Decision log for the v0.2 revision. **Read §1 (structural fixes) before touching the IR** — it explains _why_ the invariants exist (single-source morphisms, first-class Phi, loops as trace, honest coproducts for effects).                                |
-| `docs/spec/flow-language-design.docx` | v0.1-era  | Original design document (philosophy, goals, rationale). Historical authority only; superseded where it conflicts with v0.2 files.                                                                                                                           |
+| `docs/spec/mapal-language-design.docx` | v0.1-era  | Original design document (philosophy, goals, rationale). Historical authority only; superseded where it conflicts with v0.2 files.                                                                                                                           |
 | `FRAMEWORK.md`                        | current   | Categorical modeling method for compiler-internal (Level B) design; coherence checklist (§8); session reconcile gate (ADR-0014). Methodology only — does not touch the Level A spec (authority per ADR-0022 D1; upkeep frozen per ADR-0022 D2).                                                                   |
 | `HANDOFF.md`                          | 1.0       | This file.                                                                                                                                                                                                                                                   |
 
 ### 2.2 Authority order (highest wins)
 
-> **Amended 2026-07-18 (ADR-0022 D1).** The operative index of the language *as implemented* is `docs/spec/flow-as-implemented.md`. Read the order below as: the v0.2 corpus patched by errata E1–E5, patched by living corrections LC-1–5, patched by ADRs — newest wins — with oracle (interpreter) behavior the final arbiter (§5.4). "Frozen" is retired as a description of spec authority.
+> **Amended 2026-07-18 (ADR-0022 D1).** The operative index of the language *as implemented* is `docs/spec/mapal-as-implemented.md`. Read the order below as: the v0.2 corpus patched by errata E1–E5, patched by living corrections LC-1–5, patched by ADRs — newest wins — with oracle (interpreter) behavior the final arbiter (§5.4). "Frozen" is retired as a description of spec authority.
 
 1. Accepted ADRs in `docs/decisions/` (including the bootstrap ADRs encoding errata E1–E5, §3)
    - `FRAMEWORK.md` — for all compiler-internal (Level B) modeling and doc-reconcile gate questions; defers to accepted ADRs on any spec-touching question. Upkeep frozen per ADR-0022 D2 — existing models still bind where present.
@@ -51,7 +51,7 @@ All spec files live in `docs/spec/` (copied there during bootstrap, §10).
 3. `user-guide.md` v0.2 and `architecture.md` v0.2 (tie: user-guide for language behavior, architecture for compiler structure)
 4. `getting-started.md` v0.2
 5. `CHANGES.md` (rationale, not normative)
-6. `flow-language-design.docx` (historical)
+6. `mapal-language-design.docx` (historical)
 
 ---
 
@@ -59,13 +59,13 @@ All spec files live in `docs/spec/` (copied there during bootstrap, §10).
 
 These were found in a formal review of the v0.2 corpus. They are **pre-made decisions**: bootstrap (§10) turns each into an ADR (status `accepted`, revisable by Sapir) and patches the spec files. No implementation work may contradict them without a superseding ADR.
 
-### E1 — Flow-Cat cannot be both "total" and traced-cartesian
+### E1 — Mapal-Cat cannot be both "total" and traced-cartesian
 
-**Defect.** `category-ir.md` §2.1 defines morphisms as pure **total** functions; §2.8 claims Flow-Cat is traced with monoidal product = categorical product. Jointly inconsistent: a traced cartesian category is equivalent to one with a Conway fixed-point operator (Hasegawa 1997), and total functions lack fixpoints in general (`not : Bool → Bool` has none). Unbounded loops are exactly where partiality enters (`loop { -> loop; }` is legal and diverges).
+**Defect.** `category-ir.md` §2.1 defines morphisms as pure **total** functions; §2.8 claims Mapal-Cat is traced with monoidal product = categorical product. Jointly inconsistent: a traced cartesian category is equivalent to one with a Conway fixed-point operator (Hasegawa 1997), and total functions lack fixpoints in general (`not : Bool → Bool` has none). Unbounded loops are exactly where partiality enters (`loop { -> loop; }` is legal and diverges).
 
 **Fix.**
 
-- Loops/iteration live in the Kleisli category of the partiality (divergence) monad — the same §2.6 machinery already used for I/O and errors. The total core of Flow-Cat has no trace; the traced structure exists on the partial extension (least-fixpoint / Elgot-iteration semantics).
+- Loops/iteration live in the Kleisli category of the partiality (divergence) monad — the same §2.6 machinery already used for I/O and errors. The total core of Mapal-Cat has no trace; the traced structure exists on the partial extension (least-fixpoint / Elgot-iteration semantics).
 - `category-ir.md` §8.3 must be rewritten: Clocked-Cat's trace is **guarded** (register = unit delay ⇒ always productive ⇒ total; Mealy-machine semantics). `F_Verilog` therefore maps an _iteration_ trace to a _guarded_ trace — different traced structures. "F commutes with Tr" is not free; it is a theorem with content, mediated by a **done-signal protocol**: _the iteration terminates in n steps with value v ⟺ the circuit asserts `done` at cycle n with output v_. This theorem is the project's most publishable single result; state it precisely, discharge it informally now, mechanize later.
 
 **Implementation impact.** Interpreter loop semantics are partial: all loop evaluation carries a fuel/step-limit in tests; divergence is a defined outcome, not a hang. The Verilog FSM for any lowered loop implements the done protocol (`valid_in / busy / done / result` handshake).
@@ -74,13 +74,13 @@ These were found in a formal review of the v0.2 corpus. They are **pre-made deci
 
 **Defect.** `user-guide.md` §5.4 row 4: "Independent + effectful → Executor decides (may parallelize with non-deterministic order)." This makes program meaning scheduler-dependent, contradicting both "no data races by construction" and the functorial-correctness story (if the denotation is "whatever the executor did," there is nothing for a functor to preserve).
 
-**Fix.** Effectful morphisms are **not permitted in parallel fanout**. Effects either (a) sequence via `seq`, or (b) communicate via channels with **Kahn process network semantics** — blocking reads, unbounded FIFOs — under which determinism independent of scheduling is a theorem (Kahn 1974). The streaming/FPGA subset later adopts synchronous-dataflow restrictions (Lee & Messerschmitt 1987) for static schedules and bounded buffers. Channels are out of Flow-Core scope (§4), but the rule is fixed _now_ so the effect checker is built right the first time.
+**Fix.** Effectful morphisms are **not permitted in parallel fanout**. Effects either (a) sequence via `seq`, or (b) communicate via channels with **Kahn process network semantics** — blocking reads, unbounded FIFOs — under which determinism independent of scheduling is a theorem (Kahn 1974). The streaming/FPGA subset later adopts synchronous-dataflow restrictions (Lee & Messerschmitt 1987) for static schedules and bounded buffers. Channels are out of Mapal-Core scope (§4), but the rule is fixed _now_ so the effect checker is built right the first time.
 
 ### E3 — Memory-model guarantee is scoped
 
 **Defect.** "No use-after-free / double-free / leaks / races, with zero annotations" is claimed for the whole language. Whole-program region inference at general-purpose scope (closures, channels, cyclic structures) is historically treacherous (cf. Tofte–Talpin region pathologies); cycles already punt to refcounting.
 
-**Fix.** State the guarantee as **proven for the first-order, non-cyclic dataflow core** (which contains Flow-Core entirely) and **open for the full language**. `user-guide.md` §6.5 is amended accordingly. Implementation benefit: the Flow-Core lifetime engine is simple (stack/static allocation for fixed-size data; last-use frontier for arrays) and can be exactly right.
+**Fix.** State the guarantee as **proven for the first-order, non-cyclic dataflow core** (which contains Mapal-Core entirely) and **open for the full language**. `user-guide.md` §6.5 is amended accordingly. Implementation benefit: the Mapal-Core lifetime engine is simple (stack/static allocation for fixed-size data; last-use frontier for arrays) and can be exactly right.
 
 ### E4 — Operator-precedence example is self-contradictory
 
@@ -96,9 +96,9 @@ These were found in a formal review of the v0.2 corpus. They are **pre-made deci
 
 ---
 
-## 4. Implementation scope: Flow-Core (v0.3 subset)
+## 4. Implementation scope: Mapal-Core (v0.3 subset)
 
-Flow-Core is the fixed subset the compiler implements through M5 ("frozen" retired by ADR-0022 D1; the scope itself is unchanged). Anything outside it is **rejected with a clear diagnostic**, not silently accepted. Scope changes require an ADR.
+Mapal-Core is the fixed subset the compiler implements through M5 ("frozen" retired by ADR-0022 D1; the scope itself is unchanged). Anything outside it is **rejected with a clear diagnostic**, not silently accepted. Scope changes require an ADR.
 
 ### 4.1 In scope
 
@@ -166,20 +166,20 @@ flow/
 │       ├── suggestions.md          # CT-derived improvements (ADR-0017)
 │       └── plans/ · reviews/ · general/   # pre-build plans, post-build reviews, notes (ADR-0017)
 ├── crates/
-│   ├── flow-syntax/                # lexer, parser, parse tree, diagnostics
-│   ├── flow-ir/                    # objects/morphisms/compositions, builder, invariants, Mermaid dump
-│   ├── flow-lower/                 # parse tree → IR (category-ir §4 rules)
-│   ├── flow-check/                 # type check, effect check (E2), lifetime analysis (E3 scope)
-│   ├── flow-interp/                # the oracle (fueled)
-│   ├── flow-rewrite/               # layers 1–4 passes + property-test harness
-│   ├── flow-backend-llvm/
-│   ├── flow-backend-cuda/
-│   ├── flow-backend-verilog/       # + Verilator harness, done-protocol (E1)
-│   └── flow-cli/                   # `flow build|run|dump-ir|test`
+│   ├── mapal-syntax/                # lexer, parser, parse tree, diagnostics
+│   ├── mapal-ir/                    # objects/morphisms/compositions, builder, invariants, Mermaid dump
+│   ├── mapal-lower/                 # parse tree → IR (category-ir §4 rules)
+│   ├── mapal-check/                 # type check, effect check (E2), lifetime analysis (E3 scope)
+│   ├── mapal-interp/                # the oracle (fueled)
+│   ├── mapal-rewrite/               # layers 1–4 passes + property-test harness
+│   ├── mapal-backend-llvm/
+│   ├── mapal-backend-cuda/
+│   ├── mapal-backend-verilog/       # + Verilator harness, done-protocol (E1)
+│   └── mapal-cli/                   # `mapal build|run|dump-ir|test`
 ├── editors/                        # editor/tooling support (ADR-0008)
-├── examples/                       # sepia.flow, fir.flow, abs.flow, sum_to_n.flow, pipeline.flow, fanout.flow
+├── examples/                       # sepia.mapal, fir.mapal, abs.mapal, sum_to_n.mapal, pipeline.mapal, fanout.mapal
 └── tests/
-    ├── golden/                     # .flow → expected interpreter output / IR snapshots
+    ├── golden/                     # .mapal → expected interpreter output / IR snapshots
     └── differential/               # backend == interpreter harnesses
 ```
 
@@ -196,7 +196,7 @@ The repository is operated through `docs/`. The code is the product; `docs/` is 
 #### 7.1.1 Global `docs/STATUS.md` — template
 
 ```markdown
-# Flow — Global Status
+# Mapal — Global Status
 
 Last updated: YYYY-MM-DD · Session NN
 Current phase: P<k> — <name> Current milestone: M<k> — <one-line definition of done>
@@ -312,7 +312,7 @@ Living design document per component, written/updated **before** code in every s
 
 - **The interpreter is the oracle.** No backend or rewrite correctness claim without differential/property tests against it.
 - **One component focus per session** where possible; cross-cutting changes name every touched component in next-session.md.
-- **No scope creep:** anything outside Flow-Core (§4) is rejected by the compiler and out of bounds for sessions, absent an ADR.
+- **No scope creep:** anything outside Mapal-Core (§4) is rejected by the compiler and out of bounds for sessions, absent an ADR.
 - **Determinism of meaning is sacred:** nothing observable may depend on scheduling (E2). If a test is flaky, that is a semantics bug until proven otherwise.
 - **All loop evaluation in tests is fueled** (E1). A hanging test process is a protocol violation, not bad luck.
 - **Graph dumps must render:** Mermaid output is lint-checked in tests (quoting, arrow styles).
@@ -326,22 +326,22 @@ Living design document per component, written/updated **before** code in every s
 | Phase                       | Component focus | Definition of done                                                                                                                                                       |
 | --------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **P0 Bootstrap (M0)**       | repo, docs      | §10 executed: scaffold + docs system live; spec copied; ERRATA.md + ADR-0001…0007 written (bootstrap ADRs; subsequent sessions added ADR-0008…0014, see `docs/decisions/`); E1–E5 patches applied to spec files; empty workspace `cargo test` green.      |
-| **P1 Frontend**             | syntax          | Lexer+parser for all Flow-Core constructs; golden parse-tree tests incl. every `examples/*.flow`; spanned diagnostics; E4 statement-rule implemented.                    |
+| **P1 Frontend**             | syntax          | Lexer+parser for all Mapal-Core constructs; golden parse-tree tests incl. every `examples/*.mapal`; spanned diagnostics; E4 statement-rule implemented.                    |
 | **P2 IR + lowering**        | ir, lower       | §3/§4 structures with builder-enforced invariants; lowering golden tests; property test "no ill-formed graph constructible"; Mermaid dump of any program.                |
-| **P3 Interpreter (M1)**     | interp, check   | Type/effect/lifetime checks for Core; fueled evaluator; **`sepia.flow` (and abs, sum_to_n, pipeline, fanout) run correctly on CPU via interpreter.** Oracle established. |
+| **P3 Interpreter (M1)**     | interp, check   | Type/effect/lifetime checks for Core; fueled evaluator; **`sepia.mapal` (and abs, sum_to_n, pipeline, fanout) run correctly on CPU via interpreter.** Oracle established. |
 | **P4 Rewrites**             | rewrite         | Constant folding, DCE, CSE (layers 3–4) + map fusion (layer 1); every pass property-tested: random Core program × random inputs → interpreter-equal before/after.        |
 | **P5 LLVM backend (M2)**    | backend-llvm    | `.ll` → clang → native; differential green on all examples + random programs; first perf baseline recorded (sepia at N×N).                                               |
 | **P6 CUDA backend (M3)**    | backend-cuda    | `.cu` for map-kernels; compiles under nvcc; differential where GPU available, else documented skip; kernel-fusion = source-level map-fusion preserved (spec §8.2).       |
 | **P7 Verilog backend (M4)** | backend-verilog | Feedforward pipelines + single-loop FSM with E1 done-protocol; **Verilator simulation of sepia matches the interpreter bit-for-bit**; capability matrix enforced.        |
-| **M5 Tri-target demo**      | cli, all        | One `sepia.flow`; `flow build --target {cpu,cuda,verilog}` + `flow dump-ir --mermaid`; demo README showing identical outputs on three targets and the rendered graph.    |
+| **M5 Tri-target demo**      | cli, all        | One `sepia.mapal`; `mapal build --target {cpu,cuda,verilog}` + `mapal dump-ir --mermaid`; demo README showing identical outputs on three targets and the rendered graph.    |
 
-**After M5 (parked — do not wander here):** coproducts/`Option`/`?` (Core+1), recursion (CPU), channels with KPN semantics + SDF streaming for FPGA, strings, modules, error-handling design, the E1 theorem write-up, domain validation push (real-time image processing), `flow-language-design.docx` regeneration. The 2-year checkpoint judges the project on M5 + domain traction.
+**After M5 (parked — do not wander here):** coproducts/`Option`/`?` (Core+1), recursion (CPU), channels with KPN semantics + SDF streaming for FPGA, strings, modules, error-handling design, the E1 theorem write-up, domain validation push (real-time image processing), `mapal-language-design.docx` regeneration. The 2-year checkpoint judges the project on M5 + domain traction.
 
 ---
 
 ## 9. Testing & verification strategy (summary)
 
-Layered, cheapest-first: **(1) builder-enforced IR invariants** (ill-formed graphs unconstructible) → **(2) golden/snapshot tests** for syntax, IR, emitted code → **(3) property tests** for every rewrite (semantics-preservation vs oracle) → **(4) differential tests** for every backend (oracle equality on examples + randomized Core programs) → **(5) perf benchmarks** with recorded baselines and flagged regressions → **(6) mechanization** reserved for the E1 trace-preservation theorem at write-up time. Random-program generation for (3)/(4) lives in `flow-rewrite`'s test harness and grows with Flow-Core only.
+Layered, cheapest-first: **(1) builder-enforced IR invariants** (ill-formed graphs unconstructible) → **(2) golden/snapshot tests** for syntax, IR, emitted code → **(3) property tests** for every rewrite (semantics-preservation vs oracle) → **(4) differential tests** for every backend (oracle equality on examples + randomized Core programs) → **(5) perf benchmarks** with recorded baselines and flagged regressions → **(6) mechanization** reserved for the E1 trace-preservation theorem at write-up time. Random-program generation for (3)/(4) lives in `mapal-rewrite`'s test harness and grows with Mapal-Core only.
 
 ---
 
@@ -352,7 +352,7 @@ Layered, cheapest-first: **(1) builder-enforced IR invariants** (ill-formed grap
 3. Write `docs/spec/ERRATA.md` containing E1–E5 verbatim from §3, then **apply the textual patches** to `category-ir.md` (§2.1/2.7/2.8/8.3) and `user-guide.md` (§3.6, §5.4, §6.5) — marked with `> **Erratum E<k> applied — see docs/spec/ERRATA.md and ADR-000<k+1>.**`
 4. Write ADR-0001…0007 (status: accepted; E5's ADR-0006 flagged "pending Sapir veto" in next-session.md). Perform the E5 rename across `user-guide.md`, `getting-started.md`, and `examples/` if not vetoed.
 5. Instantiate `docs/STATUS.md`, all ten component folders with `STATUS.md` (status: not-started) + empty `DESIGN.md`, using §7.1 templates.
-6. Write `examples/` programs (sepia, fir, abs, sum_to_n, pipeline, fanout) in Flow-Core syntax — these are the acceptance surface for every later phase; they may not yet compile, only exist.
+6. Write `examples/` programs (sepia, fir, abs, sum_to_n, pipeline, fanout) in Mapal-Core syntax — these are the acceptance surface for every later phase; they may not yet compile, only exist.
 7. Write the first `docs/next-session.md`: "P1 Frontend — start with the lexer; read user-guide §3 + ADR-0005."
 
 ---

@@ -1,0 +1,15 @@
+---
+source: crates/mapal-syntax/tests/out_of_core.rs
+expression: "render_diagnostics(&src, &out.diagnostics)"
+---
+P0102 332..333 8:1 annotations (`@…`) are out of Mapal-Core (HANDOFF §4); planned for Core+1
+P0102 354..355 9:1 annotations (`@…`) are out of Mapal-Core (HANDOFF §4); planned for Core+1
+P0101 419..420 11:11 the `?` operator is out of Mapal-Core (HANDOFF §4); planned for Core+1 error handling
+P0101 425..426 11:17 the `?` operator is out of Mapal-Core (HANDOFF §4); planned for Core+1 error handling
+P0112 431..434 14:1 `pub` is out of Mapal-Core (HANDOFF §4); planned for post-M5
+P0103 468..480 16:15 generic type arguments are out of Mapal-Core (HANDOFF §4); planned for Core+1
+P0103 485..497 16:32 generic type arguments are out of Mapal-Core (HANDOFF §4); planned for Core+1
+P0109 516..518 17:17 `::` paths are out of Mapal-Core (HANDOFF §4); planned for Core+1 modules
+P0107 541..548 18:12 rest elements (`...tail`) in array literals are out of Mapal-Core (HANDOFF §4); planned for Core+1 slices
+P0113 563..567 19:5 `void` is out of Mapal-Core (HANDOFF §4); planned for Core+1
+P0111 572..580 22:1 `executor` declarations are out of Mapal-Core (HANDOFF §4); planned for post-M5

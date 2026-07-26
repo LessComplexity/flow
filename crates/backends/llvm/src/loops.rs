@@ -2,7 +2,7 @@
 //! quartet only; non-canonical (multi-merge SCC) shapes are rejected upstream in
 //! [`crate::emit`] as `Unsupported` (L3).
 //!
-//! The per-merge attribution is [`flow_ir::CategoryIr::loop_plan`] — the one
+//! The per-merge attribution is [`mapal_ir::CategoryIr::loop_plan`] — the one
 //! source of truth (BL7) the interp driver also consumes. The CFG mirrors the
 //! interp loop driver (interp `loops.rs`) 1:1 over memory slots:
 //!
@@ -14,7 +14,7 @@
 //! after:   … straight-line continues …
 //! ```
 
-use flow_ir::ObjectId;
+use mapal_ir::ObjectId;
 
 use crate::func::FnEmit;
 

@@ -1,6 +1,6 @@
-# Review — flow-check increment 1 (Session 10)
+# Review — mapal-check increment 1 (Session 10)
 
-Change under review: the flow-check crate (DESIGN.md → 4 src modules + 3 test files,
+Change under review: the mapal-check crate (DESIGN.md → 4 src modules + 3 test files,
 25 tests) + doc reconciliation. Process: plan (7-reader fan-out) → DESIGN → 4-lens
 adversarial design review (2 blockers, 5 majors, 6 minors — all applied pre-code) →
 Opus implementer TDD-to-green → 3 adversarial impl reviewers (1 gating finding, fixed;

@@ -66,11 +66,11 @@ constant.
 
 | Item | Kind | Model |
 | --- | --- | --- |
-| `i_reuse : TileRead → Reuse` | `Trn`, **deduced**, emitter-local | `Invariant` iff `ci == 0`; `Sliding{q}` iff `ksplit` present and `cq ≠ 0` and `ci = q·cq` with `q < k/div`; `None` otherwise. Pure arithmetic over recorded fields — no flow-ir change |
+| `i_reuse : TileRead → Reuse` | `Trn`, **deduced**, emitter-local | `Invariant` iff `ci == 0`; `Sliding{q}` iff `ksplit` present and `cq ≠ 0` and `ci = q·cq` with `q < k/div`; `None` otherwise. Pure arithmetic over recorded fields — no mapal-ir change |
 | `distinct_runs : (Reuse, TI) → ℕ` | `Trn`, deduced | `Invariant → 1` · `Sliding{q} → (TI−1)·q + k/div` · `None → TI`. The reuse ceiling and the honest factor at any TI, for any site |
 | `tile_i : (Ty, TargetProfile) → ℕ` | `Trn`, **deduced** (was: the literal `TILE_I`) | `max { TI = 2^m : TI·regs_per_acc + headroom ≤ vec_regs }`, `regs_per_acc = TJ·sizeof(elem)/vec_bytes`, `headroom = regs_per_acc + 2` (one b tile, one splat, one product) |
 | `acc_r : <TJ x elem>`, `r < TI` | `DataLoc` (register) | the S30 form, extended to the conv rung's constant-TJ main tile |
-| `vec_regs`, `vec_bytes` | machine facts | **not** in the record and never in flow-ir (ADR-0032). `TargetProfile` fields; seeded as emitter constants until that lands |
+| `vec_regs`, `vec_bytes` | machine facts | **not** in the record and never in mapal-ir (ADR-0032). `TargetProfile` fields; seeded as emitter constants until that lands |
 
 **Composition rules.**
 
@@ -84,7 +84,7 @@ constant.
    and the KC snapshot must not move by one byte.
 3. Blocking is applied where `i_reuse ≠ None` on either read. Today's gate `rows > 1 && b.ci == 0`
    is exactly `i_reuse(b) == Invariant`, so the matmul path is unchanged by definition; the conv
-   path becomes reachable because `b.ci == cq` (verified 18 == 18, `flow-ir/tests/algos.rs:2100-2112`)
+   path becomes reachable because `b.ci == cq` (verified 18 == 18, `mapal-ir/tests/algos.rs:2100-2112`)
    is `Sliding{1}`.
 4. Row-blocked taps must be **hoisted once per block**, not emitted as TI copies of the tap nest.
    TI independent nests put the matching loads in different basic blocks separated by aliasing
@@ -134,7 +134,7 @@ constant.
 ## ADR-0033 D2 — the three-line record
 
 - **Record fields consumed:** `TileRead.{ci, ck, clane, ksplit{div, cq, cr}}`, `TileSite.{rows, c,
-  k, elem}`. No new field; no flow-ir change (ADR-0032 category (b), emitter-local cashing).
+  k, elem}`. No new field; no mapal-ir change (ADR-0032 category (b), emitter-local cashing).
 - **CUDA realization against the record:** `i_reuse`/`distinct_runs` are the same facts a CUDA
   emitter needs to decide how many output rows one thread owns — register tiling is the GPU
   sibling of this rung, and it reads the identical coefficients. `tile_i`'s *formula* is shared;
@@ -157,7 +157,7 @@ constant.
 - **The reuse ceiling is `div`.** For a 3×3 conv that is 3×, approached only as `TI → ∞`. At the
   register-feasible TI=4 the factor is 2.0×.
 - **Nothing here touches the thread-count question**, which is the other S31 P0 and needs a
-  different missing fact (work per element — a genuine graph fact, absent from flow-ir, legal to
+  different missing fact (work per element — a genuine graph fact, absent from mapal-ir, legal to
   add there).
 
 ## Open questions for Sapir
@@ -245,7 +245,7 @@ supports: the nine per-tap lane loops in the remainder path, the TI=1 image-row 
 ## As built — items 3 and 4: blocking is deduced, and it pays
 
 **Item 3 (`crates/backends/llvm/src/reuse.rs`, new).** `Reuse` + `i_reuse` + `distinct_runs`
-— ~60 lines of arithmetic over recorded `TileRead` fields, zero flow-ir change (ADR-0032
+— ~60 lines of arithmetic over recorded `TileRead` fields, zero mapal-ir change (ADR-0032
 category (b)). The load-bearing claim of the plan is now code: **`ci == 0` and `ci == cq` are
 the same predicate at `q = 0` and `q = 1`**, so matmul's row-invariance and conv's sliding
 window are one rung, not two. Five unit tests over the recorded oracles pin it, including the

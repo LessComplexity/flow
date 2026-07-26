@@ -10,8 +10,8 @@
 //! and loop CFG are additionally covered by the `abs` / `fir` / `sum_to_n`
 //! example snapshots.
 
-use flow_backend_llvm::{EmitError, EmitOpts, emit, emit_with_opts};
-use flow_ir::{CategoryIr, Dest, FuncKind, IrBuilder, Operation, SourceLoc, Ty, Value};
+use mapal_backend_llvm::{EmitError, EmitOpts, emit, emit_with_opts};
+use mapal_ir::{CategoryIr, Dest, FuncKind, IrBuilder, Operation, SourceLoc, Ty, Value};
 
 const L: SourceLoc = SourceLoc { start: 0, end: 0 };
 
@@ -117,14 +117,14 @@ fn main() {
 "#;
 
 fn lower_src(src: &str) -> CategoryIr {
-    let po = flow_syntax::parse(src);
+    let po = mapal_syntax::parse(src);
     assert!(po.diagnostics.is_empty(), "parse: {:?}", po.diagnostics);
-    flow_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
+    mapal_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
 }
 
 fn build_example(name: &str) -> CategoryIr {
     let path = format!(
-        "{}/../../../examples/{}.flow",
+        "{}/../../../examples/{}.mapal",
         env!("CARGO_MANIFEST_DIR"),
         name
     );
@@ -132,12 +132,12 @@ fn build_example(name: &str) -> CategoryIr {
     lower_src(&src)
 }
 
-fn flow_main(ll: &str) -> &str {
-    let marker = ll.find("@flow_main(").expect("flow_main");
+fn mapal_main(ll: &str) -> &str {
+    let marker = ll.find("@mapal_main(").expect("mapal_main");
     let start = ll[..marker]
         .rfind("define internal ")
-        .expect("flow_main def");
-    let end = start + ll[start..].find("\n}\n").expect("flow_main end") + 3;
+        .expect("mapal_main def");
+    let end = start + ll[start..].find("\n}\n").expect("mapal_main end") + 3;
     &ll[start..end]
 }
 
@@ -535,7 +535,7 @@ fn main() {
 
 #[test]
 fn golden_tile_map_shapes() {
-    let ir = flow_rewrite::rewrite(lower_src(TILE_MATMUL_SRC)).ir;
+    let ir = mapal_rewrite::rewrite(lower_src(TILE_MATMUL_SRC)).ir;
     let tiled = emit(&ir).unwrap();
     let tiled_fn = function_containing(&tiled, " = alloca [64 x float]");
     // Rows run in TI=4 register blocks, so the accumulator is one flat
@@ -682,7 +682,7 @@ fn golden_tile_map_shapes() {
     );
     insta::assert_snapshot!("untiled_map_shape", untiled_fn);
 
-    let f64_ir = flow_rewrite::rewrite(lower_src(TILE_MATMUL_F64_SRC)).ir;
+    let f64_ir = mapal_rewrite::rewrite(lower_src(TILE_MATMUL_F64_SRC)).ir;
     let f64 = emit(&f64_ir).unwrap();
     let f64_fn = function_containing(&f64, " = alloca [32 x double]");
     assert!(
@@ -726,7 +726,7 @@ fn golden_tile_map_shapes() {
 #[test]
 fn golden_tile_map_shape_kc() {
     let src = KC_SRC;
-    let ir = flow_rewrite::rewrite(lower_src(src)).ir;
+    let ir = mapal_rewrite::rewrite(lower_src(src)).ir;
     // The KC nest is a default-OFF performance tailor (EmitOpts::kc_nest —
     // measured a 3x loss locally at 1024 f32, S29); opt in to pin its shape.
     let tiled = emit_with_opts(
@@ -866,7 +866,7 @@ fn golden_tile_map_shape_kc() {
 
 #[test]
 fn tile_contract_flags_are_opt_in() {
-    let ir = flow_rewrite::rewrite(lower_src(TILE_MATMUL_SRC)).ir;
+    let ir = mapal_rewrite::rewrite(lower_src(TILE_MATMUL_SRC)).ir;
     let plain = emit_with_opts(&ir, &EmitOpts::default()).unwrap();
     let contracted = emit_with_opts(
         &ir,
@@ -885,7 +885,7 @@ fn tile_contract_flags_are_opt_in() {
 
 #[test]
 fn golden_tile_map_shape_1d() {
-    let ir = flow_rewrite::rewrite(lower_src(TILE_FIR_SRC)).ir;
+    let ir = mapal_rewrite::rewrite(lower_src(TILE_FIR_SRC)).ir;
     let tiled = emit(&ir).unwrap();
     let tiled_fn = function_containing(&tiled, " = alloca [64 x float]");
     // The S28 window rung: TI=4 register blocks over the lane axis, so the
@@ -1009,7 +1009,7 @@ fn main() {
 
 #[test]
 fn golden_tile_map_shape_conv() {
-    let ir = flow_rewrite::rewrite(lower_src(TILE_CONV_SRC)).ir;
+    let ir = mapal_rewrite::rewrite(lower_src(TILE_CONV_SRC)).ir;
     let tiled = emit(&ir).unwrap();
     let tiled_fn = function_containing(&tiled, " = alloca [16 x float]");
     // The S28 conv rung cashed the k-split record as an unrolled (kq, kr) tap
@@ -1138,15 +1138,15 @@ fn main() {
         .skip(1)
         .filter_map(|s| s.split("\n}\n").next())
         .find(|s| {
-            s.contains("getelementptr [64 x i32]") && s.contains("call void @flow_par_trap(i64 ")
+            s.contains("getelementptr [64 x i32]") && s.contains("call void @mapal_par_trap(i64 ")
         })
         .expect("fold body");
     assert!(
-        fold_body.contains("call void @flow_par_trap(i64 "),
+        fold_body.contains("call void @mapal_par_trap(i64 "),
         "fold body guards speculate into the parallel trap flag:\n{fold_body}"
     );
     assert!(
-        !fold_body.contains("call void @flow_trap(i32"),
+        !fold_body.contains("call void @mapal_trap(i32"),
         "parallel fold body must not directly trap:\n{fold_body}"
     );
     insta::assert_snapshot!("parallel_matmul_cap", ll);
@@ -1167,10 +1167,10 @@ fn heap_src(n: u32) -> String {
 /// array into ONE `%Frame`, so `%Frame` is the block that blows the stack —
 /// macOS caps the main thread at 64 MB hard, and 2048² f32 ×3 plus the packed
 /// panel is ~67 MB. At or above `func.rs:HEAP_MIN_BYTES` (256 KB) the frame
-/// becomes a `flow_rt_alloc` arena block; every field access stays the same
+/// becomes a `mapal_rt_alloc` arena block; every field access stays the same
 /// `getelementptr %Frame, ptr %frame, …` because an `alloca` result and a
-/// `flow_rt_alloc` result are both just a `ptr`. `flow_main` then drops
-/// exactly one `flow_rt_free_all`, AFTER `flow_par_finish` — composition rule
+/// `mapal_rt_alloc` result are both just a `ptr`. `mapal_main` then drops
+/// exactly one `mapal_rt_free_all`, AFTER `mapal_par_finish` — composition rule
 /// 4: no task can still be reading arena memory past the join.
 ///
 /// The size operand is pinned deliberately. It is the emitter's own
@@ -1185,7 +1185,7 @@ fn heap_src(n: u32) -> String {
 fn golden_heap_lowered_frame() {
     let big = emit(&lower_src(&heap_src(100_000))).unwrap();
     assert!(
-        big.contains("declare ptr @flow_rt_alloc(i64, i64)\ndeclare void @flow_rt_free_all()\n"),
+        big.contains("declare ptr @mapal_rt_alloc(i64, i64)\ndeclare void @mapal_rt_free_all()\n"),
         "the arena ABI is declared:\n{big}"
     );
     assert!(
@@ -1197,19 +1197,20 @@ fn golden_heap_lowered_frame() {
         "a 780 KB frame must not be a stack block:\n{big}"
     );
     assert!(
-        big.contains("  %frame = call ptr @flow_rt_alloc(i64 800024, i64 8)\n"),
+        big.contains("  %frame = call ptr @mapal_rt_alloc(i64 800024, i64 8)\n"),
         "the frame is one arena block at LLVM's own sizeof(%Frame):\n{big}"
     );
-    let host = flow_main(&big);
+    let host = mapal_main(&big);
     assert_eq!(
-        host.matches("call void @flow_rt_free_all()").count(),
+        host.matches("call void @mapal_rt_free_all()").count(),
         1,
         "exactly one teardown:\n{host}"
     );
     assert!(
-        host.find("call void @flow_par_finish").expect("host joins")
+        host.find("call void @mapal_par_finish")
+            .expect("host joins")
             < host
-                .find("call void @flow_rt_free_all")
+                .find("call void @mapal_rt_free_all")
                 .expect("host tears down"),
         "the teardown follows the join:\n{host}"
     );
@@ -1220,14 +1221,14 @@ fn golden_heap_lowered_frame() {
         "below the threshold the frame stays on the stack:\n{small}"
     );
     assert!(
-        !small.contains("flow_rt_"),
+        !small.contains("mapal_rt_"),
         "a program that heap-allocates nothing gains no declaration:\n{small}"
     );
 }
 
 /// S24 review-find pin: a checkpoint INSIDE an effectful loop also fires
 /// BEFORE the loop is entered. The loop's seed/entry glue reads task-produced
-/// frame slots, so `flow_par_wait`+`flow_par_check` must precede the loop CFG
+/// frame slots, so `mapal_par_wait`+`mapal_par_check` must precede the loop CFG
 /// in the host body — the per-iteration hook alone would let the first entry
 /// read race a still-running task.
 #[test]
@@ -1250,11 +1251,11 @@ fn main() {
 "#;
     let ll = emit(&lower_src(src)).unwrap();
     let host = ll
-        .split("define internal void @flow_main(")
+        .split("define internal void @mapal_main(")
         .nth(1)
         .expect("host fn");
     let wait = host
-        .find("call void @flow_par_wait")
+        .find("call void @mapal_par_wait")
         .expect("host emits a checkpoint wait");
     let first_label = host.find("\nbb").expect("the loop CFG's first label");
     assert!(
@@ -1262,7 +1263,7 @@ fn main() {
         "the in-loop checkpoint's wait+check must precede the loop CFG:\n{host}"
     );
     assert!(
-        host.matches("call void @flow_par_wait").count() >= 2,
+        host.matches("call void @mapal_par_wait").count() >= 2,
         "both the pre-loop and per-iteration checkpoint hooks exist:\n{host}"
     );
 }
@@ -1279,17 +1280,17 @@ fn main() {
 "#;
     let ll = emit(&lower_src(src)).unwrap();
     assert!(
-        ll.contains("call void @flow_par_trap(i64 "),
+        ll.contains("call void @mapal_par_trap(i64 "),
         "scalar divide speculates:\n{ll}"
     );
     assert!(
-        ll.contains("call void @flow_par_watermark(i64 "),
+        ll.contains("call void @mapal_par_watermark(i64 "),
         "scalar guard publishes its decided watermark:\n{ll}"
     );
 }
 
 /// plan-time-builtin: the `time` extern is declared, a bracketed program emits
-/// exactly two `flow_time_ms` calls on the host spine in chain order, and each
+/// exactly two `mapal_time_ms` calls on the host spine in chain order, and each
 /// carries its checkpoint. The S29 fence is the point of the pin: each read
 /// waits for every task written entirely BEFORE it in the source, so `t0`
 /// fences the generation above the bracket and `t1` fences that PLUS the
@@ -1323,9 +1324,9 @@ fn main() {
 }
 "#;
     let ll = emit(&lower_src(src)).unwrap();
-    let host = flow_main(&ll);
+    let host = mapal_main(&ll);
     let read = host
-        .find("call double @flow_time_ms()")
+        .find("call double @mapal_time_ms()")
         .expect("the clock read is emitted");
     // The loop header is the block the back edge targets; the read must sit
     // after that label and before the back edge that closes the cycle.
@@ -1353,12 +1354,12 @@ fn main() {
 "#;
     let ll = emit(&lower_src(src)).unwrap();
     assert!(
-        ll.contains("declare double @flow_time_ms()"),
+        ll.contains("declare double @mapal_time_ms()"),
         "the clock extern is declared:\n{ll}"
     );
-    let host = flow_main(&ll);
+    let host = mapal_main(&ll);
     let reads: Vec<usize> = host
-        .match_indices("call double @flow_time_ms()")
+        .match_indices("call double @mapal_time_ms()")
         .map(|(i, _)| i)
         .collect();
     assert_eq!(
@@ -1366,10 +1367,10 @@ fn main() {
         2,
         "both clock reads land on the host spine, neither CSE'd nor DCE'd:\n{host}"
     );
-    // The `i32 <len>` argument of the last `flow_par_wait` before `at`.
+    // The `i32 <len>` argument of the last `mapal_par_wait` before `at`.
     let wait_len = |at: usize| -> u32 {
         let w = host[..at]
-            .rfind("call void @flow_par_wait(")
+            .rfind("call void @mapal_par_wait(")
             .expect("a checkpoint wait precedes each clock read");
         host[w..]
             .lines()
@@ -1490,7 +1491,7 @@ fn main() {
         "an unproven Index keeps the upper-bound compare:\n{cell}"
     );
     assert_eq!(
-        cell.matches("call void @flow_trap(i32 1)").count(),
+        cell.matches("call void @mapal_trap(i32 1)").count(),
         1,
         "an unproven Index keeps the index_oob trap:\n{cell}"
     );
@@ -1586,35 +1587,35 @@ fn perf_timing_golden() {
         ..EmitOpts::default()
     };
     let parallel = emit_with_opts(&build_example("abs"), &opts).unwrap();
-    let main = flow_main(&parallel);
+    let main = mapal_main(&parallel);
     assert!(
         main.starts_with(
-            "define internal void @flow_main() {\nentry:\n  call void @flow_perf_begin()\n"
+            "define internal void @mapal_main() {\nentry:\n  call void @mapal_perf_begin()\n"
         ),
         "perf begin is the first entry instruction:\n{main}"
     );
     let finish = main
-        .find("call void @flow_par_finish")
+        .find("call void @mapal_par_finish")
         .expect("parallel finish");
-    let end = main.find("call void @flow_perf_end()").expect("perf end");
+    let end = main.find("call void @mapal_perf_end()").expect("perf end");
     let ret = main.rfind("ret void").expect("return");
     assert!(finish < end && end < ret, "parallel timer order:\n{main}");
-    insta::assert_snapshot!("perf_timing_flow_main", main);
+    insta::assert_snapshot!("perf_timing_mapal_main", main);
 
     let sequential = emit_with_opts(&lower_src("fn main() {}\n"), &opts).unwrap();
-    let main = flow_main(&sequential);
+    let main = mapal_main(&sequential);
     assert!(
-        !main.contains("flow_par_finish"),
+        !main.contains("mapal_par_finish"),
         "sequential fixture:\n{main}"
     );
     assert!(
         main.starts_with(
-            "define internal void @flow_main() {\nentry:\n  call void @flow_perf_begin()\n"
+            "define internal void @mapal_main() {\nentry:\n  call void @mapal_perf_begin()\n"
         ),
         "sequential perf begin:\n{main}"
     );
     assert!(
-        main.ends_with("  call void @flow_perf_end()\n  ret void\n}\n"),
+        main.ends_with("  call void @mapal_perf_end()\n  ret void\n}\n"),
         "sequential perf end:\n{main}"
     );
 }
@@ -1631,7 +1632,7 @@ fn default_opts_are_byte_identical() {
 // --- Unsupported pin (L3) -------------------------------------------------
 
 /// A multi-merge nested loop (two loops cross-fed into one SCC): not the
-/// canonical quartet. Shape copied from `flow-rewrite/tests/identity.rs`.
+/// canonical quartet. Shape copied from `mapal-rewrite/tests/identity.rs`.
 fn multi_merge_nested_loop() -> CategoryIr {
     let mut b = IrBuilder::new();
     let f = b
@@ -1718,7 +1719,7 @@ fn main() { 4 -> f -> r; r -> println; }
 /// not a differently-shaped near-miss.
 #[test]
 fn profile_closes_the_kc_gate_by_derivation() {
-    let ir = flow_rewrite::rewrite(lower_src(KC_SRC)).ir;
+    let ir = mapal_rewrite::rewrite(lower_src(KC_SRC)).ir;
     let kc_on = |target| {
         emit_with_opts(
             &ir,

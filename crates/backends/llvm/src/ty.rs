@@ -15,7 +15,7 @@
 //!   struct wrapper, so `Pair`/`Proj` are plain store/load, not GEP); residual
 //!   arity 0 ⇒ no slot. The remap is derived on demand from the ty.
 
-use flow_ir::Ty;
+use mapal_ir::Ty;
 
 /// The LLVM value type for `ty`, or `None` if `ty` is erased (has no runtime
 /// representation): `Unit`, `IoToken`, `Str`, or a product whose residual after
@@ -74,7 +74,7 @@ pub(crate) fn lower_body_input_ty(ty: &Ty, k: u32) -> Option<String> {
 
 /// The lowered LLVM type of a **Named fn's** input with every top-level Array
 /// (the input itself, or a direct product component) lowered to `ptr` —
-/// by-reference array call arguments (BL5 amendment, suggestions #8). Flow
+/// by-reference array call arguments (BL5 amendment, suggestions #8). Mapal
 /// value semantics make array parameters observably read-only (functional
 /// `Update` copies to a fresh alloca, so no callee writes through an array
 /// argument), so the pointer is observably identical to the inline array — the

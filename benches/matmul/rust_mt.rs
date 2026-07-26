@@ -5,7 +5,7 @@
 // std::thread scoped workers (no external deps: the box builds with direct
 // rustc). Row partitioning preserves every cell's k-order, so outputs are
 // byte-equal to the naive build at any thread count.
-//   Width: quota-aware like flow-rt — $THREADS override, else cgroup v2
+//   Width: quota-aware like mapal-rt — $THREADS override, else cgroup v2
 //   cpu.max, else v1 cfs_quota/period (div-ceil), capped by
 //   available_parallelism; the box shows 128 threads at a ~61.4-core quota.
 //   Timing: workers spawn ONCE; each keeps its own min-of-iters over its

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NumPy CPU baselines for the fir/conv2d Flow shapes, size-parameterized (S29)."""
+"""NumPy CPU baselines for the fir/conv2d Mapal shapes, size-parameterized (S29)."""
 import sys
 import time
 
@@ -7,7 +7,7 @@ import numpy as np
 
 
 def inputs(count: int, mul: int, add: int, modulus: int, subtract: int) -> np.ndarray:
-    # Flow does integer arithmetic first, then widen_f32.
+    # Mapal does integer arithmetic first, then widen_f32.
     values = np.arange(count, dtype=np.int64)
     return ((values * mul + add) % modulus - subtract).astype(np.float32)
 

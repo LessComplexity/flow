@@ -1,0 +1,31 @@
+// sum_to_n.mapal
+//
+// Demonstrates: a labeled `loop` carrying tuple state (i, acc) through the trace
+//   construction of category-ir.md §4.5 under E1 (fueled / least-fixpoint
+//   semantics). `mut` marks the loop-carried variables (lowered to trace state).
+//   The loop sums 1..=10. The exit edge `-> ret;` produces the accumulator; the
+//   back-edge `-> loop;` is a real adjacency edge (Tarjan SCC identifies it).
+//
+// Expected output (interpreted):
+//   55
+
+fn sum_to_n(n: i32) -> i32 {
+    mut i: i32   <- 1;
+    mut acc: i32 <- 0;
+
+    loop {
+        (i <= n) -> {
+            -true-> {
+                acc + i -> acc;
+                i + 1   -> i;
+                -> loop;
+            }
+            -false-> acc -> ret;
+        }
+    }
+}
+
+fn main() {
+    10 -> sum_to_n -> total;
+    total -> println;
+}

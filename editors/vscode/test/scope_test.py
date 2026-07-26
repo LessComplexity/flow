@@ -23,8 +23,8 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-GRAMMAR = ROOT / "editors/vscode/syntaxes/flow.tmLanguage.json"
-FIXTURE = ROOT / "editors/nvim/test/fixture.flow"
+GRAMMAR = ROOT / "editors/vscode/syntaxes/mapal.tmLanguage.json"
+FIXTURE = ROOT / "editors/nvim/test/fixture.mapal"
 
 
 def load_rules(grammar):
@@ -108,58 +108,58 @@ def scope_at(line, col, rules):
 # (line, token, expected scope, expected nvim group) — the fourth column is the
 # consistency contract: the two editors must not disagree about what a token IS.
 CASES = [
-    (2, "double", "entity.name.function.flow", "flowFnName"),
-    (3, "ret", "keyword.control.return.flow", "flowRet"),
-    (7, "println", "support.function.builtin.flow", "flowBuiltin"),
-    (11, "a", "variable.other.definition.flow", "flowBinding"),
-    (13, "double", "entity.name.function.call.flow", "flowDeclaredFn"),
-    (13, "b", "variable.other.definition.flow", "flowBinding"),
-    (14, "iota", "support.function.builtin.flow", "flowBuiltin"),
-    (14, "ti", "variable.other.definition.flow", "flowBinding"),
-    (15, "widen_f32", "support.function.builtin.flow", "flowBuiltin"),
-    (16, "cmp", "variable.other.definition.flow", "flowBinding"),
-    (18, "true", "constant.language.boolean.flow", "flowGuardBool"),
-    (20, "map", "support.function.builtin.flow", "flowBuiltin"),
-    (21, "Pixel", "entity.name.type.flow", "flowTypeName"),
-    (25, ":myloop", "keyword.control.label.flow", "flowLabel"),
-    (27, ":myloop", "keyword.control.label.flow", "flowLabelJump"),
-    (32, '"', "string.quoted.double.flow", "flowString"),
-    (32, "\\t", "constant.character.escape.flow", "flowEscape"),
-    (32, "print", "support.function.builtin.flow", "flowBuiltin"),
-    (33, "zip", "support.function.builtin.flow", "flowBuiltin"),
-    (33, "pairs", "variable.other.definition.flow", "flowBinding"),
-    (34, "enumerate", "support.function.builtin.flow", "flowBuiltin"),
-    (35, "<-", "keyword.operator.arrow.flow", "flowArrow"),
-    (38, "0", "constant.numeric.integer.flow", "flowGuardInt"),
-    (40, "_", "variable.language.wildcard.flow", "flowGuardWild"),
-    (41, "Some", "entity.name.type.flow", "flowGuardVariant"),
-    (42, "[", "entity.name.type.flow", "flowGuardVariant"),
+    (2, "double", "entity.name.function.mapal", "flowFnName"),
+    (3, "ret", "keyword.control.return.mapal", "flowRet"),
+    (7, "println", "support.function.builtin.mapal", "flowBuiltin"),
+    (11, "a", "variable.other.definition.mapal", "flowBinding"),
+    (13, "double", "entity.name.function.call.mapal", "flowDeclaredFn"),
+    (13, "b", "variable.other.definition.mapal", "flowBinding"),
+    (14, "iota", "support.function.builtin.mapal", "flowBuiltin"),
+    (14, "ti", "variable.other.definition.mapal", "flowBinding"),
+    (15, "widen_f32", "support.function.builtin.mapal", "flowBuiltin"),
+    (16, "cmp", "variable.other.definition.mapal", "flowBinding"),
+    (18, "true", "constant.language.boolean.mapal", "flowGuardBool"),
+    (20, "map", "support.function.builtin.mapal", "flowBuiltin"),
+    (21, "Pixel", "entity.name.type.mapal", "flowTypeName"),
+    (25, ":myloop", "keyword.control.label.mapal", "flowLabel"),
+    (27, ":myloop", "keyword.control.label.mapal", "flowLabelJump"),
+    (32, '"', "string.quoted.double.mapal", "flowString"),
+    (32, "\\t", "constant.character.escape.mapal", "flowEscape"),
+    (32, "print", "support.function.builtin.mapal", "flowBuiltin"),
+    (33, "zip", "support.function.builtin.mapal", "flowBuiltin"),
+    (33, "pairs", "variable.other.definition.mapal", "flowBinding"),
+    (34, "enumerate", "support.function.builtin.mapal", "flowBuiltin"),
+    (35, "<-", "keyword.operator.arrow.mapal", "flowArrow"),
+    (38, "0", "constant.numeric.integer.mapal", "flowGuardInt"),
+    (40, "_", "variable.language.wildcard.mapal", "flowGuardWild"),
+    (41, "Some", "entity.name.type.mapal", "flowGuardVariant"),
+    (42, "[", "entity.name.type.mapal", "flowGuardVariant"),
     # Guard CHROME by column (0-based). The discriminant scopes are also produced by the
     # plain number/boolean/type rules, so they do not test the guard rules at all —
     # breaking one left this suite passing. The leading `-` does discriminate: it falls
-    # to keyword.operator.flow as soon as the guard rule stops matching.
-    (18, 8, "keyword.operator.arrow.flow", "flowGuardArrow"),
-    (38, 8, "keyword.operator.arrow.flow", "flowGuardArrow"),
-    (41, 8, "keyword.operator.arrow.flow", "flowGuardArrow"),
+    # to keyword.operator.mapal as soon as the guard rule stops matching.
+    (18, 8, "keyword.operator.arrow.mapal", "flowGuardArrow"),
+    (38, 8, "keyword.operator.arrow.mapal", "flowGuardArrow"),
+    (41, 8, "keyword.operator.arrow.mapal", "flowGuardArrow"),
 ]
 
 # Which nvim group each scope family is allowed to correspond to. Enforces that the two
 # grammars stay semantically aligned even though their scope names differ.
 FAMILY = {
-    "support.function.builtin.flow": {"flowBuiltin"},
-    "variable.other.definition.flow": {"flowBinding"},
-    "entity.name.function.flow": {"flowFnName"},
-    "entity.name.function.call.flow": {"flowDeclaredFn", "flowFlowFn"},
-    "keyword.control.return.flow": {"flowRet"},
-    "constant.language.boolean.flow": {"flowGuardBool", "flowBoolean"},
-    "entity.name.type.flow": {"flowTypeName", "flowGuardVariant"},
-    "keyword.control.label.flow": {"flowLabel", "flowLabelJump"},
-    "string.quoted.double.flow": {"flowString"},
-    "constant.character.escape.flow": {"flowEscape"},
-    "keyword.operator.arrow.flow": {"flowArrow", "flowGuardArrow"},
-    "constant.numeric.integer.flow": {"flowGuardInt", "flowNumber"},
-    "variable.language.wildcard.flow": {"flowGuardWild"},
-    "keyword.operator.arrow.flow": {"flowArrow", "flowGuardArrow"},
+    "support.function.builtin.mapal": {"flowBuiltin"},
+    "variable.other.definition.mapal": {"flowBinding"},
+    "entity.name.function.mapal": {"flowFnName"},
+    "entity.name.function.call.mapal": {"flowDeclaredFn", "flowFlowFn"},
+    "keyword.control.return.mapal": {"flowRet"},
+    "constant.language.boolean.mapal": {"flowGuardBool", "flowBoolean"},
+    "entity.name.type.mapal": {"flowTypeName", "flowGuardVariant"},
+    "keyword.control.label.mapal": {"flowLabel", "flowLabelJump"},
+    "string.quoted.double.mapal": {"flowString"},
+    "constant.character.escape.mapal": {"flowEscape"},
+    "keyword.operator.arrow.mapal": {"flowArrow", "flowGuardArrow"},
+    "constant.numeric.integer.mapal": {"flowGuardInt", "flowNumber"},
+    "variable.language.wildcard.mapal": {"flowGuardWild"},
+    "keyword.operator.arrow.mapal": {"flowArrow", "flowGuardArrow"},
 }
 
 
@@ -191,7 +191,7 @@ def main():
     grammar_src = GRAMMAR.read_text()
     builtins_tm = set(re.search(
         r'"match": "\\\\b\((map\|[^)]+)\)\\\\b"', grammar_src).group(1).split("|"))
-    vim_src = (ROOT / "editors/nvim/syntax/flow.vim").read_text()
+    vim_src = (ROOT / "editors/nvim/syntax/mapal.vim").read_text()
     builtins_vim = set()
     for line in vim_src.splitlines():
         if line.startswith("syn keyword flowBuiltin"):

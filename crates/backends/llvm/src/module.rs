@@ -1,76 +1,76 @@
-//! Module skeleton (DESIGN §2/§4): the `flow-rt` extern declarations (with the
+//! Module skeleton (DESIGN §2/§4): the `mapal-rt` extern declarations (with the
 //! S13 `zeroext` ABI rule on every `i8`/`i1` parameter), `Str` private globals,
 //! and the public `@main` wrapper.
 
-use flow_ir::{CategoryIr, ObjectId, ObjectKind, Ty, Value};
+use mapal_ir::{CategoryIr, ObjectId, ObjectKind, Ty, Value};
 use slotmap::SecondaryMap;
 
 use crate::ty::{lower_named_input_ty, lower_ty};
 
 /// A private `Str` constant global: its symbol name and byte length. `Print` of a
-/// `Str` passes `getelementptr(@name)` + `len` to `flow_print_str` (DESIGN §1).
+/// `Str` passes `getelementptr(@name)` + `len` to `mapal_print_str` (DESIGN §1).
 pub(crate) struct StrGlobal {
     pub name: String,
     pub bytes: Vec<u8>,
 }
 
 impl StrGlobal {
-    /// The array LLVM type holding the bytes (no NUL — `flow_print_str` reads
+    /// The array LLVM type holding the bytes (no NUL — `mapal_print_str` reads
     /// exactly `len` bytes via `from_raw_parts`).
     pub fn arr_ty(&self) -> String {
         format!("[{} x i8]", self.bytes.len())
     }
 }
 
-/// The `flow-rt` extern block + `llvm.memcpy` intrinsic (DESIGN §1). Every
+/// The `mapal-rt` extern block + `llvm.memcpy` intrinsic (DESIGN §1). Every
 /// `i8`/`i1` parameter carries `zeroext` — the S13 ABI rule, load-bearing for u8
 /// values > 127 on arm64 (sepia's channels) and the trailing-newline `i1`.
-/// `flow_trap` alone carries `noreturn` (flow-rt defines it `-> !`, exit 101);
-/// the print externs stay attribute-free, and so does `flow_time_ms` (the
+/// `mapal_trap` alone carries `noreturn` (mapal-rt defines it `-> !`, exit 101);
+/// the print externs stay attribute-free, and so does `mapal_time_ms` (the
 /// `time` builtin's clock read — declared unconditionally, NOT gated on
 /// `EmitOpts::perf_timing` like `PERF_DECLS`).
 pub(crate) const RT_DECLS: &str = "\
-declare void @flow_print_i32(i32, i1 zeroext)\n\
-declare void @flow_print_i64(i64, i1 zeroext)\n\
-declare void @flow_print_u8(i8 zeroext, i1 zeroext)\n\
-declare void @flow_print_bool(i1 zeroext, i1 zeroext)\n\
-declare void @flow_print_f32(float, i1 zeroext)\n\
-declare void @flow_print_f64(double, i1 zeroext)\n\
-declare void @flow_print_str(ptr, i64, i1 zeroext)\n\
-declare double @flow_time_ms()\n\
-declare void @flow_trap(i32) noreturn\n\
+declare void @mapal_print_i32(i32, i1 zeroext)\n\
+declare void @mapal_print_i64(i64, i1 zeroext)\n\
+declare void @mapal_print_u8(i8 zeroext, i1 zeroext)\n\
+declare void @mapal_print_bool(i1 zeroext, i1 zeroext)\n\
+declare void @mapal_print_f32(float, i1 zeroext)\n\
+declare void @mapal_print_f64(double, i1 zeroext)\n\
+declare void @mapal_print_str(ptr, i64, i1 zeroext)\n\
+declare double @mapal_time_ms()\n\
+declare void @mapal_trap(i32) noreturn\n\
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n";
 
 /// Opt-in compute timer ABI, emitted only with `EmitOpts::perf_timing`.
 pub(crate) const PERF_DECLS: &str = "\
-declare void @flow_perf_begin()\n\
-declare void @flow_perf_end()\n";
+declare void @mapal_perf_begin()\n\
+declare void @mapal_perf_end()\n";
 
 /// The heap-lowering arena ABI (plan-s29 emission item 4), emitted only for a
 /// module that actually lowers a block to it (`func.rs:HEAP_MIN_BYTES`) — a
 /// program whose every array still fits an `alloca` keeps today's declaration
 /// block byte-for-byte.
 pub(crate) const HEAP_DECLS: &str = "\
-declare ptr @flow_rt_alloc(i64, i64)\n\
-declare void @flow_rt_free_all()\n";
+declare ptr @mapal_rt_alloc(i64, i64)\n\
+declare void @mapal_rt_free_all()\n";
 
 /// Packed tiled kernels prefetch their next panel line.
 pub(crate) const PREFETCH_DECL: &str =
     "declare void @llvm.prefetch.p0(ptr, i32 immarg, i32 immarg, i32 immarg)\n";
 
-/// The parallel scheduler ABI, emitted only for a parallel `flow_main`.
+/// The parallel scheduler ABI, emitted only for a parallel `mapal_main`.
 pub(crate) const PAR_DECLS: &str = "\
-declare ptr @flow_par_begin(i32)\n\
-declare void @flow_par_task(ptr, i32, i32, ptr, i64, i32, i64, i32, i32)\n\
-declare void @flow_par_pin(ptr, i32)\n\
-declare void @flow_par_dep(ptr, i32, i32)\n\
-declare void @flow_par_launch(ptr, ptr)\n\
-declare void @flow_par_wait(ptr, ptr, i32)\n\
-declare void @flow_par_check(ptr, i64)\n\
-declare void @flow_par_trap(i64, i32)\n\
-declare void @flow_par_watermark(i64)\n\
-declare void @flow_par_run_pinned(ptr, i32)\n\
-declare void @flow_par_finish(ptr)\n";
+declare ptr @mapal_par_begin(i32)\n\
+declare void @mapal_par_task(ptr, i32, i32, ptr, i64, i32, i64, i32, i32)\n\
+declare void @mapal_par_pin(ptr, i32)\n\
+declare void @mapal_par_dep(ptr, i32, i32)\n\
+declare void @mapal_par_launch(ptr, ptr)\n\
+declare void @mapal_par_wait(ptr, ptr, i32)\n\
+declare void @mapal_par_check(ptr, i64)\n\
+declare void @mapal_par_trap(i64, i32)\n\
+declare void @mapal_par_watermark(i64)\n\
+declare void @mapal_par_run_pinned(ptr, i32)\n\
+declare void @mapal_par_finish(ptr)\n";
 
 /// Collect every `Str` constant object → a private global (DESIGN §2). One
 /// global per object, named `@.strN` by deterministic object order.
@@ -123,8 +123,8 @@ fn escape_bytes(bytes: &[u8]) -> String {
     s
 }
 
-/// The public `@main` wrapper (DESIGN §4, BL8). Calls the entry body `@flow_main`
-/// and returns exit 0; a non-erased return is printed through `flow-rt` so the
+/// The public `@main` wrapper (DESIGN §4, BL8). Calls the entry body `@mapal_main`
+/// and returns exit 0; a non-erased return is printed through `mapal-rt` so the
 /// differential observes it (the `Unit → i32` closed shape).
 pub(crate) fn emit_main_wrapper(ir: &CategoryIr) -> String {
     let entry = ir.entry();
@@ -146,10 +146,10 @@ pub(crate) fn emit_main_wrapper(ir: &CategoryIr) -> String {
 
     match lower_ty(output_ty) {
         None => {
-            out.push_str(&format!("  call void @flow_main({arg})\n"));
+            out.push_str(&format!("  call void @mapal_main({arg})\n"));
         }
         Some(rty) => {
-            out.push_str(&format!("  %r = call {rty} @flow_main({arg})\n"));
+            out.push_str(&format!("  %r = call {rty} @mapal_main({arg})\n"));
             if let Some(call) = print_call(output_ty, "%r") {
                 out.push_str(&format!("  {call}\n"));
             }
@@ -159,16 +159,16 @@ pub(crate) fn emit_main_wrapper(ir: &CategoryIr) -> String {
     out
 }
 
-/// The `flow-rt` print call for a scalar return value operand (BL8 result print).
-/// `None` for a type flow-rt cannot print through this path (e.g. an aggregate).
+/// The `mapal-rt` print call for a scalar return value operand (BL8 result print).
+/// `None` for a type mapal-rt cannot print through this path (e.g. an aggregate).
 fn print_call(ty: &Ty, operand: &str) -> Option<String> {
     let (func, tystr, ze) = match ty {
-        Ty::Int { bits: 32, .. } => ("flow_print_i32", "i32", false),
-        Ty::Int { bits: 64, .. } => ("flow_print_i64", "i64", false),
-        Ty::Int { bits: 8, .. } => ("flow_print_u8", "i8", true),
-        Ty::Bool => ("flow_print_bool", "i1", true),
-        Ty::Float { bits: 32 } => ("flow_print_f32", "float", false),
-        Ty::Float { bits: 64 } => ("flow_print_f64", "double", false),
+        Ty::Int { bits: 32, .. } => ("mapal_print_i32", "i32", false),
+        Ty::Int { bits: 64, .. } => ("mapal_print_i64", "i64", false),
+        Ty::Int { bits: 8, .. } => ("mapal_print_u8", "i8", true),
+        Ty::Bool => ("mapal_print_bool", "i1", true),
+        Ty::Float { bits: 32 } => ("mapal_print_f32", "float", false),
+        Ty::Float { bits: 64 } => ("mapal_print_f64", "double", false),
         _ => return None,
     };
     // Param attr goes *after* the type in a call arg (`i8 zeroext %r`) — the

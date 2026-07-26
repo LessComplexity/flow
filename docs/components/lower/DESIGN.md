@@ -13,7 +13,7 @@ against) > `syntax/DESIGN.md` §15 (the tree lower consumes). The five §0.1 pin
 
 ## §0.1 Pre-design pins from the IR increment (recorded Session 04, 2026-06-12)
 
-These five rules were pinned during the flow-ir design review (ADR-0013; ir/DESIGN §7–§10)
+These five rules were pinned during the mapal-ir design review (ADR-0013; ir/DESIGN §7–§10)
 because leaving them "lowering's choice" would let two lower authors produce different
 graphs for the same program. They are obligations on lower, decided already:
 
@@ -44,11 +44,11 @@ graphs for the same program. They are obligations on lower, decided already:
 
 > Read first. This section models the **compiler itself** at the LEVEL-B
 > firewall (FRAMEWORK §0): the objects below are the lowering filter's own `Dat`,
-> the passes are its `Trn`. It does **not** restate the object language — Flow
-> programs as morphisms in Flow-Cat are modeled once in
+> the passes are its `Trn`. It does **not** restate the object language — Mapal
+> programs as morphisms in Mapal-Cat are modeled once in
 > [`docs/architecture/categorical-model.md`](../../architecture/categorical-model.md)
 > (the project-wide model kernel) and crossed here only as opaque typed `Trm`
-> payloads (`flow_syntax::Program` in, `flow_ir::CategoryIr` out). Never conflate
+> payloads (`mapal_syntax::Program` in, `mapal_ir::CategoryIr` out). Never conflate
 > the two — the project already paid the category-keyword tax once (errata E5).
 > Scoping (FRAMEWORK §7.1): the compiler is one in-process pipe-and-filter
 > pipeline, so the physical pair `Loc`/`Trm` is **degenerate** here (all passes
@@ -61,15 +61,15 @@ graphs for the same program. They are obligations on lower, decided already:
 
 ### Why (one paragraph)
 
-`flow-lower` **is one functor**, `lower : 𝒮 ⇀ ℐ`, from the surface syntax
-category 𝒮 (the parse-clean `flow_syntax` AST as a `Dat` category) to the IR
-category ℐ (the sealed `flow_ir::CategoryIr` as a `Dat` category). Saying it once,
+`mapal-lower` **is one functor**, `lower : 𝒮 ⇀ ℐ`, from the surface syntax
+category 𝒮 (the parse-clean `mapal_syntax` AST as a `Dat` category) to the IR
+category ℐ (the sealed `mapal_ir::CategoryIr` as a `Dat` category). Saying it once,
 categorically, buys three things the prose otherwise repeats construct-by-construct:
 (1) the **object map** (`TyKind → Ty`, parse-node kind → IR construct) and the
 **morphism map** (each surface form → its IR realization) are the *same* functor
 viewed on objects vs. arrows — so the §5 type-table and the §8 emission recipes
 are not two designs but two faces of one map; (2) the functor is **partial**
-(`⇀`) by construction — its domain of definition is exactly Flow-Core (J3-clean
+(`⇀`) by construction — its domain of definition is exactly Mapal-Core (J3-clean
 trees minus the rejected-but-kept forms), and **rejection = partiality**: every
 out-of-Core form is an arrow where `lower` is undefined, surfaced as an L-code
 (§4), never a silent pass and never a panic (§13 totality is "total *into* the
@@ -84,7 +84,7 @@ SurfaceParse→CoreAst copy on every clean compile).
 ### The functor `lower : 𝒮 ⇀ ℐ`
 
 **On objects (the type-lowering core, §5 / `tys.rs`).** `resolve_ty` /
-`TypeTable::resolve` carry `flow_syntax::TyKind → flow_ir::Ty`. This map is
+`TypeTable::resolve` carry `mapal_syntax::TyKind → mapal_ir::Ty`. This map is
 **not** bijective-on-objects (so by FRAMEWORK §3 step 4 it is genuinely two
 categories, not one in disguise): one surface `Named` arrow fans out to five IR
 targets via name resolution, surface-only `Dynamic`/`Error` have no IR image, and
@@ -147,7 +147,7 @@ each is realized in code at the cited seam.
 
 ### Partiality — rejection is the functor being undefined
 
-`dom(lower) = Flow-Core ⊊ SurfaceParse`. The inclusion `ι : Flow-Core ↪
+`dom(lower) = Mapal-Core ⊊ SurfaceParse`. The inclusion `ι : Mapal-Core ↪
 SurfaceParse` is injective-but-not-surjective on objects, so the two are related
 by a **proper inclusion**, not an identity — there is genuinely a larger surface
 category. Each out-of-Core arrow is segregated as a partial-morphism site
@@ -164,12 +164,12 @@ parser's P-codes and `lower`'s `Err` arms, not uniformly by `lower` alone.
 
 ```mermaid
 graph LR
-    S["𝒮 — surface AST<br/>(flow_syntax::Program)"]
+    S["𝒮 — surface AST<br/>(mapal_syntax::Program)"]
     TT["TypeTable<br/>(Pass A)"]
     EF["Effects<br/>(Pass B)"]
     TI["TypeInfo<br/>(Pass D1)"]
     BU["IrBuilder<br/>(Pass C/D2/D3)"]
-    I["ℐ — sealed IR<br/>(flow_ir::CategoryIr)"]
+    I["ℐ — sealed IR<br/>(mapal_ir::CategoryIr)"]
     D["Diagnostic*<br/>(L1xxx)"]
     S -- "table" --> TT
     S -- "effects · L1008?" --> EF
@@ -201,12 +201,12 @@ codomain realizes).
 
 ## 1. Scope and contract
 
-flow-lower turns a **parse-clean** `flow_syntax::Program` into a **sealed**
-`flow_ir::CategoryIr`, or a list of lower-stage diagnostics (L-codes, §4). It performs
+mapal-lower turns a **parse-clean** `mapal_syntax::Program` into a **sealed**
+`mapal_ir::CategoryIr`, or a list of lower-stage diagnostics (L-codes, §4). It performs
 name resolution, literal typing, effect analysis, and graph emission. It does **not**
 perform: the E2 surface seq-context check, exhaustive whole-program type checking beyond
 what lowering itself requires, lifetime analysis, or runtime exclusivity of multiple
-Return writers (all flow-check/interp obligations — §12).
+Return writers (all mapal-check/interp obligations — §12).
 
 ```rust
 /// Lower a parse-clean program to a sealed IR.
@@ -215,23 +215,23 @@ Return writers (all flow-check/interp obligations — §12).
 /// (syntax J3: no Error nodes, no rejected-but-kept forms). Encountering such a
 /// form anyway yields L1000, never a panic. Total: never panics, never hangs
 /// (recursion is bounded by the parser's depth guard P0011; see §13).
-pub fn lower(source: &str, program: &flow_syntax::Program)
-    -> Result<flow_ir::CategoryIr, Vec<flow_syntax::Diagnostic>>
+pub fn lower(source: &str, program: &mapal_syntax::Program)
+    -> Result<mapal_ir::CategoryIr, Vec<mapal_syntax::Diagnostic>>
 ```
 
 - `source` is required because `Name` nodes are bare spans (syntax DESIGN §15); all
   identifier text is `&source[span]`. Lower also re-parses `Float` literal text and calls
-  `flow_syntax::unescape_string` for `Str` (both are "consumer's job" per §15).
-- Diagnostics reuse `flow_syntax::Diagnostic` (pub fields; constructed directly).
+  `mapal_syntax::unescape_string` for `Str` (both are "consumer's job" per §15).
+- Diagnostics reuse `mapal_syntax::Diagnostic` (pub fields; constructed directly).
   Severity is always `Error` in v1. `fix` is `None` in v1.
 - On success the IR is sealed with `entry = main` and satisfies `validate(&ir).is_empty()`
-  (flow-ir's own §16 property); lower never returns an unsealed graph.
+  (mapal-ir's own §16 property); lower never returns an unsealed graph.
 - **Error policy (LD12):** the typing pass (§7) collects diagnostics across the whole
   program (multi-error UX); the emission pass (§8) is fail-fast — its first error aborts
   lowering (a half-built graph is never returned). Any `IrError` escaping a builder call
   during emission is a lower bug surfaced as L1901, not a user diagnostic.
 
-Crate deps: `flow-syntax`, `flow-ir` (flow-ir keeps zero deps per its D8; `SourceLoc` is
+Crate deps: `mapal-syntax`, `mapal-ir` (mapal-ir keeps zero deps per its D8; `SourceLoc` is
 field-identical — conversion is a trivial `{start, end}` copy). Dev-deps: `insta`,
 `proptest`, `criterion`.
 
@@ -313,7 +313,7 @@ binds); a `mut` rebind keeps the original `decl_seq` (LD4).
     view — this is the mechanism that makes pin 5's `sum_to_n(10) = 55` hold; review
     SF-2c).
   Fanout branches do **not** open a scope — their bindings land in the enclosing scope
-  (fanout.flow uses `sq`/`db` after the join; this is the spec's "implicit join: both
+  (fanout.mapal uses `sq`/`db` after the join; this is the spec's "implicit join: both
   available here"). map/fold block bodies get a fresh root scope seeded only with the
   block params — referencing an enclosing local is L1108 (blocks are not closures;
   their IR functions have no capture slots).
@@ -360,7 +360,7 @@ available (§10). Catalogue (each gets ≥1 rejection test, §14):
 | L1007 | RecursiveType | `type` reference cycle (Ty is a tree; cycles are unrepresentable) |
 | L1008 | RecursiveCall | call-graph cycle (recursion is Core+1) |
 | L1009 | ReservedName | `fn print` / `fn time` / shadowing a builtin scalar type name (every stage builtin name is reserved) |
-| L1010 | EmptyType | zero-field `type` declaration (its literal would mint an in-edge-less Temporary — review TY-1; see also the flow-ir fix note in §16) |
+| L1010 | EmptyType | zero-field `type` declaration (its literal would mint an in-edge-less Temporary — review TY-1; see also the mapal-ir fix note in §16) |
 | L1101 | UnknownName | unresolved identifier (expression or stage position) |
 | L1102 | UnknownType | unresolved type name |
 | L1103 | UnknownField | `.f` not a field of the struct ty / member on non-product |
@@ -377,7 +377,7 @@ available (§10). Catalogue (each gets ≥1 rejection test, §14):
 | L1206 | StrOutsidePrint | string literal anywhere but directly feeding `print` |
 | L1207 | Unprintable | `print` of a non-(numeric/bool/str) value |
 | L1208 | EmptyArray | array literal/type of size 0 |
-| L1209 | TypeTooDeep | any ty (declared or synthesized) nested deeper than flow-ir's `MAX_TY_DEPTH = 64` — the parser guards only at 128, so depths 65–128 are parse-clean user input, not lower bugs (review SF-8) |
+| L1209 | TypeTooDeep | any ty (declared or synthesized) nested deeper than mapal-ir's `MAX_TY_DEPTH = 64` — the parser guards only at 128, so depths 65–128 are parse-clean user input, not lower bugs (review SF-8) |
 | L1301 | HeadlessChain | statement-level headless chain other than `-> ret;` (`-> loop;` is legal only as a jump-arm terminal — L1304); **or `()` in a value position** — `()` produces no object, its only use is the wire-less head of `() -> time` (plan-time-builtin; the message names that one use) |
 | L1302 | ExprStage | stage expression that does not consume the piped value (general E4 stages, tuple stages; OQ2); **or a wire fed to `time`** (`5 -> time`) — the one stage that takes no value |
 | L1303 | RetMidChain | stages after `-> ret` in one chain |
@@ -414,7 +414,7 @@ available (§10). Catalogue (each gets ≥1 rejection test, §14):
 ## 5. Pass A — type table
 
 `TypeDecl { name, fields }` → `Ty::Struct { name, fields }`. Field ty resolution
-(`TyKind → flow_ir::Ty`):
+(`TyKind → mapal_ir::Ty`):
 
 - `Named`: `i32`→`Int{32,true}`, `i64`→`Int{64,true}`, `u8`→`Int{8,false}`,
   `f32`/`f64`→`Float`, `bool`→`Bool`, else the type table (L1102 if absent).
@@ -426,7 +426,7 @@ available (§10). Catalogue (each gets ≥1 rejection test, §14):
   ty in D1 — `TyTooDeep` must never reach the L1901 path.
 - Zero-field declarations (`type Empty {}` parses clean): L1010 — their literals would
   mint an object with zero in-edges, which seals but fails `validate()` (review TY-1;
-  the corresponding flow-ir intake/`pack_struct` hole gets fixed and regression-tested
+  the corresponding mapal-ir intake/`pack_struct` hole gets fixed and regression-tested
   this increment, §16).
 - Declaration-order processing; duplicates → L1004/L1005. The table makes seal's
   `StructNameConflict` unreachable from lower (one decl per name).
@@ -738,7 +738,7 @@ from inside the inner loop). Everything else is L1504: an inner-loop assignment 
 outer-carried `mut` or an inner exit feeding the outer next-state closes a cycle
 through both merges (the inner `LoopEnter`'s source lands inside the merged SCC — seal
 `LoopBackOutsideScc`); a nested loop inside a token-carrying loop gives the token a
-third route consumer (I4 sanctions exactly two). Lifting these needs an flow-ir ADR
+third route consumer (I4 sanctions exactly two). Lifting these needs an mapal-ir ADR
 (OQ7).
 
 ### 8.6 Fanout (`Plain`)
@@ -751,8 +751,8 @@ chains a fanout's result onward as a tuple), the join is materialized as
 draws L1305, and a **single-branch** fanout's join is the branch's tail value itself —
 no pack (`pack` of one is `SingletonTuple`; review FAN-1). Effects thread the **current
 token in branch source order**, which makes effect order dataflow (TL-7); rejecting
-effectful `Plain` branches is flow-check's E2 obligation (ADR-0013 consequences:
-"flow-check still owes the surface seq-context rule"). Since ADR-0019 `FanoutKind` is
+effectful `Plain` branches is mapal-check's E2 obligation (ADR-0013 consequences:
+"mapal-check still owes the surface seq-context rule"). Since ADR-0019 `FanoutKind` is
 `Plain | Void` — the `Seq` summand migrated to the `SeqBlock` node (§8.10). `Void` is
 P0113 (never reaches lower; L1000 defensively).
 
@@ -813,7 +813,7 @@ node (golden `seq_two_printlns`). Emission (`emit_seq_block`, one arm off the §
 stage dispatch, next to `Fanout`):
 
 - **Statements lower in order in the enclosing scope** (no child scope — bindings
-  escape, pin b, exactly the `fanout.flow`/LD8 idiom). A **headless chain statement
+  escape, pin b, exactly the `fanout.mapal`/LD8 idiom). A **headless chain statement
   seeds `cur := seq input`** (pin a — the old bare-chain branch form parses unchanged
   and means the same); `Bind`/`Loop` statements lower as ordinary statements (`emit_stmt`).
   This chain-seeding is the one place seq diverges from `emit_block`'s non-seeding
@@ -840,7 +840,7 @@ stage dispatch, next to `Fanout`):
   (parallel) fanout** opens no escape hatch: an effectful branch that joins produces no
   value → the existing **L1305**, exactly as a bare effectful branch (parity test
   `effectful_seq_in_fanout_join_rejected`). The E2 *surface* rejection of a pure-position
-  effect stays flow-check's obligation (§1).
+  effect stays mapal-check's obligation (§1).
 - **Every** block-walking sub-pass descends into **both** `Fanout` branches and `SeqBlock`
   bodies — they are enclosing-scope sub-chains (pin b / LD8), so anything inside one is
   subject to the same rule as if it sat directly in the arm/body: the D2 map/fold collector
@@ -859,20 +859,20 @@ stage dispatch, next to `Fanout`):
 
 ## 9. Worked contracts (what the goldens will show)
 
-- **pipeline.flow `f`** = dump_demo's `f` exactly: `Mul → Fresh`, then
+- **pipeline.mapal `f`** = dump_demo's `f` exactly: `Mul → Fresh`, then
   `Add → Dest::Ret` (lookahead), constants at point of use.
-- **sum_to_n.flow `sum_to_n`** = golden d′ shape: init pack (1, 0) in declaration order
+- **sum_to_n.mapal `sum_to_n`** = golden d′ shape: init pack (1, 0) in declaration order
   (`i`, `acc`), guard `Le(i, n)` reading merge projs, jump-arm updates `acc+i`, `i+1`
   (recomputed state on the back edge), exit payload = the merge-view `acc` proj,
   `Dest::Ret`, one shared cond. 55, not 54/65.
-- **abs.flow `abs`**: head `Gt(x, 0)`; Phi guard; false arm folds `-1` (pin 3) and emits
+- **abs.mapal `abs`**: head `Gt(x, 0)`; Phi guard; false arm folds `-1` (pin 3) and emits
   `Mul(x, -1)`; `phi(x, mul, cond, Dest::Ret)` (golden c shape).
-- **fir.flow `fir4`**: product input `(signal, coeffs)` projected on first use (TY-2);
+- **fir.mapal `fir4`**: product input `(signal, coeffs)` projected on first use (TY-2);
   loop carries `(k: i32, acc: f32)`; `index()` twice; exit = merge-view `acc`.
-- **fanout.flow `main`**: two pure branches binding `sq`/`db` in main's scope (f1 shape
+- **fanout.mapal `main`**: two pure branches binding `sq`/`db` in main's scope (f1 shape
   inside main — no join object); then two prints in source order on one token chain
   (golden g shape); `main : IoToken → IoToken`; final token `output(…, None)`.
-- **sepia.flow**: `Pixel` struct table; `clamp` = nested Phi guards (inner phi feeds
+- **sepia.mapal**: `Pixel` struct table; `clamp` = nested Phi guards (inner phi feeds
   outer's false slot — golden i nesting); `main::map@0 : Pixel → Pixel` (MapBody) with
   three `clamp` calls and a `pack_struct` tail to Ret; `main::fold@1 : (f32, Pixel) → f32`
   (FoldBody; the seed `0.0` resolves f32 via §7.2); fold head pack `(0.0, sepia_image)`;
@@ -910,22 +910,22 @@ only on the source text — snapshot-stable (I12/D2 downstream).
 
 ## 12. What lower does NOT do (deferred, with owners)
 
-- **E2 surface rule** (`print` only under `seq`): flow-check (ADR-0013 consequence).
+- **E2 surface rule** (`print` only under `seq`): mapal-check (ADR-0013 consequence).
   Lower's token threading keeps even illegal-surface programs deterministic meanwhile.
 - **Full type checking** (e.g. annotation-vs-use beyond lowering needs): discharged
-  **by construction** at the flow-check boundary — builder I2 + `validate::edge_type_ok`
+  **by construction** at the mapal-check boundary — builder I2 + `validate::edge_type_ok`
   independently certify §5.1 on every sealed graph; the residual is empty, so check runs
   no typing re-walk (check/DESIGN §0, S10; supersedes this bullet's earlier "re-walks the
   sealed graph (§11.2 phase-2)" wording, whose §11.2 pointer was dangling). Lower's L12xx
   codes remain the subset needed to build at all.
 - **Multi-writer Return exclusivity at runtime**: interp (parked per next-session).
-- **Lifetime/escape analysis**: flow-check/E3.
+- **Lifetime/escape analysis**: mapal-check/E3.
 - **Float print formatting**: interp.
 
 ## 13. Module layout & totality
 
 ```
-crates/flow-lower/src/
+crates/mapal-lower/src/
 ├── lib.rs        // pub fn lower; pass orchestration (A→E)
 ├── diag.rs       // L-codes table + Diagnostic constructors
 ├── tys.rs        // Pass A: type table, TyKind→Ty
@@ -988,7 +988,7 @@ clean tree + bounded recursion + fail-fast emission ⇒ never panics/hangs.
 | LD5 | \|U\|=1 ⇒ no init/next packs, bindings read merge directly | golden d's exact shape (no gratuitous Proj) |
 | LD6 | Routing iff an arm's final item-or-tail chain is headless ending in LoopJump; routing guard = loop body's final item; non-jump arm = exit | §0-A obligation (arm reaching `-> loop` is routing, never Phi); CP-1/CP-5: the flagship guards live in `Block.tail` |
 | LD7 | Phi arms: no ret-writes (L1405), no effects (L1404), no enclosing-mut assignment (L1408); bool arms positional by discr; value-match right-folded, default required | pin 4; TokenInPhi is structural; both-arms-compute makes leaked rebinds unconditional (SF-1); exclusivity unresolved (OQ3) |
-| LD8 | Guard arms/loop bodies = child scopes; routing-guard arms lower against a snapshot, jump-arm rebinds arm-local; fanout branches = enclosing scope | fanout.flow uses `sq`/`db` after the join; arm locals (`bounded`) don't escape; the snapshot is pin 5's mechanism (SF-2c: 55, not 66) |
+| LD8 | Guard arms/loop bodies = child scopes; routing-guard arms lower against a snapshot, jump-arm rebinds arm-local; fanout branches = enclosing scope | fanout.mapal uses `sq`/`db` after the join; arm locals (`bounded`) don't escape; the snapshot is pin 5's mechanism (SF-2c: 55, not 66) |
 | LD9 | Carried names poisoned after the loop (L1107) | exit object carries the value; rebinding would force full-state exit payloads, contradicting d/d′ |
 | LD10 | Exit payload = arm chain value from the guard snapshot (+ token packed first); exit binding lands in enclosing scope; bare-value exits in token loops still rebind the token register | pin 5 + TL-3 + I4b (TK-2); validate attributes exits by merge-reachability (verified in validate.rs `check_loops`), so derived payloads are legal |
 | LD11 | Bodies = `{owner}::{map\|fold}@{i}` fns; no captures (L1108); lower enforces arity (supersedes W19's deferral) | blocks aren't closures (LC-2); arity is structural — without it there is no lowering to hand check |
@@ -1012,7 +1012,7 @@ clean tree + bounded recursion + fail-fast emission ⇒ never panics/hangs.
 
 ## 16. Open questions (→ next-session / ADR candidates)
 
-- **OQ1 — `loop { -> loop; }`:** E1 calls it legal divergence; flow-ir's `end_loop`
+- **OQ1 — `loop { -> loop; }`:** E1 calls it legal divergence; mapal-ir's `end_loop`
   requires ≥1 exit, so it is unconstructible. Lower rejects (L1501). Through M5 nothing
   needs infinite loops; if that changes, an ADR must add an exit-free loop form to the
   IR (E1's fuel semantics already covers evaluation).
@@ -1033,15 +1033,15 @@ clean tree + bounded recursion + fail-fast emission ⇒ never panics/hangs.
 - **OQ7 — routing-guard and nested-loop restrictions (L1409/L1504):** multi-route loops
   (≥2 backs/exits per merge) are IR-expressible (I3d allows ≥1 LoopBack), but their
   surface story — per-arm cond composition, polarity, the I4 token fork widened to N
-  mutually-exclusive routes — needs an flow-ir + lower ADR. Likewise nested loops
+  mutually-exclusive routes — needs an mapal-ir + lower ADR. Likewise nested loops
   beyond the inner-exits-via-ret shape. Nothing through M5 needs either.
 - **OQ8 — fn-body tails as return values (LD21):** `fn f(x: i32) -> i32 { x + 1 }` is
   parse-clean (W11) and lowered as a virtual ret-write. If Sapir prefers requiring
   explicit `-> ret` in fn bodies, that is a one-line L-code swap.
-- **flow-ir fix shipped with this increment (review TY-1):** `pack_struct` with zero
+- **mapal-ir fix shipped with this increment (review TY-1):** `pack_struct` with zero
   components (and intake of zero-field `Struct` tys) sealed Ok but failed `validate()`
   with `BadInEdges` — breaking the §16 headline "seal Ok ⇒ validate empty". Fixed in
-  flow-ir (intake + builder rejection + regression) alongside lower's L1010; recorded
+  mapal-ir (intake + builder rejection + regression) alongside lower's L1010; recorded
   in ir STATUS.
 
 ---
@@ -1080,7 +1080,7 @@ A stage like `+ 5` or `* 2` (chained pipeline, §4.3; user-guide §3.3) is "synt
 3. **Pipelines — chains kept as ordered sequences; stages are NOT semantically grouped.**
 The tree must preserve the **order** of `->` stages but must NOT impose parenthesization/grouping. "Because composition in a category is associative, the IR does not record 'stages' — it records a flat sequence of morphisms that can be grouped arbitrarily for codegen" (§4.3, verbatim) and "The graph above denotes a single morphism `A → D` regardless of how you parenthesize the chain. This is why pipeline syntax `a -> f -> g -> h` is unambiguous" (§2.1.2, verbatim). So the parse tree needs an ordered list of stages; it must not commit to a nesting that lowering would have to undo. (See §0-B obligation below — lowering wants the chain as a flat ordered chain.) Ref: §4.3, §2.1.2.
 
-4. **Flow direction `->` vs `<-` — must be normalized but the binding/assignment distinction preserved.**
+4. **Mapal direction `->` vs `<-` — must be normalized but the binding/assignment distinction preserved.**
 Both `result <- a + b` (§4.1 source) and `a + b -> result` denote the same composition. The tree must capture **source and destination** unambiguously regardless of which arrow was written. Critically, per Erratum E4 (ERRATA E4; user-guide §3.6): "**a flow is a statement, not a value-producing expression**; `->`/`<-` chains are parsed at statement level." The parser MUST parse flows at statement level, not as value-producing expressions — a flow cannot appear as an operand. Ref: ERRATA E4, user-guide §3.6/§3.2, §4.1.
 
 5. **`ret` keyword — must be preserved as the distinguished return target, not an ordinary variable.**
@@ -1111,7 +1111,7 @@ In §4.5 and user-guide §3.5, an arm body can be a bare flow `-> ret;` or `-> l
 "The `-> loop;` edge is the back-edge in the graph; `-> ret;` is the exit edge" (user-guide §3.5, verbatim). "`route -. 'true-case' .-> merge` ... `route -- 'false-case' --> ret`" (§4.5). The tree must record, for each control flow, **which label it targets** (`loop`, `search`, `outer`, `inner`, or `ret`), because nested loops use distinct labels: `-> inner;` (continue inner) vs `-> outer;` (break inner, restart outer) (user-guide §3.5 nested-loops). Lowering glues the "keep looping" output back to the `LoopMerge` (back edge) and the exit output to the result (§4.5: "the trace operator glues the 'keep looping' output back to `i_loop`"). The back edge "is not a special field on any morphism. ... a real edge in the adjacency list" (§4.5, §5.2) — but the parse tree must still mark *which* arm continues and *which* exits so lowering knows where to draw the edge. Ref: user-guide §3.5, §4.5, §5.2.
 
 14. **Loop-carried state updates — assignments to `mut` loop vars must be preserved in body order.**
-In `-true-> { i + 1 -> i; -> loop; }` (§4.5) and the array-sum body `total + head -> total; tail -> items; -> loop;` (user-guide §3.5/§8.2), the writes to loop variables (`i`, `total`, `items`) define the `next_state` half of `body : (input, state) ↦ (output, next_state)` (§2.7). Flow-Core restricts carried state to "scalar/tuple carried state" (ADR-0001). The tree must preserve these state-update assignments and their order so lowering can construct the `U`-typed back edge. Ref: §4.5, §2.7, ADR-0001.
+In `-true-> { i + 1 -> i; -> loop; }` (§4.5) and the array-sum body `total + head -> total; tail -> items; -> loop;` (user-guide §3.5/§8.2), the writes to loop variables (`i`, `total`, `items`) define the `next_state` half of `body : (input, state) ↦ (output, next_state)` (§2.7). Mapal-Core restricts carried state to "scalar/tuple carried state" (ADR-0001). The tree must preserve these state-update assignments and their order so lowering can construct the `U`-typed back edge. Ref: §4.5, §2.7, ADR-0001.
 
 15. **Fanout blocks — branches kept as an unordered-but-enumerated set, with the implicit join point marked.**
 `data -> { -> process1 -> r1; -> process2 -> r2; -> process3 -> r3; }` (user-guide §3.3) is a product/parallel fanout. The tree must carry each branch (each beginning with a bare `->` taking the fanned-out value as source) and the fact that there is an **implicit join at the closing brace**. "The implicit join at the closing brace waits for all branches to complete" (user-guide §3.3). Lowering: branches have disjoint successor sets and become bifunctor-product images (§4.5 visual; §9.5 "if the two morphisms appear in the image of a bifunctor `(f × g)` ... independent ... The IR records which morphisms came from such bifunctor images"). For the memory model the join point IS the free-frontier ("the join point of a fanout *is* the frontier synchronization point", §10), so the tree must make the block boundary recoverable. Ref: user-guide §3.3/§4.5, §9.5, §10.
@@ -1123,7 +1123,7 @@ In `-true-> { i + 1 -> i; -> loop; }` (§4.5) and the array-sum body `total + he
 `data -> void { ... }` introduces "a fanout whose results are discarded ... for side-effects-only branches" (user-guide §3.3). The tree must mark `void` distinctly; lowering maps discarded results to the terminal object `1`/`drop` (§2.4 "Terminal object `1` ... This is `drop` or 'discard the value.'"). Ref: user-guide §3.3, §2.4.
 
 18. **Function definitions — name, ordered parameters (name+type), return type, body.**
-`fn name(p1: T1, p2: T2) -> R { ... }` (user-guide §3.2). The tree must carry the function name, the **ordered** parameter list with names and types, the return type, and the body. Parameters become `ObjectKind::Parameter` objects, and multiple params are conceptually one product input ("Flow functions conceptually take one input — a product object when the function has multiple parameters", user-guide §3.2). Flow-Core requires functions be **non-recursive with an acyclic call graph** (ADR-0001) — the parser need not enforce acyclicity (a later pass does) but must preserve call names so that check is possible. Ref: user-guide §3.2, §3.2 (`ObjectKind::Parameter`), ADR-0001.
+`fn name(p1: T1, p2: T2) -> R { ... }` (user-guide §3.2). The tree must carry the function name, the **ordered** parameter list with names and types, the return type, and the body. Parameters become `ObjectKind::Parameter` objects, and multiple params are conceptually one product input ("Mapal functions conceptually take one input — a product object when the function has multiple parameters", user-guide §3.2). Mapal-Core requires functions be **non-recursive with an acyclic call graph** (ADR-0001) — the parser need not enforce acyclicity (a later pass does) but must preserve call names so that check is possible. Ref: user-guide §3.2, §3.2 (`ObjectKind::Parameter`), ADR-0001.
 
 19. **Function calls — three call syntaxes must each be representable, preserving argument structure/order.**
 "three syntaxes, all equivalent" (user-guide §3.2): (a) tuple input `(15, 20) -> add`; (b) named-parameter partial application `15 -> add.a; 20 -> add.b;`; (c) pipeline single input `data -> process`. The tree must preserve which form was used and the argument(s): for (a) the **ordered tuple**; for (b) the **parameter name** (`.a`, `.b`) each argument binds to; for (c) the single piped value. Lowering produces `Call(FunctionId)` (sugar for `Apply` after `curry`, §3.3) with the source being the product of arguments. The tuple-input order corresponds positionally to parameters (cf. `(v, lo, hi) -> clamp`, ERRATA LC-2). Ref: user-guide §3.2, §3.3 (`Call`, `Apply`).
@@ -1132,7 +1132,7 @@ In `-true-> { i + 1 -> i; -> loop; }` (§4.5) and the array-sum body `total + he
 `x -> f.method` parses as `x -> (f.method)` (user-guide §3.6), and `px.r`, `px.g`, `px.b` (user-guide §8.3) access struct fields. Member access `.` binds tighter than everything except grouping (precedence rank 2, user-guide §3.6). The tree must carry the base subtree and the field symbol. Lowering uses `Proj(u8)` (π_i projection, §3.3) for tuple/struct field access into a named product (`Struct { name, fields }`, §3.4). Ref: user-guide §3.6/§8.3, §3.3, §3.4.
 
 21. **Array indexing — base and index subtrees preserved; bounds-check obligation noted.**
-`arr[5]` / `arr[mid]` (§4.2; user-guide §8.5). The tree carries base + index expression. Lowering pairs `arr` with the index and applies `index` (§4.2). Bounds-checking "lifts this into `Kleisli(Result)`" (§4.2) — i.e., the index morphism's target becomes `Result<T, IndexError>`. Flow-Core indexing is "bounds-checked" (ADR-0001). Ref: §4.2, ADR-0001. **[Superseded by ADR-0013: in Core, OOB `Index` is a runtime trap; the `Kleisli(Result)` lift waits for Core+1 coproducts.]**
+`arr[5]` / `arr[mid]` (§4.2; user-guide §8.5). The tree carries base + index expression. Lowering pairs `arr` with the index and applies `index` (§4.2). Bounds-checking "lifts this into `Kleisli(Result)`" (§4.2) — i.e., the index morphism's target becomes `Result<T, IndexError>`. Mapal-Core indexing is "bounds-checked" (ADR-0001). Ref: §4.2, ADR-0001. **[Superseded by ADR-0013: in Core, OOB `Index` is a runtime trap; the `Kleisli(Result)` lift waits for Core+1 coproducts.]**
 
 22. **Operator precedence — the tree must reflect the §3.6 precedence so lowering sees correct grouping.**
 Precedence (tightest→loosest, user-guide §3.6): `()` > `.` > `* / %` > `+ -` > comparisons > `&&` > `||` > `-> <-` > `?` > `;`. Per ERRATA E4, `a -> b + c -> d` ≡ `a -> (b + c) -> d` and `a + b -> c` ≡ `(a + b) -> c`. The parse tree must encode these groupings (the recursive-descent grammar enforces them); this is what guarantees the `BinOp`/pipeline lowering receives correctly-nested operands. Note `?` is rank 9 (looser than `->`) but is **out of Core** (see §2). Ref: user-guide §3.6, ERRATA E4.
@@ -1141,16 +1141,16 @@ Precedence (tightest→loosest, user-guide §3.6): `()` > `.` > `* / %` > `+ -` 
 `RGB { r, g, b }` (user-guide §8.3) and `type Point { x: f32, y: f32 }`, `type Color {...}` (user-guide §2.1). Construction maps to a named product `Struct { name, fields }` (§3.4); the tree must carry the type name and the field-name→value map. Field-init shorthand (`RGB { r, g, b }` where `r,g,b` are in-scope vars) must be representable. Ref: user-guide §2.1/§8.3, §3.4.
 
 24. **Named product type declarations — `type Name { field: T, ... }` preserved (Core), enum-form rejected (see §2).**
-After E5, the keyword is `type` (ERRATA E5; user-guide §2.1). Flow-Core allows **product** (struct-like) `type` declarations only; "any `category`/`type` declaration beyond product types" is out of scope (ADR-0001). The parser must accept the struct-like form and capture field names+types (→ `Ty::Struct`, §3.4), while rejecting the enum-like (coproduct) form. The keyword `category` "may be reserved-and-rejected with a helpful error" (ERRATA E5). Ref: user-guide §2.1, ERRATA E5, ADR-0001, §3.4.
+After E5, the keyword is `type` (ERRATA E5; user-guide §2.1). Mapal-Core allows **product** (struct-like) `type` declarations only; "any `category`/`type` declaration beyond product types" is out of scope (ADR-0001). The parser must accept the struct-like form and capture field names+types (→ `Ty::Struct`, §3.4), while rejecting the enum-like (coproduct) form. The keyword `category` "may be reserved-and-rejected with a helpful error" (ERRATA E5). Ref: user-guide §2.1, ERRATA E5, ADR-0001, §3.4.
 
 25. **`map` / `fold` collection operators — postfix block with positional parameters; block is NOT an argument.**
-Per ERRATA LC-2 / ADR-0009 (the "collection-operator law"): "data arrives through the wire; the inline block is **postfix operator syntax, never an argument**; the operator's input tuple corresponds positionally to the block's parameters." Canonical forms: `array -> map { item -> ... }` (array ↔ item) and `(init, array) -> fold { acc, item -> ... }` (init ↔ acc; array ↔ item). The tree must represent the block as a **postfix operator on the operator node**, NOT as a call argument, and must preserve the **ordered block parameter list** (`item`; `acc, item`) for positional correspondence with the input tuple. The block body is "**not a first-class value**" (ERRATA LC-2). Lowering is `Pair(init, array)` then the fold/map primitive (ERRATA LC-2 cites category-ir §4). Note: the earlier `fold(0, {...})` call-position form is **explicitly wrong** and patched out. Flow-Core restricts these to fixed-size arrays with inline non-first-class block bodies (ADR-0001). Ref: ERRATA LC-2, ADR-0009, ADR-0001.
+Per ERRATA LC-2 / ADR-0009 (the "collection-operator law"): "data arrives through the wire; the inline block is **postfix operator syntax, never an argument**; the operator's input tuple corresponds positionally to the block's parameters." Canonical forms: `array -> map { item -> ... }` (array ↔ item) and `(init, array) -> fold { acc, item -> ... }` (init ↔ acc; array ↔ item). The tree must represent the block as a **postfix operator on the operator node**, NOT as a call argument, and must preserve the **ordered block parameter list** (`item`; `acc, item`) for positional correspondence with the input tuple. The block body is "**not a first-class value**" (ERRATA LC-2). Lowering is `Pair(init, array)` then the fold/map primitive (ERRATA LC-2 cites category-ir §4). Note: the earlier `fold(0, {...})` call-position form is **explicitly wrong** and patched out. Mapal-Core restricts these to fixed-size arrays with inline non-first-class block bodies (ADR-0001). Ref: ERRATA LC-2, ADR-0009, ADR-0001.
 
 26. **Source spans on every node — required for diagnostics and for `SourceLoc`/`loc` fields throughout the IR.**
 Every `Object` and `Morphism` carries `loc: SourceLoc` (§3.2). The lowering signature `fn lower(pt: ParseNode, ...)` propagates location into each `add_morphism`/`new_object`. Every parse node therefore must carry a span. This is also mandatory for the "reject-with-reason" diagnostics that must "name the construct and that it is post-Core" (ADR-0001) and for the guard-arrow "add a space" hints (ADR-0010). Ref: §3.2, §11.1, ADR-0001, ADR-0010.
 
 27. **Effectful-branch distinction is NOT a parse obligation but the effect surface (`print`) must be preserved.**
-Lowering chooses Phi (§4.4, pure) vs honest coproduct split/copair (§4.6, effectful) "When a branch contains side effects". This decision is made by the **type/effect system** ("The type system tracks effects (`IO<T>` rather than `T`) to force this lowering when needed", §4.6), not the parser. The parser need not classify effects, but must preserve calls to `print` (Flow-Core's "only effect, sequential-context-only", ADR-0001) so the effect checker can run. Ref: §4.6, §4.4, ADR-0001.
+Lowering chooses Phi (§4.4, pure) vs honest coproduct split/copair (§4.6, effectful) "When a branch contains side effects". This decision is made by the **type/effect system** ("The type system tracks effects (`IO<T>` rather than `T`) to force this lowering when needed", §4.6), not the parser. The parser need not classify effects, but must preserve calls to `print` (Mapal-Core's "only effect, sequential-context-only", ADR-0001) so the effect checker can run. Ref: §4.6, §4.4, ADR-0001.
 
 ## §0-B. WHAT §4 (AND ADJACENT SECTIONS) SAY ABOUT PARSE-TREE SHAPE
 

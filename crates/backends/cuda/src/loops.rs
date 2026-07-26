@@ -2,7 +2,7 @@
 //! guard-first; llvm `loops.rs` ported to C++ statements). Only the
 //! canonical single-merge shape reaches here — non-canonical (multi-merge
 //! SCC) loops are rejected upstream in [`crate::emit`] as `Unsupported`
-//! (L3), and the attribution is [`flow_ir::CategoryIr::loop_plan`], the one
+//! (L3), and the attribution is [`mapal_ir::CategoryIr::loop_plan`], the one
 //! source of truth (BL7) the interp driver also consumes — never re-derived.
 //!
 //! The C++ shape mirrors the interp/llvm driver 1:1 over the fn's hoisted
@@ -43,13 +43,13 @@
 //! freed at fn exit (§2's O(k·n), recorded — the conservative default).
 //!
 //! Trap semantics are unchanged in loops (DESIGN §3): cone emissions are
-//! the ordinary op table — host scalar guards call `flow_trap` directly,
+//! the ordinary op table — host scalar guards call `mapal_trap` directly,
 //! and every kernel launch in a cone is followed by
 //! `trap_check_after_launch()`, so a device trap on iteration `i` fires
 //! before iteration `i+1`'s host code runs (first-trap-wins in launch
 //! order, the oracle's evaluation order).
 
-use flow_ir::ObjectId;
+use mapal_ir::ObjectId;
 
 use crate::EmitError;
 use crate::func::FnEmit;

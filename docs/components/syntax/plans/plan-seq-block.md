@@ -38,12 +38,12 @@ unchanged (E2/ADR-0003 stand verbatim).
    branch, T0201 by ADR-0003. CK5 upgrades pin → theorem.
 3. Headless statements/tail seed from the seq input — today's bare-chain branch form
    parses unchanged and means the same (backward compatible by construction).
-4. Bindings escape (enclosing scope) — the `fanout.flow` idiom
+4. Bindings escape (enclosing scope) — the `fanout.mapal` idiom
    (`… -> seq { -> f -> x; }  x -> g;`) holds for seq exactly as for fanout.
 
 ## Work packages (order: WP1 → {WP2 ∥ WP3} → WP4)
 
-### WP1 — flow-syntax
+### WP1 — mapal-syntax
 
 1. AST: `StageKind::SeqBlock(Block)`; delete `FanoutKind::Seq` (compiler finds every
    match site — that is the point of the node split).
@@ -61,7 +61,7 @@ unchanged (E2/ADR-0003 stand verbatim).
    of the fanout section) + §15 shapes + diagnostic catalogue (P0117);
    IMPLEMENTATION.md rows (`SeqBlock`, P0117 site); STATUS.md counts.
 
-### WP2 — flow-lower (after WP1 compiles)
+### WP2 — mapal-lower (after WP1 compiles)
 
 1. Read `emit_block`/`BodyCtx` (emit.rs:553) and the guard-arm-block path
    (emit.rs:1985) first; reuse the fitting one for `emit_seq_block` — do not write a
@@ -83,7 +83,7 @@ unchanged (E2/ADR-0003 stand verbatim).
 6. Docs same change: lower/DESIGN.md (seq section rewritten off the fanout page;
    L-catalogue if L1611; morphism table), IMPLEMENTATION.md, STATUS.md.
 
-### WP3 — flow-check (after WP1 compiles; parallel with WP2)
+### WP3 — mapal-check (after WP1 compiles; parallel with WP2)
 
 1. Effects walk (effects.rs:172): `Fanout` node opens the context unconditionally
    (`FanoutKind` is now `Plain | Void`; `Void` unreachable behind the parse-clean
@@ -104,8 +104,8 @@ unchanged (E2/ADR-0003 stand verbatim).
    `data -> seq { "Step 1" -> log; "Step 2" -> log; "Step 3" -> log; }`.
    §8.6 (channels, full-language) untouched; §5.4 table unchanged.
 2. `HANDOFF.md` §4.1 line 109 amended: `seq { … }` statement block for ordering.
-3. Example: extend `examples/fanout.flow`'s effect epilogue **or** add a minimal
-   `seq_demo.flow` (pure fanout → join → seq of ordered prints) — golden through
+3. Example: extend `examples/fanout.mapal`'s effect epilogue **or** add a minimal
+   `seq_demo.mapal` (pure fanout → join → seq of ordered prints) — golden through
    parse→lower→interp (interp acceptance run proves the no-IR-delta claim end to
    end; expected output pinned in the header comment).
 4. Global STATUS: ADR ledger row (ADR-0019); check row one-liner (OQ-C1 closed);
@@ -169,7 +169,7 @@ Deviations from the letter of the plan, each verified:
    loop-carried `mut` reassigned in a fanout branch dropped from the carried
    state; capture-in-fanout misreported L1101). Each has a named regression;
    the seq-wrapped `sum_to_n` variant is pinned to 55 via the interp oracle.
-6. **Example: new `examples/seq_demo.flow`** (not a fanout.flow extension) —
+6. **Example: new `examples/seq_demo.mapal`** (not a fanout.mapal extension) —
    pure fanout → join → seq of ordered prints, golden through
    parse→lower→check→interp (`36\n12\n`); the lower golden shows the ordering is
    carried by the IoToken thread alone, no seq node (pin d proven end-to-end).

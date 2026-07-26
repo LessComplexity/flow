@@ -40,7 +40,7 @@ not dominant (16× coarser slices moved the 14-thread regression by 20% / 7%). C
 work scales cleanly — 4.01× at 4 threads on matmul512, 5.6× at 8 on matmul1024.
 
 **(c) The actual defect is one line, and it disables load balancing entirely.**
-`flow-rt:slice_ranges` computes
+`mapal-rt:slice_ranges` computes
 
 ```rust
 slices = ceil(n / GRAIN).min(threads)
@@ -79,7 +79,7 @@ splits: **geometry from the graph, constants from the profile.**
 
 | Item | Kind | Model |
 | --- | --- | --- |
-| `work_per_element : Task → ℕ` | `Trn`, **deduced**, **flow-ir** | the body's op count, weighted by op class. A graph fact — a property of the program, not of any machine — and the ONE thing flow-ir must learn here. Absent today: `Task.rank` weights are element counts (`algo.rs:1207`), and the crate has no op counting at all |
+| `work_per_element : Task → ℕ` | `Trn`, **deduced**, **mapal-ir** | the body's op count, weighted by op class. A graph fact — a property of the program, not of any machine — and the ONE thing mapal-ir must learn here. Absent today: `Task.rank` weights are element counts (`algo.rs:1207`), and the crate has no op counting at all |
 | `bytes_per_element : Task → ℕ` | `Trn`, deduced, emitter | from the recorded `TileRead` strides and `elem` width; already derivable, uncomputed |
 | `intensity : Task → ℚ` | `Trn`, deduced | `work_per_element / bytes_per_element` — the quantity §1(a) shows the optimum tracking |
 | `footprint : Task → ℕ` | `Trn`, deduced | live bytes per dispatch, from the site's array extents. Distinguishes matmul 1024 (wants 8) from matmul 4096 (wants 14) at *equal* intensity |
@@ -100,7 +100,7 @@ splits: **geometry from the graph, constants from the profile.**
    trap observation.
 3. **Width and grain are independent.** `grain` is *not* derived from `width`; a dispatch may
    be 4 lanes × 32 pieces. Collapsing them is the defect being removed.
-4. **flow-ir learns `work_per_element` and nothing else.** Core counts, P/E ratios, cache
+4. **mapal-ir learns `work_per_element` and nothing else.** Core counts, P/E ratios, cache
    sizes and lane classes are machine facts and stay in `TargetProfile` (the ADR-0032
    contract). The scheduler itself is emitter-local, consuming both.
 5. **The default profile emits byte-identical text** where the deduced schedule equals today's
@@ -127,7 +127,7 @@ really about, and it reorganises the three rungs into one artifact.
 
 `GRAIN` is the same hand-set literal `TILE_J` and `TILE_KC` were, and ADR-0034 already names it
 — *"the same disease at the runtime placement"*. S31 skipped it under rule 4 because it lives
-in flow-rt rather than the emitter. **That placement split is the actual obstacle**: the
+in mapal-rt rather than the emitter. **That placement split is the actual obstacle**: the
 emitter knows the graph's reuse structure and cannot reach the pool; the pool knows the
 machine's runtime state and knows nothing about the graph. So neither can size a slice, and a
 constant sits in the gap.
@@ -221,7 +221,7 @@ is a stream dependency, over the identical record.
 
 ### Step 1 — the pool stops inventing sizes and starts receiving them
 
-`flow_par_task` carries the region's `Granularity` — at minimum `width` and `slice_elems` —
+`mapal_par_task` carries the region's `Granularity` — at minimum `width` and `slice_elems` —
 and `slice_ranges` stops collapsing them. This is the §2.5 principle made concrete: the pool
 no longer derives sizes from `GRAIN` and `configured_threads()`, it applies the ones the
 compiler computed, and keeps only what it alone can see — which lane, when, and who steals.
@@ -241,7 +241,7 @@ lets an E-core take fewer pieces without anyone deciding it should.
 the deduction must independently reproduce **2 / 4 / 8 / 8 / 14** for the six measured kernels
 and must pick over-decomposition for matmul512 while refusing it for conv2d.
 
-This is where `work_per_element` enters flow-ir — the single graph fact the whole S31/S32 line
+This is where `work_per_element` enters mapal-ir — the single graph fact the whole S31/S32 line
 has been missing, and the one thing here that is legal to put there.
 
 ### Step 3 — region plans compose (this is the DAG rung, and it is the same operator)
@@ -270,11 +270,11 @@ has never been exercised.
 
 | program | shape | what it must show |
 | --- | --- | --- |
-| `mixed_widths.flow` | conv2d@1024 **then** matmul@8192 in one program | R1: two dispatches in one process, deduced 4 and 14. A global width is wrong for at least one of them — this is Sapir's own example and the plan's headline case |
-| `wide_small.flow` | 8 independent small maps, no deps | R2: co-scheduled onto one wave. Serialized, this is 8× a dispatch that cannot fill the machine |
-| `wide_big.flow` | 4 independent matmuls, each wanting ~4 lanes | R2 under contention: `Σ width = 16 > 14` — the apportionment rule, not just the packing |
-| `deep_narrow.flow` | a long dependent chain of small maps | the negative control: no co-scheduling is possible, so R2 must cost nothing |
-| `critical_path.flow` | one long task beside several short ones | R2's tie-break: the long task must get the lanes, which `rank` already knows |
+| `mixed_widths.mapal` | conv2d@1024 **then** matmul@8192 in one program | R1: two dispatches in one process, deduced 4 and 14. A global width is wrong for at least one of them — this is Sapir's own example and the plan's headline case |
+| `wide_small.mapal` | 8 independent small maps, no deps | R2: co-scheduled onto one wave. Serialized, this is 8× a dispatch that cannot fill the machine |
+| `wide_big.mapal` | 4 independent matmuls, each wanting ~4 lanes | R2 under contention: `Σ width = 16 > 14` — the apportionment rule, not just the packing |
+| `deep_narrow.mapal` | a long dependent chain of small maps | the negative control: no co-scheduling is possible, so R2 must cost nothing |
+| `critical_path.mapal` | one long task beside several short ones | R2's tie-break: the long task must get the lanes, which `rank` already knows |
 
 Measured small **and** big per Sapir's directive, at 1t/4t/8t/14t and against the deduced
 schedule, with cpp/rust baselines where a baseline is meaningful.
@@ -291,14 +291,14 @@ schedule, with cpp/rust baselines where a baseline is meaningful.
   §1(a), the way `profile::tests::generic_reproduces_the_six_literals` pins the tile factors.
 - **Composition law tests** (§2.7): plans for two regions composed must equal the plan deduced
   for their union, on both the sequential and the concurrent operator.
-- **`work_per_element` oracle tests** in flow-ir, against hand-counted bodies.
+- **`work_per_element` oracle tests** in mapal-ir, against hand-counted bodies.
 - **Step 1 is a no-op at its defaults** — every measured number unmoved before R1 sets the knobs.
 
 ## 6. ADR-0033 D2 — the three-line record
 
 - **Record fields consumed:** `PathPlan.tasks[*].{kind, deps, rank}`, `TaskKind::Split{site, n}`,
   and via the site, `TileSite.{rows, c, k, elem}` + `TileRead` strides. **Added:**
-  `work_per_element` — a genuine graph fact, the only flow-ir change in this plan.
+  `work_per_element` — a genuine graph fact, the only mapal-ir change in this plan.
 - **CUDA realization against the record:** the same deduction with different constants — width
   becomes block/grid geometry, grain becomes items per thread, lanes become SMs; `levels`
   becomes stream assignment, which is the direct GPU analogue of R2 and the reason to design
@@ -312,7 +312,7 @@ schedule, with cpp/rust baselines where a baseline is meaningful.
 
 1. **Where does the runtime half of the profile live?** The thread-count inputs (core count,
    P/E split, throughput ratio) are facts about a *runtime* placement, and `TargetProfile` is
-   an emitter table. Either it grows a runtime half, or flow-rt gets its own profile and the
+   an emitter table. Either it grows a runtime half, or mapal-rt gets its own profile and the
    emitter passes a schedule it cannot fully validate. Recorded as a collision in
    plan-s31-target-profiles; it must be settled before step 2.
 2. **Does `work_per_element` weight op classes?** A divide is not an add. Unweighted is

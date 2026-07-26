@@ -3,8 +3,8 @@
 Status: **SHIPPED — S34, 2026-07-26.** Closes the project's top P0 (README "What is next" #4,
 `docs/STATUS.md` Blockers): the rewriter deleted a trap that must fire. Found by CI on its
 first run; pinned as a proptest regression seed
-(`crates/flow-rewrite/tests/property.proptest-regressions`), **retained and now passing**.
-Implemented at `crates/flow-rewrite/src/functor_laws.rs:is_identity_body` +
+(`crates/mapal-rewrite/tests/property.proptest-regressions`), **retained and now passing**.
+Implemented at `crates/mapal-rewrite/src/functor_laws.rs:is_identity_body` +
 `graph_rewrites.rs:is_pure` (`pub(crate)`). Gate: `cargo test --workspace --release` green,
 LLVM differential 36/36 in 462 s (ran, did not skip); `cargo fmt` clean.
 
@@ -39,7 +39,7 @@ The law being applied is the `List` functor's identity law: `List(id_A) = id_{Li
 the body must *be* `id_A`.
 
 In this IR a body is a graph, and its denotation is not only its Return value. The oracle
-(`flow-interp`, the specification) evaluates every op in a function's graph, which is exactly
+(`mapal-interp`, the specification) evaluates every op in a function's graph, which is exactly
 why DCE pins impure dead cones live (`graph_rewrites.rs::analyze_dce`, R4). So for a body `f`
 with Return writer `Output(param)` and a residual op set `R`:
 
@@ -72,7 +72,7 @@ rests on.
 
 ## Acceptance — as built
 
-- [x] `cargo test -q -p flow-rewrite --release --test property` — **11 green** (9 + 2 new) with
+- [x] `cargo test -q -p mapal-rewrite --release --test property` — **11 green** (9 + 2 new) with
       the pinned seed retained, 0.23 s. The seed was not touched.
 - [x] `identity_map_body_with_dead_trap_stays_trapped` — the hand-written form of the
       counterexample, alongside `dead_trapping_div_stays_trapped`.
@@ -98,6 +98,6 @@ refusal costs nothing measurable today.
 
 ## What this does not touch
 
-The second P0 (`flow_par_wait` lets workers run ahead of the clock —
+The second P0 (`mapal_par_wait` lets workers run ahead of the clock —
 `components/backend-llvm/plans/plan-s33b-clock-read-barrier.md`) is unrelated: a measurement
 race in the runtime, not a rewrite-law defect.

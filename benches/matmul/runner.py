@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Runs every benchmark leg, writes results.csv (leg,N,ms,gflops,note).
-flow-cuda, flow-llvm, flow-cuda-cap-{f64,f32} and flow-llvm-cap-{f64,f32} are
-process-wall min-of-3 with an adaptive cap; flow-cuda-cap-kernel-{f64,f32} are
-per-iteration compute (sum of the binary's FLOW_PERF kernel-event times, min of
-3 process runs); flow-llvm-cap-compute-{f64,f32} are flow_main compute time,
+mapal-cuda, mapal-llvm, mapal-cuda-cap-{f64,f32} and mapal-llvm-cap-{f64,f32} are
+process-wall min-of-3 with an adaptive cap; mapal-cuda-cap-kernel-{f64,f32} are
+per-iteration compute (sum of the binary's MAPAL_PERF kernel-event times, min of
+3 process runs); mapal-llvm-cap-compute-{f64,f32} are mapal_main compute time,
 also min-of-3; the compiled CUDA / BLAS / numpy / rust / cpp / chapel legs
 self-report per-iteration times. A machine-spec comment header (utc / cpu /
 threads / core quota / RAM / clang) is stamped above the CSV header (S26
@@ -81,7 +81,7 @@ ONLY = set(sys.argv[1:])  # optional leg filter (S26b trimmed box runs)
 
 # S27: optional size ceiling for local runs (macOS stack caps the llvm legs;
 # naive 4096 baselines cost ~8 min each). Unset = every leg's full size list.
-MAX_N = int(os.environ.get("FLOW_BENCH_MAX_N", "0")) or None
+MAX_N = int(os.environ.get("MAPAL_BENCH_MAX_N", "0")) or None
 
 def clamp(sizes):
     return tuple(n for n in sizes if MAX_N is None or (n if isinstance(n, int) else n[0]) <= MAX_N)
@@ -94,8 +94,8 @@ def add(leg, n, ms, note=""):
     ROWS.append((leg, n, f"{ms:.4f}", f"{gf:.2f}", note))
     print(f"{leg:12s} N={n:5d} {ms:12.4f} ms {gf:10.2f} GFLOP/s {note}", flush=True)
 
-# --- flow-cuda (process wall, min of 3; correctness stdout shown for N=4) ---
-for n in ((4, 16, 32, 64, 128) if wanted("flow-cuda") else ()):
+# --- mapal-cuda (process wall, min of 3; correctness stdout shown for N=4) ---
+for n in ((4, 16, 32, 64, 128) if wanted("mapal-cuda") else ()):
     try:
         best, out = float("inf"), ""
         for _ in range(3):
@@ -103,49 +103,49 @@ for n in ((4, 16, 32, 64, 128) if wanted("flow-cuda") else ()):
             r = run([f"./mm_cu_{n}"], timeout=3600)
             dt = (time.perf_counter() - t0) * 1e3
             if r.returncode != 0:
-                print(f"flow-cuda N={n} FAILED rc={r.returncode}: {r.stderr[-300:]}", flush=True)
+                print(f"mapal-cuda N={n} FAILED rc={r.returncode}: {r.stderr[-300:]}", flush=True)
                 best = None
                 break
             best = min(best, dt)
             out = r.stdout.strip().replace("\n", "/")
         if best is None:
             continue
-        add("flow-cuda", n, best, f"out={out}")
+        add("mapal-cuda", n, best, f"out={out}")
         if n == 64 and best > 600_000:
-            print("flow-cuda N=64 over 600 s — skipping N=128", flush=True)
+            print("mapal-cuda N=64 over 600 s — skipping N=128", flush=True)
             break
     except FileNotFoundError:
         break
     except subprocess.TimeoutExpired:
-        print(f"flow-cuda N={n} TIMEOUT — stopping leg", flush=True)
+        print(f"mapal-cuda N={n} TIMEOUT — stopping leg", flush=True)
         break
 
-# --- flow-llvm / flow-cuda-cap-{f64,f32} / flow-llvm-cap-{f64,f32} ---
-# (process wall, min of 3) — same shape as flow-cuda above; cap_at/cap_ms give
+# --- mapal-llvm / mapal-cuda-cap-{f64,f32} / mapal-llvm-cap-{f64,f32} ---
+# (process wall, min of 3) — same shape as mapal-cuda above; cap_at/cap_ms give
 # each leg its adaptive skip (the llvm loop form hits the naive-Update N^4
 # wall, its capture form the by-value-capture N^4 wall — stop before the 1 h
 # timeout).
 for leg, fmt, sizes, cap_at, cap_ms in (
-    ("flow-llvm", "./mm_ll_{}", (4, 16, 32, 64, 128), 64, 600_000),
-    ("flow-cuda-cap-f64", "./mm_cu_cap_{}", (16, 64, 128, 256, 512, 1024, 2048, 4096), 64, 600_000),
-    ("flow-cuda-cap-f32", "./mm_cu_cap_f32_{}", (16, 64, 128, 256, 512, 1024, 2048, 4096), 64, 600_000),
+    ("mapal-llvm", "./mm_ll_{}", (4, 16, 32, 64, 128), 64, 600_000),
+    ("mapal-cuda-cap-f64", "./mm_cu_cap_{}", (16, 64, 128, 256, 512, 1024, 2048, 4096), 64, 600_000),
+    ("mapal-cuda-cap-f32", "./mm_cu_cap_f32_{}", (16, 64, 128, 256, 512, 1024, 2048, 4096), 64, 600_000),
     # S21: the llvm cap legs run every size — WP3b killed the by-value/aggregate
     # walls; the 256-checkpoint cap still guards the 512 leg adaptively.
-    # S24: the plain legs run the parallel orchestrator (FLOW_PAR unset = all
+    # S24: the plain legs run the parallel orchestrator (MAPAL_PAR unset = all
     # cores); the -1t rows pin the same binaries to one thread at the
     # comparison sizes — the single-thread baseline in the same table.
     # S27: sizes run to 4096 (the S26c 4096-minimum directive; the ulimit
     # wrapper below is what makes the 2048/4096 alloca stacks viable), and the
     # -fma legs are the product face (contract flags in the .ll — outputs are
     # numerically-equal-not-byte-equal to the conformance legs by design).
-    ("flow-llvm-cap-f64", "./mm_ll_cap_{}", (16, 64, 128, 256, 512, 1024, 2048, 4096), 256, 120_000),
-    ("flow-llvm-cap-f32", "./mm_ll_cap_f32_{}", (16, 64, 128, 256, 512, 1024, 2048, 4096), 256, 120_000),
-    ("flow-llvm-cap-f64-1t", "FLOW_PAR=1 ./mm_ll_cap_{}", (512, 1024, 2048, 4096), 4096, 3_600_000),
-    ("flow-llvm-cap-f32-1t", "FLOW_PAR=1 ./mm_ll_cap_f32_{}", (512, 1024, 2048, 4096), 4096, 3_600_000),
-    ("flow-llvm-cap-f64-fma", "./mm_ll_fma_cap_{}", (256, 512, 1024, 2048, 4096), 256, 120_000),
-    ("flow-llvm-cap-f32-fma", "./mm_ll_fma_cap_f32_{}", (256, 512, 1024, 2048, 4096), 256, 120_000),
-    ("flow-llvm-cap-f64-fma-1t", "FLOW_PAR=1 ./mm_ll_fma_cap_{}", (512, 1024, 2048, 4096), 4096, 3_600_000),
-    ("flow-llvm-cap-f32-fma-1t", "FLOW_PAR=1 ./mm_ll_fma_cap_f32_{}", (512, 1024, 2048, 4096), 4096, 3_600_000),
+    ("mapal-llvm-cap-f64", "./mm_ll_cap_{}", (16, 64, 128, 256, 512, 1024, 2048, 4096), 256, 120_000),
+    ("mapal-llvm-cap-f32", "./mm_ll_cap_f32_{}", (16, 64, 128, 256, 512, 1024, 2048, 4096), 256, 120_000),
+    ("mapal-llvm-cap-f64-1t", "MAPAL_PAR=1 ./mm_ll_cap_{}", (512, 1024, 2048, 4096), 4096, 3_600_000),
+    ("mapal-llvm-cap-f32-1t", "MAPAL_PAR=1 ./mm_ll_cap_f32_{}", (512, 1024, 2048, 4096), 4096, 3_600_000),
+    ("mapal-llvm-cap-f64-fma", "./mm_ll_fma_cap_{}", (256, 512, 1024, 2048, 4096), 256, 120_000),
+    ("mapal-llvm-cap-f32-fma", "./mm_ll_fma_cap_f32_{}", (256, 512, 1024, 2048, 4096), 256, 120_000),
+    ("mapal-llvm-cap-f64-fma-1t", "MAPAL_PAR=1 ./mm_ll_fma_cap_{}", (512, 1024, 2048, 4096), 4096, 3_600_000),
+    ("mapal-llvm-cap-f32-fma-1t", "MAPAL_PAR=1 ./mm_ll_fma_cap_f32_{}", (512, 1024, 2048, 4096), 4096, 3_600_000),
 ):
     if not wanted(leg):
         continue
@@ -153,11 +153,11 @@ for leg, fmt, sizes, cap_at, cap_ms in (
         try:
             best, out = float("inf"), ""
             cmd = [fmt.format(n)]
-            if leg.startswith("flow-llvm"):
+            if leg.startswith("mapal-llvm"):
                 # allocas hold the arrays; N>=1024 needs a big stack (heap
                 # lowering is the recorded fix). No `exec` — the -1t legs carry
                 # an env prefix; the ~ms bash wrapper cost is identical across
-                # every flow-llvm row, so within-table ratios stay clean.
+                # every mapal-llvm row, so within-table ratios stay clean.
                 cmd = ["bash", "-c", f"ulimit -s unlimited 2>/dev/null || ulimit -s hard; {cmd[0]}"]
             for _ in range(3):
                 t0 = time.perf_counter()
@@ -181,13 +181,13 @@ for leg, fmt, sizes, cap_at, cap_ms in (
             print(f"{leg} N={n} TIMEOUT — stopping leg", flush=True)
             break
 
-# --- flow-cuda-cap-kernel-{f64,f32} (per-iteration compute: sum of the ---
-# binary's FLOW_PERF launch= CUDA-event times; process run repeated 3x, min of
+# --- mapal-cuda-cap-kernel-{f64,f32} (per-iteration compute: sum of the ---
+# binary's MAPAL_PERF launch= CUDA-event times; process run repeated 3x, min of
 # sums — startup EXCLUDED, unlike the process-wall legs above; the note keeps
-# the per-launch detail + the binary's own FLOW_PERF total) ---
+# the per-launch detail + the binary's own MAPAL_PERF total) ---
 for leg, fmt in (
-    ("flow-cuda-cap-kernel-f64", "./mm_cu_cap_perf_{}"),
-    ("flow-cuda-cap-kernel-f32", "./mm_cu_cap_f32_perf_{}"),
+    ("mapal-cuda-cap-kernel-f64", "./mm_cu_cap_perf_{}"),
+    ("mapal-cuda-cap-kernel-f32", "./mm_cu_cap_f32_perf_{}"),
 ):
     if not wanted(leg):
         continue
@@ -200,14 +200,14 @@ for leg, fmt in (
                     print(f"{leg} N={n} FAILED rc={r.returncode}: {r.stderr[-300:]}", flush=True)
                     best = None
                     break
-                launches = re.findall(r"FLOW_PERF launch=(\S+) ms=([\d.]+)", r.stdout)
+                launches = re.findall(r"MAPAL_PERF launch=(\S+) ms=([\d.]+)", r.stdout)
                 if not launches:
-                    print(f"{leg} N={n} FAILED: no FLOW_PERF lines in stdout", flush=True)
+                    print(f"{leg} N={n} FAILED: no MAPAL_PERF lines in stdout", flush=True)
                     best = None
                     break
                 best = min(best, sum(float(ms) for _, ms in launches))
-                out = "/".join(l for l in r.stdout.strip().splitlines() if not l.startswith("FLOW_PERF"))
-                total = re.search(r"FLOW_PERF total ms=([\d.]+)", r.stdout)
+                out = "/".join(l for l in r.stdout.strip().splitlines() if not l.startswith("MAPAL_PERF"))
+                total = re.search(r"MAPAL_PERF total ms=([\d.]+)", r.stdout)
                 note = f"out={out} " + " ".join(f"{k}:{ms}" for k, ms in launches)
                 if total:
                     note += f" total:{total.group(1)}"
@@ -220,18 +220,18 @@ for leg, fmt in (
             print(f"{leg} N={n} TIMEOUT — stopping leg", flush=True)
             break
 
-# --- flow-llvm-cap-compute-{f64,f32}[-1t] (flow_main timer, min of 3) ---
+# --- mapal-llvm-cap-compute-{f64,f32}[-1t] (mapal_main timer, min of 3) ---
 # -fma-compute twins are the product face; sizes run to 4096. -1t twins pin
-# FLOW_PAR=1 (replaces the S27c manual 1t rows).
+# MAPAL_PAR=1 (replaces the S27c manual 1t rows).
 for leg, fmt, par in (
-    ("flow-llvm-cap-compute-f64", "./mm_ll_perf_cap_{}", "par"),
-    ("flow-llvm-cap-compute-f32", "./mm_ll_perf_cap_f32_{}", "par"),
-    ("flow-llvm-cap-fma-compute-f64", "./mm_ll_fma_perf_cap_{}", "par"),
-    ("flow-llvm-cap-fma-compute-f32", "./mm_ll_fma_perf_cap_f32_{}", "par"),
-    ("flow-llvm-cap-compute-f64-1t", "./mm_ll_perf_cap_{}", "1"),
-    ("flow-llvm-cap-compute-f32-1t", "./mm_ll_perf_cap_f32_{}", "1"),
-    ("flow-llvm-cap-fma-compute-f64-1t", "./mm_ll_fma_perf_cap_{}", "1"),
-    ("flow-llvm-cap-fma-compute-f32-1t", "./mm_ll_fma_perf_cap_f32_{}", "1"),
+    ("mapal-llvm-cap-compute-f64", "./mm_ll_perf_cap_{}", "par"),
+    ("mapal-llvm-cap-compute-f32", "./mm_ll_perf_cap_f32_{}", "par"),
+    ("mapal-llvm-cap-fma-compute-f64", "./mm_ll_fma_perf_cap_{}", "par"),
+    ("mapal-llvm-cap-fma-compute-f32", "./mm_ll_fma_perf_cap_f32_{}", "par"),
+    ("mapal-llvm-cap-compute-f64-1t", "./mm_ll_perf_cap_{}", "1"),
+    ("mapal-llvm-cap-compute-f32-1t", "./mm_ll_perf_cap_f32_{}", "1"),
+    ("mapal-llvm-cap-fma-compute-f64-1t", "./mm_ll_fma_perf_cap_{}", "1"),
+    ("mapal-llvm-cap-fma-compute-f32-1t", "./mm_ll_fma_perf_cap_f32_{}", "1"),
 ):
     if not wanted(leg):
         continue
@@ -241,7 +241,7 @@ for leg, fmt, par in (
             cmd = [
                 "bash",
                 "-c",
-                f"export FLOW_PAR={par}; ulimit -s unlimited 2>/dev/null || ulimit -s hard; {fmt.format(n)}",
+                f"export MAPAL_PAR={par}; ulimit -s unlimited 2>/dev/null || ulimit -s hard; {fmt.format(n)}",
             ]
             for _ in range(3):
                 r = run(cmd, timeout=3600)
@@ -249,13 +249,13 @@ for leg, fmt, par in (
                     print(f"{leg} N={n} FAILED rc={r.returncode}: {r.stderr[-300:]}", flush=True)
                     best = None
                     break
-                total = re.search(r"FLOW_PERF total ms=([\d.]+)", r.stdout)
+                total = re.search(r"MAPAL_PERF total ms=([\d.]+)", r.stdout)
                 if not total:
-                    print(f"{leg} N={n} FAILED: no FLOW_PERF total in stdout", flush=True)
+                    print(f"{leg} N={n} FAILED: no MAPAL_PERF total in stdout", flush=True)
                     best = None
                     break
                 best = min(best, float(total.group(1)))
-                out = "/".join(l for l in r.stdout.strip().splitlines() if not l.startswith("FLOW_PERF"))
+                out = "/".join(l for l in r.stdout.strip().splitlines() if not l.startswith("MAPAL_PERF"))
                 note = f"out={out} total:{total.group(1)}"
             if best is None:
                 continue

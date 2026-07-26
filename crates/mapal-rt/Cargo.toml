@@ -1,0 +1,11 @@
+[package]
+name = "mapal-rt"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dev-dependencies]
+mapal-ir = { path = "../mapal-ir" }
+mapal-interp = { path = "../mapal-interp" }

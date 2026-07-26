@@ -21,7 +21,7 @@ expected llvm delta is small to none; measured, not assumed).
 ## 1. Categorical model (Dat + Trn)
 
 Why category theory buys anything here: the emitter today realises the functor
-`F_CUDA : Flow-Cat → C-text` morphism-by-morphism — every edge becomes a statement,
+`F_CUDA : Mapal-Cat → C-text` morphism-by-morphism — every edge becomes a statement,
 every object a local. But the functor's obligation is only that the **composite**
 agrees with the oracle (R1); the factorisation into statements is an emission
 choice. Minimal emission is the observation that the text should mirror the
@@ -80,9 +80,9 @@ Composition rules (the invariants the implementation must preserve):
 - **R-DET (determinism):** class + tree extraction are pure functions of the
   sealed graph; same IR ⇒ same text (ADR-0020).
 
-## 2. The query (flow-ir)
+## 2. The query (mapal-ir)
 
-`flow_ir::emission_plan(f) -> EmissionPlan` with per-object `class`, and
+`mapal_ir::emission_plan(f) -> EmissionPlan` with per-object `class`, and
 per-statement-point the expression tree in leaf-to-root order. Lives beside
 `loop_plan`/`last_use_plan`/`bounds_proof`; same doc/test discipline (§5.1-style
 golden rows + proptest: classification total, R-NODUP holds on random testgen
@@ -90,7 +90,7 @@ graphs). `guarded?` composes the EXISTING `bounds_proof` + const-divisor facts �
 deduce once; the backend must not re-derive.
 
 The query owns `guarded?` entirely — no backend parameter: `bounds_proof` is
-already in flow-ir, the const-divisor fact is graph-visible (the divisor Pair-edge
+already in mapal-ir, the const-divisor fact is graph-visible (the divisor Pair-edge
 source is a Constant — the same fact `kernel::const_int_operand` reads), and
 float-Div/Mod-never-traps is IR semantics (ADR-0013 IN6). A backend that elides
 MORE guards than the query assumes only leaves a value conservatively Named —
@@ -180,14 +180,14 @@ Deviations/decisions, all emitter-side (the query is untouched):
 
 `FnEmit` (host + `__host__ __device__` lane) gains the identical mechanism:
 plan + expression memo + dissolved-`component_expr` + decl skip + input alias
-`in`. Host force-Named set: Call targets (host callees trap via `flow_trap`
+`in`. Host force-Named set: Call targets (host callees trap via `mapal_trap`
 inside — position is semantic) AND every bulk-op target (launch/readback
 machinery needs an lvalue: `cudaMemcpy(&oN, …)`), plus product-typed Inline.
 Scalar launch args inline (a fold seed constant rides the launch call:
 `k0_0<<<…>>>(t1, 0, o5, 10)`). Same Div/Mod slot-fetch reorder as WP-B. Phi
 strict-select discipline unchanged (arms as temps — an inlined Phi RESULT is
 fine; arms never re-form). Print's residual-erased token-product keeps one
-local (`oN = (expr); flow_print(oN)`) — the plan excludes token-carrying
+local (`oN = (expr); mapal_print(oN)`) — the plan excludes token-carrying
 objects by design; recorded headroom with the array-handle aliases.
 Exhibits: sepia channel = one line per coefficient row; fn1 (matmul v2 body)
 = one return expression (was 10 locals / 12 statements); golden corpus
@@ -243,7 +243,7 @@ recorded headroom, not debt.
 
 ## 6. WP sequencing (codex codes; orchestrator designs/reviews/reconciles)
 
-- **WP-A** `flow_ir::emission_plan` + tests (classification goldens on the 10
+- **WP-A** `mapal_ir::emission_plan` + tests (classification goldens on the 10
   examples + matmul4_cap; proptest R-NODUP/totality over testgen).
 - **WP-B** `DevEmit` consumer (device twins) + golden re-pins.
 - **WP-C** `FnEmit` host + kernel bodies + loops.rs cones + re-pins.

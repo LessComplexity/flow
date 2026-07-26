@@ -7,53 +7,53 @@ echo "== toolchain =="
 nvcc --version | tail -1
 rustc --version
 nvidia-smi -L
-echo "== flow-rt staticlib (rustc direct, dependency-free) =="
-rustc --edition 2024 --crate-type=staticlib -O flow_rt.rs -o libflow_rt.a
-echo "== flow-cuda builds (pinned recipe, DESIGN §4/§6) =="
+echo "== mapal-rt staticlib (rustc direct, dependency-free) =="
+rustc --edition 2024 --crate-type=staticlib -O mapal_rt.rs -o libmapal_rt.a
+echo "== mapal-cuda builds (pinned recipe, DESIGN §4/§6) =="
 for n in 4 16 32 64 128; do
   if [ -f "matmul$n.cu" ] && [ ! -f "mm_cu_$n" ]; then
-    nvcc -std=c++17 -fmad=true -arch=sm_89 "matmul$n.cu" libflow_rt.a -o "mm_cu_$n" -lpthread -ldl -lm
+    nvcc -std=c++17 -fmad=true -arch=sm_89 "matmul$n.cu" libmapal_rt.a -o "mm_cu_$n" -lpthread -ldl -lm
     echo "built mm_cu_$n"
   fi
 done
-echo "== flow-cuda-cap builds (pinned recipe, same as the loop legs) =="
+echo "== mapal-cuda-cap builds (pinned recipe, same as the loop legs) =="
 for n in 16 64 128 256 512 1024 2048 4096; do
   for v in "cap" "cap_f32" "cap_perf" "cap_f32_perf"; do
     if [ -f "matmul${n}_${v}.cu" ] && [ ! -f "mm_cu_${v}_$n" ]; then
-      nvcc -std=c++17 -fmad=true -arch=sm_89 "matmul${n}_${v}.cu" libflow_rt.a -o "mm_cu_${v}_$n" -lpthread -ldl -lm
+      nvcc -std=c++17 -fmad=true -arch=sm_89 "matmul${n}_${v}.cu" libmapal_rt.a -o "mm_cu_${v}_$n" -lpthread -ldl -lm
       echo "built mm_cu_${v}_$n"
     fi
   done
 done
-echo "== flow-llvm builds (clang -O2 -march=native -ffp-contract=fast: the S24b fmad decision, CPU face — bench is perf mode; the differential gate stays contraction-off) =="
+echo "== mapal-llvm builds (clang -O2 -march=native -ffp-contract=fast: the S24b fmad decision, CPU face — bench is perf mode; the differential gate stays contraction-off) =="
 if command -v clang >/dev/null; then
   # Parallel + incremental (S21: the v2 procedural modules are ~21 KB — each
   # clang build is sub-second after WP3b; the loop stays for rerun-resume).
   pids=()
   for n in 4 16 32 64 128; do
     if [ -f "matmul$n.ll" ] && [ ! -f "mm_ll_$n" ]; then
-      clang -O2 -march=native -ffp-contract=fast "matmul$n.ll" libflow_rt.a -o "mm_ll_$n" -lpthread -ldl -lm && echo "built mm_ll_$n" &
+      clang -O2 -march=native -ffp-contract=fast "matmul$n.ll" libmapal_rt.a -o "mm_ll_$n" -lpthread -ldl -lm && echo "built mm_ll_$n" &
       pids+=($!)
     fi
   done
   for n in 16 64 128 256 512 1024 2048 4096; do
     for v in "cap" "cap_f32"; do
       if [ -f "matmul${n}_${v}.ll" ] && [ ! -f "mm_ll_${v}_$n" ]; then
-        clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}.ll" libflow_rt.a -o "mm_ll_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_${v}_$n" &
+        clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}.ll" libmapal_rt.a -o "mm_ll_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_${v}_$n" &
         pids+=($!)
       fi
       if [ -f "matmul${n}_${v}_perf.ll" ] && [ ! -f "mm_ll_perf_${v}_$n" ]; then
-        clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}_perf.ll" libflow_rt.a -o "mm_ll_perf_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_perf_${v}_$n" &
+        clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}_perf.ll" libmapal_rt.a -o "mm_ll_perf_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_perf_${v}_$n" &
         pids+=($!)
       fi
       # S27 product-face FMA twins (contract flags live IN the .ll — same
       # clang flags; the conformance builds above stay contraction-free).
       if [ -f "matmul${n}_${v}_fma.ll" ] && [ ! -f "mm_ll_fma_${v}_$n" ]; then
-        clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}_fma.ll" libflow_rt.a -o "mm_ll_fma_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_fma_${v}_$n" &
+        clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}_fma.ll" libmapal_rt.a -o "mm_ll_fma_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_fma_${v}_$n" &
         pids+=($!)
       fi
       if [ -f "matmul${n}_${v}_fma_perf.ll" ] && [ ! -f "mm_ll_fma_perf_${v}_$n" ]; then
-        clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}_fma_perf.ll" libflow_rt.a -o "mm_ll_fma_perf_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_fma_perf_${v}_$n" &
+        clang -O2 -march=native -ffp-contract=fast "matmul${n}_${v}_fma_perf.ll" libmapal_rt.a -o "mm_ll_fma_perf_${v}_$n" -lpthread -ldl -lm && echo "built mm_ll_fma_perf_${v}_$n" &
         pids+=($!)
       fi
     done
@@ -62,7 +62,7 @@ if command -v clang >/dev/null; then
   for p in "${pids[@]}"; do wait "$p" || rc=1; done
   if [ "$rc" -ne 0 ]; then echo "WARNING: one or more clang builds failed (affected legs skip-with-reason)"; fi
 else
-  echo "clang not on box — skipping all flow-llvm legs (run them locally instead)"
+  echo "clang not on box — skipping all mapal-llvm legs (run them locally instead)"
 fi
 echo "== baseline builds =="
 nvcc -O3 -arch=sm_89 naive_cuda.cu -o naive_cuda

@@ -1,6 +1,6 @@
 -- Pins the highlighting decisions that regex precedence makes fragile.
 --
--- syntax/flow.vim depends on Vim's last-match-wins rule, and its own header says
+-- syntax/mapal.vim depends on Vim's last-match-wins rule, and its own header says
 -- "read before reordering anything". This asserts the outcomes rather than the
 -- ordering, so a reorder that changes behaviour fails here instead of silently
 -- mis-painting code.
@@ -11,7 +11,7 @@
 -- used: it does not resolve inside a `:luafile`.
 vim.cmd("set noswapfile")
 vim.cmd("set rtp+=editors/nvim")
-vim.cmd("edit! editors/nvim/test/fixture.flow")
+vim.cmd("edit! editors/nvim/test/fixture.mapal")
 vim.cmd("syntax on")
 
 -- {line, token, expected group, why}
@@ -107,7 +107,7 @@ for _, c in ipairs(cases) do
 end
 
 -- No valid example may light up as an error.
-for _, f in ipairs(vim.fn.glob(vim.fn.getcwd() .. "/examples/*.flow", false, true)) do
+for _, f in ipairs(vim.fn.glob(vim.fn.getcwd() .. "/examples/*.mapal", false, true)) do
   vim.cmd("edit! " .. vim.fn.fnameescape(f))
   vim.cmd("syntax on")
   for l = 1, vim.fn.line("$") do

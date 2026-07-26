@@ -1,10 +1,10 @@
 //! DESIGN §6 — the remote compile-and-run differential harness (WP6), ported
-//! from `flow-backend-llvm/tests/differential.rs` with `nvcc` swapped for
+//! from `mapal-backend-llvm/tests/differential.rs` with `nvcc` swapped for
 //! `clang` per the §4/§6.6 recipe.
 //!
 //! For each program (the 10 examples, the pinned special cases, and a
 //! closed-mode testgen sweep), on **raw and `rewrite()`d** IR: `emit → nvcc
-//! -std=c++17 -fmad=false -arch=sm_89 prog.cu libflow_rt.a -o prog -lpthread
+//! -std=c++17 -fmad=false -arch=sm_89 prog.cu libmapal_rt.a -o prog -lpthread
 //! -ldl -lm` (120 s compile timeout) `→ run (15 s timeout) → compare per
 //! L1/§3`: `Done` ⇒ exit 0 + stdout **byte-equal** to the oracle; `Trapped`
 //! ⇒ exit 101 (stdout ignored; classes never cross); **exit 102 ⇒ infra
@@ -40,12 +40,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, Once};
 use std::time::{Duration, Instant};
 
-use flow_interp::{Outcome, RValue, RunResult, render, run};
-use flow_ir::{CategoryIr, SourceLoc, Ty};
-use flow_rewrite::rewrite;
+use mapal_interp::{Outcome, RValue, RunResult, render, run};
+use mapal_ir::{CategoryIr, SourceLoc, Ty};
+use mapal_rewrite::rewrite;
 
-// The testgen program generator (shared with flow-rewrite's differential duty).
-#[path = "../../../flow-rewrite/tests/testgen/mod.rs"]
+// The testgen program generator (shared with mapal-rewrite's differential duty).
+#[path = "../../../mapal-rewrite/tests/testgen/mod.rs"]
 mod testgen;
 
 use proptest::strategy::{Strategy, ValueTree};
@@ -123,23 +123,23 @@ fn nvcc() -> Option<String> {
 
 fn rt_lib() -> PathBuf {
     static BUILD: Once = Once::new();
-    // Serialize the flow-rt staticlib build so parallel test binaries don't race.
+    // Serialize the mapal-rt staticlib build so parallel test binaries don't race.
     BUILD.call_once(|| {
         let ok = Command::new("cargo")
-            .args(["build", "-p", "flow-rt"])
+            .args(["build", "-p", "mapal-rt"])
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
-        assert!(ok, "cargo build -p flow-rt failed");
+        assert!(ok, "cargo build -p mapal-rt failed");
     });
     PathBuf::from(format!(
-        "{}/../../../target/debug/libflow_rt.a",
+        "{}/../../../target/debug/libmapal_rt.a",
         env!("CARGO_MANIFEST_DIR")
     ))
 }
 
 /// The §4/§6.6 compile recipe argv (unit-tested): flags first, then the
-/// translation unit, the flow-rt staticlib, `-o exe`, and the pinned Linux
+/// translation unit, the mapal-rt staticlib, `-o exe`, and the pinned Linux
 /// link tail LAST. `--use_fast_math` and host `-march=native`/`-mfma` are
 /// forbidden (§4) — `local::compile_recipe_argv_pinned` asserts their absence.
 fn nvcc_argv(cu: &Path, rt: &Path, exe: &Path) -> Vec<String> {
@@ -271,7 +271,7 @@ fn classify(tag: &str, want_out: &Option<String>, want_code: i32, got: &RunOut) 
     Verdict::Pass
 }
 
-/// Compile `.cu` + libflow_rt.a per the §4/§6.6 recipe and run, time-boxed
+/// Compile `.cu` + libmapal_rt.a per the §4/§6.6 recipe and run, time-boxed
 /// (120 s compile, 15 s run). Panics — naming the program, with stderr and
 /// the full source — on nvcc failure or compile timeout (an emitter bug or a
 /// broken box; llvm's clang-failure panic carried over).
@@ -344,7 +344,7 @@ fn assert_parity(nvcc: &str, ir: &CategoryIr, rr: &RunResult, tag: &str) {
     let Some((want_out, want_code)) = expect_native(ir, rr) else {
         return; // diverged — skip
     };
-    let cu = flow_backend_cuda::emit(ir).unwrap_or_else(|e| panic!("{tag}: emit failed: {e:?}"));
+    let cu = mapal_backend_cuda::emit(ir).unwrap_or_else(|e| panic!("{tag}: emit failed: {e:?}"));
     match classify(tag, &want_out, want_code, &compile_run(nvcc, &cu, tag)) {
         Verdict::Pass => {}
         Verdict::Parity(m) | Verdict::Infra(m) => panic!("{m}"),
@@ -352,14 +352,14 @@ fn assert_parity(nvcc: &str, ir: &CategoryIr, rr: &RunResult, tag: &str) {
 }
 
 fn lower_src(src: &str) -> CategoryIr {
-    let po = flow_syntax::parse(src);
+    let po = mapal_syntax::parse(src);
     assert!(po.diagnostics.is_empty(), "parse: {:?}", po.diagnostics);
-    flow_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
+    mapal_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
 }
 
 fn build_example(name: &str) -> CategoryIr {
     let path = format!(
-        "{}/../../../examples/{}.flow",
+        "{}/../../../examples/{}.mapal",
         env!("CARGO_MANIFEST_DIR"),
         name
     );
@@ -369,7 +369,7 @@ fn build_example(name: &str) -> CategoryIr {
 
 // --- tests ----------------------------------------------------------------
 
-/// The §6.8 line, part 1: the 10 examples (`vector.flow` excluded — the
+/// The §6.8 line, part 1: the 10 examples (`vector.mapal` excluded — the
 /// aspirational exhibit, not Core), raw and rewritten, compile-and-run
 /// oracle-equal.
 #[test]
@@ -486,7 +486,7 @@ fn main() { 4 -> f -> r; r -> println; }
 /// after the loop is dead recompute for values and a DOUBLE side effect for
 /// an exit-arm Print (the llvm miscompile class). TEXT-ONLY like llvm's, on
 /// raw AND rewritten `.cu` (§6.8): the interp oracle PANICS on this shape
-/// today (a decide-cone read-before-write in flow-interp's loop driver —
+/// today (a decide-cone read-before-write in mapal-interp's loop driver —
 /// the reason llvm pins it textually), so no oracle expectation exists to
 /// compile-run against; and a pure recompute would be runtime-unobservable
 /// anyway — the occurrence count IS the detector. Runs wherever loop
@@ -513,7 +513,7 @@ fn main() { 4 -> f -> r; r -> println; }
         } else {
             rewrite(lower_src(src)).ir
         };
-        let cu = match flow_backend_cuda::emit(&ir) {
+        let cu = match mapal_backend_cuda::emit(&ir) {
             Ok(cu) => cu,
             Err(e) => panic!("exit_only_payload/{tag}: emit failed: {e:?}"),
         };
@@ -575,7 +575,7 @@ fn main() { (1, 0) -> f -> r; r -> println; }
 /// into the result — the wrapper would print the return; the trap fires
 /// first (llvm harness construction, ported).
 fn build_update_oob() -> CategoryIr {
-    use flow_ir::{Dest, FuncKind, IrBuilder, Value};
+    use mapal_ir::{Dest, FuncKind, IrBuilder, Value};
     let mut b = IrBuilder::new();
     let f = b
         .declare(FuncKind::Named, "main", Ty::Unit, Ty::i32(), L)
@@ -600,7 +600,7 @@ fn build_update_oob() -> CategoryIr {
 /// (`0.1 + 0.2`), an f32 division, IEEE float ÷0 (±inf/NaN — the ADR-0013
 /// S13 amendment: NO trap), and float `Mod` (Rust `%` ≡ C `fmod` — the
 /// DESIGN §4/§10 open question this case pins). Every print flows through
-/// the same flow-rt on the host, so what the pin checks is VALUE parity
+/// the same mapal-rt on the host, so what the pin checks is VALUE parity
 /// (`-fmad=false`, BC9) rendered byte-equal.
 #[test]
 fn differential_float_print_parity() {
@@ -726,7 +726,7 @@ struct Job {
 /// Build a job from an `ir` + its oracle run. `None` if the run diverged.
 fn make_job(ir: &CategoryIr, rr: &RunResult, tag: String) -> Option<Job> {
     let (want_out, want_code) = expect_native(ir, rr)?;
-    let cu = flow_backend_cuda::emit(ir).unwrap_or_else(|e| panic!("{tag}: emit: {e:?}"));
+    let cu = mapal_backend_cuda::emit(ir).unwrap_or_else(|e| panic!("{tag}: emit: {e:?}"));
     Some(Job {
         tag,
         cu,
@@ -873,11 +873,15 @@ mod local {
 
     #[test]
     fn compile_recipe_argv_pinned() {
-        let argv = nvcc_argv(Path::new("p.cu"), Path::new("libflow_rt.a"), Path::new("p"));
+        let argv = nvcc_argv(
+            Path::new("p.cu"),
+            Path::new("libmapal_rt.a"),
+            Path::new("p"),
+        );
         // §4 recipe, pinned in order: ISO C++17, no FMA contraction, sm_89.
         assert_eq!(&argv[..3], ["-std=c++17", "-fmad=false", "-arch=sm_89"]);
-        // Then the translation unit and the flow-rt staticlib, then -o exe.
-        assert_eq!(&argv[3..5], ["p.cu", "libflow_rt.a"]);
+        // Then the translation unit and the mapal-rt staticlib, then -o exe.
+        assert_eq!(&argv[3..5], ["p.cu", "libmapal_rt.a"]);
         assert_eq!(&argv[5..7], ["-o", "p"]);
         // §6.6 link tail LAST, in pinned order.
         assert_eq!(&argv[argv.len() - 3..], ["-lpthread", "-ldl", "-lm"]);

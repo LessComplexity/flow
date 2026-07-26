@@ -1,13 +1,13 @@
-# Flow Programming Language — User Guide v0.2
+# Mapal Programming Language — User Guide v0.2
 
 **A dataflow language with visual graph equivalence and multi-target compilation.**
 
-> **Reading the status badges.** This guide describes the full v0.2 language design; the compiler implements **Flow-Core**, the fixed subset catalogued in `HANDOFF.md` §4. A section that teaches constructs outside Flow-Core carries a badge at its head:
+> **Reading the status badges.** This guide describes the full v0.2 language design; the compiler implements **Mapal-Core**, the fixed subset catalogued in `HANDOFF.md` §4. A section that teaches constructs outside Mapal-Core carries a badge at its head:
 >
 > - **Core+1** — the construct parses today and is rejected with a dedicated diagnostic: a `P01xx` code at parse time, or an `Lxxxx` code at the Core-boundary (lowering) checks. The badge names the code, and the horizon where the compiler states one.
 > - **Aspirational** — the construct is not in the current grammar at all (parsing fails without a dedicated code) or is explicitly post-M5. It is shown for design direction only.
 >
-> A section without a badge teaches only constructs that compile in Flow-Core today; snippets are illustrative fragments unless they show a complete program.
+> A section without a badge teaches only constructs that compile in Mapal-Core today; snippets are illustrative fragments unless they show a complete program.
 
 ---
 
@@ -30,15 +30,15 @@ Appendices: A. Standard library (planned). B. Compilation targets.
 
 ## 1. Introduction
 
-### What Flow is
+### What Mapal is
 
-Flow is a general-purpose programming language whose surface syntax directly denotes a dataflow graph. Three design pillars:
+Mapal is a general-purpose programming language whose surface syntax directly denotes a dataflow graph. Three design pillars:
 
 1. **Code *is* the graph.** Text maps one-to-one onto a graph IR (the Category IR — see `category-ir.md`). The `->` operator is categorical composition; `{ … }` fanout blocks are products; pattern-match guards are coproducts.
 2. **Graph-derived memory safety.** No garbage collector, no ownership annotations. Lifetimes are inferred from the graph's last-use frontier.
 3. **Multi-target compilation.** Write once, compile to CPU (via LLVM), GPU (via CUDA), FPGA (via Verilog), or browser (via WASM). Each backend is a functor out of the IR, which guarantees semantic preservation.
 
-### What Flow is for
+### What Mapal is for
 
 **General computing.** System utilities, web services, CLI applications, desktop apps, data-processing pipelines, scripting, automation.
 
@@ -58,11 +58,11 @@ fn main() {
 
 ### 2.1 Types
 
-> **Core+1 — does not compile today.** The dynamic array `[T]` below is rejected with P0104, and the enum-like variants (`-Circle { … }`) with P0105. Horizon per the compiler: Core+1 (slices, coproducts). Everything else in this section — primitives, `[T; N]`, tuples, struct-like `type` declarations — is Flow-Core.
+> **Core+1 — does not compile today.** The dynamic array `[T]` below is rejected with P0104, and the enum-like variants (`-Circle { … }`) with P0105. Horizon per the compiler: Core+1 (slices, coproducts). Everything else in this section — primitives, `[T; N]`, tuples, struct-like `type` declarations — is Mapal-Core.
 
-In Flow, types are declared with the **`type`** keyword. Every value belongs to exactly one type.
+In Mapal, types are declared with the **`type`** keyword. Every value belongs to exactly one type.
 
-> **Note on terminology.** The keyword `type` in Flow declares a *type*, which is an object in Flow-Cat (the category of Flow types and pure functions). The category-theoretic sense of "category" (as in Flow-Cat) is disambiguated in appendix A of `category-ir.md`.
+> **Note on terminology.** The keyword `type` in Mapal declares a *type*, which is an object in Mapal-Cat (the category of Mapal types and pure functions). The category-theoretic sense of "category" (as in Mapal-Cat) is disambiguated in appendix A of `category-ir.md`.
 
 > **Erratum E5 applied — see docs/spec/ERRATA.md and ADR-0006.**
 
@@ -166,7 +166,7 @@ Immutability-by-default is what makes parallel fanout safe by default.
 
 ### 3.2 Functions
 
-> **Core+1 — does not compile today.** Calling syntax #2 below (named-parameter partial application, `15 -> add.a`) parses as ordinary member access but is rejected at the Core boundary with L1106 ("named-parameter partial application is out of Core"); the compiler states no horizon for it. Syntaxes #1 (tuple input) and #3 (pipeline) are Flow-Core, as are the `ret.0` / `ret.1` tuple-slot returns.
+> **Core+1 — does not compile today.** Calling syntax #2 below (named-parameter partial application, `15 -> add.a`) parses as ordinary member access but is rejected at the Core boundary with L1106 ("named-parameter partial application is out of Core"); the compiler states no horizon for it. Syntaxes #1 (tuple input) and #3 (pipeline) are Mapal-Core, as are the `ret.0` / `ret.1` tuple-slot returns.
 
 **Definition.**
 
@@ -179,7 +179,7 @@ fn name(p1: T1, p2: T2) -> R {
 
 The `ret` keyword names the return object. Every morphism that writes to `ret` contributes to the function's output.
 
-**Single-input convention.** Flow functions conceptually take one input — a product object when the function has multiple parameters. This matches the categorical story: `add : i32 × i32 → i32`.
+**Single-input convention.** Mapal functions conceptually take one input — a product object when the function has multiple parameters. This matches the categorical story: `add : i32 × i32 → i32`.
 
 **Calling a function — three syntaxes, all equivalent.**
 
@@ -205,9 +205,9 @@ fn divmod(a: i32, b: i32) -> (i32, i32) {
 }
 ```
 
-### 3.3 Flow operators
+### 3.3 Mapal operators
 
-> **Core+1 — does not compile today.** The `void` fanout at the end of this section is rejected with P0113 ("`void` is out of Flow-Core … planned for Core+1"). The basic, chained, explicit-intermediate, and parallel-fanout forms are Flow-Core.
+> **Core+1 — does not compile today.** The `void` fanout at the end of this section is rejected with P0113 ("`void` is out of Mapal-Core … planned for Core+1"). The basic, chained, explicit-intermediate, and parallel-fanout forms are Mapal-Core.
 
 **Basic.** `source -> destination;`
 
@@ -256,7 +256,7 @@ The `void` keyword introduces a fanout whose results are discarded. Used for sid
 
 ### 3.4 Conditionals
 
-> **Core+1 — does not compile today.** Pattern destructuring guards (`-Some(x)->`, `-None->`) are rejected with P0106 ("planned for Core+1 coproducts"). The nested example parses cleanly but is rejected at the Core boundary with L1008 — recursion is out of Core (planned Core+1, CPU backends only, `HANDOFF.md` §4.2). Boolean guards, integer-literal guards, and the `-_->` default are Flow-Core.
+> **Core+1 — does not compile today.** Pattern destructuring guards (`-Some(x)->`, `-None->`) are rejected with P0106 ("planned for Core+1 coproducts"). The nested example parses cleanly but is rejected at the Core boundary with L1008 — recursion is out of Core (planned Core+1, CPU backends only, `HANDOFF.md` §4.2). Boolean guards, integer-literal guards, and the `-_->` default are Mapal-Core.
 
 **Pattern matching with guards.**
 
@@ -306,7 +306,7 @@ Internally, guards lower to coproduct injection and copairing; see §2.3 of `cat
 
 ### 3.5 Loops
 
-> **Core+1 — does not compile today.** Only the while-style `loop { … -> loop; }` form is Flow-Core. The for-style example is not: `[i32]` is rejected with P0104 and the destructuring guards (`-[]->`, `-[head, ...tail]->`) with P0106. The `:outer` / `:inner` labeled blocks and `-> :label;` jumps are rejected with P0110 (ADR-0012; "Flow-Core's only loop introducer is `loop`"). Horizon per the compiler: Core+1.
+> **Core+1 — does not compile today.** Only the while-style `loop { … -> loop; }` form is Mapal-Core. The for-style example is not: `[i32]` is rejected with P0104 and the destructuring guards (`-[]->`, `-[head, ...tail]->`) with P0106. The `:outer` / `:inner` labeled blocks and `-> :label;` jumps are rejected with P0110 (ADR-0012; "Mapal-Core's only loop introducer is `loop`"). Horizon per the compiler: Core+1.
 
 Loops are named blocks that create feedback edges in the graph.
 
@@ -373,11 +373,11 @@ Destructuring guards (`-[]-`, `-[head, ...tail]-`) make head/tail iteration natu
 > target lexically enclosing labels only. The keyword form `loop { … -> loop; }` is
 > unchanged.
 
-Formally, each `loop` denotes a `Tr^U` in the traced monoidal structure of Flow-Cat, where `U` is the loop-carried state; see §2.7 and §4.5 of `category-ir.md`.
+Formally, each `loop` denotes a `Tr^U` in the traced monoidal structure of Mapal-Cat, where `U` is the loop-carried state; see §2.7 and §4.5 of `category-ir.md`.
 
 ### 3.6 Operator precedence
 
-> **Core+1 — does not compile today.** Row 9 of the table, the `?` operator, is rejected with P0101 ("planned for Core+1 error handling"); it is listed here to fix its precedence in the design. Every other row describes Flow-Core syntax.
+> **Core+1 — does not compile today.** Row 9 of the table, the `?` operator, is rejected with P0101 ("planned for Core+1 error handling"); it is listed here to fix its precedence in the design. Every other row describes Mapal-Core syntax.
 
 Highest (tightest) to lowest:
 
@@ -408,7 +408,7 @@ A flow is a statement, not a value-producing expression; `->`/`<-` chains are pa
 
 ## 4. Visual representation
 
-Flow's surface syntax maps directly to a dataflow graph. The graph is not a separate artifact; it *is* the program, viewed differently. The compiler renders the graph to Mermaid, Graphviz, or the visual debugger from the same IR.
+Mapal's surface syntax maps directly to a dataflow graph. The graph is not a separate artifact; it *is* the program, viewed differently. The compiler renders the graph to Mermaid, Graphviz, or the visual debugger from the same IR.
 
 ### 4.1 Simple pipeline
 
@@ -432,7 +432,7 @@ flowchart LR
     t2 -- "× 3" --> ret(("ret : u32"))
 ```
 
-Each edge is a morphism; each node is an object in Flow-Cat. The pipeline denotes the composition `(×3) ∘ (+5) ∘ (×2) : u32 → u32`.
+Each edge is a morphism; each node is an object in Mapal-Cat. The pipeline denotes the composition `(×3) ∘ (+5) ∘ (×2) : u32 → u32`.
 
 ### 4.2 Visual elements — legend
 
@@ -446,7 +446,7 @@ Each edge is a morphism; each node is an object in Flow-Cat. The pipeline denote
 
 ### 4.3 Conditional branch
 
-> **Core+1 — does not compile today.** This example parses, but writing `ret` inside a pure guard arm is rejected at the Core boundary with L1405 ("`-> ret` inside a Phi-position arm"). In Flow-Core a pure arm yields its value as a tail expression — e.g. `-true-> { input * 2 -> doubled; doubled }` — or flows directly to a target, as in §3.4.
+> **Core+1 — does not compile today.** This example parses, but writing `ret` inside a pure guard arm is rejected at the Core boundary with L1405 ("`-> ret` inside a Phi-position arm"). In Mapal-Core a pure arm yields its value as a tail expression — e.g. `-true-> { input * 2 -> doubled; doubled }` — or flows directly to a target, as in §3.4.
 
 **Source:**
 
@@ -554,7 +554,7 @@ The three downstream morphisms have disjoint successor sets, so the parallelism 
 
 ### 5.1 Parallel-by-default
 
-Flow's execution model is parallel-first. Independent operations in the graph run concurrently; sequential execution is the exception, opted into via `seq`.
+Mapal's execution model is parallel-first. Independent operations in the graph run concurrently; sequential execution is the exception, opted into via `seq`.
 
 **Automatic parallelism — happens when both conditions hold:**
 
@@ -594,7 +594,7 @@ data -> seq {
 
 ### 5.3 Execution models (`executor`)
 
-> **Core+1 — does not compile today.** The `executor` declaration is rejected with P0111 (horizon: post-M5), the `@executor(…)` annotation with P0102, and the `[Data]` / `[Result]` parameters with P0104. §§5.1–5.2 are Flow-Core (the `seq` form per ADR-0019); §5.4's channel rule is prose only.
+> **Core+1 — does not compile today.** The `executor` declaration is rejected with P0111 (horizon: post-M5), the `@executor(…)` annotation with P0102, and the `[Data]` / `[Result]` parameters with P0104. §§5.1–5.2 are Mapal-Core (the `seq` form per ADR-0019); §5.4's channel rule is prose only.
 
 How parallelism is *realized* (threads, async tasks, hardware lanes) is controlled by an executor — pluggable like allocators in C++:
 
@@ -628,7 +628,7 @@ fn process_data(input: [Data]) -> [Result] {
 | Independent + pure | Parallel |
 | Independent + effectful | **Not permitted in parallel fanout** — must `seq` or use channels |
 
-Effectful morphisms are **not permitted in parallel fanout**. Effects either (a) sequence via `seq`, or (b) communicate via channels with **Kahn process network semantics** — blocking reads, unbounded FIFOs — under which scheduling-independent determinism is a theorem (Kahn 1974). Channels are out of Flow-Core scope, but the rule is fixed now.
+Effectful morphisms are **not permitted in parallel fanout**. Effects either (a) sequence via `seq`, or (b) communicate via channels with **Kahn process network semantics** — blocking reads, unbounded FIFOs — under which scheduling-independent determinism is a theorem (Kahn 1974). Channels are out of Mapal-Core scope, but the rule is fixed now.
 
 > **Erratum E2 applied — see docs/spec/ERRATA.md and ADR-0003.**
 
@@ -636,9 +636,9 @@ Effectful morphisms are **not permitted in parallel fanout**. Effects either (a)
 
 ## 6. Memory model
 
-> **Core+1 — does not compile today.** The examples in §6.2 and §6.4 use call-expression syntax (`allocate(1024)`), which is rejected with P0108 ("use a tuple-input flow: `(args) -> f`"). The fanout and flow shapes themselves are Flow-Core; `Buffer` and the library functions are illustrative.
+> **Core+1 — does not compile today.** The examples in §6.2 and §6.4 use call-expression syntax (`allocate(1024)`), which is rejected with P0108 ("use a tuple-input flow: `(args) -> f`"). The fanout and flow shapes themselves are Mapal-Core; `Buffer` and the library functions are illustrative.
 
-Flow has no garbage collector and no ownership annotations. The compiler infers lifetimes from the graph's last-use frontier — see §10 of `category-ir.md` for the formal treatment.
+Mapal has no garbage collector and no ownership annotations. The compiler infers lifetimes from the graph's last-use frontier — see §10 of `category-ir.md` for the formal treatment.
 
 ### 6.1 Core rule — reference by default, free at last use
 
@@ -710,7 +710,7 @@ fn create_buffer() -> Buffer {
 
 ### 6.5 What the compiler guarantees
 
-The memory guarantee is **scoped**. It is **PROVEN for the first-order, non-cyclic dataflow core** (which contains Flow-Core entirely) and **OPEN for the full language** (closures, channels, cyclic structures; cf. the Tofte–Talpin region pathologies — cycles fall back to refcounting).
+The memory guarantee is **scoped**. It is **PROVEN for the first-order, non-cyclic dataflow core** (which contains Mapal-Core entirely) and **OPEN for the full language** (closures, channels, cyclic structures; cf. the Tofte–Talpin region pathologies — cycles fall back to refcounting).
 
 Within the proven core:
 
@@ -727,7 +727,7 @@ Cyclic data structures are the one case that needs extra attention. In v0.2, cyc
 
 ## 7. Error handling
 
-> **Core+1 / aspirational — does not compile today.** Nothing in this section is in Flow-Core yet; `HANDOFF.md` §4.2 schedules coproducts and `?` as the first Core+1 feature. The `?` operator parses and is rejected with P0101 ("planned for Core+1 error handling"), and enum-like variants in a `type` body with P0105 — but generic type declarations (`type Result<T, E>`) are not in the current grammar at all, and neither is `panic!()`.
+> **Core+1 / aspirational — does not compile today.** Nothing in this section is in Mapal-Core yet; `HANDOFF.md` §4.2 schedules coproducts and `?` as the first Core+1 feature. The `?` operator parses and is rejected with P0101 ("planned for Core+1 error handling"), and enum-like variants in a `type` body with P0105 — but generic type declarations (`type Result<T, E>`) are not in the current grammar at all, and neither is `panic!()`.
 
 Errors are values that flow through the graph like any other data. The Result type is a coproduct.
 
@@ -791,7 +791,7 @@ data -> {
 
 ### 8.1 Fibonacci
 
-> **Core+1 — does not compile today.** This example parses cleanly, but the self-calls are rejected at the Core boundary with L1008 ("recursive call cycle: fibonacci -> fibonacci — recursion is out of Core"). Planned Core+1, CPU backends only (`HANDOFF.md` §4.2). The guard arms shown here use the Flow-Core tail-expression form.
+> **Core+1 — does not compile today.** This example parses cleanly, but the self-calls are rejected at the Core boundary with L1008 ("recursive call cycle: fibonacci -> fibonacci — recursion is out of Core"). Planned Core+1, CPU backends only (`HANDOFF.md` §4.2). The guard arms shown here use the Mapal-Core tail-expression form.
 
 ```flow
 fn fibonacci(n: i32) -> i32 {
@@ -830,7 +830,7 @@ fn sum_array(arr: [i32]) -> i32 {
 
 ### 8.3 Sepia filter — natural parallelism
 
-> **Core+1 — does not compile today.** The anonymous block stages (`-> { … } -> r;`) are rejected with P0115 — the diagnostic cites this section's full-language form by name. The tuple stage (`-> (v, 0, 255) -> clamp`) would further be rejected at the Core boundary with L1302 ("expression stage does not consume the wire"). For the Flow-Core version of this program see `examples/sepia.flow`.
+> **Core+1 — does not compile today.** The anonymous block stages (`-> { … } -> r;`) are rejected with P0115 — the diagnostic cites this section's full-language form by name. The tuple stage (`-> (v, 0, 255) -> clamp`) would further be rejected at the Core boundary with L1302 ("expression stage does not consume the wire"). For the Mapal-Core version of this program see `examples/sepia.mapal`.
 
 ```flow
 fn sepia(px: RGB) -> RGB {
@@ -895,7 +895,7 @@ fn matmul(a: [[f32]], b: [[f32]]) -> [[f32]] {
 
 ### 8.5 Binary search
 
-> **Core+1 — does not compile today.** `[i32]` is rejected with P0104, `Option<usize>` with P0103, the `arr.len()` and `Some(mid)` calls with P0108, and the `:search` block / `-> :search;` jumps with P0110 ("Flow-Core's only loop introducer is `loop`"). Horizon per the compiler: Core+1.
+> **Core+1 — does not compile today.** `[i32]` is rejected with P0104, `Option<usize>` with P0103, the `arr.len()` and `Some(mid)` calls with P0108, and the `:search` block / `-> :search;` jumps with P0110 ("Mapal-Core's only loop introducer is `loop`"). Horizon per the compiler: Core+1.
 
 ```flow
 fn binary_search(arr: [i32], target: i32) -> Option<usize> {
@@ -976,7 +976,7 @@ flowchart LR
 
 ## 9. Hardware-specific features
 
-> **Core+1 / aspirational — does not compile today.** None of §9 is in Flow-Core. The `@…` annotations (§9.1, §9.3) parse and are rejected with P0102 ("planned for Core+1"); `Stream<RGB>` draws P0103 and the `[f32]` parameters P0104. The `@device` / `@shared` / `@bram` stage attributes (§9.2) are not in the grammar at all.
+> **Core+1 / aspirational — does not compile today.** None of §9 is in Mapal-Core. The `@…` annotations (§9.1, §9.3) parse and are rejected with P0102 ("planned for Core+1"); `Stream<RGB>` draws P0103 and the `[f32]` parameters P0104. The `@device` / `@shared` / `@bram` stage attributes (§9.2) are not in the grammar at all.
 
 ### 9.1 Platform annotations
 
@@ -1085,7 +1085,7 @@ s3 -> ret;
 
 ### 10.4 Common patterns
 
-> **Core+1 — does not compile today.** The `filter` pattern below is rejected with P0114 ("only `map`/`fold` are Core collection operators … planned for Core+1"). The `map`, `fold`, and pipeline patterns are Flow-Core.
+> **Core+1 — does not compile today.** The `filter` pattern below is rejected with P0114 ("only `map`/`fold` are Core collection operators … planned for Core+1"). The `map`, `fold`, and pipeline patterns are Mapal-Core.
 
 ```flow
 // map
@@ -1137,7 +1137,7 @@ lerp(a, b, t)       // linear interpolation
 
 ## Appendix B — compilation targets
 
-> **Status — as implemented.** Only the CPU row exists today: `flow-backend-llvm` is the implemented backend; the `flow-backend-cuda` and `flow-backend-verilog` crates are one-line stubs, and there is no WASM backend crate. The table is the design target.
+> **Status — as implemented.** Only the CPU row exists today: `mapal-backend-llvm` is the implemented backend; the `mapal-backend-cuda` and `mapal-backend-verilog` crates are one-line stubs, and there is no WASM backend crate. The table is the design target.
 
 | Target | Backend | Output |
 |---|---|---|
@@ -1146,7 +1146,7 @@ lerp(a, b, t)       // linear interpolation
 | FPGA | `F_Verilog` | Synthesizable Verilog, pipeline stages → registers |
 | Browser | `F_WASM` | WebAssembly module |
 
-Each backend is a functor out of Flow-Cat — see §8 of `category-ir.md` for the formal treatment and semantic-preservation guarantee.
+Each backend is a functor out of Mapal-Cat — see §8 of `category-ir.md` for the formal treatment and semantic-preservation guarantee.
 
 ---
 

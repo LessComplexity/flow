@@ -6,7 +6,7 @@
 //!
 //! Exit 0 = every closed draw emits (raw + rewritten); exit 1 lists panics.
 
-#[path = "../../../flow-rewrite/tests/testgen/mod.rs"]
+#[path = "../../../mapal-rewrite/tests/testgen/mod.rs"]
 mod testgen;
 
 use proptest::strategy::{Strategy, ValueTree};
@@ -26,10 +26,10 @@ fn main() {
             if open {
                 continue; // excluded (BL8), as in the differential
             }
-            let rewritten = flow_rewrite::rewrite(build(&prog).ir).ir;
+            let rewritten = mapal_rewrite::rewrite(build(&prog).ir).ir;
             for (leg, ir) in [("raw", &ir), ("rewritten", &rewritten)] {
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    flow_backend_cuda::emit(ir)
+                    mapal_backend_cuda::emit(ir)
                 }));
                 match r {
                     Ok(_) => ok += 1,
@@ -45,8 +45,8 @@ fn main() {
     if let Some(first) = panics.first() {
         eprintln!("FIRST PANICKING CASE:\n{first}");
     }
-    // FLOW_EMIT_SWEEP_MERMAID=<n> dumps that draw's raw IR for feeder tracing.
-    if let Ok(want) = std::env::var("FLOW_EMIT_SWEEP_MERMAID") {
+    // MAPAL_EMIT_SWEEP_MERMAID=<n> dumps that draw's raw IR for feeder tracing.
+    if let Ok(want) = std::env::var("MAPAL_EMIT_SWEEP_MERMAID") {
         let want: usize = want.parse().unwrap();
         let mut runner = TestRunner::deterministic();
         let mut k = 0usize;

@@ -1,0 +1,26 @@
+---
+source: crates/mapal-rewrite/tests/golden.rs
+expression: "format!(\"{:#?}\", res.report)"
+---
+RewriteReport {
+    rounds: 3,
+    applied: [
+        (
+            LiftLoops,
+            2,
+        ),
+        (
+            Dce,
+            6,
+        ),
+        (
+            Inline,
+            2,
+        ),
+        (
+            ConstFold,
+            6,
+        ),
+    ],
+    skipped_non_canonical: false,
+}

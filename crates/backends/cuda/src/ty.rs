@@ -34,7 +34,7 @@
 //! static stride (llvm's nested `[n x [m x T]]` is likewise flat); strides
 //! stay in the `Ty` for the WP2+ index arithmetic.
 
-use flow_ir::Ty;
+use mapal_ir::Ty;
 
 /// The CUDA C++ value type for `ty`, or `None` if `ty` is erased (has no
 /// runtime representation): `Unit`, `IoToken`, `Str`, or a product whose

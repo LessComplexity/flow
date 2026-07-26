@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 213 80" width="213" height="80"
-     role="img" aria-labelledby="flow-wordmark-title">
-  <title id="flow-wordmark-title">Flow</title>
+     role="img" aria-labelledby="mapal-wordmark-title">
+  <title id="mapal-wordmark-title">Mapal</title>
   <!-- Mark + wordmark. Colour baked in for the same reason as logo.svg: a GitHub
        markdown image cannot inherit the page colour. -->
   <g fill="none" stroke="#14B8A6" stroke-width="5"
@@ -15,5 +15,5 @@
   </g>
   <text x="94" y="55" fill="#14B8A6"
         font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-        font-size="44" font-weight="600" letter-spacing="2">flow</text>
+        font-size="44" font-weight="600" letter-spacing="2">mapal</text>
 </svg>

@@ -32,7 +32,7 @@ Neutral change? Say so, with the measurement that shows it.
 | LLVM differential (did **not** skip) | |
 | `sh editors/test.sh` (if `editors/` touched) | |
 
-> `flow-rewrite`'s property suite replays pinned counterexamples from
+> `mapal-rewrite`'s property suite replays pinned counterexamples from
 > `property.proptest-regressions`. Never delete a seed to get a green run — if a pinned seed
 > fails, that *is* the result.
 

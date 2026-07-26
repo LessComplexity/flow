@@ -1,13 +1,13 @@
-# FlowIcons.ttf — the logo as a font glyph
+# MapalIcons.ttf — the logo as a font glyph
 
 The Rust and C++ logos you see in a Neovim file tree or bufferline are **font glyphs**.
 Nerd Fonts ships those brand marks as characters, which is why they render as real logos in a
-terminal. Terminals draw text, so an SVG is not an option — to get Flow's mark the same way,
+terminal. Terminals draw text, so an SVG is not an option — to get Mapal's mark the same way,
 the mark has to be in a font.
 
-This is a **single-glyph font** containing the Flow mark at **U+F8F0**.
+This is a **single-glyph font** containing the Mapal mark at **U+F8F0**.
 
-Built by [`build_flow_icons.py`](build_flow_icons.py) with `fontTools`.
+Built by [`build_mapal_icons.py`](build_mapal_icons.py) with `fontTools`.
 
 ## Why not patch a Nerd Font
 
@@ -19,26 +19,26 @@ whatever Nerd Font you already use instead of replacing it.
 
 ```sh
 # macOS
-cp assets/font/FlowIcons.ttf ~/Library/Fonts/
+cp assets/font/MapalIcons.ttf ~/Library/Fonts/
 
 # Linux
-mkdir -p ~/.local/share/fonts && cp assets/font/FlowIcons.ttf ~/.local/share/fonts/ && fc-cache -f
+mkdir -p ~/.local/share/fonts && cp assets/font/MapalIcons.ttf ~/.local/share/fonts/ && fc-cache -f
 ```
 
 Then add it as a **fallback** after your main font:
 
 | terminal    | setting                                                              |
 | ----------- | -------------------------------------------------------------------- |
-| Kitty       | `symbol_map U+F8F0 FlowIcons`                                         |
-| WezTerm     | `font = wezterm.font_with_fallback { "Your Font", "FlowIcons" }`       |
-| Ghostty     | `font-family = FlowIcons` (listed after your main family)              |
+| Kitty       | `symbol_map U+F8F0 MapalIcons`                                         |
+| WezTerm     | `font = wezterm.font_with_fallback { "Your Font", "MapalIcons" }`       |
+| Ghostty     | `font-family = MapalIcons` (listed after your main family)              |
 | Alacritty   | no per-range fallback; relies on the system font fallback chain        |
 | iTerm2      | Preferences → Profiles → Text → *Use a different font for non-ASCII*   |
 
 Then point Neovim at it:
 
 ```lua
-local icon = require("flow.icon")
+local icon = require("mapal.icon")
 icon.setup({ glyph = icon.logo })
 ```
 
@@ -48,7 +48,7 @@ so nothing breaks — you just do not get the real mark.
 ## Rebuild
 
 ```sh
-python3 assets/font/build_flow_icons.py
+python3 assets/font/build_mapal_icons.py
 ```
 
 The script asserts what it claims on the way out: that U+F8F0 maps to the glyph, and that the
@@ -65,4 +65,4 @@ robust than approximating curves.
 U+F8F0 sits in the BMP private-use area, outside every range Nerd Fonts v3 assigns. Private
 use means no codepoint is ever formally "safe"; if it collides with something in your setup,
 change `CODEPOINT` in the script and `M.logo` in
-[`../../editors/nvim/lua/flow/icon.lua`](../../editors/nvim/lua/flow/icon.lua).
+[`../../editors/nvim/lua/mapal/icon.lua`](../../editors/nvim/lua/mapal/icon.lua).

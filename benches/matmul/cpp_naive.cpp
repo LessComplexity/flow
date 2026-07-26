@@ -1,5 +1,5 @@
 // Naive triple-loop GEMM in C++ — the host-language baseline in both widths
-// (same i/j/k order as the Flow program's cell fn and rust_naive.rs; f32 for
+// (same i/j/k order as the Mapal program's cell fn and rust_naive.rs; f32 for
 // like-for-like against rust_naive/numpy, f64 against the f64 capture legs).
 // Build: clang++ -O3 -march=native cpp_naive.cpp -o cpp_naive
 // Usage: cpp_naive [N] [ITERS] [f32|f64]   (defaults: 512 50 f32)

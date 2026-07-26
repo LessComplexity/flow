@@ -1,4 +1,4 @@
-# Flow Language — Architecture Overview v0.2
+# Mapal Language — Architecture Overview v0.2
 
 **Complete system architecture from source code to hardware execution.**
 
@@ -27,8 +27,8 @@ Appendices: A. Component responsibilities. B. File formats.
 
 ```mermaid
 flowchart TB
-    src[Source .flow files]
-    subgraph sys["Flow Language System — general-purpose with hardware acceleration"]
+    src[Source .mapal files]
+    subgraph sys["Mapal Language System — general-purpose with hardware acceleration"]
         direction LR
         comp["Compiler pipeline"]
         tool["Tooling ecosystem"]
@@ -51,9 +51,9 @@ flowchart TB
 
 Three pillars, stated precisely:
 
-1. **Single source of truth.** Code denotes a morphism in Flow-Cat; the graph IR is that morphism made explicit. The visual and textual representations are two renderings of the same object, not two representations that must be kept in sync.
+1. **Single source of truth.** Code denotes a morphism in Mapal-Cat; the graph IR is that morphism made explicit. The visual and textual representations are two renderings of the same object, not two representations that must be kept in sync.
 
-2. **General-purpose with hardware strengths.** Default target is CPU via LLVM. GPU and FPGA are alternative backends (functors out of Flow-Cat, §8 of `category-ir.md`), not a separate language.
+2. **General-purpose with hardware strengths.** Default target is CPU via LLVM. GPU and FPGA are alternative backends (functors out of Mapal-Cat, §8 of `category-ir.md`), not a separate language.
 
 3. **Mathematical foundation.** Every sound optimization has a categorical justification: a functor law, a naturality square, a within-category equation, or a graph property. The compiler records which layer justifies each rewrite (see §9 of `category-ir.md`).
 
@@ -73,7 +73,7 @@ Three pillars, stated precisely:
 
 ```mermaid
 flowchart TD
-    src[Source .flow] --> lex[Lexer]
+    src[Source .mapal] --> lex[Lexer]
     lex --> |tokens| par[Parser]
     par --> |minimal parse tree| build[IR builder]
     build --> |Category IR graph| tc[Type checker]
@@ -155,7 +155,7 @@ Independent morphisms in the graph execute in parallel. "Independent" is a graph
 
 #### 2.2.8 Backend code generators
 
-Each backend is a functor `F : Flow-Cat → Target-Cat` that satisfies `F(id) = id` and `F(g ∘ f) = F(g) ∘ F(f)`. The backend lowers one morphism at a time using a compile-time table of `Operation → target-instruction`. Semantic preservation of the whole program follows from functoriality.
+Each backend is a functor `F : Mapal-Cat → Target-Cat` that satisfies `F(id) = id` and `F(g ∘ f) = F(g) ∘ F(f)`. The backend lowers one morphism at a time using a compile-time table of `Operation → target-instruction`. Semantic preservation of the whole program follows from functoriality.
 
 ### 2.3 Compiler driver
 
@@ -238,7 +238,7 @@ A binary format exists for large compilation units (100K+ LOC) where JSON parse 
 
 ### 3.4 Memory model (graph-derived lifetimes)
 
-Flow does not use Rust-style ownership annotations. Lifetimes are inferred from the graph's last-use frontier:
+Mapal does not use Rust-style ownership annotations. Lifetimes are inferred from the graph's last-use frontier:
 
 1. Allocation morphisms (`Alloc`) create heap objects.
 2. All uses are morphisms with the object as source.
@@ -269,12 +269,12 @@ flowchart LR
     cg --> bin[Native binary]
 ```
 
-Object-level: Flow primitive types map to LLVM primitive types; tuples map to LLVM struct types; function types map to `ptr`. Morphism-level: primitives map one-to-one to LLVM instructions (`Add ↦ add nsw`, `Mul ↦ mul nsw`, `Phi ↦ select` or the `phi` instruction depending on control-flow lowering, `Trace ↦ structured loop with back-edge`).
+Object-level: Mapal primitive types map to LLVM primitive types; tuples map to LLVM struct types; function types map to `ptr`. Morphism-level: primitives map one-to-one to LLVM instructions (`Add ↦ add nsw`, `Mul ↦ mul nsw`, `Phi ↦ select` or the `phi` instruction depending on control-flow lowering, `Trace ↦ structured loop with back-edge`).
 
 Example output:
 
 ```llvm
-; Flow:  data * 2 -> + 5 -> ret;
+; Mapal:  data * 2 -> + 5 -> ret;
 define i32 @process(i32 %data) {
   %t1 = shl nsw i32 %data, 1    ; from Mul→strength-reduction
   %ret = add nsw i32 %t1, 5
@@ -295,12 +295,12 @@ flowchart LR
     nvcc --> gpu[GPU binary]
 ```
 
-Map-over-array morphisms `List(f)` are the critical case: because `List` is a functor in both Flow-Cat and CUDA-Cat, the image of `List(f)` is a kernel launch whose body is `F_CUDA(f)`. Map fusion in the source (a functor law) is preserved by the functor and becomes kernel fusion in the backend for free — no separate kernel-fusion pass is required.
+Map-over-array morphisms `List(f)` are the critical case: because `List` is a functor in both Mapal-Cat and CUDA-Cat, the image of `List(f)` is a kernel launch whose body is `F_CUDA(f)`. Map fusion in the source (a functor law) is preserved by the functor and becomes kernel fusion in the backend for free — no separate kernel-fusion pass is required.
 
 Example output:
 
 ```cuda
-// Flow:  data * 2 -> + 5 -> ret;  applied via map
+// Mapal:  data * 2 -> + 5 -> ret;  applied via map
 __global__ void pipeline_kernel(int32_t* input, int32_t* output, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
@@ -331,12 +331,12 @@ The target category `Clocked-Cat` is a traced monoidal category where:
 - Morphisms are combinational blocks plus registers.
 - Trace is register feedback on the designated wire.
 
-Because both Flow-Cat and `Clocked-Cat` are traced, `F_Verilog` commutes with the trace operator. A software loop `Tr^U(body)` in the source becomes a hardware state machine with a register on `U` — the *same categorical construct*, just interpreted in a different category.
+Because both Mapal-Cat and `Clocked-Cat` are traced, `F_Verilog` commutes with the trace operator. A software loop `Tr^U(body)` in the source becomes a hardware state machine with a register on `U` — the *same categorical construct*, just interpreted in a different category.
 
 Example output:
 
 ```verilog
-// Flow:  data * 2 -> + 5 -> ret;  (pipelined)
+// Mapal:  data * 2 -> + 5 -> ret;  (pipelined)
 module pipeline(
     input  wire        clk,
     input  wire [31:0] data,
@@ -362,7 +362,7 @@ flowchart LR
     wat --> wasm[WASM binary]
 ```
 
-Straightforward because WebAssembly's structured control flow (`block`, `loop`, `if`, `br`) mirrors Flow's composition, conditional, and trace primitives.
+Straightforward because WebAssembly's structured control flow (`block`, `loop`, `if`, `br`) mirrors Mapal's composition, conditional, and trace primitives.
 
 ---
 
@@ -461,7 +461,7 @@ The default runtime is a thin wrapper around the LLVM-generated binary. Parallel
 
 ```mermaid
 flowchart LR
-    write[Write .flow source] --> build[flow build --debug]
+    write[Write .mapal source] --> build[flow build --debug]
     build --> debug[flow debug]
     debug --> prof[flow profile]
     prof --> rel[flow build --release]
@@ -475,15 +475,15 @@ flowchart LR
 my-project/
 ├── flow.toml              # project manifest
 ├── src/
-│   ├── main.flow          # entry point
-│   ├── image_proc.flow    # module
-│   └── utils.flow         # utilities
+│   ├── main.mapal          # entry point
+│   ├── image_proc.mapal    # module
+│   └── utils.mapal         # utilities
 ├── tests/
-│   └── test_image.flow
+│   └── test_image.mapal
 ├── benches/
-│   └── benchmark.flow
+│   └── benchmark.mapal
 └── build/
-    ├── ir/                # serialized Category IR (.flow-ir)
+    ├── ir/                # serialized Category IR (.mapal-ir)
     ├── cuda/              # emitted .cu
     └── verilog/           # emitted .v
 ```
@@ -555,7 +555,7 @@ Target: < 1 GB resident for 100 K LOC. Arena allocation plus graph compression (
 
 ### 10.3 Research directions
 
-- **Quantum backend.** A functor `Flow-Cat → Quantum-Cat` is plausible for the pure, unitary-expressible fragment. The dagger structure of quantum categories has no analog in Flow-Cat, so only a subset of programs target this backend.
+- **Quantum backend.** A functor `Mapal-Cat → Quantum-Cat` is plausible for the pure, unitary-expressible fragment. The dagger structure of quantum categories has no analog in Mapal-Cat, so only a subset of programs target this backend.
 - **Neuromorphic backend.** Dataflow maps naturally to spiking-neural-network substrates.
 - **Richer type systems.** Dependent types (size-indexed arrays for dimension checking), linear types (single-use resources, matches FPGA hardware resource constraints), graded monads (fine-grained effect tracking).
 
@@ -581,9 +581,9 @@ Target: < 1 GB resident for 100 K LOC. Arena allocation plus graph compression (
 
 | Extension | Contents |
 |---|---|
-| `.flow` | Source |
-| `.flow-ir` | Compiled IR, binary |
-| `.flow-debug` | Debug info, JSON |
+| `.mapal` | Source |
+| `.mapal-ir` | Compiled IR, binary |
+| `.mapal-debug` | Debug info, JSON |
 | `flow.toml` | Package manifest |
 | `flow.lock` | Resolved dependency versions |
 

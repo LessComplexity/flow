@@ -1,17 +1,17 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/flow-syntax",
-    "crates/flow-ir",
-    "crates/flow-lower",
-    "crates/flow-check",
-    "crates/flow-interp",
-    "crates/flow-rt",
-    "crates/flow-rewrite",
+    "crates/mapal-syntax",
+    "crates/mapal-ir",
+    "crates/mapal-lower",
+    "crates/mapal-check",
+    "crates/mapal-interp",
+    "crates/mapal-rt",
+    "crates/mapal-rewrite",
     "crates/backends/llvm",
     "crates/backends/cuda",
     "crates/backends/verilog",
-    "crates/flow-cli",
+    "crates/mapal-cli",
 ]
 
 [workspace.package]

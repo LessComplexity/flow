@@ -3,7 +3,7 @@
 Status: **SHIPPED S27** (agenda items 1–3; codex-implemented WP1/WP2/WP2b, orchestrator
 line-by-line reviewed). Deviations from the plan as written: (1) the parallel-flavor
 pack placement shipped as a **wrapper + nested-session split** — the packed Split task
-becomes a run-once wrapper (`@task{i}`: pack, then `flow_par_begin(1)` → slice dispatch
+becomes a run-once wrapper (`@task{i}`: pack, then `mapal_par_begin(1)` → slice dispatch
 → help-first `finish`) rather than a pack inside the same task body; sound because the
 pool is global (no thread spawn per session), `finish` is help-first (width-1 safe), and
 tiled sites are trap-free (nested `check_trap` vacuous); (2) **orchestrator review found
@@ -55,7 +55,7 @@ Packing changes only **where** the kernel reads b from — a new `DataLoc` over 
 | --- | --- | --- |
 | `contract` flags | `Trn` semantics (product face) | per-cell chain becomes `fma`-contractible: `fmul contract`/`fadd contract` on the tile-kernel chain only. Opt-in `EmitOpts::contract=false` default — the conformance face (differential, goldens, oracle) never sees it. S24b precedent (GPU `-fmad`): product recipe contracts, conformance gate stays bit-exact. |
 | packed b panel | `Dat` placement (`DataLoc`) | one contiguous j-tile-major copy of b: `packed[jt][k][lane]`, lane-contiguous per k, k-sequential per j-tile — the k-loop's b-read becomes stride-TJ sequential. A pure layout functor: same values, same read order per cell. |
-| pack pass | `Trn` placement | one pass over b in the site-owning task, **before** the parallel slice dispatch (happens-before all slices); sequential v1 (`ponytail:` ceiling — parallelize via the same slice mechanism if it shows in FLOW_PERF). |
+| pack pass | `Trn` placement | one pass over b in the site-owning task, **before** the parallel slice dispatch (happens-before all slices); sequential v1 (`ponytail:` ceiling — parallelize via the same slice mechanism if it shows in MAPAL_PERF). |
 | per-width TJ | emitter const table | `TILE_J: f32→16, f64→8` (TI×TJ acc regs: 16 4s vs 16 2d — both half the file, headroom for b/a lanes). Packed layout width follows the same const. |
 | k-unroll ×2 | `Trn` placement | two sequential k steps per iteration body — ascending k order preserved, pure branch-count reduction. |
 | prefetch | `Trn` placement | `llvm.prefetch` of the next packed k-line; hint-only, no semantic content. |
@@ -65,13 +65,13 @@ Packing changes only **where** the kernel reads b from — a new `DataLoc` over 
 - **Conformance face (default, `contract=false`):** packing + per-width TJ + unroll +
   prefetch all preserve the per-cell chain (same values, same order) ⇒ differential
   stdout byte-equal at -O0/-O2, tiled == untiled == oracle, any thread count, any
-  `FLOW_PAR`. The existing 1280-run gate + tile differentials run UNCHANGED.
+  `MAPAL_PAR`. The existing 1280-run gate + tile differentials run UNCHANGED.
 - **Product face (`--contract`):** single-rounding ⇒ bits legitimately differ from the
   oracle. Verification is numeric: rel-error vs the plain build ≤ 1e-4 (f32) / 1e-12
   (f64) on every printed value, checked by `tile_ab.sh`'s fma leg (byte-equality is
   asserted only plain-vs-plain). Runner box legs carry `fma` as a separate leg label.
 
-## Emission (backend-llvm only; flow-ir untouched again)
+## Emission (backend-llvm only; mapal-ir untouched again)
 
 1. `EmitOpts` gains `contract: bool` (default false) and `packing: bool` (default
    **true** — packing is rung 3 of tiling; `--no-pack` exists only for A/B
@@ -104,7 +104,7 @@ Packing changes only **where** the kernel reads b from — a new `DataLoc` over 
 ## Measurement
 
 - Local: `tile_ab.sh` grows fma + no-pack legs; sweep matrix {pack on/off} ×
-  {contract on/off} × {512, 1024, 2048} × {f32, f64}, FLOW_PAR=1 min-of-3; f64 TJ
+  {contract on/off} × {512, 1024, 2048} × {f32, f64}, MAPAL_PAR=1 min-of-3; f64 TJ
   sweep {8, 16} to confirm the table; disasm checks per above.
 - Box (one box, clang-18 via llvm.sh, runner-stamped specs): standing legs + fma leg,
   **2048/4096 rows on every table** (S26c directive — verify `ulimit -s unlimited`

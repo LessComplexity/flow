@@ -17,20 +17,20 @@
 //! `Update` program (ADR-0021's motivating `c[t] <- v` pattern, smallest
 //! honest version), and emit-twice byte equality over the loop examples.
 
-use flow_backend_cuda::{EmitOpts, emit, emit_with_opts};
-use flow_ir::{CategoryIr, Dest, FuncKind, IrBuilder, SourceLoc, Ty};
+use mapal_backend_cuda::{EmitOpts, emit, emit_with_opts};
+use mapal_ir::{CategoryIr, Dest, FuncKind, IrBuilder, SourceLoc, Ty};
 
 const L: SourceLoc = SourceLoc { start: 0, end: 0 };
 
 fn lower_src(src: &str) -> CategoryIr {
-    let po = flow_syntax::parse(src);
+    let po = mapal_syntax::parse(src);
     assert!(po.diagnostics.is_empty(), "parse: {:?}", po.diagnostics);
-    flow_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
+    mapal_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
 }
 
 fn build_example(name: &str) -> CategoryIr {
     let path = format!(
-        "{}/../../../examples/{}.flow",
+        "{}/../../../examples/{}.mapal",
         env!("CARGO_MANIFEST_DIR"),
         name
     );
@@ -260,7 +260,7 @@ fn main() {
     );
 }
 
-/// Rule 4's consumer half (flow-ir's `last_use_borrowed_init_is_never_dead`
+/// Rule 4's consumer half (mapal-ir's `last_use_borrowed_init_is_never_dead`
 /// pin): a loop carrying a BORROWED init (the fn's array parameter feeds the
 /// LoopEnter) never writes in place and is never freed at the back edge —
 /// the per-iteration full-copy malloc + the value-guarded per-buffer free
@@ -425,7 +425,7 @@ fn abs_structural_lines() {
     let cu = emit(&build_example("abs")).unwrap();
     for needle in [
         "#include <cstdint>",
-        "[[noreturn]] void flow_trap(uint32_t kind);",
+        "[[noreturn]] void mapal_trap(uint32_t kind);",
         "static unsigned int* d_trap = nullptr;",
         // The negated arm: unsigned-cast wrapping multiply (BC2).
         "(int32_t)((uint32_t)",
@@ -433,7 +433,7 @@ fn abs_structural_lines() {
         "? t0 : t1;",
         // Direct C++ call to the abs fn + its host-only definition.
         "static int32_t fn0(int32_t in)",
-        "flow_print_i32(",
+        "mapal_print_i32(",
         "  trap_init();",
         "int main() {",
         "  return 0;",
@@ -596,14 +596,14 @@ fn main() { 5 -> countdown; }
 "#;
     let cu = emit(&lower_src(src)).unwrap();
     assert_eq!(
-        cu.matches("flow_print_i32(o").count(),
+        cu.matches("mapal_print_i32(o").count(),
         1,
         "the exit-arm print must be emitted exactly once:\n{cu}"
     );
     // The one emission is inside the while body (runs on the exit step).
     let loop_start = cu.find("while (true) {").unwrap();
     let brk = cu.find(") { break; }").unwrap();
-    let print = cu.find("flow_print_i32(o").unwrap();
+    let print = cu.find("mapal_print_i32(o").unwrap();
     assert!(
         loop_start < print && print < brk,
         "the decide-cone print precedes the guard:\n{cu}"
@@ -793,7 +793,7 @@ fn golden_one_kernel_matmul() {
     // — fold Index reads proven + #13-safe divisions; both readbacks —
     // constants proven), so NO launch carries `d_trap` and NO readback
     // follows any launch.
-    let main_start = cu.find("static void flow_main() {").unwrap();
+    let main_start = cu.find("static void mapal_main() {").unwrap();
     let main_end = cu[main_start..].find("\n}\n").unwrap() + main_start;
     let main_def = &cu[main_start..main_end];
     assert_eq!(main_def.matches("<<<").count(), 4, "{main_def}");
@@ -934,7 +934,7 @@ fn arena_gates_plan_section_7() {
     // the map launch too — the fold's captured-index reads prove via the
     // S20c capture-range flow and its `t / 4` / `t % 4` are #13-safe
     // constant divisions).
-    let main_start = cu.find("static void flow_main() {").unwrap();
+    let main_start = cu.find("static void mapal_main() {").unwrap();
     let main_end = cu[main_start..].find("\n}\n").unwrap() + main_start;
     let main_def = &cu[main_start..main_end];
     assert_eq!(main_def.matches("<<<").count(), 4, "{main_def}");
@@ -1011,7 +1011,7 @@ fn arena_emit_twice_byte_equal() {
 // --- suggestions.md #19a: kernel-time instrumentation ------------------------
 
 /// With `perf_timing` on, every launch site is wrapped in CUDA events and
-/// the machine-readable `FLOW_PERF` lines print; with it off (the `emit`
+/// the machine-readable `MAPAL_PERF` lines print; with it off (the `emit`
 /// default) the text contains none of that machinery, and the launch /
 /// trap-check counts are identical either way (the §3 convention is
 /// untouched — the stop event is recorded before the trap check).
@@ -1025,25 +1025,25 @@ fn perf_timing_instruments_launches() {
         "cudaEvent_t fev4_start, fev4_stop;",
         "cu_check(cudaEventCreate(&fev0_start), \"cudaEventCreate\");",
         // The launch wrap: Record(start) … launch … Record(stop) → Sync →
-        // ElapsedTime → the FLOW_PERF line.
+        // ElapsedTime → the MAPAL_PERF line.
         "cu_check(cudaEventRecord(fev0_start), \"cudaEventRecord\");",
         "cu_check(cudaEventRecord(fev0_stop), \"cudaEventRecord\");",
         "cu_check(cudaEventSynchronize(fev0_stop), \"cudaEventSynchronize\");",
-        "cu_check(cudaEventElapsedTime(&flow_perf_ms, fev0_start, fev0_stop), \"cudaEventElapsedTime\");",
-        "flow_perf_total += flow_perf_ms;",
-        "printf(\"FLOW_PERF launch=k0_0 ms=%.4f\\n\", flow_perf_ms);",
+        "cu_check(cudaEventElapsedTime(&mapal_perf_ms, fev0_start, fev0_stop), \"cudaEventElapsedTime\");",
+        "mapal_perf_total += mapal_perf_ms;",
+        "printf(\"MAPAL_PERF launch=k0_0 ms=%.4f\\n\", mapal_perf_ms);",
         // The per-fn total at fn end, then the destroys.
-        "printf(\"FLOW_PERF total ms=%.4f\\n\", flow_perf_total);",
+        "printf(\"MAPAL_PERF total ms=%.4f\\n\", mapal_perf_total);",
         "cu_check(cudaEventDestroy(fev0_stop), \"cudaEventDestroy\");",
     ] {
         assert!(on.contains(needle), "missing `{needle}` in:\n{on}");
     }
     // vector_add's 5 launch sites (zip, map, two deduped Index, fold) → 5
-    // event pairs and 5 FLOW_PERF launch lines; one total line (only
-    // flow_main launches — fn1/fn2 are pure-scalar __host__ __device__).
+    // event pairs and 5 MAPAL_PERF launch lines; one total line (only
+    // mapal_main launches — fn1/fn2 are pure-scalar __host__ __device__).
     assert_eq!(on.matches("cudaEventCreate(&fev").count(), 10, "{on}");
-    assert_eq!(on.matches("FLOW_PERF launch=").count(), 5, "{on}");
-    assert_eq!(on.matches("FLOW_PERF total ms=").count(), 1, "{on}");
+    assert_eq!(on.matches("MAPAL_PERF launch=").count(), 5, "{on}");
+    assert_eq!(on.matches("MAPAL_PERF total ms=").count(), 1, "{on}");
     // The event stop is recorded BEFORE the trap check where the check
     // rides. vector_add's own sites are all trap-free now (S20: the two
     // constant readbacks prove), so the ordering pins on an unproven
@@ -1060,7 +1060,7 @@ fn perf_timing_instruments_launches() {
     // to the defaulted options (the differential/goldens ride the default).
     let off = emit(&ir).unwrap();
     assert!(!off.contains("cudaEvent"), "{off}");
-    assert!(!off.contains("FLOW_PERF"), "{off}");
+    assert!(!off.contains("MAPAL_PERF"), "{off}");
     assert_eq!(
         off,
         emit_with_opts(&ir, &EmitOpts::default()).unwrap(),
@@ -1087,7 +1087,7 @@ fn perf_timing_instruments_launches() {
 }
 
 /// A cone (in-loop) launch is instrumented too — per EXECUTION, so a loop
-/// prints one FLOW_PERF line per iteration — and the fn-scope events are
+/// prints one MAPAL_PERF line per iteration — and the fn-scope events are
 /// still created once, at fn entry (not per iteration).
 #[test]
 fn perf_timing_instruments_cone_launches_once_created() {
@@ -1101,12 +1101,12 @@ fn perf_timing_instruments_cone_launches_once_created() {
     // One site (the advance-cone Update): one pair, created at fn top,
     // destroyed at fn exit — the Record/print lines sit inside the loop.
     assert_eq!(build.matches("cudaEventCreate(&fev").count(), 2, "{build}");
-    assert_eq!(build.matches("FLOW_PERF launch=").count(), 1, "{build}");
+    assert_eq!(build.matches("MAPAL_PERF launch=").count(), 1, "{build}");
     let brk = build.find(") { break; }").unwrap();
-    let rec = build.find("FLOW_PERF launch=").unwrap();
+    let rec = build.find("MAPAL_PERF launch=").unwrap();
     assert!(
         brk < rec,
-        "the cone launch's FLOW_PERF line is in-loop:\n{build}"
+        "the cone launch's MAPAL_PERF line is in-loop:\n{build}"
     );
-    assert!(build.contains("FLOW_PERF total ms="), "{build}");
+    assert!(build.contains("MAPAL_PERF total ms="), "{build}");
 }

@@ -9,7 +9,7 @@ Depends on: syntax, ir Depended on by: check, interp, rewrite, backend-llvm, bac
 ## What works
 
 `pub fn lower(source, &Program) -> Result<CategoryIr, Vec<Diagnostic>>` — the full
-Flow-Core surface, end to end: all eight `examples/*.flow` lower to sealed,
+Mapal-Core surface, end to end: all eight `examples/*.mapal` lower to sealed,
 validate-empty, lint-clean IR matching the ir-golden shapes (DESIGN §9 contracts hold:
 sum_to_n's exit reads the merge view — the 55-not-66 snapshot regression is pinned;
 abs folds `-1` with no `Neg`; sepia's `0.0` fold seed resolves f32 via literal-width
@@ -19,7 +19,7 @@ effects/call-graph → declare → per-fn typing walk + body emission + outer em
 seal). 63 L-codes (L1000–L1901) with ≥1 rejection test each (except L1901, internal by
 construction); S29 added none — the `time` builtin's two misuses reuse L1301/L1302. The pure collection builtins `zip`/`enumerate` (ADR-0018) route at
 call-shaped stages like `print` (`is_collection_builtin`) but carry no token — legal in
-parallel fanout and map/fold bodies; emit owns L1606–L1610, the flow-ir builder re-derives
+parallel fanout and map/fold bodies; emit owns L1606–L1610, the mapal-ir builder re-derives
 the shapes/bound defensively (LD12/LD26). **The array-construction builtins `iota(n)` /
 `fill(x, n)` (ADR-0029)** route at `ExprKind::Call` stages (the P0108 carve makes them the
 only legal call expressions — `emit.rs:Emitter::{emit_iota, emit_fill, static_count_arg}`,
@@ -90,7 +90,7 @@ the bench shapes' `iter ms=` line.
 
 ## Test coverage (golden / property / differential / skipped+why)
 
-161 tests (`cargo test -p flow-lower --release`, 2026-07-25: 120 rejection + 20 golden +
+161 tests (`cargo test -p mapal-lower --release`, 2026-07-25: 120 rejection + 20 golden +
 12 structural + 6 capture + 2 proptest + 1 unit; the inventory below is the S13 base;
 S29 added the six `time` rows — `structural.rs::time_bracket_types_f64` (two `TimeMs`,
 each `IoToken → (IoToken, f64)`, and the bracketed `t1 - t0` types f64) and
@@ -111,7 +111,7 @@ token-free even in an effectful `main`), 108 rejection-matrix
 tests (all L-codes incl. L1606–L1611 + `fn zip`/`fn enumerate` L1009 collision parity + ATK-finding regressions from the soundness attack + 11 seq: L1611 continues/return + effectful-return-position, valued-effectful-return positive, L1404 effectful seq/fanout in a Phi arm, L1108 capture in seq in map body, effectful-seq-in-fanout L1305 parity, empty/bindings-escape/headless-seed positives),
 2 bounded proptests (never-panics + Ok⇒validate-empty+lint-clean; literal-width vs
 annotations). The seq `sum_to_n`-reassign value contract (55) lives in
-`flow-interp/tests/acceptance.rs`. Implementation survived 2 adversarial code reviews + a
+`mapal-interp/tests/acceptance.rs`. Implementation survived 2 adversarial code reviews + a
 soundness attack + the WP2 seq-block fixer pass: 25 distinct confirmed findings, all fixed
 with named regressions (highlights: ATK-02 effectful-call loops now carry the token; ATK-05
 loop-exit bindings land in the enclosing scope; LOWER-RETK-TRUNC u64→u32 ret.k truncation;
@@ -127,6 +127,6 @@ lower_vmatch_16 ≈ 40.9 µs. Baseline only; nothing to flag.
 
 DESIGN §16 OQ1–OQ8, headline ones: OQ1 infinite loops are IR-unconstructible
 (`end_loop` requires an exit) though E1 calls them legal; OQ7 multi-route routing
-guards + general nested loops need an flow-ir ADR (I4 token-fork widening, per-arm
+guards + general nested loops need an mapal-ir ADR (I4 token-fork widening, per-arm
 cond composition); OQ2 E4 general-expression-stage semantics; OQ8 fn-body tails as
 return values (W11 reading — implemented, one-line swap if vetoed).

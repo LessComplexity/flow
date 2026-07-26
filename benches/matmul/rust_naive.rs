@@ -1,5 +1,5 @@
 // Naive triple-loop GEMM in Rust — the host-language baseline (same i/j/k
-// order as the Flow program's cell fn). Build: rustc -O -C target-cpu=native rust_naive.rs -o rust_naive
+// order as the Mapal program's cell fn). Build: rustc -O -C target-cpu=native rust_naive.rs -o rust_naive
 use std::time::Instant;
 
 fn main() {

@@ -1,7 +1,7 @@
 #!/bin/bash
 # S26 box driver: BLAS rung 2 (TI register blocking + fixed-TJ split) — same-box sweep.
-# Same protocol as s25_box.sh (rsync benches/matmul -> /root/bench, flow-rt lib.rs
-# -> /root/bench/flow_rt.rs; runner.sh builds, runner.py runs + results.csv).
+# Same protocol as s25_box.sh (rsync benches/matmul -> /root/bench, mapal-rt lib.rs
+# -> /root/bench/mapal_rt.rs; runner.sh builds, runner.py runs + results.csv).
 # S26 changes vs s25_box.sh:
 #   1. clang-18 via llvm.sh instead of apt clang-15 (standing gotcha: apt clang-15
 #      leaves the tile nest fully scalar; clang version is result-changing).

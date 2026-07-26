@@ -53,7 +53,7 @@ syntax-directed, never reconstructive: `->` is an edge; a binding names a node
 output; `mut` rebind mints a new node; fanout blocks are literal out-edges; guards
 are Phi arms; `loop` is a real cycle (inline SCC); bulk ops are single morphisms
 with body sub-graphs; sequencing and effects are themselves edges (the world token —
-`seq` has zero IR footprint beyond token order, ADR-0019). flow-lower does real
+`seq` has zero IR footprint beyond token order, ADR-0019). mapal-lower does real
 work (naming, typing, widths, desugaring, 51 L-codes) but ALL of it is local —
 no alias, dependence, or effect analysis exists anywhere in the pipeline, because
 nothing structural is ever lost. The property survived contact by:
@@ -75,7 +75,7 @@ Array DSLs (Futhark, XLA, TVM, Accelerate) get this class of win from graph IRs 
 they are the existence proof — but they are domain-restricted. General-purpose
 languages get it unreliably or on trust: C/C++/Rust autovectorizers surrender to
 aliasing; Chapel's `forall` and OpenMP pragmas are *programmer assertions* of
-independence, not proofs. Flow's position is the combination no one hands out
+independence, not proofs. Mapal's position is the combination no one hands out
 together: a **general** language whose whole surface lowers to the analyzable graph
 + the multi-backend placement contract + oracle-differential-verified transforms.
 

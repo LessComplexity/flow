@@ -1,8 +1,8 @@
 #!/bin/bash
 # S25 box driver: the tile-emission CPU leg — full same-box sweep, tiled default.
-# Same protocol as s24_box.sh (rsync benches/matmul -> /root/bench, flow-rt lib.rs
-# -> /root/bench/flow_rt.rs); runner.sh now also builds the mm_ll_perf_* compute
-# binaries and runner.py adds the flow-llvm-cap-compute-{f64,f32} legs.
+# Same protocol as s24_box.sh (rsync benches/matmul -> /root/bench, mapal-rt lib.rs
+# -> /root/bench/mapal_rt.rs); runner.sh now also builds the mm_ll_perf_* compute
+# binaries and runner.py adds the mapal-llvm-cap-compute-{f64,f32} legs.
 # S25 addition: x86 disasm check — does the tiled kernel carry vfmadd (fused) or
 # split vmul/vadd (the arm64 observation), and is it 256/512-bit?
 set -e

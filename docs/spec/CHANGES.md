@@ -1,8 +1,8 @@
-# Flow — Changes Log (v0.1 → v0.2)
+# Mapal — Changes Log (v0.1 → v0.2)
 
 This pass was ostensibly a conversion of ASCII diagrams to Mermaid. In practice, writing the Mermaid and formalizing the category-theoretic claims surfaced a number of structural and consistency issues in v0.1 that needed fixes before the diagrams could be drawn accurately. This document records what changed, grouped by area, with the rationale for each.
 
-Nothing in the surface language was removed. Where surface syntax appeared inconsistent across documents, the v0.2 canonical form was chosen based on consistency with the design document (`flow-language-design.docx`, which is the newest of the pre-v0.2 sources).
+Nothing in the surface language was removed. Where surface syntax appeared inconsistent across documents, the v0.2 canonical form was chosen based on consistency with the design document (`mapal-language-design.docx`, which is the newest of the pre-v0.2 sources).
 
 ---
 
@@ -42,7 +42,7 @@ This change has a happy downstream consequence for the FPGA backend (§1.6 below
 
 ### 1.4 "Skips the AST" softened
 
-**Before.** Several v0.1 documents claimed Flow "skips the traditional AST" entirely.
+**Before.** Several v0.1 documents claimed Mapal "skips the traditional AST" entirely.
 
 **After.** The parser *does* produce a tree of `ParseNode` values that the IR-builder pattern-matches on — that is an AST by any other name. The honest claim, now in both `architecture.md` and `category-ir.md`, is:
 
@@ -71,9 +71,9 @@ The type system tracks effects via Kleisli categories, so the compiler knows whi
 
 The user asked specifically for categories, functors, and natural transformations expressed as diagrams. v0.1 talked about category theory as motivation but didn't diagram the actual structures or use them to justify optimizations. v0.2 adds:
 
-### 2.1 Flow-Cat as a bicartesian closed traced category
+### 2.1 Mapal-Cat as a bicartesian closed traced category
 
-§2 of `category-ir.md` defines Flow-Cat as the category whose objects are Flow types and whose morphisms are pure total Flow functions, with:
+§2 of `category-ir.md` defines Mapal-Cat as the category whose objects are Mapal types and whose morphisms are pure total Mapal functions, with:
 
 - **Products** (tuples) and their universal property.
 - **Coproducts** (`Option`, `Result`, user enums) and their universal property.
@@ -85,11 +85,11 @@ Each structure comes with a Mermaid universal-property diagram.
 
 ### 2.2 Effects via Kleisli categories
 
-Partial, I/O, mutable-state, and error-producing operations don't live in Flow-Cat directly — they live in Kleisli categories over effect monads (§2.6 of `category-ir.md`). The `?` operator is Kleisli composition in the Result-monad; this is shown as a Mermaid diagram.
+Partial, I/O, mutable-state, and error-producing operations don't live in Mapal-Cat directly — they live in Kleisli categories over effect monads (§2.6 of `category-ir.md`). The `?` operator is Kleisli composition in the Result-monad; this is shown as a Mermaid diagram.
 
 ### 2.3 Functors
 
-§6 of `category-ir.md` treats `List`, `Option`, `Result<_, E>`, `Array<_, N>`, `Stream` as endofunctors on Flow-Cat, with their functor laws drawn as commutative diagrams. The map-fusion optimization is a direct consequence of composition-preservation.
+§6 of `category-ir.md` treats `List`, `Option`, `Result<_, E>`, `Array<_, N>`, `Stream` as endofunctors on Mapal-Cat, with their functor laws drawn as commutative diagrams. The map-fusion optimization is a direct consequence of composition-preservation.
 
 ### 2.4 Natural transformations
 
@@ -99,7 +99,7 @@ Crucially, §7.4 distinguishes natural transformations from within-category equa
 
 ### 2.5 Backends as functors
 
-§8 of `category-ir.md` reformulates each backend as a functor `F : Flow-Cat → Target-Cat`. Semantic preservation is the statement that `F` satisfies the functor laws: `F(id) = id` and `F(g ∘ f) = F(g) ∘ F(f)`. This is the formal answer to "does the compiler change the meaning of my program?" — no, by functoriality.
+§8 of `category-ir.md` reformulates each backend as a functor `F : Mapal-Cat → Target-Cat`. Semantic preservation is the statement that `F` satisfies the functor laws: `F(id) = id` and `F(g ∘ f) = F(g) ∘ F(f)`. This is the formal answer to "does the compiler change the meaning of my program?" — no, by functoriality.
 
 ### 2.6 Optimization framework classified by justification
 
@@ -118,7 +118,7 @@ Each layer has a clearly scoped correctness argument. The compiler source organi
 
 ### 3.1 Aligned on graph-derived lifetimes
 
-**Before.** `getting-started.md` and `user-guide.md` said "Rust-like ownership without garbage collection"; `flow-language-design.docx` said "reference by default, free at last use" using graph lifetime analysis. These are materially different — Rust has affine types and explicit `&`/`&mut`, whereas the graph-lifetime model is closer to region inference with compiler-computed frees.
+**Before.** `getting-started.md` and `user-guide.md` said "Rust-like ownership without garbage collection"; `mapal-language-design.docx` said "reference by default, free at last use" using graph lifetime analysis. These are materially different — Rust has affine types and explicit `&`/`&mut`, whereas the graph-lifetime model is closer to region inference with compiler-computed frees.
 
 **After.** All documents align on the graph-lifetime model from the design document. §10 of `category-ir.md` gives the formal treatment; §6 of `user-guide.md` gives the user-facing explanation; §3.4 of `architecture.md` gives the compiler-implementation view. The terminology "ownership" is no longer used — "lifetime" is.
 
@@ -186,7 +186,7 @@ Categorical structural diagrams (universal properties of products, coproducts, e
 | `architecture.md` | Rewrite. ASCII → Mermaid throughout. Memory model aligned. Backends framed as functors. Version v0.2. |
 | `user-guide.md` | Rewrite. ASCII → Mermaid. New §5 (parallelism), §6 (memory), §7 (errors). Memory model aligned. Version v0.2. |
 | `getting-started.md` | Replaced. Was a duplicate of `user-guide.md`; now a true quick-start. Version v0.2. |
-| `flow-language-design.docx` | **Not rewritten in this pass.** The design document's content is largely consistent with v0.2 already (it was the newest source of truth pre-pass). A future pass could regenerate it to match the diagram conventions used in the other v0.2 documents. |
+| `mapal-language-design.docx` | **Not rewritten in this pass.** The design document's content is largely consistent with v0.2 already (it was the newest source of truth pre-pass). A future pass could regenerate it to match the diagram conventions used in the other v0.2 documents. |
 | `CHANGES.md` | New (this file). |
 
 ---
@@ -195,11 +195,11 @@ Categorical structural diagrams (universal properties of products, coproducts, e
 
 Items surfaced during this pass that are worth tracking but outside scope:
 
-- **`category` keyword collision.** The surface-language `category` keyword means "type" (an object in Flow-Cat). The category-theoretic "category" means the ambient structure. Appendix A of `category-ir.md` notes the collision. A future revision could rename the surface keyword to `type` — invasive but clean.
+- **`category` keyword collision.** The surface-language `category` keyword means "type" (an object in Mapal-Cat). The category-theoretic "category" means the ambient structure. Appendix A of `category-ir.md` notes the collision. A future revision could rename the surface keyword to `type` — invasive but clean.
 - **Cyclic data structures.** v0.2 requires an explicit annotation for cyclic types (switches to refcounting). A proper cycle collector or region analysis is future work.
-- **Quantum backend.** Mentioned in §10 of `architecture.md` as research. The dagger structure of quantum categories does not exist in Flow-Cat, so only a subset of programs could target such a backend — the functor would be a partial functor. This needs formal treatment before it's more than speculation.
+- **Quantum backend.** Mentioned in §10 of `architecture.md` as research. The dagger structure of quantum categories does not exist in Mapal-Cat, so only a subset of programs could target such a backend — the functor would be a partial functor. This needs formal treatment before it's more than speculation.
 - **Mechanized proofs.** The categorical claims in `category-ir.md` (functor laws for each backend, naturality of each polymorphic operation) are plausible but not mechanized. Discharging them in a proof assistant (Lean, Coq, Agda) is future work that would strengthen the "provably correct" claim from "informally argued" to "machine-checked."
-- **`flow-language-design.docx` regeneration.** Not done in this pass; its content is consistent but its diagram conventions aren't aligned.
+- **`mapal-language-design.docx` regeneration.** Not done in this pass; its content is consistent but its diagram conventions aren't aligned.
 
 ---
 

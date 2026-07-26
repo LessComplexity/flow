@@ -1,8 +1,8 @@
-# Benchmark: Flow matmul vs hand CUDA vs cuBLAS vs CPU (Session 16, 2026-07-21)
+# Benchmark: Mapal matmul vs hand CUDA vs cuBLAS vs CPU (Session 16, 2026-07-21)
 
-**Question (Sapir):** can a Flow matmul at best optimization levels be compared to other
+**Question (Sapir):** can a Mapal matmul at best optimization levels be compared to other
 languages on speed, over many iterations? **Answer: yes, and here it is — but the honest
-headline is that today's Flow-CUDA matmul is bounded by the *execution strategy*
+headline is that today's Mapal-CUDA matmul is bounded by the *execution strategy*
 (one kernel launch per `Index`/`Update`, Θ(N³) launches at ~24 µs each), not by the
 algorithm, the GPU, or the language's ceiling.** Every number below is measured, on one
 vast.ai RTX 4090 box (nvcc 12.4.131, 12 vCPU, Ubuntu 22.04) unless marked macOS;
@@ -10,13 +10,13 @@ correctness was verified at every size (all legs print `c[0]`/`c[N²−1]` and a
 
 ## Artifacts (in-tree, reproducible)
 
-- `examples/matmul4.flow` — the readable N=4 program (runs `-275\n3748` through interp).
-- `benches/matmul/` — `gen_flow.py` (the generator), `matmul{16,32,64,128}.flow`,
+- `examples/matmul4.mapal` — the readable N=4 program (runs `-275\n3748` through interp).
+- `benches/matmul/` — `gen_flow.py` (the generator), `matmul{16,32,64,128}.mapal`,
   `naive_cuda.cu`, `cublas_gemm.cu`, `numpy_bench.py`, `rust_naive.rs`, `runner.{sh,py}`,
   `results.csv`.
-- Emitters: `cargo run -p flow-backend-{llvm,cuda} --example emit -- <file.flow>`
+- Emitters: `cargo run -p flow-backend-{llvm,cuda} --example emit -- <file.mapal>`
   (new `examples/emit.rs` dev tools in both backend crates).
-- The Flow program is the only Core-expressible matmul shape today: a flattened
+- The Mapal program is the only Core-expressible matmul shape today: a flattened
   loop-driven `cell(i,j)` dot-product with `c[t] <- v` (the ADR-0021 motivating
   pattern) — map/fold bodies may not close over arrays (**L1108**), so the one-kernel
   map+fold form is not expressible in Core.
@@ -26,7 +26,7 @@ correctness was verified at every size (all legs print `c[0]`/`c[N²−1]` and a
 `interp` (N=4) = `flow-cuda` = `naive-cuda` = `numpy` at every N — e.g. N=64 →
 `1047.0 / 2107.0`, N=128 → `-7312.0 / -933.0`, N=4096 → `74348.0 / -302529.0`.
 The flow-cuda programs ran under the **pinned M3 recipe** (`nvcc -std=c++17 -fmad=false
--arch=sm_89`, flow-rt staticlib) — the differential contract, unmodified for speed.
+-arch=sm_89`, mapal-rt staticlib) — the differential contract, unmodified for speed.
 
 ## Numbers
 
@@ -55,20 +55,20 @@ after warmup (CUDA events); numpy/rust are per-iteration best-of.
    algorithm* as a single kernel runs in 0.0032 ms at N=64 — a **3.8-million× gap**
    (20M× at N=128). This is the DESIGN's recorded correct-first price (sync after every
    launch, §3) made visible; it is not the algorithm and not the GPU.
-2. **The same `.flow` source on flow-llvm is 38× faster at N=64 — on a laptop CPU**
+2. **The same `.mapal` source on flow-llvm is 38× faster at N=64 — on a laptop CPU**
    (316 ms vs 12.16 s). One native process, alloca-resident arrays, no launches.
    Backend strategy dominates (VISION truth #1). flow-llvm's own jump from 5.1 ms
    (N=32) to 316 ms (N=64) is the recorded **W3 naive-`Update` wall** (the N⁴ copy) —
    the backends' two biggest walls are both already in the array-scale plan.
-3. **The expressibility gap is the real blocker for a Flow GEMM.** The one-kernel form
+3. **The expressibility gap is the real blocker for a Mapal GEMM.** The one-kernel form
    needs map bodies that close over the whole arrays — L1108 forbids it today.
    Relaxing that (pure read captures / a cartesian or broadcast form) is an **ADR-level
-   language-design conversation**, not a backend optimization. Until then every Flow
+   language-design conversation**, not a backend optimization. Until then every Mapal
    matmul is the flattened loop shape, and no backend can rescue Θ(N³) launches.
 4. **The algorithm gap (independent of language) is 22×:** naive one-kernel CUDA peaks
    at ~3.1 TF/s (memory-bound, ~4% of the 4090's ~82.6 TF/s fp32 peak); cuBLAS reaches
    **55.9 TF/s at N=4096** (~68% of peak). That is the tiling/tensor-core gap — it
-   defines what "best optimization levels" would mean for a future Flow GEMM kernel
+   defines what "best optimization levels" would mean for a future Mapal GEMM kernel
    (shared-memory tiling before anything else matters).
 5. **CPU context:** numpy (the box's BLAS) sits between naive-CUDA and cuBLAS at big N
    (1.3 TF/s at N=2048); single-thread naive Rust tracks ~1.3–2.6 GF/s until the
@@ -81,7 +81,7 @@ after warmup (CUDA events); numpy/rust are per-iteration best-of.
   N³ launch law is the clean signal from N=32 up.
 - These are single-GPU, single-precision, square sizes; cuBLAS ran `CUBLAS_DEFAULT_MATH`
   (no TF32) to stay honest fp32.
-- Nothing here measures a "Flow is slow" property of the language: it measures (a) one
+- Nothing here measures a "Mapal is slow" property of the language: it measures (a) one
   deliberately correct-first execution strategy, and (b) one missing language feature
   (captures). Both walls are named, recorded, and have design paths.
 - numpy's N=4096 dip (341 GF/s) is its BLAS threading behavior at that size — reported,
@@ -107,22 +107,22 @@ would not reuse the host-side llvm emitter (host IR ≠ device IR: address space
 host calls, NVVM intrinsics) and would add driver-API launch glue — more parts, no
 perf (nvcc's device pipeline is Clang→NVPTX→ptxas underneath). The interesting variant
 is **NVRTC**: same emitted `.cu` text, compiled at runtime — removes the nvcc *binary*
-dependency and enables JIT (relevant to a future `flow run --gpu` without a toolkit
+dependency and enables JIT (relevant to a future `mapal run --gpu` without a toolkit
 install). Recorded in `components/backend-cuda/suggestions.md` #11; a spike belongs to
 a future session if JIT becomes a requirement. (Mature precedent for the raw-NVPTX
-path exists — Triton, Numba — but they have no host surface; Flow has a real one:
-scalars, guards, loop driving, `flow-rt` IO.)
+path exists — Triton, Numba — but they have no host surface; Mapal has a real one:
+scalars, guards, loop driving, `mapal-rt` IO.)
 
 ## Reproduce
 
 ```sh
-# Flow programs (any N): python3 benches/matmul/gen_flow.py <N> benches/matmul/matmul<N>.flow
-cargo run -p flow-backend-cuda --example emit -- benches/matmul/matmul64.flow   # → .cu
-cargo run -p flow-backend-llvm --example emit -- benches/matmul/matmul64.flow   # → .ll
-clang -O2 benches/matmul/matmul64.ll target/debug/libflow_rt.a -o /tmp/mm       # local llvm leg
+# Mapal programs (any N): python3 benches/matmul/gen_flow.py <N> benches/matmul/matmul<N>.mapal
+cargo run -p mapal-backend-cuda --example emit -- benches/matmul/matmul64.mapal   # → .cu
+cargo run -p mapal-backend-llvm --example emit -- benches/matmul/matmul64.mapal   # → .ll
+clang -O2 benches/matmul/matmul64.ll target/debug/libmapal_rt.a -o /tmp/mm       # local llvm leg
 # New legs (harness, no numbers recorded here yet):
 #   f32 capture variants: python3 benches/matmul/gen_flow_capture.py <N> --width f32
-#     (checked in: matmul{16,64,128,256}_cap_f32.flow; emit .cu/.ll exactly as above)
+#     (checked in: matmul{16,64,128,256}_cap_f32.mapal; emit .cu/.ll exactly as above)
 #   cpp naive baseline (both widths): clang++ -O3 -march=native benches/matmul/cpp_naive.cpp -o cpp_naive
 #     then `cpp_naive <N> <ITERS> f32|f64` — runner legs cpp-naive-f32 / cpp-naive-f64
 #   flow legs (runner.sh builds every checked-in .cu/.ll into mm_{cu,ll}[_cap[_f32]][_perf]_<N>):
@@ -130,11 +130,11 @@ clang -O2 benches/matmul/matmul64.ll target/debug/libflow_rt.a -o /tmp/mm       
 #     (capture, N=16..256, process wall min-of-3; llvm: clang -O2 -march=native —
 #     native-codegen parity with rust_naive's -C target-cpu=native)
 #   perf-instrumented kernels (legs flow-cuda-cap-kernel-f64/-f32, per-iteration compute =
-#     sum of the FLOW_PERF launch= CUDA-event lines, min of 3 process runs):
-#     cargo run -p flow-backend-cuda --example emit -- <file.flow> - --perf > benches/matmul/<base>_perf.cu
+#     sum of the MAPAL_PERF launch= CUDA-event lines, min of 3 process runs):
+#     cargo run -p mapal-backend-cuda --example emit -- <file.mapal> - --perf > benches/matmul/<base>_perf.cu
 #   All bench .cu/.ll artifacts are checked in, emitted from the W1+W2 tree (by-ref llvm
 #     captures, deduped kernels — 3 __global__ for 4 launches, one arena cudaMalloc per
-#     capture flow_main) — rsync benches/matmul to the box as usual.
+#     capture mapal_main) — rsync benches/matmul to the box as usual.
 #   chapel baselines (chapel-f32/f64, forall over a 2D domain, one binary both widths):
 #     CHPL_TARGET_CPU=native chpl --fast benches/matmul/chapel_matmul.chpl -o chapel_matmul
 #     then `chapel_matmul --n=<N> --iters=<ITERS> --width=f32|f64` (config consts, no positionals).
@@ -143,7 +143,7 @@ clang -O2 benches/matmul/matmul64.ll target/debug/libflow_rt.a -o /tmp/mm       
 #     && apt-get install ./chapel-2.9.0-1.ubuntu22.amd64.deb (runner.sh does this; source-build
 #     fallback: util/setchplenv.bash — the PREFERRED config, not quickstart — && make)
 # GPU leg (vast.ai, per backend-cuda DESIGN §6): image nvidia/cuda:12.4.1-devel-ubuntu22.04,
-# rsync benches/matmul + crates/flow-rt/src/lib.rs (as flow_rt.rs), then: bash runner.sh
+# rsync benches/matmul + crates/mapal-rt/src/lib.rs (as mapal_rt.rs), then: bash runner.sh
 # Box cost for this run: ≈ $0.18 (destroyed after, per the standing rule).
 ```
 
@@ -156,7 +156,7 @@ clang -O2 benches/matmul/matmul64.ll target/debug/libflow_rt.a -o /tmp/mm       
 bindings (pure read captures). The matmul is now writable in its natural one-kernel form:
 a map over cells with an inner fold over the captured `a`/`b`. Same generator, same arrays,
 same pinned recipe, same box class (RTX 4090, destroyed after, ≈$0.30 incl. a CN-network
-rustup workaround — `libflow_rt.a` cross-compiled locally and shipped).
+rustup workaround — `libmapal_rt.a` cross-compiled locally and shipped).
 
 **Correctness first (as always):** flow-cuda output = interp = numpy at every N
 (1815/6944 · 1047/2107 · −7312/−933 · −3694/10946). The LLVM differential covers the

@@ -1,0 +1,29 @@
+// fanout.mapal
+//
+// Demonstrates: parallel fanout `x -> { -> a; -> b; }` over PURE branches with an
+//   implicit join into a tuple (user-guide §3.3 / §4.5). The two branches are
+//   structurally independent, so they run in parallel by default. `print` is
+//   effectful and therefore MUST NOT appear inside the fanout (E2); the prints
+//   happen sequentially AFTER the join.
+//
+// Expected output (interpreted), for input 6:
+//   36
+//   12
+
+fn square(x: i32) -> i32 {
+    x * x -> ret;
+}
+
+fn double(x: i32) -> i32 {
+    x * 2 -> ret;
+}
+
+fn main() {
+    6 -> {
+        -> square -> sq;
+        -> double -> db;
+    }
+    // implicit join: (sq, db) are both available here
+    sq -> println;
+    db -> println;
+}

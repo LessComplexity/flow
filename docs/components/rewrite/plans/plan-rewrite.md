@@ -1,4 +1,4 @@
-# Plan: flow-rewrite (P4) — layers 3–4 + map fusion, property-tested vs the oracle
+# Plan: mapal-rewrite (P4) — layers 3–4 + map fusion, property-tested vs the oracle
 
 Written: 2026-07-17 · Session 12 · Status: approved (Sapir pre-authorized S12 "complete all"; DESIGN.md is the model)
 Model: [`../DESIGN.md`](../DESIGN.md) — read it first; this plan only sequences the build.

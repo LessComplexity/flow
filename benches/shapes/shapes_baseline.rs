@@ -1,4 +1,4 @@
-// CPU baselines for the fir/conv2d Flow shapes, size-parameterized (S29 scale-up).
+// CPU baselines for the fir/conv2d Mapal shapes, size-parameterized (S29 scale-up).
 // Build: rustc -O -C target-cpu=native shapes_baseline.rs -o shapes_baseline_rs
 use std::time::Instant;
 

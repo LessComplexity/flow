@@ -3,18 +3,18 @@
 Status: **SHIPPED — 2026-07-24 (S27b, same-day continuation); ratified by Sapir at S27 close: "I want even
 loop naive implementations to enjoy the perf boost from this structure
 automatically."**
-Implemented at `crates/flow-rewrite/src/lift.rs`,
+Implemented at `crates/mapal-rewrite/src/lift.rs`,
 `PassId::LiftLoops` in the default list after `Inline`. Acceptance = the S26/WP3
 matmul4 pins INVERT: `cell`'s k-loop fold-lifts → `cell` is loop-free → Inline strips
 it → the t-loop map-lifts → `tile_plan` fires — matmul4 tiles, outputs `-275`/`3748`
 byte-exact on every engine.
 (Original design text below; Sapir S26 context: matmul4 loop form pinned non-tiling —
-byte-identical emission — while its cap twin `benches/matmul/matmul4_cap.flow` tiles.)
+byte-identical emission — while its cap twin `benches/matmul/matmul4_cap.mapal` tiles.)
 
 ## Why
 
 `tile_plan` is a graph-shape detector: it recognizes `map { … fold { … } }` sites with
-affine reads. The idiomatic loop form of the same math (`examples/matmul4.flow` —
+affine reads. The idiomatic loop form of the same math (`examples/matmul4.mapal` —
 `mut`/`Update`/cross-fn `Call`) never produces that shape, so the whole tile ladder
 (rungs 1–3, FMA, cuda-to-come) is invisible to it. Lifting canonical loops to
 `map`/`fold` is a **rewrite-level equivalence**, proven per-loop from the SCC facts
@@ -33,13 +33,13 @@ form "this trace factors through a Core collection op":
 | **R-LM** (loop→map) | `S = (t, c : [E; n])`; t: init 0, advance t+1, guard `t < T` (T static); c: advance exactly one `Update c[t] <- v` (index object ≡ the counter object, v1), v's cone pure and c-free; **n = T**; exit payload = c | `Iota(T) -> Map{t -> v}` with captures = inv; the c-init edge is dropped | identity index over [0,T) writes every slot ⇒ init values dead; cell t computes the same v(t) cone ⇒ **byte-exact** |
 
 Both are consolidations, not new structure: the loop SCC (merge, back-route, decide/
-advance cones — `flow_ir::algo::loop_plan`'s `LoopPlan` fields) already *contains* the
+advance cones — `mapal_ir::algo::loop_plan`'s `LoopPlan` fields) already *contains* the
 `Iota`/`Fold`/`Map` decomposition; the rule cashes it. No new IR ops; `Iota` (ADR-0029)
 and captured `Map`/`Fold` (ADR-0027) are the existing targets.
 
 ### Why the chain reaches the tiled form (the interleave)
 
-`matmul4.flow`: `cell`'s k-loop is R-LF (acc chain, k as the item); `matmul`'s t-loop is
+`matmul4.mapal`: `cell`'s k-loop is R-LF (acc chain, k as the item); `matmul`'s t-loop is
 R-LM whose v-cone contains a pure `Call cell`. The existing **fixpoint driver** delivers
 the full chain with no new sequencing machinery, provided `PassId::Inline` is wired in
 (S27 fn-strip WP, prerequisite):
@@ -77,12 +77,12 @@ coverage — init lives); counter step ≠ +1 or init ≠ 0.
 
 ## Placement & tests (for the implementation WP, post-ratification)
 
-- `crates/flow-rewrite/src/lift.rs`, `PassId::LiftLoops`, in the DEFAULT list beside
+- `crates/mapal-rewrite/src/lift.rs`, `PassId::LiftLoops`, in the DEFAULT list beside
   `Inline` (prerequisite: the S27 fn-strip wiring WP).
 - Gate: R1 property harness (per-pass + full pipeline, determinism, idempotence) over
   testgen + a new liftable-loop testgen Step; differential — lifted output byte-equal
-  to oracle at -O0/-O2, any FLOW_PAR.
-- **Acceptance = the pin flip:** `examples/matmul4.flow` under default `rewrite()`
+  to oracle at -O0/-O2, any MAPAL_PAR.
+- **Acceptance = the pin flip:** `examples/matmul4.mapal` under default `rewrite()`
   emits tile-nest markers (the S26 "verified non-tiling" pin inverts), and its output
   stays `-275` / `3748` byte-exact on interp + llvm + cuda.
 
@@ -103,7 +103,7 @@ coverage — init lives); counter step ≠ +1 or init ≠ 0.
 - Default-rewritten `matmul4` has zero Calls, zero loop SCCs, and a captured Map whose
   body contains a captured Fold. LLVM selects the packed align-64 tile path and
   prints exactly `-275\n3748\n` at `-O0`/`-O2`, under both the default environment
-  and `FLOW_PAR=1`.
+  and `MAPAL_PAR=1`.
 - Focused rules/rejections, the per-pass/full R1 property battery, generated lift
   steps in the 1,280-program LLVM differential, the full release workspace, and
   formatting are all gated.

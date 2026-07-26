@@ -1,0 +1,22 @@
+---
+source: crates/mapal-ir/tests/golden_mermaid.rs
+expression: dump
+---
+flowchart LR
+    subgraph f0["fn main"]
+        f0o0(("io"))
+        f0o1(("ret: io"))
+        f0o2(("#quot;hello#quot;: str"))
+        f0o3(("(io, str)"))
+        f0o4(("io"))
+        f0o5(("#quot;world#quot;: str"))
+        f0o6(("(io, str)"))
+        f0o7(("io"))
+        f0o0 -- "Pair 0/2" --> f0o3
+        f0o2 -- "Pair 1/2" --> f0o3
+        f0o3 -- "Print" --> f0o4
+        f0o4 -- "Pair 0/2" --> f0o6
+        f0o5 -- "Pair 1/2" --> f0o6
+        f0o6 -- "Print" --> f0o7
+        f0o7 -- "Output" --> f0o1
+    end

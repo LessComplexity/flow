@@ -1,0 +1,270 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Mapal",
+  "scopeName": "source.mapal",
+  "comment": "Mirrors editors/nvim/syntax/mapal.vim. NOTE the precedence difference: TextMate takes the FIRST matching pattern, Vim the LAST, so this file is ordered most-specific first while the Vim file is ordered least-specific first. Any rule added to one must be added to the other, at the opposite end.",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#guards"
+    },
+    {
+      "include": "#labels"
+    },
+    {
+      "include": "#fn-declaration"
+    },
+    {
+      "include": "#reserved"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#call-position"
+    },
+    {
+      "include": "#binding"
+    },
+    {
+      "include": "#arrows"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#operators"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.mapal",
+          "match": "//.*$",
+          "captures": {
+            "0": {
+              "patterns": [
+                {
+                  "name": "keyword.codetag.notation.mapal",
+                  "match": "\\b(TODO|FIXME|XXX|NOTE)\\b"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.mapal",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.mapal",
+          "match": "\\\\[nrt\"\\\\0]"
+        }
+      ]
+    },
+    "guards": {
+      "comment": "Guard arrows. The chrome (leading `-`, trailing `->`) is scoped as an arrow so it reads as flow plumbing; the discriminant inside gets the scope of what it IS. Must precede #arrows and #operators or the bare `-` wins.",
+      "patterns": [
+        {
+          "match": "(-)(true|false)(->)",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.arrow.mapal"
+            },
+            "2": {
+              "name": "constant.language.boolean.mapal"
+            },
+            "3": {
+              "name": "keyword.operator.arrow.mapal"
+            }
+          }
+        },
+        {
+          "match": "(-)([0-9]+)(->)",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.arrow.mapal"
+            },
+            "2": {
+              "name": "constant.numeric.integer.mapal"
+            },
+            "3": {
+              "name": "keyword.operator.arrow.mapal"
+            }
+          }
+        },
+        {
+          "match": "(-)(_)(->)",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.arrow.mapal"
+            },
+            "2": {
+              "name": "variable.language.wildcard.mapal"
+            },
+            "3": {
+              "name": "keyword.operator.arrow.mapal"
+            }
+          }
+        },
+        {
+          "comment": "Variant guard: -Some(x)-> / -None->. The tag is a type; a binder inside stays plain.",
+          "match": "(-)([A-Z]\\w*)(?:(\\()([^()]*)(\\)))?(->)",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.arrow.mapal"
+            },
+            "2": {
+              "name": "entity.name.type.mapal"
+            },
+            "3": {
+              "name": "punctuation.section.parens.begin.mapal"
+            },
+            "5": {
+              "name": "punctuation.section.parens.end.mapal"
+            },
+            "6": {
+              "name": "keyword.operator.arrow.mapal"
+            }
+          }
+        },
+        {
+          "comment": "Destructuring guard: -[]-> / -[head, ...tail]->",
+          "match": "(-)(\\[)([^\\[\\]]*)(\\])(->)",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.arrow.mapal"
+            },
+            "2": {
+              "name": "entity.name.type.mapal"
+            },
+            "4": {
+              "name": "entity.name.type.mapal"
+            },
+            "5": {
+              "name": "keyword.operator.arrow.mapal"
+            }
+          }
+        }
+      ]
+    },
+    "labels": {
+      "comment": "ADR-0012: labels carry a `:` sigil on both ends. The negative lookbehind keeps the second colon of `::` from starting a label. SCOPE CHOICE: `entity.name.label` is the semantically obvious scope and was the first one used, but VS Code's default themes style it #C8C8C8 against an editor foreground of #CCCCCC \u2014 a 4/255 difference, i.e. it renders as plain text and reads as 'labels are not highlighted'. `keyword.control` is themed #C586C0 and is defensible: a label IS control flow, and it matches the Vim file, which links labels to `Label` (a Statement-family group most colorschemes colour distinctly). Consistency across the two editors is the tiebreaker.",
+      "patterns": [
+        {
+          "match": "(?<!:)(:[a-zA-Z_]\\w*)(?=\\s*\\{)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.label.mapal"
+            }
+          }
+        },
+        {
+          "match": "(?<=->)\\s*(?<!:)(:\\w+)(?=\\s*;)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.label.mapal"
+            }
+          }
+        }
+      ]
+    },
+    "fn-declaration": {
+      "match": "\\b(fn)\\s+([a-zA-Z_]\\w*)",
+      "captures": {
+        "1": {
+          "name": "keyword.declaration.function.mapal"
+        },
+        "2": {
+          "name": "entity.name.function.mapal"
+        }
+      }
+    },
+    "reserved": {
+      "comment": "ADR-0006/E5: `category` was the v0.1 spelling of `type` and is reserved-and-rejected. The editor teaches the error.",
+      "name": "invalid.illegal.reserved.mapal",
+      "match": "\\b(category)\\b"
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.mapal",
+          "match": "\\b(fn|type|loop|seq|mut|void)\\b"
+        },
+        {
+          "name": "keyword.control.return.mapal",
+          "match": "\\b(ret)\\b"
+        },
+        {
+          "comment": "Kept in sync with the lowerer's builtin dispatch. A name missing here does not merely lose its colour \u2014 it falls through to #call-position and gets mis-scoped as a user function.",
+          "name": "support.function.builtin.mapal",
+          "match": "\\b(map|fold|print|println|zip|enumerate|iota|fill|widen_i64|widen_f32|widen_f64|time)\\b"
+        },
+        {
+          "name": "constant.language.boolean.mapal",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "support.type.primitive.mapal",
+          "match": "\\b(i32|i64|u8|f32|f64|bool)\\b"
+        }
+      ]
+    },
+    "call-position": {
+      "comment": "An identifier between two arrows is applied: `data -> f -> g -> ret;`. A binding/call rule written as `(?<=->)\\s*(ident)` starts its match at the WHITESPACE after the arrow \u2014 one column earlier than the keyword rule that matches the identifier itself. TextMate picks the earliest match, so without this exclusion the rule wins on position no matter how patterns are ordered, and `-> println;` scopes println as a variable. Keep this list in sync with #keywords; editors/vscode/test/scope_test.py asserts it.",
+      "match": "(?<=->)\\s*(?!(?:println|print|widen_i64|widen_f32|widen_f64|enumerate|iota|fill|fold|map|zip|time|ret|loop|seq|mut|void|type|fn|true|false)\\b)([a-z_]\\w*)(?=\\s*->)",
+      "captures": {
+        "1": {
+          "name": "entity.name.function.call.mapal"
+        }
+      }
+    },
+    "binding": {
+      "comment": "A terminal arrow into a snake_case name BINDS it: `5 -> a;` introduces `a`. Unlike the Vim file this cannot special-case a terminal call to a declared fn (`-> myfn;`) \u2014 TextMate cannot know what has been declared, so those read as bindings here; the real answer for both editors is LSP semantic tokens (ADR-0008). A binding/call rule written as `(?<=->)\\s*(ident)` starts its match at the WHITESPACE after the arrow \u2014 one column earlier than the keyword rule that matches the identifier itself. TextMate picks the earliest match, so without this exclusion the rule wins on position no matter how patterns are ordered, and `-> println;` scopes println as a variable. Keep this list in sync with #keywords; editors/vscode/test/scope_test.py asserts it.",
+      "match": "(?<=->)\\s*(?!(?:println|print|widen_i64|widen_f32|widen_f64|enumerate|iota|fill|fold|map|zip|time|ret|loop|seq|mut|void|type|fn|true|false)\\b)([a-z_]\\w*)(?=\\s*;)",
+      "captures": {
+        "1": {
+          "name": "variable.other.definition.mapal"
+        }
+      }
+    },
+    "arrows": {
+      "comment": "Composition is the language, so arrows are deliberately prominent.",
+      "name": "keyword.operator.arrow.mapal",
+      "match": "->|<-"
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.mapal",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.mapal",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "types": {
+      "comment": "PascalCase is the named-product-type convention (user-guide \u00a710.2).",
+      "name": "entity.name.type.mapal",
+      "match": "\\b[A-Z]\\w*\\b"
+    },
+    "operators": {
+      "name": "keyword.operator.mapal",
+      "match": "==|!=|<=|>=|&&|\\|\\||[+\\-*/%=!<>]"
+    }
+  }
+}

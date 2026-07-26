@@ -45,7 +45,7 @@ acceptance · Verdict: **ready; no unresolved blocker or v1-condition conflict**
 - [x] R1/R2, determinism, idempotence, and second-round empty planning.
 - [x] Testgen emits both lift shapes with `K >= 1`; 1,280 differential observes lifts.
 - [x] matmul4: 0 Calls, 0 loop SCCs, Map-with-Fold; tiled align-64 LLVM marker.
-- [x] Exact `-275\n3748\n` at O0/O2, default and `FLOW_PAR=1`.
+- [x] Exact `-275\n3748\n` at O0/O2, default and `MAPAL_PAR=1`.
 - [x] No changes made to `crates/backends/llvm/src`.
 - [x] Release rewrite, LLVM, workspace, and formatting gates green.
 

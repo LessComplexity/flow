@@ -12,7 +12,7 @@ fir & conv2d from the naive implementations to be better than other languages."*
 S27c local matrix (M4 Pro, fair compute basis, `docs/performance/matmul/s27.md`):
 
 - **conv2d_512: flow 7.9× BEHIND single-thread cpp at 14 threads** — the priced
-  refusal. `tile_affine` (`crates/flow-ir/src/algo.rs:770-830`) walks Add +
+  refusal. `tile_affine` (`crates/mapal-ir/src/algo.rs:770-830`) walks Add +
   literal-Mul only; conv2d's `img[(i + k/3)*18 + j + k%3]` hits `_ => None`
   (`algo.rs:828`) → site refused → per-cell `sdiv/srem` + untiled body calls,
   while clang unrolls the compile-time 3×3. Everything else conv2d needs already
@@ -38,10 +38,10 @@ one walker extension.
 
 | Item | Kind | Model |
 | --- | --- | --- |
-| `TileKSplit { div: u64, cq: u64, cr: u64 }` | `Dat` (flow-ir) | the k-decomposition: address += `cq·(k÷div) + cr·(k%div)` |
+| `TileKSplit { div: u64, cq: u64, cr: u64 }` | `Dat` (mapal-ir) | the k-decomposition: address += `cq·(k÷div) + cr·(k%div)` |
 | `TileRead.ksplit? : TileRead → TileKSplit` | `Dat` morphism, **Partial** | §3 consolidation: NOT a new site type — the same `TileRead` with one more morphism. `None` = affine-in-raw-k (today's sites, bit-identical); `Some` = derived-var site. Doubles as the emitter-gate discriminator. |
 | fold-body k-split detection | `Trn` (recognizer) | the `tile_split` move (`algo.rs:654-671`) one level down: scan fold morphisms for `Div`/`Mod` of the fold element proj (slot `captures+1`) with one shared literal `div`; bind the two target objects as the `kq`/`kr` axes — the same axis-binding-by-identity the map body gets for `(t÷C, t%C)` → `(i, lane)`. |
-| `conv_site(site)` gate predicate | `Trn` (emitter-local) | rung doctrine (S26/S27): gates are emitter-local predicates cashing record facts; zero flow-ir change beyond the record. |
+| `conv_site(site)` gate predicate | `Trn` (emitter-local) | rung doctrine (S26/S27): gates are emitter-local predicates cashing record facts; zero mapal-ir change beyond the record. |
 | `emit_tiled_map_conv` | `TrnLoc` (strategy, §4.4) | parallel realisation of the site's `t_from→t_to` contract, selected by the record. Unrolls the (kq,kr) taps: `div`,`cq`,`cr` compile-time ⇒ per-tap constant offsets; div/mod vanish. |
 | `window1d_site(site)` + `emit_tiled_map_blocked_1d` | `Trn` + `TrnLoc` | FIR dual of rung 2: TI blocks over the LANE axis (rows==1); one scalar `a` load per k shared across TI subrows (a is the invariant read — roles swapped vs matmul); constant-TJ everywhere on the main path. |
 | `acc [TI·TJ x elem]` | `DataLoc` | register-resident accumulators, TI independent chains (ILP) — same placement as rung 2. |
@@ -67,7 +67,7 @@ single-rounding class, rel ≤ 1e-4, labeled as today.
 
 ## Work items
 
-**A1 — record the k-split site (flow-ir).** `algo.rs`: add `TileKSplit` +
+**A1 — record the k-split site (mapal-ir).** `algo.rs`: add `TileKSplit` +
 `TileRead.ksplit: Option<TileKSplit>` (`:148-154`); fold-body analog of
 `tile_split` called from `tile_fold_shape` (`:674-768`): find `Div`/`Mod` leaves
 on the fold element proj with shared literal `div`, check rule 2, bind `kq`/`kr`
@@ -90,7 +90,7 @@ vector per tap. TI=1 in v1. j-remainder via the existing runtime-`tj` split
 shape; seq + par-split flavors both (same dispatch points as other rungs).
 Unhandled ksplit shapes keep the A2 fallback.
 
-**B — FIR 1-D blocked rung (llvm, zero flow-ir change).** Gate
+**B — FIR 1-D blocked rung (llvm, zero mapal-ir change).** Gate
 `window1d_site`: `site.rows == 1 && site.b.ck == 1 && site.b.ksplit.is_none()`
 ⇒ `emit_tiled_map_blocked_1d`: full blocks `jb` step `TI·TJ` while
 `jb + TI·TJ ≤ jw_hi`; `acc [TI·TJ x elem]`; per-subrow seed splat; k loop
@@ -104,14 +104,14 @@ Head/tail: TI=1 constant-TJ main + runtime-`tj` remainder (the
 
 ## Tests
 
-- `crates/flow-ir/tests/algos.rs`: `tile_conv2d_fixture` (clone the matmul
+- `crates/mapal-ir/tests/algos.rs`: `tile_conv2d_fixture` (clone the matmul
   fixture `:1398`, add fold-body `k/3`,`k%3`) asserting the full recorded site
   incl. `ksplit`; the two existing `TileRead` literals (`:1595-1620`,
   `:1784-1809`) gain `ksplit: None`; refusal pins: `depth % div != 0`, Div/Mod
   divisor mismatch, mixed `ck≠0 ∧ ksplit` (rule 1).
 - `crates/backends/llvm/tests/differential.rs`: `differential_tiled_conv2d`
   (conf byte-equal vs untiled + interp oracle; fma rel≤1e-4; -O0/-O2) at 16
-  (oracle) + a `C % TJ ≠ 0` remainder case + FLOW_PAR split landing mid-tile;
+  (oracle) + a `C % TJ ≠ 0` remainder case + MAPAL_PAR split landing mid-tile;
   extend `differential_tiled_fir` (`:741-797`) with `N % (TI·TJ) ≠ 0` and
   par-split-mid-block cases. Loop-form fixtures: naive loop conv2d + fir that
   lift → recognize → win (the S27b vehicle; `tests/golden.rs` example pins).
@@ -124,7 +124,7 @@ Head/tail: TI=1 constant-TJ main + runtime-`tj` remainder (the
 
 ## Measurement
 
-- Local: `benches/shapes/shapes_ab.sh` then `FLOW_PAR=1 benches/shapes/shapes_ab.sh`
+- Local: `benches/shapes/shapes_ab.sh` then `MAPAL_PAR=1 benches/shapes/shapes_ab.sh`
   (min-of-3; byte-equal conf + rel≤1e-4 fma hard gates). Done-when numbers above.
 - Box: the S27-baseline shapes legs are in the box run launched this session
   (instance 45692618); re-run `shapes_ab.sh` on-box after landing for the S28

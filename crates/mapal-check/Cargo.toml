@@ -1,0 +1,11 @@
+[package]
+name = "mapal-check"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mapal-ir = { path = "../mapal-ir" }
+mapal-syntax = { path = "../mapal-syntax" }
+
+[dev-dependencies]
+mapal-lower = { path = "../mapal-lower" }

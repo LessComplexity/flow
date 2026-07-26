@@ -2,28 +2,28 @@
 source: crates/backends/llvm/tests/golden_ll.rs
 expression: ll
 ---
-; flow-backend-llvm emitted module
-declare void @flow_print_i32(i32, i1 zeroext)
-declare void @flow_print_i64(i64, i1 zeroext)
-declare void @flow_print_u8(i8 zeroext, i1 zeroext)
-declare void @flow_print_bool(i1 zeroext, i1 zeroext)
-declare void @flow_print_f32(float, i1 zeroext)
-declare void @flow_print_f64(double, i1 zeroext)
-declare void @flow_print_str(ptr, i64, i1 zeroext)
-declare double @flow_time_ms()
-declare void @flow_trap(i32) noreturn
+; mapal-backend-llvm emitted module
+declare void @mapal_print_i32(i32, i1 zeroext)
+declare void @mapal_print_i64(i64, i1 zeroext)
+declare void @mapal_print_u8(i8 zeroext, i1 zeroext)
+declare void @mapal_print_bool(i1 zeroext, i1 zeroext)
+declare void @mapal_print_f32(float, i1 zeroext)
+declare void @mapal_print_f64(double, i1 zeroext)
+declare void @mapal_print_str(ptr, i64, i1 zeroext)
+declare double @mapal_time_ms()
+declare void @mapal_trap(i32) noreturn
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
-declare ptr @flow_par_begin(i32)
-declare void @flow_par_task(ptr, i32, i32, ptr, i64, i32, i64, i32, i32)
-declare void @flow_par_pin(ptr, i32)
-declare void @flow_par_dep(ptr, i32, i32)
-declare void @flow_par_launch(ptr, ptr)
-declare void @flow_par_wait(ptr, ptr, i32)
-declare void @flow_par_check(ptr, i64)
-declare void @flow_par_trap(i64, i32)
-declare void @flow_par_watermark(i64)
-declare void @flow_par_run_pinned(ptr, i32)
-declare void @flow_par_finish(ptr)
+declare ptr @mapal_par_begin(i32)
+declare void @mapal_par_task(ptr, i32, i32, ptr, i64, i32, i64, i32, i32)
+declare void @mapal_par_pin(ptr, i32)
+declare void @mapal_par_dep(ptr, i32, i32)
+declare void @mapal_par_launch(ptr, ptr)
+declare void @mapal_par_wait(ptr, ptr, i32)
+declare void @mapal_par_check(ptr, i64)
+declare void @mapal_par_trap(i64, i32)
+declare void @mapal_par_watermark(i64)
+declare void @mapal_par_run_pinned(ptr, i32)
+declare void @mapal_par_finish(ptr)
 
 @.str0 = private unnamed_addr constant [8 x i8] c"c[0]  = "
 @.str1 = private unnamed_addr constant [8 x i8] c"c[15] = "
@@ -290,7 +290,7 @@ bb3:
   ret void
 }
 
-define internal void @flow_main() {
+define internal void @mapal_main() {
 entry:
   %frame = alloca %Frame
   %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
@@ -315,58 +315,58 @@ entry:
   %o32 = getelementptr %Frame, ptr %frame, i32 0, i32 19
   %o33 = getelementptr %Frame, ptr %frame, i32 0, i32 20
   %o34 = getelementptr %Frame, ptr %frame, i32 0, i32 21
-  %h = call ptr @flow_par_begin(i32 7)
-  call void @flow_par_task(ptr %h, i32 0, i32 0, ptr @task0, i64 38, i32 34, i64 0, i32 0, i32 0)
-  call void @flow_par_task(ptr %h, i32 1, i32 0, ptr @task1, i64 6, i32 1, i64 0, i32 0, i32 0)
-  call void @flow_par_task(ptr %h, i32 2, i32 0, ptr @task2, i64 6, i32 1, i64 0, i32 0, i32 0)
-  call void @flow_par_task(ptr %h, i32 3, i32 1, ptr @task3, i64 16, i32 33, i64 0, i32 0, i32 0)
-  call void @flow_par_task(ptr %h, i32 4, i32 1, ptr @task4, i64 16, i32 17, i64 0, i32 0, i32 0)
-  call void @flow_par_task(ptr %h, i32 5, i32 1, ptr @task5, i64 16, i32 33, i64 0, i32 0, i32 0)
-  call void @flow_par_task(ptr %h, i32 6, i32 1, ptr @task6, i64 16, i32 17, i64 0, i32 0, i32 0)
-  call void @flow_par_dep(ptr %h, i32 6, i32 1)
-  call void @flow_par_dep(ptr %h, i32 4, i32 2)
-  call void @flow_par_dep(ptr %h, i32 0, i32 3)
-  call void @flow_par_dep(ptr %h, i32 3, i32 4)
-  call void @flow_par_dep(ptr %h, i32 0, i32 5)
-  call void @flow_par_dep(ptr %h, i32 5, i32 6)
-  call void @flow_par_launch(ptr %h, ptr %frame)
-  call void @flow_par_wait(ptr %h, ptr @ckpt0_entries, i32 0)
-  call void @flow_par_check(ptr %h, i64 44)
-  call void @flow_print_str(ptr @.str0, i64 8, i1 zeroext false)
-  call void @flow_par_wait(ptr %h, ptr @ckpt5_entries, i32 2)
-  call void @flow_par_check(ptr %h, i64 73)
+  %h = call ptr @mapal_par_begin(i32 7)
+  call void @mapal_par_task(ptr %h, i32 0, i32 0, ptr @task0, i64 38, i32 34, i64 0, i32 0, i32 0)
+  call void @mapal_par_task(ptr %h, i32 1, i32 0, ptr @task1, i64 6, i32 1, i64 0, i32 0, i32 0)
+  call void @mapal_par_task(ptr %h, i32 2, i32 0, ptr @task2, i64 6, i32 1, i64 0, i32 0, i32 0)
+  call void @mapal_par_task(ptr %h, i32 3, i32 1, ptr @task3, i64 16, i32 33, i64 0, i32 0, i32 0)
+  call void @mapal_par_task(ptr %h, i32 4, i32 1, ptr @task4, i64 16, i32 17, i64 0, i32 0, i32 0)
+  call void @mapal_par_task(ptr %h, i32 5, i32 1, ptr @task5, i64 16, i32 33, i64 0, i32 0, i32 0)
+  call void @mapal_par_task(ptr %h, i32 6, i32 1, ptr @task6, i64 16, i32 17, i64 0, i32 0, i32 0)
+  call void @mapal_par_dep(ptr %h, i32 6, i32 1)
+  call void @mapal_par_dep(ptr %h, i32 4, i32 2)
+  call void @mapal_par_dep(ptr %h, i32 0, i32 3)
+  call void @mapal_par_dep(ptr %h, i32 3, i32 4)
+  call void @mapal_par_dep(ptr %h, i32 0, i32 5)
+  call void @mapal_par_dep(ptr %h, i32 5, i32 6)
+  call void @mapal_par_launch(ptr %h, ptr %frame)
+  call void @mapal_par_wait(ptr %h, ptr @ckpt0_entries, i32 0)
+  call void @mapal_par_check(ptr %h, i64 44)
+  call void @mapal_print_str(ptr @.str0, i64 8, i1 zeroext false)
+  call void @mapal_par_wait(ptr %h, ptr @ckpt5_entries, i32 2)
+  call void @mapal_par_check(ptr %h, i64 73)
   %t0 = load i32, ptr %o27
   store i32 %t0, ptr %o28
-  call void @flow_par_wait(ptr %h, ptr @ckpt7_entries, i32 2)
-  call void @flow_par_check(ptr %h, i64 77)
+  call void @mapal_par_wait(ptr %h, ptr @ckpt7_entries, i32 2)
+  call void @mapal_par_check(ptr %h, i64 77)
   %t1 = load i32, ptr %o33
   store i32 %t1, ptr %o34
-  call void @flow_par_wait(ptr %h, ptr @ckpt1_entries, i32 1)
-  call void @flow_par_check(ptr %h, i64 65)
+  call void @mapal_par_wait(ptr %h, ptr @ckpt1_entries, i32 1)
+  call void @mapal_par_check(ptr %h, i64 65)
   %t2 = load i32, ptr %o13
   store i32 %t2, ptr %o14
-  call void @flow_par_wait(ptr %h, ptr @ckpt3_entries, i32 1)
-  call void @flow_par_check(ptr %h, i64 69)
+  call void @mapal_par_wait(ptr %h, ptr @ckpt3_entries, i32 1)
+  call void @mapal_par_check(ptr %h, i64 69)
   %t3 = load i32, ptr %o19
   store i32 %t3, ptr %o20
   %t4 = load i32, ptr %o14
-  call void @flow_print_i32(i32 %t4, i1 zeroext true)
-  call void @flow_par_wait(ptr %h, ptr @ckpt2_entries, i32 1)
-  call void @flow_par_check(ptr %h, i64 67)
-  call void @flow_print_str(ptr @.str1, i64 8, i1 zeroext false)
+  call void @mapal_print_i32(i32 %t4, i1 zeroext true)
+  call void @mapal_par_wait(ptr %h, ptr @ckpt2_entries, i32 1)
+  call void @mapal_par_check(ptr %h, i64 67)
+  call void @mapal_print_str(ptr @.str1, i64 8, i1 zeroext false)
   %t5 = load i32, ptr %o20
-  call void @flow_print_i32(i32 %t5, i1 zeroext true)
-  call void @flow_par_wait(ptr %h, ptr @ckpt4_entries, i32 1)
-  call void @flow_par_check(ptr %h, i64 71)
-  call void @flow_print_str(ptr @.str2, i64 8, i1 zeroext false)
+  call void @mapal_print_i32(i32 %t5, i1 zeroext true)
+  call void @mapal_par_wait(ptr %h, ptr @ckpt4_entries, i32 1)
+  call void @mapal_par_check(ptr %h, i64 71)
+  call void @mapal_print_str(ptr @.str2, i64 8, i1 zeroext false)
   %t6 = load i32, ptr %o28
-  call void @flow_print_i32(i32 %t6, i1 zeroext true)
-  call void @flow_par_wait(ptr %h, ptr @ckpt6_entries, i32 2)
-  call void @flow_par_check(ptr %h, i64 75)
-  call void @flow_print_str(ptr @.str3, i64 8, i1 zeroext false)
+  call void @mapal_print_i32(i32 %t6, i1 zeroext true)
+  call void @mapal_par_wait(ptr %h, ptr @ckpt6_entries, i32 2)
+  call void @mapal_par_check(ptr %h, i64 75)
+  call void @mapal_print_str(ptr @.str3, i64 8, i1 zeroext false)
   %t7 = load i32, ptr %o34
-  call void @flow_print_i32(i32 %t7, i1 zeroext true)
-  call void @flow_par_finish(ptr %h)
+  call void @mapal_print_i32(i32 %t7, i1 zeroext true)
+  call void @mapal_par_finish(ptr %h)
   ret void
 }
 
@@ -432,6 +432,6 @@ entry:
 
 define i32 @main() {
 entry:
-  call void @flow_main()
+  call void @mapal_main()
   ret i32 0
 }

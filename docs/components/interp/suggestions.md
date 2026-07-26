@@ -11,8 +11,8 @@
 ## Detail
 
 **S1 (the strongest).** DESIGN §2 is explicit: "The in-SCC object set is precomputed once."
-The code computes it once in `eval_fn` (`crates/flow-interp/src/eval.rs:build_in_scc`) for the
-incidence test, then `crates/flow-interp/src/loops.rs:derive_plan` calls `build_in_scc` *again*,
+The code computes it once in `eval_fn` (`crates/mapal-interp/src/eval.rs:build_in_scc`) for the
+incidence test, then `crates/mapal-interp/src/loops.rs:derive_plan` calls `build_in_scc` *again*,
 plus `ir.loop_structure(f)` (to find the SCC) and `ir.topo_order(f)`, and scans all
 `ir.morphisms()` to locate the `LoopExit`. This is recomputation, not a stored copy, so it is
 not a *correctness* defect (deduce-don't-store is satisfied — nothing drifts). But it is the
@@ -22,7 +22,7 @@ closes the code↔model gap recorded in `IMPLEMENTATION.md` divergence 3. Scope 
 are entered rarely, so the payoff is model-alignment first, cycles second — reasonable to defer.
 
 **S2.** This is a genuine forked-structure smell but with a YAGNI caveat: the scalar type set is
-frozen for M1 (spec-frozen `flow_ir::Value`), so the "third caller / future width" trigger for
+frozen for M1 (spec-frozen `mapal_ir::Value`), so the "third caller / future width" trigger for
 abstraction has not actually arrived. Two ~10-line match functions are *not* worth a macro today
 by FRAMEWORK §5's own "three similar lines beat a premature abstraction." Flag it, don't apply it
 — revisit only if a numeric width is ever added (then the macro earns its place immediately).
@@ -33,7 +33,7 @@ by FRAMEWORK §5's own "three similar lines beat a premature abstraction." Flag 
   two error shapes). It is not: `Result<RValue, Abort>` is `Done(RValue) ⊕ Abort` with the
   `Done` payload in the `Ok` slot; the separation buys straight-line `?`-propagation through the
   per-op happy path. **Ledgered** at DESIGN §1 / IN2. Stays split.
-- **`RValue` mirrors `flow_ir::Ty`** (scalar/tuple/struct/array) but is a genuinely richer object
+- **`RValue` mirrors `mapal_ir::Ty`** (scalar/tuple/struct/array) but is a genuinely richer object
   (adds `Token`, `Unit`, and holds *values* not *types*). Not a consolidation candidate — the
   surface-`Ty`/IR-`Ty` and value/type distinctions are already adjudicated in
   `docs/architecture/categorical-model.md` §7.2. Stays.

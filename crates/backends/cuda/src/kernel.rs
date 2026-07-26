@@ -35,14 +35,14 @@
 //! addressable from device code, so the flag pointer is threaded
 //! explicitly). In-kernel and in-twin guards do `*trap = kind + 1; return …;`
 //! — the flag is cudaMemset-zeroed (0 = quiescent), so it stores the
-//! flow-rt kind **plus one** (div_zero ⇒ `1u`, index_oob ⇒ `2u`); the host
-//! readback decodes with `flow_trap(kind - 1)` (module.rs). A bare-kind
+//! mapal-rt kind **plus one** (div_zero ⇒ `1u`, index_oob ⇒ `2u`); the host
+//! readback decodes with `mapal_trap(kind - 1)` (module.rs). A bare-kind
 //! store would collide: div_zero's 0 would read back as "no trap". After a
 //! device-side `Call` to a capable fn the caller emits `if (*trap) return
 //! …;` to unwind to the launching kernel (the oracle's first-trap-wins
 //! order, §3). `__host__ __device__` fns take the same trailing parameter
 //! when capable — host callers pass the host global `d_trap`, unused on the
-//! host pass because host guards call `flow_trap` directly.
+//! host pass because host guards call `mapal_trap` directly.
 //!
 //! **The width rule (§3, llvm `func.rs:589–619` ported).** An `Index`/`Update`
 //! index operand is extended to `int64_t` *per its `Ty`* — in C++ the
@@ -61,7 +61,7 @@
 //! that constant as a `long long n` launch argument and use the same BC3 grid.
 //! Top-level `Index` and `Fold` launch `<<<1, 1>>>` (BC4's single thread).
 
-use flow_ir::{
+use mapal_ir::{
     BoundsProof, CategoryIr, EmissionClass, EmissionPlan, FuncId, FuncKind, Morphism, MorphismId,
     ObjectId, ObjectKind, Operation, SourceLoc, Ty, Value,
 };
@@ -204,7 +204,7 @@ impl Qualifiers {
         for (f, fd) in ir.funcs() {
             let in_ty = &ir.object(fd.input).expect("input resolves").ty;
             let out_ty = &ir.object(fd.output).expect("output resolves").ty;
-            let token = flow_ir::ty_contains_token(in_ty) || flow_ir::ty_contains_token(out_ty);
+            let token = mapal_ir::ty_contains_token(in_ty) || mapal_ir::ty_contains_token(out_ty);
             let qual = if token || !body_reachable.get(f).copied().unwrap_or(false) {
                 // (i) token-bearing ⇒ host-only; (iii) token-free ∧ NOT
                 // body-reachable ⇒ host-only (regardless of bulk ops — no
@@ -2968,14 +2968,14 @@ fn int_min(ct: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flow_ir::{Dest, IrBuilder};
+    use mapal_ir::{Dest, IrBuilder};
 
     const L: SourceLoc = SourceLoc { start: 0, end: 0 };
 
     fn lower_src(src: &str) -> CategoryIr {
-        let po = flow_syntax::parse(src);
+        let po = mapal_syntax::parse(src);
         assert!(po.diagnostics.is_empty(), "parse: {:?}", po.diagnostics);
-        flow_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
+        mapal_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
     }
 
     fn emit_src(src: &str) -> String {
@@ -2984,7 +2984,7 @@ mod tests {
 
     fn build_example(name: &str) -> CategoryIr {
         let path = format!(
-            "{}/../../../examples/{name}.flow",
+            "{}/../../../examples/{name}.mapal",
             env!("CARGO_MANIFEST_DIR")
         );
         let src = std::fs::read_to_string(&path).unwrap();
@@ -2999,7 +2999,7 @@ mod tests {
             fnames.insert(
                 id,
                 if id == entry {
-                    "flow_main".to_string()
+                    "mapal_main".to_string()
                 } else {
                     format!("fn{ord}")
                 },
@@ -3289,7 +3289,7 @@ mod tests {
         // no kernel — before #17/#12 it was the duplicate k1_0).
         assert_eq!(cu.matches("__global__ void").count(), 2, "{cu}");
         // Launch count unchanged: one map launch, one index launch.
-        let main_start = cu.find("static void flow_main() {").unwrap();
+        let main_start = cu.find("static void mapal_main() {").unwrap();
         let main_def = &cu[main_start..];
         assert_eq!(main_def.matches("<<<").count(), 2, "{main_def}");
     }
@@ -3775,11 +3775,11 @@ fn main() {
         let cu = emit_src(src);
         let twin = twin_slice(&cu);
         // The device bounds guard: extend to int64_t, two-sided compare,
-        // set the flag + return (§3) — never flow_trap on device.
+        // set the flag + return (§3) — never mapal_trap on device.
         assert!(twin.contains("int64_t t"), "{twin}");
         assert!(twin.contains("< 0 ||"), "{twin}");
         assert!(twin.contains("*trap = 2u; return int32_t{};"), "{twin}");
-        assert!(!twin.contains("flow_trap"), "{twin}");
+        assert!(!twin.contains("mapal_trap"), "{twin}");
     }
 
     #[test]
@@ -3838,8 +3838,8 @@ fn main() {
     fn trap_flag_stores_encode_kind_plus_one() {
         // §3's flag encoding: the flag is cudaMemset-zeroed (0 = quiescent),
         // so a guard stores kind + 1 — div_zero ⇒ 1u, index_oob ⇒ 2u — and
-        // the host readback decodes with flow_trap(kind - 1) back to the
-        // flow-rt kinds 0/1. A bare-kind store would collide: div_zero's 0
+        // the host readback decodes with mapal_trap(kind - 1) back to the
+        // mapal-rt kinds 0/1. A bare-kind store would collide: div_zero's 0
         // would read back as "no trap" (the R1 class cross).
         let src = "fn main() {\n    [10, 0] -> map { x -> [100 / x, x][x] } -> rs;\n    \
                    rs[0] -> println;\n}\n";
@@ -3855,7 +3855,7 @@ fn main() {
             "{twin}"
         );
         // The host decode maps 1→0 (div_zero) and 2→1 (index_oob).
-        assert!(cu.contains("flow_trap(kind - 1);"), "{cu}");
+        assert!(cu.contains("mapal_trap(kind - 1);"), "{cu}");
     }
 
     #[test]
@@ -3869,7 +3869,7 @@ fn main() {
         assert!(cu.contains("#ifdef __CUDA_ARCH__"), "{cu}");
         assert!(cu.contains("*d_trap = 1u; return int32_t{};"), "{cu}");
         assert!(cu.contains("#else"), "{cu}");
-        assert!(cu.contains("flow_trap(0);"), "{cu}");
+        assert!(cu.contains("mapal_trap(0);"), "{cu}");
         assert!(cu.contains("#endif"), "{cu}");
     }
 
@@ -3916,8 +3916,8 @@ fn main() {
         let cu = crate::emit(&ir).unwrap();
         let dev = cu.find("__device__").expect("device fn");
         let kern = cu.find("__global__").expect("kernel");
-        let proto = cu.find("static void flow_main();").expect("host proto");
-        let def = cu.find("static void flow_main() {").expect("host def");
+        let proto = cu.find("static void mapal_main();").expect("host proto");
+        let def = cu.find("static void mapal_main() {").expect("host def");
         assert!(dev < kern, "device fns before kernels");
         assert!(kern < proto, "kernels before host prototypes");
         assert!(proto < def, "prototypes before definitions");
@@ -3960,7 +3960,7 @@ fn main() {
         // WP-C (R-ONENAME): the HostDevice body calls sq with the param
         // read in place — no extraction local.
         assert!(cu.contains("= fn0(in);"), "{cu}");
-        let main_start = cu.find("static void flow_main() {").unwrap();
+        let main_start = cu.find("static void mapal_main() {").unwrap();
         let host = &cu[main_start..];
         assert!(host.contains("fn0(3)"), "{host}");
         // Exactly one definition of sq (no twin).

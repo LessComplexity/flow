@@ -1,0 +1,43 @@
+// fir.mapal
+//
+// Demonstrates: fixed-size arrays (`[f32; 8]`, `[f32; 4]`), bounds-checked array
+//   indexing, and a labeled `loop` carrying an index and a `mut` accumulator
+//   (trace construction, category-ir.md §4.5; E1 fueled semantics). Computes one
+//   FIR output sample: the dot product of `coeffs` with the LAST 4 samples of
+//   `signal` (a 4-tap filter applied at the end of the window).
+//
+//     out = sum over k in 0..4 of coeffs[k] * signal[4 + k]
+//
+// Values chosen so the result is EXACT in binary f32:
+//   coeffs       = [0.5, 0.25, 0.125, 0.0625]   (all powers of two)
+//   signal[4..8] = [5.0, 6.0, 7.0, 8.0]
+//   out = 0.5*5 + 0.25*6 + 0.125*7 + 0.0625*8
+//       = 2.5  + 1.5     + 0.875   + 0.5
+//       = 5.375
+//
+// Expected output (interpreted):
+//   5.375
+
+fn fir4(signal: [f32; 8], coeffs: [f32; 4]) -> f32 {
+    mut k: i32     <- 0;
+    mut acc: f32   <- 0.0;
+
+    loop {
+        (k < 4) -> {
+            -true-> {
+                acc + coeffs[k] * signal[4 + k] -> acc;
+                k + 1 -> k;
+                -> loop;
+            }
+            -false-> acc -> ret;
+        }
+    }
+}
+
+fn main() {
+    [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0] -> signal: [f32; 8];
+    [0.5, 0.25, 0.125, 0.0625]               -> coeffs: [f32; 4];
+
+    (signal, coeffs) -> fir4 -> sample;
+    sample -> println;
+}

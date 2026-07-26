@@ -29,7 +29,7 @@ ADR-NNNN-short-slug.md              e.g. ADR-0021-array-update.md
 ADR-NNNN-short-slug-candidate.md    while the decision is still open
 ```
 
-- `NNNN` is zero-padded, sequential, and never reused. **The next free number is 0037.**
+- `NNNN` is zero-padded, sequential, and never reused. **The next free number is 0038.**
 - A new proposal takes the next number with `Status: candidate — NOT decided · number
   provisional`. A candidate **binds nothing and changes nothing**, which is what makes it cheap
   to write and cheap to reject.
@@ -53,7 +53,7 @@ ADR-NNNN-short-slug-candidate.md    while the decision is still open
 
 | # | Title | Date | Status |
 | --- | --- | --- | --- |
-| [0001](ADR-0001-flow-core-scope.md) | Flow-Core (v0.3 subset) is the frozen implementation scope through M5 | 2026-06-11 | accepted |
+| [0001](ADR-0001-flow-core-scope.md) | Mapal-Core (v0.3 subset) is the frozen implementation scope through M5 | 2026-06-11 | accepted |
 | [0002](ADR-0002-loops-partiality-trace.md) | Loops are traced in the partiality Kleisli category, not the total core | 2026-06-11 | accepted — encodes erratum **E1** |
 | [0003](ADR-0003-parallel-effects-kpn.md) | Effects forbidden in parallel fanout; channels use Kahn process-network semantics | 2026-06-11 | accepted — **E2** |
 | [0004](ADR-0004-memory-guarantee-scope.md) | The zero-annotation memory guarantee is scoped to the first-order non-cyclic core | 2026-06-11 | accepted — **E3** |
@@ -66,11 +66,11 @@ ADR-NNNN-short-slug-candidate.md    while the decision is still open
 | [0011](ADR-0011-loop-labels-ident-brace.md) | Loop labels are the keyword `loop` only; statement-initial `Ident {` resolved by scan | 2026-06-11 | accepted — **amended by 0012** |
 | [0012](ADR-0012-labeled-blocks-sigil.md) | Labeled blocks `:label { … }`, jumps `-> :label;`, enclosing targets only | 2026-06-12 | accepted |
 | [0013](ADR-0013-ir-realization.md) | IR realization — all dataflow is edges; Core op set; loops as inline cycles; IO as a linear token | 2026-06-12 | accepted |
-| [0014](ADR-0014-categorical-architecture-model.md) | `FRAMEWORK.md` is the Level-B model layer for compiler-internal design, distinct from Flow-Cat | 2026-06-13 | accepted |
+| [0014](ADR-0014-categorical-architecture-model.md) | `FRAMEWORK.md` is the Level-B model layer for compiler-internal design, distinct from Mapal-Cat | 2026-06-13 | accepted |
 | [0015](ADR-0015-print-println-split.md) | Split the print effect — `print` raw, `println` appends a newline | 2026-06-14 | accepted |
 | [0016](ADR-0016-loop-guard-first-evaluation.md) | Loop branch evaluation is guard-first — no speculative continue-branch on the exit step | 2026-06-15 | accepted — refines E1 |
 | [0017](ADR-0017-category-architect-docs-tree.md) | The category-architect docs tree, and immutable session logs | 2026-07-16 | accepted |
-| [0018](ADR-0018-zip-enumerate-core.md) | `zip` and `enumerate` join Flow-Core as collection primitives | 2026-07-16 | accepted |
+| [0018](ADR-0018-zip-enumerate-core.md) | `zip` and `enumerate` join Mapal-Core as collection primitives | 2026-07-16 | accepted |
 | [0019](ADR-0019-seq-statement-block.md) | `seq` is a statement block, not a fanout kind | 2026-07-16 | accepted |
 | [0020](ADR-0020-backend-emission-contract.md) | Backend emission contract — one convention, one runtime, oracle-parity semantics | 2026-07-17 | accepted |
 | [0021](ADR-0021-array-update.md) | Array element update — pure `Update` op + `c[i] <- x` rebind sugar | 2026-07-18 | accepted |
@@ -89,6 +89,7 @@ ADR-NNNN-short-slug-candidate.md    while the decision is still open
 | [0034](ADR-0034-autotuned-placement-constants-candidate.md) | Placement constants are searched, not set — an autotuner over `tile_plan` | 2026-07-25 | **candidate** |
 | [0035](ADR-0035-co-execution-multi-backend-candidate.md) | Co-execution — one source, several backends at once; `Trm` as cross-backend transmission | 2026-07-25 | **candidate**, unscheduled |
 | [0036](ADR-0036-scan-core-op-candidate.md) | `scan` — the loop/fold middle class as a first-class Core op | 2026-07-25 | **candidate** |
+| [0037](ADR-0037-project-name-mapal.md) | The language is named **Mapal**; source files are `.mapal` | 2026-07-26 | accepted |
 
 Errata **E1–E5** predate the ADR numbering; ADR-0002 … ADR-0006 encode them one-for-one. The
 historical ledger — including which errata were patched back into the spec text — is the
@@ -106,8 +107,8 @@ survives. See [`CONTRIBUTING.md`](../../CONTRIBUTING.md).
 
 ## Writing one
 
-1. Take the next free number (**0037**), name the file `ADR-0037-<slug>-candidate.md`.
-2. Open with `# ADR-0037: <title>` and `Date: YYYY-MM-DD · Status: candidate — NOT decided ·
+1. Take the next free number (**0038**), name the file `ADR-0038-<slug>-candidate.md`.
+2. Open with `# ADR-0038: <title>` and `Date: YYYY-MM-DD · Status: candidate — NOT decided ·
    number provisional · changes nothing until accepted`.
 3. **Context** — what forces the decision, argued from repo evidence (`file:symbol`, a measured
    wall, a rejection you hit), not from preference.

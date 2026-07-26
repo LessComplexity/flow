@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Generate matmul{N}.flow — the flattened loop-driven matmul (the only
+"""Generate matmul{N}.mapal — the flattened loop-driven matmul (the only
 Core-expressible shape today: L1108 bodies don't close over arrays, so the
-one-kernel map+fold form is out). Pattern: crates/flow-interp/tests/update_pipeline.rs."""
+one-kernel map+fold form is out). Pattern: crates/mapal-interp/tests/update_pipeline.rs."""
 import sys
 
 def gen(n: int) -> str:
@@ -51,7 +51,7 @@ fn main() {{
 
 if __name__ == "__main__":
     n = int(sys.argv[1])
-    out = sys.argv[2] if len(sys.argv) > 2 else f"matmul{n}.flow"
+    out = sys.argv[2] if len(sys.argv) > 2 else f"matmul{n}.mapal"
     with open(out, "w") as f:
         f.write(gen(n))
     print(f"wrote {out} (N={n}, NN={n*n})")

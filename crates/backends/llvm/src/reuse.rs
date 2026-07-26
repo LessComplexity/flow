@@ -10,7 +10,7 @@
 //! ```
 //!
 //! so it is arithmetic over `TileRead`, **not** new graph analysis — ADR-0032
-//! category (b), emitter-local cashing with zero flow-ir change. The point of
+//! category (b), emitter-local cashing with zero mapal-ir change. The point of
 //! writing it this way is that `ci == 0` (matmul's `b`) and `ci == cq` (conv's
 //! `b`) stop being two different rungs: they are the same predicate at `q = 0`
 //! and `q = 1`, which is what makes blocking generic per algorithm rather than
@@ -20,7 +20,7 @@
 //! register file — a machine fact, and [`crate::profile::TargetProfile::tile_i`]
 //! owns it. Geometry here, constants there.
 
-use flow_ir::{TileRead, TileSite};
+use mapal_ir::{TileRead, TileSite};
 
 /// How a read's addresses move when the output row index advances by one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,7 +93,7 @@ pub(crate) fn distinct_runs(site: &TileSite, read: &TileRead, ti: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flow_ir::{TileKSplit, Ty, Value};
+    use mapal_ir::{TileKSplit, Ty, Value};
 
     fn read(ci: u64, ck: u64, clane: u64, ksplit: Option<TileKSplit>) -> TileRead {
         TileRead {
@@ -120,7 +120,7 @@ mod tests {
         }
     }
 
-    /// The recorded matmul oracle (`flow-ir/tests/algos.rs`): `b.ci == 0` is
+    /// The recorded matmul oracle (`mapal-ir/tests/algos.rs`): `b.ci == 0` is
     /// row-invariance — the fact the S26 gate already cashes — and `a`'s row
     /// stride shares nothing.
     #[test]

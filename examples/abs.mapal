@@ -1,0 +1,22 @@
+// abs.mapal
+//
+// Demonstrates: a guard block (`-true-> / -false->`) with PURE branches, which
+//   lower to a Phi morphism (category-ir.md §4.4 / CHANGES §1.5). The result of
+//   the guard flows into `ret` as a statement (E4: a flow is a statement, not a
+//   value-producing expression). `main` applies `abs` to a negative constant and
+//   prints the result; `print` sits in sequential context (E2).
+//
+// Expected output (interpreted):
+//   7
+
+fn abs(x: i32) -> i32 {
+    (x > 0) -> {
+        -true->  x;
+        -false-> x * -1;
+    } -> ret;
+}
+
+fn main() {
+    -7 -> abs -> result;
+    result -> println;
+}

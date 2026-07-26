@@ -1,21 +1,21 @@
 # Component: ir — DESIGN
 
-Written: 2026-06-12 · Session 04 · Status of this doc: increment 1 (P2) — authoritative for `crates/flow-ir`
+Written: 2026-06-12 · Session 04 · Status of this doc: increment 1 (P2) — authoritative for `crates/mapal-ir`
 Spec authority: ADR-0013 > category-ir.md §3/§5 (+§2, §4 worked lowerings, §9.5, §11) > architecture.md §3. CHANGES §1 is the rationale; E1 (ADR-0002) and E2 (ADR-0003) constrain loops and effects.
 
 ## Categorical model (Dat + Trn)
 
-This crate is modeled as a FRAMEWORK component (FRAMEWORK §0–§4). **Two-level firewall, stated once so it is never re-litigated:** the object language — Flow programs *as* morphisms of Flow-Cat — is **Level A**, already modeled in `docs/spec/category-ir.md`; this section does **not** restate it. What is modeled here is **Level B: the compiler itself** — `flow-ir`'s own internal Rust data types and the passes over them. The name collision is deliberate and is the errata-E5 tax: `CategoryIr`/`Object`/`Morphism`/`Operation` are Level-B *Rust structs the compiler holds in RAM* (objects of the compiler's `Dat`), **not** arrows of Flow-Cat. Never conflate the two. One-line pointer to the cross-component picture: see `docs/architecture/categorical-model.md`.
+This crate is modeled as a FRAMEWORK component (FRAMEWORK §0–§4). **Two-level firewall, stated once so it is never re-litigated:** the object language — Mapal programs *as* morphisms of Mapal-Cat — is **Level A**, already modeled in `docs/spec/category-ir.md`; this section does **not** restate it. What is modeled here is **Level B: the compiler itself** — `mapal-ir`'s own internal Rust data types and the passes over them. The name collision is deliberate and is the errata-E5 tax: `CategoryIr`/`Object`/`Morphism`/`Operation` are Level-B *Rust structs the compiler holds in RAM* (objects of the compiler's `Dat`), **not** arrows of Mapal-Cat. Never conflate the two. One-line pointer to the cross-component picture: see `docs/architecture/categorical-model.md`.
 
-**Scoping truth (FRAMEWORK §7.1 degenerate case).** The compiler is a single in-process pipe-and-filter pipeline, so the PHYSICAL pair `Loc`/`Trm` is **degenerate** for `flow-ir`: every type lives in one process, every pass is same-location, no transmission crosses a boundary. `loc.rs::SourceLoc` is a byte-range *datum*, **not** a FRAMEWORK `Loc` execution site (D8). The LOGICAL pair `Dat`/`Trn` is therefore applied richly and `Loc`/`Trm` are not invoked until the downstream backend/runtime seam (CPU/GPU/FPGA; host↔device `cudaMemcpy`), which lives in other crates. So the complete model of this crate is `Dat` (the data category below) + `Alg` (its passes, §§ below).
+**Scoping truth (FRAMEWORK §7.1 degenerate case).** The compiler is a single in-process pipe-and-filter pipeline, so the PHYSICAL pair `Loc`/`Trm` is **degenerate** for `mapal-ir`: every type lives in one process, every pass is same-location, no transmission crosses a boundary. `loc.rs::SourceLoc` is a byte-range *datum*, **not** a FRAMEWORK `Loc` execution site (D8). The LOGICAL pair `Dat`/`Trn` is therefore applied richly and `Loc`/`Trm` are not invoked until the downstream backend/runtime seam (CPU/GPU/FPGA; host↔device `cudaMemcpy`), which lives in other crates. So the complete model of this crate is `Dat` (the data category below) + `Alg` (its passes, §§ below).
 
 ### Why (one paragraph)
 
-Modeling `flow-ir` as a category buys three concrete things. (1) *Optionality is a partial morphism*: `value? : Object → Value` is defined exactly on `kind == Constant` (I7) — the nullable field IS the partiality, with the `kind` enum as its discriminator (FRAMEWORK §3 step 5). (2) *Deduce, don't store*: loop regions, topological order, and SCCs are **deduced morphisms** out of `CategoryIr`, never stored fields — so there is no second copy to drift (D3/D5; FRAMEWORK §5 "Deduce, don't store"). (3) *Consolidation*: each k-ary operation is one categorical product (`k` `Pair` edges into one product `Object`, then one op-edge), so I1 (one source, one target) is the *consequence* of representing arity as a product object, not a restriction bolted on top — there is no wide-edge type to parallel.
+Modeling `mapal-ir` as a category buys three concrete things. (1) *Optionality is a partial morphism*: `value? : Object → Value` is defined exactly on `kind == Constant` (I7) — the nullable field IS the partiality, with the `kind` enum as its discriminator (FRAMEWORK §3 step 5). (2) *Deduce, don't store*: loop regions, topological order, and SCCs are **deduced morphisms** out of `CategoryIr`, never stored fields — so there is no second copy to drift (D3/D5; FRAMEWORK §5 "Deduce, don't store"). (3) *Consolidation*: each k-ary operation is one categorical product (`k` `Pair` edges into one product `Object`, then one op-edge), so I1 (one source, one target) is the *consequence* of representing arity as a product object, not a restriction bolted on top — there is no wide-edge type to parallel.
 
 ### The Dat category (objects)
 
-The internal data category `Dat` of the compiler. Objects are the Rust types of `crates/flow-ir/src/{graph,ty,loc}.rs`; primitive sets follow FRAMEWORK notation (`𝕊` string, `𝔹` bool, `ℕ` natural, `u8`/`u32`/`u64`/`i32`/… the machine scalars). The central object is `CategoryIr` — one sealed dataflow graph — built out of `Object`/`Morphism`/`FuncDef` keyed by the opaque id atoms `ObjectId`/`MorphismId`/`FuncId`.
+The internal data category `Dat` of the compiler. Objects are the Rust types of `crates/mapal-ir/src/{graph,ty,loc}.rs`; primitive sets follow FRAMEWORK notation (`𝕊` string, `𝔹` bool, `ℕ` natural, `u8`/`u32`/`u64`/`i32`/… the machine scalars). The central object is `CategoryIr` — one sealed dataflow graph — built out of `Object`/`Morphism`/`FuncDef` keyed by the opaque id atoms `ObjectId`/`MorphismId`/`FuncId`.
 
 ```mermaid
 graph TB
@@ -161,7 +161,7 @@ All diagrams in this and sibling docs follow the project Mermaid rules — the s
 
 In: the graph data structures (§3–§5 below), the invariant-enforcing builder (§10–§11), the independent validator (§12), iterative Tarjan SCC + topological order (§13), the deterministic Mermaid dump + lint (§14), tests (§16), a small criterion bench.
 
-Out (deliberately): JSON serialization (category-ir §5.3 — deferred until a consumer exists; note the `rhs_const` example there is LC-4-patched); any mutation/rewrite API (P4 will design removal/replacement with its own invariant story — v1 graphs are **append-only then sealed**); bifunctor-image tagging for §9.5 (deferred — recomputable from adjacency; revisit in rewrite's design); effect *legality* checking (print-only-in-seq is flow-check's job; the IR enforces only the structural token rules of §8); lowering itself (flow-lower).
+Out (deliberately): JSON serialization (category-ir §5.3 — deferred until a consumer exists; note the `rhs_const` example there is LC-4-patched); any mutation/rewrite API (P4 will design removal/replacement with its own invariant story — v1 graphs are **append-only then sealed**); bifunctor-image tagging for §9.5 (deferred — recomputable from adjacency; revisit in rewrite's design); effect *legality* checking (print-only-in-seq is mapal-check's job; the IR enforces only the structural token rules of §8); lowering itself (mapal-lower).
 
 The IR is the project's central data structure; ten components depend on it. Where the spec is internally inconsistent, ADR-0013 + ERRATA LC-4 record the resolution; this document only restates those decisions and adds the concrete Rust realization.
 
@@ -198,7 +198,7 @@ pub struct CategoryIr {
 - **No `HashMap` anywhere in the graph** (spec §5.1 says HashMap; we deviate for determinism — D2). SlotMap/SecondaryMap iterate in key order; v1 graphs are append-only, so iteration order = insertion order = deterministic. Mermaid dumps, topo orders, and snapshots depend on this.
 - Edge Vecs are in insertion order (stable tie-break for topo).
 - Fields are `pub(crate)`: integration tests and downstream crates construct graphs **only** through the builder; in-crate unit tests may corrupt graphs to negative-test `validate()`.
-- `SourceLoc { pub start: u32, pub end: u32 }` is defined **in this crate**, field-identical to `flow_syntax::SourceLoc` (half-open byte range). flow-ir keeps zero dependencies on flow-syntax (per ir/STATUS.md); flow-lower converts trivially.
+- `SourceLoc { pub start: u32, pub end: u32 }` is defined **in this crate**, field-identical to `mapal_syntax::SourceLoc` (half-open byte range). mapal-ir keeps zero dependencies on mapal-syntax (per ir/STATUS.md); mapal-lower converts trivially.
 
 Read API (all `&self`, no `Display` impls anywhere — C3 convention): `object(id)`, `morphism(id)`, `objects()`, `morphisms()`, `in_edges(id) -> &[MorphismId]`, `out_edges(id) -> &[MorphismId]`, `owner(id) -> FuncId`, `func(id)`, `funcs()`, `entry()`, plus §13's `sccs(f)` / `topo_order(f)` / `loop_structure(f)` / `loop_plan(f, merge)` and §14's `to_mermaid()`.
 
@@ -228,7 +228,7 @@ pub enum Value { I32(i32), I64(i64), U8(u8), F32(f32), F64(f64), Bool(bool), Str
 
 `Value::ty(&self) -> Ty` is total. Float formatting stays unpinned (interp's DESIGN decides; dumps render via `{:?}`).
 
-**I10 (J1 transplant):** `Ty` is recursive; every Ty entering the builder is depth-checked (`MAX_TY_DEPTH = 64`) with an **iterative** walk. flow-syntax's only blocker-grade defect was unguarded type recursion; this crate does not repeat it. No recursive algorithm in this crate may run without either a depth guard or an explicit-stack formulation (see §13).
+**I10 (J1 transplant):** `Ty` is recursive; every Ty entering the builder is depth-checked (`MAX_TY_DEPTH = 64`) with an **iterative** walk. mapal-syntax's only blocker-grade defect was unguarded type recursion; this crate does not repeat it. No recursive algorithm in this crate may run without either a depth guard or an explicit-stack formulation (see §13).
 
 ## 4. Object
 
@@ -382,7 +382,7 @@ t0 : IoToken (Parameter of an effectful fn, e.g. main)
 - **Entry/effect signature synthesis is pinned law, not policy** (reviewers F1/L3-1): a function whose body contains `Print` (or a `Call` to an effectful function) is *effectful*; lowering **must** declare it with token-threaded tys — surface `A → B` becomes `(IoToken × A) → (IoToken × B)`, degenerating to `IoToken → IoToken` when `A`/`B` is absent/Unit (no Unit components are manufactured). In particular surface `fn main()` declares as `main : IoToken → IoToken`; `FnBuilder::input()` is the seed token, and the final token is written to Return (`output(t_last, None)` or `Dest::Ret`). The mirror obligation is recorded in lower/DESIGN §0.1.
 - **Tokens through loops (token-in ⇒ token-out):** a `print` inside a loop makes `IoToken` a component of `U`. When `ty_contains_token(U)`, **every** `LoopExit` of that merge must have token-bearing exit payload `B` (the token escapes; it may not die in the loop — I4b would be violated at the merge). The escaped token threads to Return per the synthesis rule. Worked countdown-shaped example (`print` in a Unit-returning loop): `U = (i32, IoToken)`; exit payload `B = IoToken` (the token view `Proj` of the merge state); golden-tested per §16.
 - **`TimeMs` adds no token machinery (S29, plan-time-builtin).** I4/I4b/I5 and the loop token-in ⇒ token-out rule are all keyed on the `ty_contains_token` predicate, and a `(IoToken, f64)` target is token-bearing like any other product, so a clock read threads exactly as a print does: `Proj 0` moves the token on, `Proj 1` reads the milliseconds (a token-free target, hence unrestricted, per I4's "reading values never consumes the world"). The only new thing about it is *what else* it produces: `TimeMs` is Core's first effect yielding a **value** beside the token, and that value must not be read off the host spine — see §13's `path_plan` host-cone rule.
-- **§4.6 (effectful branches via honest coproducts) is deliberately unrepresentable in v1**: `Inject`/`Copair`/`Distribute` are Core+1, and HANDOFF §4.1 admits pure branches only. An effectful guard arm is a flow-check rejection upstream, not an IR shape.
+- **§4.6 (effectful branches via honest coproducts) is deliberately unrepresentable in v1**: `Inject`/`Copair`/`Distribute` are Core+1, and HANDOFF §4.1 admits pure branches only. An effectful guard arm is a mapal-check rejection upstream, not an IR shape.
 
 ## 9. Invariants ledger (what "ill-formed is unconstructible" means)
 
@@ -407,7 +407,7 @@ t0 : IoToken (Parameter of an effectful fn, e.g. main)
 `IrBuilder::seal` is the only producer of `CategoryIr`; it runs the global checks (I5 SCC placement, I4b token sinks, I6 acyclicity + `StructNameConflict` (all `Struct` tys sharing a name in one graph must have identical fields — else `expected Pixel, found Pixel` diagnostics), I-RET completeness, unclosed loops, undefined bodies) and returns `Result<CategoryIr, IrError>`. After seal the graph is immutable.
 
 Two scope notes (recorded so the headline claim is read correctly):
-- **Well-formedness ≠ unique meaning.** A validate-clean graph may still have, e.g., two unconditional full-value Return writers; *exclusivity at runtime* is a flow-check/interp obligation (§17). "No ill-formed graph constructible" is exactly the I-ledger, no more.
+- **Well-formedness ≠ unique meaning.** A validate-clean graph may still have, e.g., two unconditional full-value Return writers; *exclusivity at runtime* is a mapal-check/interp obligation (§17). "No ill-formed graph constructible" is exactly the I-ledger, no more.
 - **`ty_contains_token(&Ty) -> bool`** is one shared, depth-guarded, iterative predicate used by every token rule (I4, I4b, Phi, Map/Fold bodies, loop `U`) — a top-level-only check would miss `((IoToken, x), y)`.
 
 ## 10. Builder API
@@ -468,10 +468,10 @@ Notes:
 - **No builder call can target an *existing* object except** the Return object (via `Dest::Ret`/`output`) and the LoopMerge (via `loop_back`); every other call mints its target. This is the mechanism behind I3(a) — Parameter and Constant objects are in-edge-free *by construction*, not by convention.
 - `Dest::Ret { slot: None }` makes the primitive target the Return object directly (ty must equal output ty); `slot: Some(k)` is legal only when the output ty is a product (Tuple/Struct/Array — else `RetNotProduct`), takes `arity` from that ty, checks the component ty at `k`, and creates a fresh object plus a `Pair{k, arity}` edge into Return. Same rules inside Map/Fold body builders (bodies have their own Return).
 - **Canonical ret-write** (one normal form, reviewer L3-4): when the final value is produced by a builder primitive, lower targets Return directly with `Dest::Ret`; `output()`/`Operation::Output` is reserved for the literal bare `x -> ret` / `x -> ret.k` of a *pre-existing* object (D6's purpose). Emitting `Fresh` + `output()` where `Dest::Ret` suffices is non-canonical; golden tests pin the canonical shapes.
-- All ids are bare slotmap keys, which are unique only **within** one builder: two `IrBuilder` instances re-issue identical keys, so an id from another instance can silently resolve to a colliding local entity (impl-review SND-2 demonstrated a foreign `FuncId` sealing and validating clean against the wrong callee). **Mixing builders is undefined behavior with no defense** — pinned by test `cross_builder_funcid_mixing_is_unsupported_ub`, not guarded by code. flow-lower uses exactly one builder. If a second constructing client ever appears, the fix is an ADR wrapping ids with a process-unique builder nonce (rejecting foreign ids as `UnknownObject`/`UnknownFunction`); do not rely on key versioning — that defense was claimed here once and proven false.
+- All ids are bare slotmap keys, which are unique only **within** one builder: two `IrBuilder` instances re-issue identical keys, so an id from another instance can silently resolve to a colliding local entity (impl-review SND-2 demonstrated a foreign `FuncId` sealing and validating clean against the wrong callee). **Mixing builders is undefined behavior with no defense** — pinned by test `cross_builder_funcid_mixing_is_unsupported_ub`, not guarded by code. mapal-lower uses exactly one builder. If a second constructing client ever appears, the fix is an ADR wrapping ids with a process-unique builder nonce (rejecting foreign ids as `UnknownObject`/`UnknownFunction`); do not rely on key versioning — that defense was claimed here once and proven false.
 - Dropping a `LoopHandle` without `end_loop`, or dropping `FnBuilder` without `finish`, leaves the *builder* (not any sealed graph) inconsistent — `seal` re-checks everything, so no ill-formed `CategoryIr` can result; `finish`/`seal` report `OpenLoop`/`UnfinishedFunction` precisely.
 
-### 10.1 IrError (renderer-free, like flow-syntax diag values — no Display)
+### 10.1 IrError (renderer-free, like mapal-syntax diag values — no Display)
 
 `#[derive(Clone, Debug, PartialEq)]` enum; variants are the rejection matrix rows (one unit test each, §16): `DuplicateName`, `UnknownFunction`, `UnknownObject`, `WrongBuilder` (object from another fn), `AlreadyBuilt`, `UnfinishedFunction`, `NotUnary`/`NotBinary`, `TypeMismatch { expected: Ty, found: Ty, loc }`, `NonCoreType`, `TyTooDeep`, `NotAProduct`, `SlotOutOfRange`, `ArityMismatch`, `EmptyProduct`, `SingletonTuple`, `ValueTyMismatch`, `TokenNotLinear`, `TokenDropped` (I4b), `TokenInPhi`, `TokenInBody`, `TokenNotEscaping` (loop `U` token without token-bearing exit), `StrOutsidePrint`, `StructNameConflict`, `CallToBody`, `BodyKindMismatch`, `RecursiveCall { cycle: Vec<FuncId> }`, `OpenLoop`, `LoopWithoutBack`, `LoopWithoutExit`, `LoopBackOutsideScc`, `RetMixedWriters`, `RetSlotConflict`, `RetSlotMissing`, `RetNotProduct`, `RetTypeMismatch`, `NoEntry`/`EntryNotNamed`.
 
@@ -535,21 +535,21 @@ JSON serialization (§5.3) is deferred; when it lands it must serialize the LC-4
 ## 15. Module layout
 
 ```
-crates/flow-ir/src/
-  lib.rs        // doc header citing this DESIGN + ADR-0013; private mods + curated pub use (flow-syntax style)
-  loc.rs        // SourceLoc (mirror of flow-syntax's, documented as such)
+crates/mapal-ir/src/
+  lib.rs        // doc header citing this DESIGN + ADR-0013; private mods + curated pub use (mapal-syntax style)
+  loc.rs        // SourceLoc (mirror of mapal-syntax's, documented as such)
   ty.rs         // Ty, Value, depth check, ty_label
   graph.rs      // ids, Object, Morphism, Operation, FuncDef, CategoryIr + read API
   builder.rs    // IrBuilder, FnBuilder, LoopHandle, Dest, IrError (+ src/builder/tests.rs allowed)
   validate.rs   // validate(), IrViolation (independent of builder.rs internals)
   algo.rs       // iterative Tarjan, topo_order
   mermaid.rs    // to_mermaid, lint_mermaid
-crates/flow-ir/tests/
+crates/mapal-ir/tests/
   builder_rejections.rs   // the IrError matrix, one or more tests per variant
   golden_mermaid.rs       // §16 golden graphs → insta snapshots (rendered text), each linted
   proptest_builder.rs     // the headline property + token/loop properties
   algos.rs                // SCC/topo/deep-graph tests
-crates/flow-ir/benches/ir_scale.rs
+crates/mapal-ir/benches/ir_scale.rs
 ```
 
 Cargo: `slotmap = "1.0"` (runtime); dev-deps exactly `insta = "1.47.2"`, `proptest = "1.11.0"`, `criterion = "0.5.1"` + `[[bench]] name = "ir_scale", harness = false` (workspace conventions; no `[lints]`, edition/version via workspace).
@@ -566,8 +566,8 @@ Cargo: `slotmap = "1.0"` (runtime); dev-deps exactly `insta = "1.47.2"`, `propte
 
 ## 17. Open questions (→ ADR candidates / later increments)
 
-- Bifunctor-image tagging (§9.5): deferred — derivable by reachability; rewrite's design decides if a cached tag is worth it. Related (reviewer L3-6): a plain fanout with separately-bound outputs lowers to N independent chains with **no join object** — the "implicit join" is a lifetime/scheduling *frontier* recovered from adjacency, not an edge. If flow-check's E3 frontier turns out to genuinely need the block boundary as data, that escalates to an ADR; until then adjacency suffices.
-- Multiple full-value Return writers: representable (I-RET); *exclusivity* (only one fires per run) is a flow-check/interp obligation, not an IR invariant — revisit when interp pins evaluation.
+- Bifunctor-image tagging (§9.5): deferred — derivable by reachability; rewrite's design decides if a cached tag is worth it. Related (reviewer L3-6): a plain fanout with separately-bound outputs lowers to N independent chains with **no join object** — the "implicit join" is a lifetime/scheduling *frontier* recovered from adjacency, not an edge. If mapal-check's E3 frontier turns out to genuinely need the block boundary as data, that escalates to an ADR; until then adjacency suffices.
+- Multiple full-value Return writers: representable (I-RET); *exclusivity* (only one fires per run) is a mapal-check/interp obligation, not an IR invariant — revisit when interp pins evaluation.
 - Rewrite-readiness of append-only storage (reviewer L3-10): *additive* rewrites (map-fusion = new fused body + new Map morphism + dead old one) fit v1; CSE/DCE/const-fold need the P4 removal/replace API; seal-then-rebuild is the v1 stopgap. No P2/P3 consumer needs mutation.
 - Trap semantics (div/mod-zero, OOB Index): Core-pinned in ADR-0013; the honest `Kleisli(Result)` lift returns with Core+1 coproducts and will change `Index`/`Div` typing.
 - JSON serialization format (§5.3): when implemented, takes the LC-4 edge form; needs a version field decision.
@@ -590,6 +590,6 @@ Cargo: `slotmap = "1.0"` (runtime); dev-deps exactly `insta = "1.47.2"`, `propte
 | D5 | `FuncDef.morphisms` = insertion-ordered set, not a "path"; topo on demand | bodies are DAGs (fanout); spec's path reading breaks — noted in ADR-0013 |
 | D6 | `Operation::Output` is the single identity-shaped op, only Return-targeted | bare `x -> ret` needs a morphism; §2.1.1's ban targets implicit composition ids |
 | D7 | `LoopBack` fires on true, `LoopExit` on false; separate route objects per direction **always** (one canonical form; §4.5's single-route drawing realizes as two routes); exit payload reads the merge-state view of the failing iteration (`sum_to_n` exits 55) | §4.5's labels; Elgot-general without coproducts; one normal form for golden tests |
-| D8 | flow-ir defines its own `SourceLoc`; zero deps on flow-syntax | dependency direction (ir is depended on by 8 crates); STATUS "Depends on: none" |
+| D8 | mapal-ir defines its own `SourceLoc`; zero deps on mapal-syntax | dependency direction (ir is depended on by 8 crates); STATUS "Depends on: none" |
 | D9 | Mermaid uses one arrow style (`-->`); back edges marked by label `"LoopBack ↩"` + merge `⟲ ` prefix, not dashed arrows — departing from §4.5's drawing convention | HANDOFF §5 item 6's failure mode was mixed styles; lint stays trivial; legibility verified on the nested-loop golden |
 | D10 | Effect signature synthesis (`main : IoToken → IoToken`), token-sink (I4b), token-in ⇒ token-out for loops | reviewers F1/F2/L2-01/L3-1 — the token story must be law before lower exists |

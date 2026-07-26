@@ -1,5 +1,5 @@
 // Naive GEMM in Chapel — the parallel-language baseline: the same i/j/k math
-// per cell as the Flow program's cell fn and rust_naive.rs, with the (i,j)
+// per cell as the Mapal program's cell fn and rust_naive.rs, with the (i,j)
 // space expressed as a 2D domain and Chapel's headline `forall` data
 // parallelism (tasks default to the physical core count). One binary covers
 // both widths: real(32)/real(64) via a generic proc selected by `--width=`.

@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <div align = center>
 
-<img src="assets/logo-wordmark.svg" width="320" alt="Flow">
+<img src="assets/logo-wordmark.svg" width="320" alt="Mapal">
 
 <br>
 
@@ -17,11 +17,11 @@
 </div>
 <!-- markdownlint-enable MD033 -->
 
-# Flow
+# Mapal
 
 <!--toc:start-->
 
-- [Flow](#flow)
+- [Mapal](#flow)
   - [The idea](#the-idea)
     - [What the compiler works out for you](#what-the-compiler-works-out-for-you)
     - [Why category theory](#why-category-theory)
@@ -41,7 +41,7 @@
 
 **A parallel-first language: you describe _what_ to compute, the compiler works out _how_.**
 
-A Flow program is a dataflow graph. The compiler reads that graph and deduces the
+A Mapal program is a dataflow graph. The compiler reads that graph and deduces the
 optimisation facts once — what runs concurrently, which reads repeat, which axes can be
 split, which indices are provably in bounds — then hands them to any backend. You never
 write a thread, a lock, a SIMD intrinsic, or a tuning pragma.
@@ -70,7 +70,7 @@ Most fast code is fast because a human wrote the machine's details into the prog
 sizes, thread counts, vector widths, memory layouts. That knowledge does not survive a move
 to different hardware.
 
-Flow splits the two halves apart:
+Mapal splits the two halves apart:
 
 |                                                                                                 | Comes from                          | Portable?                                  |
 | ----------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------ |
@@ -135,7 +135,7 @@ Full method, machine specs and raw logs: [`docs/performance/`](docs/performance/
 
 ### Matrix multiply, f32 — M4 Pro
 
-|    N |        Flow | C++ naive-mt | Rust naive-mt | NumPy 1t | NumPy mt |
+|    N |        Mapal | C++ naive-mt | Rust naive-mt | NumPy 1t | NumPy mt |
 | ---: | ----------: | -----------: | ------------: | -------: | -------: |
 | 1024 | **2.23 ms** |          140 |           133 |     1.30 |     0.68 |
 | 4096 |  **151 ms** |       33,065 |        33,548 |     84.6 |     44.1 |
@@ -145,7 +145,7 @@ that number is about the hardware.
 
 ### Other shapes — M4 Pro
 
-| workload               |         Flow | C++ naive-mt | NumPy 1t |
+| workload               |         Mapal | C++ naive-mt | NumPy 1t |
 | ---------------------- | -----------: | -----------: | -------: |
 | FIR filter, 1M samples |  **0.27 ms** |         1.42 |     6.10 |
 | conv2d 3×3, 1024×1024  | **0.089 ms** |         0.14 |     1.55 |
@@ -162,9 +162,9 @@ a Python loop over nine array slices), so that column is not like-for-like.
 ### Against a hand-tuned BLAS, on equal hardware
 
 On the M4, NumPy's matmul runs on the AMX coprocessor. Rerun on an i9-14900F, where NumPy
-goes through OpenBLAS on the same AVX2 units Flow targets, and the gap is hardware:
+goes through OpenBLAS on the same AVX2 units Mapal targets, and the gap is hardware:
 
-| 1024² f32 | Flow vs NumPy 1t  | Flow vs NumPy threaded | NumPy backend    |
+| 1024² f32 | Mapal vs NumPy 1t  | Mapal vs NumPy threaded | NumPy backend    |
 | --------- | ----------------- | ---------------------- | ---------------- |
 | M4 Pro    | NumPy 13.5× ahead | NumPy 3.3× ahead       | Accelerate → AMX |
 | i9-14900F | NumPy 1.21× ahead | **tie** (1.53 / 1.51)  | OpenBLAS → AVX2  |
@@ -176,14 +176,14 @@ threaded within **±10%**, ahead only at 2048². On the **untuned `generic`** pr
 The threaded parity is **not** a better scheduler. Same box, 8 threads per row, only CPU
 uniformity varying:
 
-| 8 threads on…       |    Flow | NumPy | winner           |
+| 8 threads on…       |    Mapal | NumPy | winner           |
 | ------------------- | ------: | ----: | ---------------- |
 | 8 E-cores (uniform) | 5.89 ms |  5.59 | NumPy by 5%      |
 | 8 P-cores (uniform) | 2.44 ms |  1.72 | **NumPy by 41%** |
-| 4 P + 4 E (mixed)   | 3.38 ms |  5.57 | **Flow by 65%**  |
+| 4 P + 4 E (mixed)   | 3.38 ms |  5.57 | **Mapal by 65%**  |
 
 Swapping four E-cores for four 35%-faster ones bought OpenBLAS nothing (5.59 → 5.57): it
-partitions statically, so every panel waits on the slowest thread. Flow went 5.89 → 3.38.
+partitions statically, so every panel waits on the slowest thread. Mapal went 5.89 → 3.38.
 So it is **heterogeneity tolerance**, which matters on consumer CPUs and does not claim
 anything about a homogeneous server. Detail: [s33.md §4](docs/performance/matmul/s33.md).
 
@@ -194,7 +194,7 @@ The flat 20% single-threaded kernel gap is the honest remaining target.
 | face                        | guarantee                                       | speed                                       |
 | --------------------------- | ----------------------------------------------- | ------------------------------------------- |
 | **conformance** (default)   | bit-identical to the interpreter, always        | 50–75% slower at ≥1024², up to 2.2× at 512² |
-| **contract** (`--contract`) | relative tolerance; single-rounding FMA allowed | **every Flow number above**                 |
+| **contract** (`--contract`) | relative tolerance; single-rounding FMA allowed | **every Mapal number above**                 |
 
 At 4096² the default is 226 ms parallel / 2,203 ms single-threaded, against 151 / 1,256.
 Clone and run the default emitter and you get the slower pair.
@@ -210,7 +210,7 @@ Clone and run the default emitter and you get the slower pair.
 | CPU backend (LLVM)     | working — automatic threading, vectorisation, cache blocking                                                                  |
 | GPU backend (CUDA)     | working — 640 compile-and-runs on an RTX 4090, July 2026; **not re-validated on hardware since.** No `time` builtin           |
 | FPGA backend (Verilog) | not started                                                                                                                   |
-| Command-line tool      | **not built** — `flow` prints "not yet implemented" and exits 1                                                               |
+| Command-line tool      | **not built** — `mapal` prints "not yet implemented" and exits 1                                                               |
 | Tests                  | ~950; 161 are CUDA's and skip without `nvcc`. Green as of the trap-deletion fix below                                         |
 | CI                     | `cargo fmt` + full suite on Linux and macOS, per push. Cannot pass vacuously — a skipped LLVM differential fails the run      |
 
@@ -250,17 +250,17 @@ Needs a recent Rust toolchain and `clang`.
 cargo test --workspace --release
 
 # run a program on the interpreter
-cargo run --release -p flow-interp --example run -- examples/pipeline.flow
+cargo run --release -p mapal-interp --example run -- examples/pipeline.mapal
 
 # compile a program to a native binary
-cargo build --release -p flow-rt          # the runtime it links against
-cargo run --release -p flow-backend-llvm --example emit -- \
-    examples/fir.flow - --rewrite > fir.ll
-clang -O2 fir.ll target/release/libflow_rt.a -o fir && ./fir
+cargo build --release -p mapal-rt          # the runtime it links against
+cargo run --release -p mapal-backend-llvm --example emit -- \
+    examples/fir.mapal - --rewrite > fir.ll
+clang -O2 fir.ll target/release/libmapal_rt.a -o fir && ./fir
 ```
 
-Start in [`examples/`](examples/) — `pipeline.flow` for syntax, `sepia.flow` for most of the
-language, `fir.flow` for a loop.
+Start in [`examples/`](examples/) — `pipeline.mapal` for syntax, `sepia.mapal` for most of the
+language, `fir.mapal` for a loop.
 
 ### Editor support
 
@@ -277,35 +277,35 @@ disk.
 **Neovim** — with lazy.nvim:
 
 ```lua
-{ dir = "/path/to/flow/editors/nvim", ft = "flow" }
+{ dir = "/path/to/flow/editors/nvim", ft = "mapal" }
 ```
 
 or without a plugin manager:
 
 ```lua
 vim.opt.runtimepath:append("/path/to/flow/editors/nvim")
-require("flow.icon").setup()          -- optional: nvim-web-devicons / mini.icons
+require("mapal.icon").setup()          -- optional: nvim-web-devicons / mini.icons
 ```
 
 **VS Code / Cursor** — symlink the extension and restart:
 
 ```sh
 python3 editors/vscode/package-vsix.py
-code --install-extension editors/vscode/flow-lang-0.1.0.vsix   # or `cursor`
+code --install-extension editors/vscode/mapal-lang-0.1.0.vsix   # or `cursor`
 ```
 
-Then restart. A `.flow` file should show **Flow** in the status bar. Copying the folder into
+Then restart. A `.mapal` file should show **Mapal** in the status bar. Copying the folder into
 `~/.vscode/extensions` does _not_ work — VS Code reads `extensions.json` as its registry and
 ignores unregistered directories silently.
 
 **The logo as a terminal glyph.** The Rust and C++ marks in a file tree are font glyphs, not
-images — Nerd Fonts ships those brand logos as characters. So Flow's mark ships as a
-single-glyph font, [`assets/font/FlowIcons.ttf`](assets/font/), which you install and add as a
+images — Nerd Fonts ships those brand logos as characters. So Mapal's mark ships as a
+single-glyph font, [`assets/font/MapalIcons.ttf`](assets/font/), which you install and add as a
 terminal _fallback_ font (rather than us patching and redistributing someone else's Nerd Font).
 Then:
 
 ```lua
-local icon = require("flow.icon")
+local icon = require("mapal.icon")
 icon.setup({ glyph = icon.logo })     -- the real mark at U+F8F0
 ```
 
@@ -375,7 +375,7 @@ it ships off. All four steps are in the repo, wrong explanation included.
 
 [Apache License 2.0 with the LLVM exception](LICENSE) — the same licence LLVM and Swift use,
 for the same reason. Apache-2.0 carries an explicit patent grant; the exception keeps the
-runtime Flow links into your binaries from imposing attribution requirements on _your_
+runtime Mapal links into your binaries from imposing attribution requirements on _your_
 program's output.
 
 <!----------------------------------{ Badges }---------------------------------->
@@ -384,16 +384,16 @@ program's output.
      LLVM-exception as NOASSERTION, so shields' dynamic one renders the words
      "not identifiable by github". The exception is real; the badge says so. -->
 
-[Badge Workflow]: https://github.com/LessComplexity/flow/actions/workflows/ci.yml/badge.svg
+[Badge Workflow]: https://github.com/LessComplexity/mapal/actions/workflows/ci.yml/badge.svg
 [Badge License]: https://img.shields.io/badge/license-Apache--2.0_WITH_LLVM--exception-blue
-[Badge Language]: https://img.shields.io/github/languages/top/LessComplexity/flow
-[Badge Pull Requests]: https://img.shields.io/github/issues-pr/LessComplexity/flow
-[Badge Issues]: https://img.shields.io/github/issues/LessComplexity/flow
+[Badge Language]: https://img.shields.io/github/languages/top/LessComplexity/mapal
+[Badge Pull Requests]: https://img.shields.io/github/issues-pr/LessComplexity/mapal
+[Badge Issues]: https://img.shields.io/github/issues/LessComplexity/mapal
 [Badge Determinism]: https://img.shields.io/badge/output-byte--identical-14b8a6
 
 <!-----------------------------------{ Links }----------------------------------->
 
-[Workflow]: https://github.com/LessComplexity/flow/actions/workflows/ci.yml
+[Workflow]: https://github.com/LessComplexity/mapal/actions/workflows/ci.yml
 [License]: LICENSE
-[Pull Requests]: https://github.com/LessComplexity/flow/pulls
-[Issues]: https://github.com/LessComplexity/flow/issues
+[Pull Requests]: https://github.com/LessComplexity/mapal/pulls
+[Issues]: https://github.com/LessComplexity/mapal/issues

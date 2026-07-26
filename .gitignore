@@ -2,7 +2,7 @@
 __pycache__/
 .DS_Store
 
-# Emitted artifacts. Regenerated from the .flow sources by benches/matmul/regen.sh;
+# Emitted artifacts. Regenerated from the .mapal sources by benches/matmul/regen.sh;
 # the sources and the emitter are the record, not their output.
 benches/matmul/*.ll
 benches/matmul/*.cu

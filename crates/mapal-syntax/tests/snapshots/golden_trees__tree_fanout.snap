@@ -1,0 +1,61 @@
+---
+source: crates/mapal-syntax/tests/golden_trees.rs
+assertion_line: 24
+expression: rendered
+---
+13:1 Program
+13:1   Fn ‹square›
+13:11     Param ‹x›
+13:14       Ty::Named ‹i32›
+13:22     ret_ty
+13:22       Ty::Named ‹i32›
+13:26     Block
+14:5       Stmt::Chain
+14:5         Chain
+14:5           head
+14:5             Binary *
+14:5               Var ‹x›
+14:9               Var ‹x›
+14:11           -> Ret
+17:1   Fn ‹double›
+17:11     Param ‹x›
+17:14       Ty::Named ‹i32›
+17:22     ret_ty
+17:22       Ty::Named ‹i32›
+17:26     Block
+18:5       Stmt::Chain
+18:5         Chain
+18:5           head
+18:5             Binary *
+18:5               Var ‹x›
+18:9               Int 2 ‹2›
+18:11           -> Ret
+21:1   Fn ‹main›
+21:11     Block
+22:5       Stmt::Chain
+22:5         Chain
+22:5           head
+22:5             Int 6 ‹6›
+22:7           -> Fanout plain (2)
+23:9             Chain
+23:9               -> Expr
+23:12                 Var ‹square›
+23:19               -> Expr
+23:22                 Var ‹sq›
+24:9             Chain
+24:9               -> Expr
+24:12                 Var ‹double›
+24:19               -> Expr
+24:22                 Var ‹db›
+27:5       Stmt::Chain
+27:5         Chain
+27:5           head
+27:5             Var ‹sq›
+27:8           -> Expr
+27:11             Var ‹println›
+28:5       Stmt::Chain
+28:5         Chain
+28:5           head
+28:5             Var ‹db›
+28:8           -> Expr
+28:11             Var ‹println›

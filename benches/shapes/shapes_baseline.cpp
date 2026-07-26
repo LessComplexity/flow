@@ -1,4 +1,4 @@
-// CPU baselines for the fir/conv2d Flow shapes, size-parameterized (S29 scale-up).
+// CPU baselines for the fir/conv2d Mapal shapes, size-parameterized (S29 scale-up).
 // Build: clang++ -O3 -march=native -ffp-contract=fast -std=c++17 shapes_baseline.cpp -o shapes_baseline -pthread
 #include <algorithm>
 #include <chrono>

@@ -1,16 +1,16 @@
 # plan-s33 — the timed window must not contain a materialisation
 
-Status: **SHIPPED** (S33) — see §7 as-built. Component: `flow-rt` (backend-llvm's runtime seam).
+Status: **SHIPPED** (S33) — see §7 as-built. Component: `mapal-rt` (backend-llvm's runtime seam).
 Driven by: `docs/performance/conv2d-per-core-gap.md` §7 — the diagnosis that closed the
 S31/S32 conv2d gap as a measurement boundary, and Sapir's call to standardise on a
-compute-only window by pre-faulting Flow's output.
+compute-only window by pre-faulting Mapal's output.
 
 ## 1. Categorical model (FRAMEWORK §2 + §4)
 
 ### Why model it
 
 The defect is not in any algorithm; it is a **placement** fact, and only the `Loc`/`Trm`
-half of the framework can state it. An arena block returned by `flow_rt_alloc` is a
+half of the framework can state it. An arena block returned by `mapal_rt_alloc` is a
 *virtual* range: the datum has no `DataLoc` in physical RAM until something touches it.
 The kernel's first store is therefore doing two things at once — executing a `Trn` **and**
 triggering the transmission that materialises its own output. `() -> time` brackets the
@@ -67,19 +67,19 @@ value-initialises — i.e. performs `reside` — before `run_iters`.
 
 ## 2. The change
 
-One place. `flow_main` emits **exactly one** arena call for the whole program:
+One place. `mapal_main` emits **exactly one** arena call for the whole program:
 
 ```
-%frame = call ptr @flow_rt_alloc(i64 16810248, i64 8)   ; conv2d_1024, 16.8 MB
+%frame = call ptr @mapal_rt_alloc(i64 16810248, i64 8)   ; conv2d_1024, 16.8 MB
 ```
 
 `entry_alloc` pushes into `self.allocas` (`func.rs:804`), so it lands in the entry-block
-prologue ahead of every task — including both `time` reads. Making `flow_rt_alloc` itself
+prologue ahead of every task — including both `time` reads. Making `mapal_rt_alloc` itself
 `reside` therefore satisfies CR-1 and CR-2 for every heap-lowered program at once, with
-**zero emitter change and zero flow-ir change** (ADR-0032 clean: the runtime learns nothing
+**zero emitter change and zero mapal-ir change** (ADR-0032 clean: the runtime learns nothing
 about the graph, the graph learns nothing about the machine).
 
-In `crates/flow-rt/src/lib.rs:flow_rt_alloc`, after the null check:
+In `crates/mapal-rt/src/lib.rs:mapal_rt_alloc`, after the null check:
 
 ```rust
 // CR-1 (plan-s33): hand back a RESIDENT block. Fresh large allocations are
@@ -100,7 +100,7 @@ while off < layout.size() {
 
 `write_volatile` so LLVM cannot delete the loop as dead stores.
 
-Contract note for the doc comment above `flow_rt_alloc`: the block is still documented as
+Contract note for the doc comment above `mapal_rt_alloc`: the block is still documented as
 uninitialised, and stays honest — every large block comes from a fresh zero-filled mapping,
 so writing `0` observes and changes nothing. Consumers still write before they read.
 
@@ -131,7 +131,7 @@ zeroing be the initialisation. We match the baseline's *boundary*, not its metho
 - It does **not** make any program faster. The fault cost is paid either way; this decides
   *when*, and therefore what the clock sees. Total process time is unchanged (the one-byte
   touch is ~4k stores per 16 MB).
-- It **does** make `benches/shapes/*.flow` measure the same thing the baselines measure.
+- It **does** make `benches/shapes/*.mapal` measure the same thing the baselines measure.
 - Nothing goes in the README off the back of it until the re-measured rows exist.
 
 ## 4. Acceptance
@@ -139,7 +139,7 @@ zeroing be the initialisation. We match the baseline's *boundary*, not its metho
 | # | Check | Done when |
 | --- | --- | --- |
 | 1 | Page faults attributable to the conv map | `perf stat -e page-faults` differenced (full − genonly) drops **3 → 0** on the i9 |
-| 2 | Flow's window becomes compute-only | flow `iter ms` ≈ its `ref-cycles` time (0.150 ms), i.e. **0.258 → ~0.16** warm; the residual over ref-cycles is under 10% |
+| 2 | Mapal's window becomes compute-only | flow `iter ms` ≈ its `ref-cycles` time (0.150 ms), i.e. **0.258 → ~0.16** warm; the residual over ref-cycles is under 10% |
 | 3 | conv2d verdict on a matched boundary | flow beats `cppb` 1t (0.1944) rather than losing to it |
 | 4 | No value change anywhere | `cargo test --workspace --release` 72 suites green; llvm goldens byte-identical (this is runtime-only — **no `.ll` should move at all**) |
 | 5 | Cold/warm spread narrows | flow cold/warm ratio falls from 1.27 toward cpp's 1.08, since the cold-fault cost leaves the window |
@@ -160,8 +160,8 @@ out of the runtime seam.
 
 ## 7. As-built (S33)
 
-Shipped as `reside` in `crates/flow-rt/src/lib.rs`, called from `flow_rt_alloc`. 5 lines of
-loop plus its rationale. **No emitter change, no flow-ir change, no `.ll` moved.**
+Shipped as `reside` in `crates/mapal-rt/src/lib.rs`, called from `mapal_rt_alloc`. 5 lines of
+loop plus its rationale. **No emitter change, no mapal-ir change, no `.ll` moved.**
 
 ### Acceptance results
 
@@ -170,9 +170,9 @@ loop plus its rationale. **No emitter change, no flow-ir change, no `.ll` moved.
 | 1 | Map-attributable page faults 3 → 0 | **CRITERION WITHDRAWN — it was ill-formed.** See below |
 | 2 | Window becomes compute-only | ✅ i9 warm **0.2586 → 0.1440 ms**, against 0.150 ms predicted independently by `ref-cycles`. M4 **0.395–0.426 → 0.2111** |
 | 3 | conv2d beats `cppb` 1t on a matched boundary | ✅ i9 **1.44×** ahead (0.1440 vs 0.2072); M4 **1.24×** ahead (0.2111 vs 0.2616) |
-| 4 | No value change; gate green; no `.ll` moves | ✅ **72 suites, 0 failed**; `fmt` clean; `git diff` touches only `flow-rt/src/lib.rs`; `golden_ll` suites pass unchanged; conv2d stdout `576/-96` byte-identical PRE vs POST |
+| 4 | No value change; gate green; no `.ll` moves | ✅ **72 suites, 0 failed**; `fmt` clean; `git diff` touches only `mapal-rt/src/lib.rs`; `golden_ll` suites pass unchanged; conv2d stdout `576/-96` byte-identical PRE vs POST |
 | 5 | Cold/warm spread narrows toward cpp's 1.08 | ✅ **1.15 → 1.01** — flat, i.e. *better* than cpp |
-| 6 | Unit check | ✅ `flow-rt` 21/21, incl. the extended `arena_alloc_is_usable_and_freed` |
+| 6 | Unit check | ✅ `mapal-rt` 21/21, incl. the extended `arena_alloc_is_usable_and_freed` |
 | + | `reside` must not add net cost | ✅ total process wall **1.485 → 1.498 ms** (+0.9%, the ~4k stores) |
 
 ### Why check 1 was withdrawn
@@ -194,8 +194,8 @@ the same class of error as the measurement boundary it was meant to verify.*
 ### Deviation: the staticlib is not rebuilt by `cargo test`
 
 `cargo test --workspace --release` refreshes the rlib but leaves
-`target/release/libflow_rt.a` stale. The first M4 measurement therefore linked the **old**
-runtime and read 0.396 ms — an apparent total non-effect. `cargo build -p flow-rt --release`
+`target/release/libmapal_rt.a` stale. The first M4 measurement therefore linked the **old**
+runtime and read 0.396 ms — an apparent total non-effect. `cargo build -p mapal-rt --release`
 is required before any hand-linked leg. `shapes_ab.sh` and `tile_ab.sh` already do this;
 ad-hoc links must too. **A stale staticlib presents exactly as "the change did nothing."**
 
@@ -210,7 +210,7 @@ min-of-30, recorded figure → post-fix figure:
 | conv2d_512 | 0.083 | **0.052** | 1.60× |
 | fir_65536 | 0.2156 | **0.104** | 2.07× |
 
-Every one of these **understated Flow**, so the corrections all move in Flow's favour — which
+Every one of these **understated Mapal**, so the corrections all move in Mapal's favour — which
 is precisely why they must not be published until re-measured properly through the harness
 rather than read off this table. matmul at large N is expected to be near-immune (its kernel
 is ~20 ms against the same 4 MB output, so the boundary is well under 1%) but is **unverified**.

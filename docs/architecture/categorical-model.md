@@ -2,7 +2,7 @@
 
 Status: accepted (ADR-0014, ratified 2026-06-14). Authority: `FRAMEWORK.md`
 (repo root) is the method; this document is its **project-specific instantiation**
-for the Flow compiler. Frozen Level-A authority is `docs/spec/category-ir.md`, which
+for the Mapal compiler. Frozen Level-A authority is `docs/spec/category-ir.md`, which
 this document never restates.
 
 This is the binding statement of how every `flow-*` crate is modeled, reviewed, and
@@ -16,7 +16,7 @@ firewall** against the two-`category` hazard (errata E5 / ADR-0006).
 model the system's `Dat` (data types + their relations) and `Trn` (passes, as objects
 with `t_from`/`t_to` into `Dat`), then run the §8 checklist. For *this* project the
 payoff is concrete and already partly banked — the Consolidation Principle (§3) is the
-reason `flow-ir` has one `Object` struct with a partial `value?` morphism (not parallel
+reason `mapal-ir` has one `Object` struct with a partial `value?` morphism (not parallel
 `ConstantNode`/`InnerNode` types), the reason `topo`/`sccs`/`loop_structure` are deduced
 not stored (D3/D5), and the reason `SourceLoc` is duplicated at exactly one declared seam
 rather than shared (D8). Naming the method lets a future session *re-derive* those
@@ -28,13 +28,13 @@ There are two categories in this project that share nouns. **They must never tou
 
 | Level | What it is | Authoritative in | Modeled by FRAMEWORK? |
 | ----- | ---------- | ---------------- | --------------------- |
-| **A — object language** | Flow *programs* are morphisms in **Flow-Cat** | `docs/spec/category-ir.md` (frozen) | **No** — restated nowhere; appears in Level B only as *data* |
+| **A — object language** | Mapal *programs* are morphisms in **Mapal-Cat** | `docs/spec/category-ir.md` (frozen) | **No** — restated nowhere; appears in Level B only as *data* |
 | **B — the compiler itself** | The `flow-*` crates' own data types + passes | each crate's `DESIGN.md` | **Yes** — this is what we model |
 
-**The collision is deliberate and dangerous.** `flow-ir`'s Rust types `CategoryIr`,
+**The collision is deliberate and dangerous.** `mapal-ir`'s Rust types `CategoryIr`,
 `Object`, `Morphism`, `Operation` echo the Level-A category's nouns on purpose. But at
 Level B they are **just Rust structs the compiler holds in RAM** — `Dat` objects of the
-*compiler*, not arrows of Flow-Cat. The project has paid this tax once already: **E5**
+*compiler*, not arrows of Mapal-Cat. The project has paid this tax once already: **E5**
 (ADR-0006) renamed the surface keyword `category` → `type` because the two senses were
 confusable in the object language. The firewall is the standing mitigation in the design
 docs.
@@ -43,14 +43,14 @@ docs.
 
 - A Level-B model section models the **compiler's** types. A `CategoryIr` *value* is one
   large Level-B `Dat` object (a sealed dataflow graph); its `Object`/`Morphism` fields are
-  Level-B morphisms. **It is never a Flow-Cat arrow.**
-- Level-A constructs may appear **only as data** inside Level B. Example: `flow-syntax`'s
+  Level-B morphisms. **It is never a Mapal-Cat arrow.**
+- Level-A constructs may appear **only as data** inside Level B. Example: `mapal-syntax`'s
   `Chain`/`Stage`/`StageKind` are Level-B AST nodes that *represent* a Level-A pipe-and-filter
   chain — they are not themselves Level-A morphisms.
-- **Do not restate `category-ir.md`.** A DESIGN section that models a Flow program *as* a
+- **Do not restate `category-ir.md`.** A DESIGN section that models a Mapal program *as* a
   category is doing Level A's (frozen) job in the wrong place. Reject it.
 - Every Level-B model section states its scope up front: "these are the compiler's own
-  `Dat` types, not Flow-Cat."
+  `Dat` types, not Mapal-Cat."
 
 ## 2. The vocabulary we apply — `Dat` + `Trn` richly, `Loc`/`Trm` only at the seam
 
@@ -118,7 +118,7 @@ lives). The backend DESIGNs (`backend-llvm`, `backend-cuda`, `backend-verilog`) 
 only ones that invoke the physical pair with content; the strategy-2-category framing of
 the parallel target functors is owned by a future backend ADR, not here.
 
-> `SourceLoc` in `flow-ir`/`flow-syntax` is **not** a FRAMEWORK `Loc`. It is a byte-range
+> `SourceLoc` in `mapal-ir`/`mapal-syntax` is **not** a FRAMEWORK `Loc`. It is a byte-range
 > *datum* (a `Dat` object), despite the name. The firewall applies to it too.
 
 ## 4. The required DESIGN.md lead section
@@ -130,7 +130,7 @@ immediately after the one-line overview and **before** scope, tables, or recipes
 ```markdown
 ## Categorical model (Dat + Trn)
 
-**Firewall.** These are the compiler's own Level-B `Dat` types, not Flow-Cat arrows.
+**Firewall.** These are the compiler's own Level-B `Dat` types, not Mapal-Cat arrows.
 [If the crate holds Level-A constructs as data, name them and say "as data only."]
 
 **Physical pair.** Degenerate (FRAMEWORK §7.1) — `Dat` + `Alg` only.
@@ -170,7 +170,7 @@ section against the §8 modeling smells —
       have a consistency mechanism (cf. topo/SCC deduced not stored, D3/D5).
 - [ ] Every diagram morphism is in the morphism table and vice versa; new fields updated
       the table in the same change.
-- [ ] The firewall holds — no Level-B section restates Level A or models a Flow program as
+- [ ] The firewall holds — no Level-B section restates Level A or models a Mapal program as
       a category.
 
 This rides the existing reconcile pass; it is one checklist block, not a new review stage.
@@ -183,9 +183,9 @@ The compiler-wide picture has three boundary morphisms worth naming here, each a
 
 | Bridge | Signature | Stored? | Semantics |
 | ------ | --------- | ------- | --------- |
-| `SourceLoc` duality (D8) | `flow_syntax::SourceLoc → flow_ir::SourceLoc` | **Stored copy** at one seam (`flow_lower::tys::ir_loc`) | Field-identical `{start,end}`; `flow-ir` defines its **own** copy to keep zero deps on `flow-syntax` (it is the depended-on hub). The §5 "one source of truth, variation at one declared seam" pattern at the *link* level: seam = the crate boundary, variation = zero, cost = one trivial total function. **Not** a FRAMEWORK `Loc` — a byte-range datum |
-| The Diagnostic seam | `IrError ⊕ IrViolation ⇀ Diagnostic` (rendered downstream) | **Deduced** at the CLI | Every crate emits *renderer-free* structured error values (no `Display` — C3/I5); presentation is reserved for one downstream site (`flow-cli`). The §4.4 cross-cutting natural transformation / §5 "isolate effects, define each boundary once". `IrError` (build context) and `IrViolation` (graph ids) stay **two objects** by the independent-oracle design (§11) — a justified difference, not a redundancy |
-| The type-resolution functor | `flow_syntax::TyKind ⇀ flow_ir::Ty` (`resolve_ty` / `TypeTable::resolve`) | **Deduced** (a pass) | A **partial** `Trn` — name resolution + struct inlining + Core whitelisting + depth bounding — bijective-on-objects in neither direction (surface-only `Dynamic`/`Error`; IR-only `Unit`/`Str`/`IoToken`; `Named` fans out to `Int`/`Float`/`Bool`/`Struct`). Two distinct `Ty` objects joined by a partial functor; **do not conflate** the surface `Ty` with the IR `Ty` |
+| `SourceLoc` duality (D8) | `mapal_syntax::SourceLoc → mapal_ir::SourceLoc` | **Stored copy** at one seam (`mapal_lower::tys::ir_loc`) | Field-identical `{start,end}`; `mapal-ir` defines its **own** copy to keep zero deps on `mapal-syntax` (it is the depended-on hub). The §5 "one source of truth, variation at one declared seam" pattern at the *link* level: seam = the crate boundary, variation = zero, cost = one trivial total function. **Not** a FRAMEWORK `Loc` — a byte-range datum |
+| The Diagnostic seam | `IrError ⊕ IrViolation ⇀ Diagnostic` (rendered downstream) | **Deduced** at the CLI | Every crate emits *renderer-free* structured error values (no `Display` — C3/I5); presentation is reserved for one downstream site (`mapal-cli`). The §4.4 cross-cutting natural transformation / §5 "isolate effects, define each boundary once". `IrError` (build context) and `IrViolation` (graph ids) stay **two objects** by the independent-oracle design (§11) — a justified difference, not a redundancy |
+| The type-resolution functor | `mapal_syntax::TyKind ⇀ mapal_ir::Ty` (`resolve_ty` / `TypeTable::resolve`) | **Deduced** (a pass) | A **partial** `Trn` — name resolution + struct inlining + Core whitelisting + depth bounding — bijective-on-objects in neither direction (surface-only `Dynamic`/`Error`; IR-only `Unit`/`Str`/`IoToken`; `Named` fans out to `Int`/`Float`/`Bool`/`Struct`). Two distinct `Ty` objects joined by a partial functor; **do not conflate** the surface `Ty` with the IR `Ty` |
 
 Each is the §3-correct shape already executed (consolidate what commutes, segregate what
 does not); they are recorded here so a future reader does not try to "fix" them (collapse
@@ -222,23 +222,23 @@ each "fix" would invert a dependency, break an invariant, or destroy an oracle.
 
 | Pair | Why they stay two |
 | ---- | ----------------- |
-| `flow_syntax::SourceLoc` vs `flow_ir::SourceLoc` (D8) | Field-identical, but collapsing inverts the dependency direction — `flow-ir` is the depended-on hub and must stay free of `flow-syntax`. One declared seam (`flow_lower` conversion), zero variation, a trivial total function. A stored copy *by design*. |
+| `mapal_syntax::SourceLoc` vs `mapal_ir::SourceLoc` (D8) | Field-identical, but collapsing inverts the dependency direction — `mapal-ir` is the depended-on hub and must stay free of `mapal-syntax`. One declared seam (`mapal_lower` conversion), zero variation, a trivial total function. A stored copy *by design*. |
 | `IrError` (build context) vs `IrViolation` (graph ids) | Collapsing destroys the **independent oracle**: `validate()` must re-derive the invariants without sharing builder code (ir §11). The duplication *buys* the property "seal Ok ⇒ validate empty." |
 | surface `Ty` (`TyKind`) vs IR `Ty` | Joined by a **partial functor** (`resolve_ty`): surface-only `Dynamic`/`Error`; IR-only `Unit`/`Str`/`IoToken`; `Named` fans out to `Int`/`Float`/`Bool`/`Struct`. Bijective-on-objects in neither direction — genuinely two objects, one partial map. |
 
 ### 7.3 Modeling insights — a relation the model makes newly visible
 
-- **The surface parse category strictly contains Flow-Core; rejection _is_ the partiality
-  of the lowering functor.** `flow-syntax` deliberately *keeps* out-of-Core forms it has
+- **The surface parse category strictly contains Mapal-Core; rejection _is_ the partiality
+  of the lowering functor.** `mapal-syntax` deliberately *keeps* out-of-Core forms it has
   already rejected (`Call`, `Question`, `Dynamic`, custom loop labels, `OutOfCore` guards,
   `Void` fanout — retained for span-precise diagnostics). Categorically these are partial
   morphisms into an out-of-Core subcategory, and `lower`/`check` is the **partial functor**
-  whose domain of definition is exactly Flow-Core. "Reject with a clear diagnostic"
+  whose domain of definition is exactly Mapal-Core. "Reject with a clear diagnostic"
   (HANDOFF §4) = "the functor is undefined here, and says where."
 - **Diagnostics are a cross-cutting concern (a natural transformation), realized as
   parallel renderer-free error types.** Every crate emits structured, `Display`-free error
   values (`Diagnostic` / `IrError` / `IrViolation`); presentation is reserved for one site
-  (`flow-cli`). This is FRAMEWORK §4.4's "same wrapper applied everywhere" plus §5's
+  (`mapal-cli`). This is FRAMEWORK §4.4's "same wrapper applied everywhere" plus §5's
   "define each boundary once" — and it raises one soft consolidation candidate (§7.5).
 
 ### 7.4 Performance deductions — optimizations read off the model
@@ -276,7 +276,7 @@ action).
    `not-started`); the framing — a shared `Backend` contract and a `TargetText` type —
    should be fixed by a backend ADR *before* the first backend is written. Reserved here,
    owned there.
-2. **A single diagnostic contract all crates map into** *(soft — revisit when `flow-cli`
+2. **A single diagnostic contract all crates map into** *(soft — revisit when `mapal-cli`
    is built)*. Today each crate carries its own renderer-free error enum and the CLI renders
    each; FRAMEWORK §5 ("define each boundary once") suggests one declared `Diagnostic`
    target every crate's errors map into, so the CLI has one renderer, not N. Not urgent

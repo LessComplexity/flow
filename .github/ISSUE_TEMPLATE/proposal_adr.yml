@@ -1,5 +1,5 @@
 name: Proposal (language, op, backend, algorithm)
-description: Something Flow should be able to do, or should do differently. The step before an ADR.
+description: Something Mapal should be able to do, or should do differently. The step before an ADR.
 labels: ["proposal"]
 body:
   - type: markdown
@@ -46,7 +46,7 @@ body:
     id: surface
     attributes:
       label: Surface, if it changes the language
-      description: How it is written in `.flow`, and what the interpreter does with it — the oracle has to define it before any backend can emit it.
+      description: How it is written in `.mapal`, and what the interpreter does with it — the oracle has to define it before any backend can emit it.
       render: text
 
   - type: textarea

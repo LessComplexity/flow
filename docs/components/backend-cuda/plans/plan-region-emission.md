@@ -5,7 +5,7 @@ Status: plan (model-first, HANDOFF §7.1.5) · Written: 2026-07-21 · Session 16
 Evidence: `docs/notes/bench-matmul.md` (the per-op launch wall measured: ~24 µs × Θ(N³) launches; the same algorithm as one kernel is 3.8M× faster at N=64).
 Scope: backend line (CUDA v2 now; Verilog P7 designed in from the start). Language semantics untouched; R1 differential contract untouched (ADR-0020 §3 — the functor's *image* changes shape, not meaning).
 
-**The architecture (Sapir's pipeline, S17):** `Flow → Cat IR (the primitive execution graph) → zoning/combining → backend → runtime`. The source is the *algorithm*; the stripped graph is its deepest presentation — functions inline, named bindings dissolve, and only **meaning** survives (effects/token, loops, types are semantics, not human constructs; readability boundaries become span metadata for diagnostics, never structure). Zoning/combining then computes the *machine*-optimal consolidation from the graph — **what is human-readable is not necessarily optimal; the optimal separation is graph-computed** (the algorithm/schedule separation). Two zoning decisions, kept separate by kind: the **legal** zones (semantic — computed once, in the IR, shared by all targets) and the **optimal** zones (cost — refined per backend: CUDA kernels, Verilog stage-sets, ASIC dataflow blocks). R1 is what makes "optimal" a cost question rather than a correctness question: every zoning of the same graph must produce the same observable behavior.
+**The architecture (Sapir's pipeline, S17):** `Mapal → Cat IR (the primitive execution graph) → zoning/combining → backend → runtime`. The source is the *algorithm*; the stripped graph is its deepest presentation — functions inline, named bindings dissolve, and only **meaning** survives (effects/token, loops, types are semantics, not human constructs; readability boundaries become span metadata for diagnostics, never structure). Zoning/combining then computes the *machine*-optimal consolidation from the graph — **what is human-readable is not necessarily optimal; the optimal separation is graph-computed** (the algorithm/schedule separation). Two zoning decisions, kept separate by kind: the **legal** zones (semantic — computed once, in the IR, shared by all targets) and the **optimal** zones (cost — refined per backend: CUDA kernels, Verilog stage-sets, ASIC dataflow blocks). R1 is what makes "optimal" a cost question rather than a correctness question: every zoning of the same graph must produce the same observable behavior.
 
 ## 1. Why the current mapping is wrong for op-rich shapes (the honest review of v1)
 
@@ -61,21 +61,21 @@ Raw: two fns (`matmul` outer loop t, `cell` inner loop k with 2 `Index` + mul/ad
 
 1. **Strip:** `cell` inlines into `matmul`'s loop body (one primitive graph: outer loop t, inner loop k, two array reads, FMA, one update).
 2. **Partition (today's semantics, sequential loops):** the inner-k loop over device arrays with a scalar live-out = one region per cell call → **N² launches** (vs v1's 2N³+N²): at N=64, 4096 launches ≈ **0.1–0.2 s** (vs 12.16 s) — a ~100× win from mapping alone, semantics untouched.
-3. **Partition + independence (the `par` track):** the outer loop is independent-iteration (each `c[t]` written once, no cross-iteration reads) → the whole matmul is one elementwise region with an inner per-thread k-loop → **one kernel** ≈ naive-CUDA territory (0.0032 ms at N=64) — the S16 bench's control number, reached from the Flow source.
+3. **Partition + independence (the `par` track):** the outer loop is independent-iteration (each `c[t]` written once, no cross-iteration reads) → the whole matmul is one elementwise region with an inner per-thread k-loop → **one kernel** ≈ naive-CUDA territory (0.0032 ms at N=64) — the S16 bench's control number, reached from the Mapal source.
 4. The differential (existing, unchanged) is the acceptance test: raw and stripped-and-region-mapped IR must both stay oracle-equal — that is what R1 *is for*.
 
 ## 4. What does NOT change
 
-- The `emit(&CategoryIr) -> Result<String, EmitError>` contract, `flow-rt`, the trap flag + kind+1 encoding, the exit-102 infra protocol, `-fmad=false`, the width rule, the qualifier analysis (HostDevice/Twin still governs kept-call device visibility), the L3 `loop_plan` ceiling, the three recorded `Unsupported` cells.
+- The `emit(&CategoryIr) -> Result<String, EmitError>` contract, `mapal-rt`, the trap flag + kind+1 encoding, the exit-102 infra protocol, `-fmad=false`, the width rule, the qualifier analysis (HostDevice/Twin still governs kept-call device visibility), the L3 `loop_plan` ceiling, the three recorded `Unsupported` cells.
 - The oracle, the language, the rewrite laws (inline is additive). The v1 emitter remains in-tree as the reference until v2's differential matches it on the full corpus (then v1 retires or stays as a debug flag — decided at the v2 gate).
 
 ## 5. Where the machinery lives (shared, once — the two-level structure, Sapir S17)
 
 Region knowledge is split by *kind*, not by backend:
 
-- **Level 1 — `flow-ir` owns the maximal legal partition (the semantic fact).** A new query `CategoryIr::region_plan(f) -> RegionPlan` (deduced on demand from the sealed graph, never stored — the BL7 `loop_plan` pattern exactly): the maximal effect-free, loop-free components of the flattened graph. Boundary rules are semantic only: the token thread + `Print` cut (E2/L4); loop scopes cut (guard-first; the loop's decide/advance cones **are** regions — the query generalizes the cone machinery `loop_plan` already computes); entry/output are ports. Deterministic, total, property-testable in one place. Every backend must agree on this partition — it is semantics, not cost.
+- **Level 1 — `mapal-ir` owns the maximal legal partition (the semantic fact).** A new query `CategoryIr::region_plan(f) -> RegionPlan` (deduced on demand from the sealed graph, never stored — the BL7 `loop_plan` pattern exactly): the maximal effect-free, loop-free components of the flattened graph. Boundary rules are semantic only: the token thread + `Print` cut (E2/L4); loop scopes cut (guard-first; the loop's decide/advance cones **are** regions — the query generalizes the cone machinery `loop_plan` already computes); entry/output are ports. Deterministic, total, property-testable in one place. Every backend must agree on this partition — it is semantics, not cost.
 - **Level 2 — each backend refines and realizes (the cost fact).** A backend consumes the `RegionPlan` and, within legal regions, applies its cost model: CUDA merges elementwise-compatible regions into one kernel (launch/sync price) and picks residency + readback points (host/device); Verilog realizes a region as a pipeline/FSM stage-set (E1's feedforward/single-loop restriction prunes); LLVM treats a region as straight-line code (the degenerate case — calls are cheap). **The cost model refines the legal partition, never defines it.**
-- **`flow-rewrite`:** the `inline` pass (strip) + its R1 property pins (determinism, idempotence, oracle equality over testgen) — runs before Level 1, since the partition sees the flattened graph.
+- **`mapal-rewrite`:** the `inline` pass (strip) + its R1 property pins (determinism, idempotence, oracle equality over testgen) — runs before Level 1, since the partition sees the flattened graph.
 - **interp (optional, later):** may consume the same plan for a fused-eval fast path — never a second definition of regions.
 
 ## 6. Perf contract (Sapir's per-step gate, first application)
@@ -95,7 +95,7 @@ Structural, CI-safe assertions (deterministic, machine-independent), added to `g
 
 ## 8. Sequencing
 
-1. `inline` pass in flow-rewrite + R1 pins (small; unblocks everything).
+1. `inline` pass in mapal-rewrite + R1 pins (small; unblocks everything).
 2. `regions.rs` partition + the CUDA cost model + structural perf gates.
 3. CUDA v2 emitter per region (the matmul acceptance: 12.16 s → ≤0.3 s at N=64; then 1-kernel with `par`).
 4. P7 Verilog DESIGN with the same partition (region = pipeline/FSM stage-set).

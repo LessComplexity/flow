@@ -1,17 +1,17 @@
 [package]
-name = "flow-backend-cuda"
+name = "mapal-backend-cuda"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-flow-ir = { path = "../../flow-ir" }
+mapal-ir = { path = "../../mapal-ir" }
 slotmap = "1.0"
 
 [dev-dependencies]
-flow-syntax = { path = "../../flow-syntax" }
-flow-lower = { path = "../../flow-lower" }
-flow-interp = { path = "../../flow-interp" }
-flow-rewrite = { path = "../../flow-rewrite" }
+mapal-syntax = { path = "../../mapal-syntax" }
+mapal-lower = { path = "../../mapal-lower" }
+mapal-interp = { path = "../../mapal-interp" }
+mapal-rewrite = { path = "../../mapal-rewrite" }
 insta = "1.47.2"
 tempfile = "3.27.0"
 proptest = "1.11.0"

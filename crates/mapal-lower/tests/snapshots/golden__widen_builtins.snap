@@ -1,0 +1,36 @@
+---
+source: crates/mapal-lower/tests/golden.rs
+expression: dump
+---
+flowchart LR
+    subgraph f0["fn main"]
+        f0o0(("io"))
+        f0o1(("ret: io"))
+        f0o2(("7: i32"))
+        f0o3(("a: i64"))
+        f0o4(("16777217: i32"))
+        f0o5(("b: f32"))
+        f0o6(("9: i32"))
+        f0o7(("c: f64"))
+        f0o8(("d: f64"))
+        f0o9(("(io, i64)"))
+        f0o10(("io"))
+        f0o11(("(io, f64)"))
+        f0o12(("io"))
+        f0o13(("(io, f64)"))
+        f0o14(("io"))
+        f0o2 -- "Widen" --> f0o3
+        f0o4 -- "Widen" --> f0o5
+        f0o6 -- "Widen" --> f0o7
+        f0o5 -- "Widen" --> f0o8
+        f0o0 -- "Pair 0/2" --> f0o9
+        f0o3 -- "Pair 1/2" --> f0o9
+        f0o9 -- "Println" --> f0o10
+        f0o10 -- "Pair 0/2" --> f0o11
+        f0o8 -- "Pair 1/2" --> f0o11
+        f0o11 -- "Println" --> f0o12
+        f0o12 -- "Pair 0/2" --> f0o13
+        f0o7 -- "Pair 1/2" --> f0o13
+        f0o13 -- "Println" --> f0o14
+        f0o14 -- "Output" --> f0o1
+    end

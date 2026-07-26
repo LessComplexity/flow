@@ -10,13 +10,13 @@ body:
         observable behaviour: a change that deletes one is a bug even when the value is unused.
 
         Memory unsafety or an unsound proof that removes a check? That is [a private security
-        report](https://github.com/LessComplexity/flow/security/advisories/new), not this form.
+        report](https://github.com/LessComplexity/mapal/security/advisories/new), not this form.
 
   - type: textarea
     id: repro
     attributes:
       label: Minimal reproducer
-      description: The smallest `.flow` source (or IR, or command) that shows it. Smaller beats realistic.
+      description: The smallest `.mapal` source (or IR, or command) that shows it. Smaller beats realistic.
       render: text
     validations:
       required: true
@@ -37,11 +37,11 @@ body:
       multiple: true
       options:
         - Interpreter (the oracle itself)
-        - Rewriter (flow-rewrite)
+        - Rewriter (mapal-rewrite)
         - LLVM backend
         - CUDA backend
         - Parser / lowering / type check
-        - Runtime (flow-rt)
+        - Runtime (mapal-rt)
         - Editor tooling
         - Not sure
     validations:
@@ -67,7 +67,7 @@ body:
     id: notes
     attributes:
       label: Anything else
-      description: What you already ruled out, which passes you bisected, whether `FLOW_PAR=1` changes it, whether it reproduces at an older commit.
+      description: What you already ruled out, which passes you bisected, whether `MAPAL_PAR=1` changes it, whether it reproduces at an older commit.
 
   - type: checkboxes
     id: preflight

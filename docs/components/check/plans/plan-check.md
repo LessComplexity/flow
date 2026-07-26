@@ -1,4 +1,4 @@
-# Plan — flow-check (P3 completion: the owed checks)
+# Plan — mapal-check (P3 completion: the owed checks)
 
 Written: 2026-07-16 · Session 10 · status: **accepted & built** (proceed chosen; outcome: DESIGN.md + crate, 25 tests, workspace 448 green — see `../reviews/review-check.md`. Built-reality deltas vs this plan: exclusivity went strict-no-exception (CK3 refines D-B); `check` gained the `source: &str` param (design review B1); E3 zero-code stance kept (D-E confirmed))
 Inputs: interp/DESIGN §9 + lower/DESIGN §12 (the owed ledger); ADR-0003 (E2), ADR-0004 (E3),
@@ -10,22 +10,22 @@ Session-10 read fan-out: 7 reader reports (workflow `wf_51a1970c-ad9`).
 
 Discharge the four obligations every downstream component currently *assumes*
 (interp IN3 trusts them; ir §17 and lower §12 delegate them): Return exclusivity,
-E2 effect legality, full-typing residual, E3 lifetime scope — as `flow-check`, a
+E2 effect legality, full-typing residual, E3 lifetime scope — as `mapal-check`, a
 pass over lower's output. P3's DoD ("type/effect/lifetime checks for Core") closes.
 
 ## Component(s) touched
 
-- `check` (`crates/flow-check` — today a 1-line stub crate, no deps): all new code.
+- `check` (`crates/mapal-check` — today a 1-line stub crate, no deps): all new code.
 - `docs/components/check/{DESIGN,IMPLEMENTATION,STATUS,suggestions}.md` + INDEX row flip.
-- No changes to ir/lower/interp code. (Acceptance tests add `calc.flow` coverage — test-only.)
+- No changes to ir/lower/interp code. (Acceptance tests add `calc.mapal` coverage — test-only.)
 
 ## The four obligations — what each actually is (grounded)
 
 | # | Obligation | Source | Reality on the sealed graph | Check's job |
 | - | --- | --- | --- | --- |
 | 1 | Return exclusivity | ir §17 (I-RET permits ≥1 full-value writers); interp IN3 assumes exactly one fires | Lower's own output is single-writer (L1405 upstream); multi-writer graphs arise from **hand-built IR** (IrBuilder users, future producers) | Static exclusivity rule (below) |
-| 2 | E2 effect legality (`print` only in seq context) | ADR-0003:36-38 "flow-check runs an effect analysis…"; lower §12 defers it | **Graph-invisible**: lower token-threads even illegal fanout branches, so print-in-fanout ≡ print-in-seq as sealed graphs. Fanout membership exists only in the tree | Tree×graph pass (below) |
-| 3 | Full typing beyond lowering needs | lower §12 "flow-check re-walks the sealed graph" | **Discharged by construction**: builder I2 per-call + `validate::edge_type_ok` re-derive §5.1 independently; lower guarantees validate-clean output. Residual ≈ ∅ | `validate()` as boundary assert; no new typing pass |
+| 2 | E2 effect legality (`print` only in seq context) | ADR-0003:36-38 "mapal-check runs an effect analysis…"; lower §12 defers it | **Graph-invisible**: lower token-threads even illegal fanout branches, so print-in-fanout ≡ print-in-seq as sealed graphs. Fanout membership exists only in the tree | Tree×graph pass (below) |
+| 3 | Full typing beyond lowering needs | lower §12 "mapal-check re-walks the sealed graph" | **Discharged by construction**: builder I2 per-call + `validate::edge_type_ok` re-derive §5.1 independently; lower guarantees validate-clean output. Residual ≈ ∅ | `validate()` as boundary assert; no new typing pass |
 | 4 | E3 lifetime/escape | ADR-0004 scope; lower §12 | **Vacuous for Core**: realized IR has no `Alloc/Free/Load/Store` (ir/DESIGN:296 "no heap in Core — E3 scope"); `Ty` has no ref variant; a violating graph is unconstructible | Documented vacuity proof in DESIGN + STATUS; **zero code** (YAGNI). Becomes real with the first heap op (post-Core ADR) |
 
 ## Model delta (preview of the DESIGN.md categorical-model section)
@@ -73,7 +73,7 @@ re-running lower's Pass B inference — one source of truth for effects.
 
 ## API + crate shape (decisions to ratify)
 
-- **D-A. Entry:** `pub fn check(program: &flow_syntax::Program, ir: &CategoryIr) -> Vec<Diagnostic>`.
+- **D-A. Entry:** `pub fn check(program: &mapal_syntax::Program, ir: &CategoryIr) -> Vec<Diagnostic>`.
   The tree parameter is forced by E2's graph-invisibility (obligation 2). Rejected
   alternatives: (a) IR fanout annotation — new IR surface + ADR, heavier, serves only
   this check today (ir §17 says escalate only if *genuinely* needed as data);
@@ -91,8 +91,8 @@ re-running lower's Pass B inference — one source of truth for effects.
   applies per branch at every level. Map/fold inline blocks: effectful bodies are
   already unrepresentable (I4 token-free bodies; lower rejects upstream) — noted, not
   re-checked.
-- **D-D. Diagnostics:** reuse `flow_syntax::Diagnostic`; band **`T####`** (already
-  reserved in flow-syntax diag.rs:11). Sub-bands: T0001 boundary (non-validate-clean
+- **D-D. Diagnostics:** reuse `mapal_syntax::Diagnostic`; band **`T####`** (already
+  reserved in mapal-syntax diag.rs:11). Sub-bands: T0001 boundary (non-validate-clean
   input — internal/producer bug, the L1901 analogue) · T01xx exclusivity · T02xx
   effects (E2) · T03xx reserved E3 (unallocated until heap ops exist). Mirror lower's
   pattern: `enum TCode` + `code()` + free `diag()`; severity always Error, fix None.
@@ -100,8 +100,8 @@ re-running lower's Pass B inference — one source of truth for effects.
   (no heap ops in realized op set + no ref `Ty`) and the reopen trigger (first
   `Alloc`-class op ADR must add the frontier pass per category-ir §10). STATUS row
   says exactly this.
-- **D-F. Deps:** `flow-ir` + `flow-syntax` (Diagnostic + Program); dev-deps
-  `flow-lower` (parse→lower fixtures, same as interp). No slotmap need unless a
+- **D-F. Deps:** `mapal-ir` + `mapal-syntax` (Diagnostic + Program); dev-deps
+  `mapal-lower` (parse→lower fixtures, same as interp). No slotmap need unless a
   SecondaryMap shows up (likely not — passes are fold-over-iterators).
 
 ## Build → test recipe
@@ -113,9 +113,9 @@ re-running lower's Pass B inference — one source of truth for effects.
    two same-loop LoopExit writers → clean; slot-writers (I-RET slot form) → clean.
 4. `effects.rs` (D-C) → tests via parse→lower→check: print in fanout branch → T02xx
    naming `seq`; effectful *call* in fanout branch → T02xx (transitive case); print
-   under `seq` → clean; pure fanout (`fanout.flow`) → clean; nested fanout with inner
+   under `seq` → clean; pure fanout (`fanout.mapal`) → clean; nested fanout with inner
    print → T02xx.
-5. Acceptance: all 8 golden examples + `calc.flow` (currently untested through lower —
+5. Acceptance: all 8 golden examples + `calc.mapal` (currently untested through lower —
    found in read phase) pass check with **zero diagnostics**; determinism (run twice,
    identical output).
 6. Reconcile: DESIGN (model lead-section per ADR-0014 template) written **before**
@@ -139,7 +139,7 @@ verification by cheap independent verifiers — same shape as S08/S09.
 - **D-B strictness:** conservative rule may reject exotic-but-sound hand-built graphs
   (e.g. writers guarded by disjoint Phi conditions). Acceptable: no producer emits
   those today; loosening is additive later.
-- **calc.flow through lower is unverified** — if it fails to lower, that's a
+- **calc.mapal through lower is unverified** — if it fails to lower, that's a
   discovery logged to syntax/lower STATUS, not a check bug.
 - **IN6/IN7 (float ÷0 amendment, integer overflow)** stay parked — they are
   ADR-0013-amendment / backend-ADR items, not check passes (interp §14).

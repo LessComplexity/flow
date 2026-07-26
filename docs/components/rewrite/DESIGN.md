@@ -1,11 +1,11 @@
 # Component: rewrite — DESIGN
 
-Written: 2026-07-17 · Session 12 · Updated: 2026-07-24 · S27b loop lifting — authoritative for `crates/flow-rewrite`
+Written: 2026-07-17 · Session 12 · Updated: 2026-07-24 · S27b loop lifting — authoritative for `crates/mapal-rewrite`
 Spec authority: category-ir.md §9 (optimization framework — layers, §9.6 verification) + §6.1.1 (map fusion = the `List` functor law) > ADR-0013 / ir/DESIGN (§5.1 typing table, §7 loops D7, §8 tokens I4/I4b, §11 validate, §17 "seal-then-rebuild is the v1 stopgap") > interp/DESIGN (the oracle: fueled `run`/`eval_call`, wrapping integer arithmetic, traps, guard-first loops, M1 canonical-loop scope) > check/DESIGN (pipeline position: check runs **pre-rewrite**; rewrite must preserve what check certified) > HANDOFF §5.7 (layer directories), §8 P4 DoD, §9 (random-program generation lives here).
 
 ## Categorical model (Dat + Trn)
 
-**Firewall.** These are the compiler's own Level-B `Dat` types, not Flow-Cat arrows. The crate holds Level-A constructs as data only: a sealed `flow_ir::CategoryIr` value is one Level-B object; the *laws* that justify each pass (functor laws, within-category equations) are Level-A facts about Flow-Cat, **cited** by the pass's correctness argument, never restated or re-proven here (category-ir.md §6/§9 owns them).
+**Firewall.** These are the compiler's own Level-B `Dat` types, not Mapal-Cat arrows. The crate holds Level-A constructs as data only: a sealed `mapal_ir::CategoryIr` value is one Level-B object; the *laws* that justify each pass (functor laws, within-category equations) are Level-A facts about Mapal-Cat, **cited** by the pass's correctness argument, never restated or re-proven here (category-ir.md §6/§9 owns them).
 
 **Physical pair.** Degenerate (FRAMEWORK §7.1) — `Dat` + `Alg` only. Rewriting is one in-process pass between `lower`/`check` and the backends.
 
@@ -17,7 +17,7 @@ Modeling the rewriter categorically buys three things. (1) **Soundness is one st
 
 ```mermaid
 graph TB
-    CIr["flow_ir::CategoryIr (sealed)"]
+    CIr["mapal_ir::CategoryIr (sealed)"]
     Plan["RewritePlan"]
     Al["alias: ObjectId → ObjectId"]
     Cf["constify: ObjectId → Value"]
@@ -57,7 +57,7 @@ graph TB
 | Morphism | Signature | Partiality | Semantics |
 |---|---|---|---|
 | `alias?` | `ObjectId → ObjectId` | Partial | consumers of the key read the value instead (CSE merge, Phi-select, proj∘pack forward, algebraic identity). Resolved transitively before replay; acyclic by construction (always points at an earlier-in-topo object) |
-| `constify?` | `ObjectId → flow_ir::Value` | Partial | the object is re-materialized as a `Constant` with this value; its defining cone is not replayed for it (const fold) |
+| `constify?` | `ObjectId → mapal_ir::Value` | Partial | the object is re-materialized as a `Constant` with this value; its defining cone is not replayed for it (const fold) |
 | `drop` | `RewritePlan → ObjectId-set` | Total | objects (with their defining morphisms) not replayed at all (DCE). Plan-consistency: nothing live references a dropped object |
 | `fuse?` | `MorphismId → FusionSpec` | Partial | a `Map` edge replaced by a fused `Map` with a synthesized composed body (layer 1) |
 | `inline` | `RewritePlan → MorphismId-set` | Total | selected `Call` sites replay as the callee body with Return redirection |
@@ -93,7 +93,7 @@ graph TB
 | Bridge | Signature | Stored? | Semantics |
 |---|---|---|---|
 | IR intake/output | `&CategoryIr → CategoryIr` | new value | read-only intake; the output is a **new** sealed graph (ids not stable across rebuild — consumers must not hold old ids) |
-| oracle | dev-dep on `flow-interp` | test-only | R1 is discharged by the property harness, not by the library (the crate itself depends only on `flow-ir`) |
+| oracle | dev-dep on `mapal-interp` | test-only | R1 is discharged by the property harness, not by the library (the crate itself depends only on `mapal-ir`) |
 | generator | `testgen` (this crate's test harness) | test-only | HANDOFF §9: random Core-program generation lives here and is **exported for P5–P7 differential tests** |
 
 ---
@@ -102,7 +102,7 @@ graph TB
 
 In: the plan+replay architecture (§1); layer-3 constant folding + algebraic identities (§2); layer-4 DCE + CSE (§3); layer-1 map fusion + `map(id)` elimination (§4); the fixpoint driver + report (§5); the random-program generator + property harness (§6); goldens, properties, bench (§8).
 
-Out (deliberately): layer-2 naturality — the `Zip`/`Enumerate` naturality squares recorded in ir §17 (rule table seeded in `naturality.rs` as data, **no pass**; next increment); non-canonical loops — multi-back/exit merges (lower OQ7, unreachable) **and the multi-merge inner-exits-via-`ret` nested loop, which IS lower-reachable** (ir §7, lower §8.5; review F3 corrected the earlier "unreachable" claim) — both take the R6 whole-graph identity path; rewriting across `IoToken`-bearing objects beyond identity (effect chains are replayed verbatim); a mutation API in flow-ir (ir §17 sanctions seal-then-rebuild; a mutating rewriter is a later ADR if profiles ever demand it); cost models (every implemented rewrite is unconditionally profitable or neutral).
+Out (deliberately): layer-2 naturality — the `Zip`/`Enumerate` naturality squares recorded in ir §17 (rule table seeded in `naturality.rs` as data, **no pass**; next increment); non-canonical loops — multi-back/exit merges (lower OQ7, unreachable) **and the multi-merge inner-exits-via-`ret` nested loop, which IS lower-reachable** (ir §7, lower §8.5; review F3 corrected the earlier "unreachable" claim) — both take the R6 whole-graph identity path; rewriting across `IoToken`-bearing objects beyond identity (effect chains are replayed verbatim); a mutation API in mapal-ir (ir §17 sanctions seal-then-rebuild; a mutating rewriter is a later ADR if profiles ever demand it); cost models (every implemented rewrite is unconditionally profitable or neutral).
 
 ## 1. Pass architecture — plan + one shared replayer
 
@@ -127,7 +127,7 @@ The builder exposes **typed primitives only** (no raw add-object/add-edge); comp
 | defined by `TimeMs` (S29) | one op edge, source = the **bare** `IoToken` (no packed source, unlike `Print`) | `fb.time_ms(replayed_token, loc)` — mints the fresh `(IoToken, f64)` pair. Identity replay only: no pass ever plans a `TimeMs` (see §3 — it is impure by `is_pure` and token-bearing by ty, which excludes it from CSE, forwarding, DCE removal and lifting without a single `TimeMs` special case) |
 | defined by `Output` | op edge | `output(replayed_src, slot, loc)` |
 | Return slot writes | `Pair` into Return | the writing primitive replayed with `Dest::Ret{slot}` (canonical form, ir L3-4) |
-| `LoopMerge` + routes + exits | the quartet | canonicity and per-merge layout are **delegated to `flow_ir::CategoryIr::loop_plan(f, merge)`** (ir §13, BL7 — the one source of truth; `is_canonical` gates on `loop_plan(...).is_some()` for every `loop_structure` merge, `replay` reads the same `LoopPlan` back). Replay init → `begin_loop` → in-SCC morphisms in body order (merge ↦ `merge_of(lh)`) → `loop_back(next_state', cond')` from the back route's slot feeders → `loop_exit(value', cond', dest)` from the exit route's slot feeders → `end_loop`. Route objects are never materialized. **Exit attribution (S12): by route-feeder membership in the specific merge's SCC (the interp driver's rule, now encapsulated in `loop_plan`) — never by reachability, which mis-attributed a downstream loop's exit to an upstream merge; two sequential canonical loops in one fn are canonical and rewritable** (pinned by `identity.rs::two_sequential_loops_rewrite_not_skipped`) |
+| `LoopMerge` + routes + exits | the quartet | canonicity and per-merge layout are **delegated to `mapal_ir::CategoryIr::loop_plan(f, merge)`** (ir §13, BL7 — the one source of truth; `is_canonical` gates on `loop_plan(...).is_some()` for every `loop_structure` merge, `replay` reads the same `LoopPlan` back). Replay init → `begin_loop` → in-SCC morphisms in body order (merge ↦ `merge_of(lh)`) → `loop_back(next_state', cond')` from the back route's slot feeders → `loop_exit(value', cond', dest)` from the exit route's slot feeders → `end_loop`. Route objects are never materialized. **Exit attribution (S12): by route-feeder membership in the specific merge's SCC (the interp driver's rule, now encapsulated in `loop_plan`) — never by reachability, which mis-attributed a downstream loop's exit to an upstream merge; two sequential canonical loops in one fn are canonical and rewritable** (pinned by `identity.rs::two_sequential_loops_rewrite_not_skipped`) |
 
 - **Id remap**: `SecondaryMap<ObjectId_old, ObjectId_new>`, built during the walk. `alias?` is resolved (transitively) *before* lookup; `constify?` short-circuits to a fresh `constant(v)`; `drop` objects are skipped.
 - `inline` redirects a selected call through the callee replay recipe. `lift` reconstructs the planned SCC as a captured collection op and marks the old merge/routes/SCC complete; both reuse the same remap and primitive emitter.
@@ -235,7 +235,7 @@ Round = `Inline → LiftLoops → ConstFold → Cse → Dce → MapFusion`, each
 
 ## 6. testgen — the random-program generator (HANDOFF §9: lives here, feeds P5–P7)
 
-`crates/flow-rewrite/tests/testgen/mod.rs` (shared test module, importable pattern per lower's `tests/common`). Two strategies over the **public builder** (well-typed by construction; seal always Ok):
+`crates/mapal-rewrite/tests/testgen/mod.rs` (shared test module, importable pattern per lower's `tests/common`). Two strategies over the **public builder** (well-typed by construction; seal always Ok):
 
 1. **Closed programs** — an entry `main` (effectful: token-threaded prints of every interesting intermediate; or pure) over a generated DAG of scalar/tuple/array ops: constants (small-int biased ±100 + edge values {0, 1, -1, MIN, MAX}), chains of `binop/unop/phi/pack/proj/index/zip/enumerate/map/fold/call`, helper fns (acyclic), canonical loops with **statically bounded** iteration (guard `i < K`, `K ≤ 64`, carried tuple state), plus liftable `LiftFold` and identity-`Update` `LiftMap` shapes with `K >= 1` — generated programs terminate; divergence is pinned by a separate hand-built case, not generated.
 2. **Open functions** — pure `Named` fns with parameter input, exercised via `eval_call` with proptest-generated `RValue` args (random inputs × random programs).
@@ -244,11 +244,11 @@ Modes: `default` (traps permitted — `Div/Mod/Index` with arbitrary feeders; th
 
 ## 7. Public API
 
-§5's driver types plus nothing — no `Display` (C3), `RewriteResult`/`RewriteReport` derive `Clone, Debug, PartialEq` (PassId also `Copy, Eq`). Library deps: `flow-ir`, `slotmap`. Dev-deps: `flow-syntax`, `flow-lower`, `flow-interp`, `proptest`, `insta`, `criterion`.
+§5's driver types plus nothing — no `Display` (C3), `RewriteResult`/`RewriteReport` derive `Clone, Debug, PartialEq` (PassId also `Copy, Eq`). Library deps: `mapal-ir`, `slotmap`. Dev-deps: `mapal-syntax`, `mapal-lower`, `mapal-interp`, `proptest`, `insta`, `criterion`.
 
 ## 8. Test plan (what P4-green means)
 
-1. **Identity-replay anchor**: `replay(ir, ∅)` on the **10 in-Core examples** (all of `examples/` except `vector.flow`, which is the out-of-Core generics sketch and does not lower — review F5) — validate-empty, interp `RunResult` byte-equal, Mermaid lint-clean.
+1. **Identity-replay anchor**: `replay(ir, ∅)` on the **10 in-Core examples** (all of `examples/` except `vector.mapal`, which is the out-of-Core generics sketch and does not lower — review F5) — validate-empty, interp `RunResult` byte-equal, Mermaid lint-clean.
 2. **The headline property (P4 DoD)**: ∀ generated program `p` (both strategies, both modes), every pass including `Inline` and `LiftLoops`, and the full pipeline: `run(rewrite(p)) ≈ run(p)` per R1; `validate` empty; plus **determinism** (same input ⇒ byte-identical output Mermaid) and **idempotence** (`rewrite(rewrite(p).ir)` applies nothing).
 3. **Example goldens**: every example through `rewrite` → interp output unchanged (exact), rewritten Mermaid snapshot (insta, read against this DESIGN), report snapshot (which laws fired — e.g. lower's undeduped constants collapse under CSE).
 4. **Micro-goldens per rule** (before/after shape assertions): each §2 table row; each §3 exclusion (dead trapping `Div` **kept**; dead `Div` by const-2 removed; `-0.0`/`0.0` **not** CSE-merged; token-bearing never merged; cross-SCC never merged); `Phi`-select keeps branch cones; fusion micro (fused body shape, orphan bodies dropped, out-degree-2 intermediate **not** fused); `map(id)` elimination; uncalled-fn removal. **Plus the §1.2 pins**: `fn f() -> i32 { 2 + 3 }` and `x + 0 -> ret` survive `rewrite` *unchanged* and re-seal clean (P1); `x * 0 -> x` inside a loop is *not* constified (P2, the `LoopBackOutsideScc` repro); fusion skipped when either body contains a loop (P3); a dead pure bounded loop is *kept* (RW11); a hand-built multi-merge nested loop makes `rewrite` the whole-graph identity with `skipped_non_canonical` (RW8).
@@ -258,24 +258,24 @@ Modes: `default` (traps permitted — `Div/Mod/Index` with arbitrary feeders; th
 ## 9. Module layout (HANDOFF §5.7 — one source file per layer, mirroring §9)
 
 ```
-crates/flow-rewrite/src/
+crates/mapal-rewrite/src/
   lib.rs             // rewrite, rewrite_with, PassId, RewriteResult, RewriteReport + curated pub use
   plan.rs            // RewritePlan (alias/constify/drop/fuse/inline/lift), specs
-  lift.rs            // R-LF/R-LM analysis over flow-ir LoopPlan facts
+  lift.rs            // R-LF/R-LM analysis over mapal-ir LoopPlan facts
   replay.rs          // the shared replayer (§1.1)
   driver.rs          // fixpoint rounds, report, validate assertion
   functor_laws.rs    // layer 1: map fusion, map(id)          (§4)
   naturality.rs      // layer 2: rule table (data, planned)   (§4)
   equations.rs       // layer 3: const fold + identities      (§2)
   graph_rewrites.rs  // layer 4: DCE + CSE                    (§3)
-crates/flow-rewrite/tests/
+crates/mapal-rewrite/tests/
   testgen/mod.rs     // §6 generator (shared; P5–P7 will consume)
   identity.rs        // §8.1
   property.rs        // §8.2 headline + §8.5 adversarial
   golden.rs          // §8.3 example goldens
   micro.rs           // §8.4 per-rule shape assertions
   lift.rs            // focused R-LF/R-LM positives + rejection pins
-crates/flow-rewrite/benches/rewrite_scale.rs
+crates/mapal-rewrite/benches/rewrite_scale.rs
 ```
 
 ## 10. Decision ledger (RW1–RW8 — decided once, do not re-litigate)
@@ -303,4 +303,4 @@ crates/flow-rewrite/benches/rewrite_scale.rs
 - **Backend trap story (P5)**: the `trap_free` generator mode exists for backends until backends pin deterministic trap behavior (LLVM div-by-zero is UB — P5's DESIGN must decide guard-and-abort vs. trap-free-subset differential testing).
 - **Generic-SCC replay** (lift RW8): a structural-clone path reconstructing multi-merge SCCs via nested `LoopHandle`s (the ir algos.rs nested test proves the builder can express them) — needed the day a backend must compile the nested inner-exits-via-`ret` shape; until then whole-graph identity + interp's M1 assert make the conservative path honest.
 - **Ret-targeted fold via `output()` re-emission** (lift P1's lossless-but-lazy exclusion): replay could rewrite a Return-targeted foldable op as `constant(v)` + `output(v_obj, None)` — only worth it if backends ever want pre-folded returns.
-- **Mutating rewriter**: only if `rewrite_scale` ever shows rebuild dominating; would be a flow-ir ADR (removal/replace API with its own invariant story, ir §17).
+- **Mutating rewriter**: only if `rewrite_scale` ever shows rebuild dominating; would be a mapal-ir ADR (removal/replace API with its own invariant story, ir §17).

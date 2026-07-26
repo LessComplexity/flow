@@ -1,27 +1,27 @@
-# Flow — Getting Started v0.2
+# Mapal — Getting Started v0.2
 
-**A 10-minute introduction to the Flow language.**
+**A 10-minute introduction to the Mapal language.**
 
 For the full reference, see `user-guide.md`. For compiler internals, see `architecture.md` and `category-ir.md`.
 
 ---
 
-## 1. What Flow is in one paragraph
+## 1. What Mapal is in one paragraph
 
-Flow is a general-purpose language whose surface syntax directly denotes a dataflow graph. You write `data -> process -> result;` and that is, literally, the compiler's internal representation — three nodes with two edges. Because the representation is a graph (formally: a morphism in a category called Flow-Cat), the compiler can reason about parallelism structurally, infer memory lifetimes, and target CPU, GPU, or FPGA from the same source.
+Mapal is a general-purpose language whose surface syntax directly denotes a dataflow graph. You write `data -> process -> result;` and that is, literally, the compiler's internal representation — three nodes with two edges. Because the representation is a graph (formally: a morphism in a category called Mapal-Cat), the compiler can reason about parallelism structurally, infer memory lifetimes, and target CPU, GPU, or FPGA from the same source.
 
 ## 2. Install and build your first program
 
 ```bash
 # Install (placeholder — tooling not yet released)
-curl -sSf https://flow-lang.org/install | sh
+curl -sSf https://mapal-lang.org/install | sh
 
 # Create a project
 flow pkg init hello
 cd hello
 
-# Source: src/main.flow
-cat > src/main.flow <<'EOF'
+# Source: src/main.mapal
+cat > src/main.mapal <<'EOF'
 fn main() {
     "Hello, world!" -> print;
 }
@@ -67,7 +67,7 @@ data -> seq {
 }
 ```
 
-> **Corrected per ADR-0019 — see docs/spec/ERRATA.md (LC-5).** This example previously wrapped each step in an anonymous block (`-> { … }`), which the parser rejects (P0115, out of Flow-Core); `seq { … }` is a statement block in stage position whose body is the ordinary block production.
+> **Corrected per ADR-0019 — see docs/spec/ERRATA.md (LC-5).** This example previously wrapped each step in an anonymous block (`-> { … }`), which the parser rejects (P0115, out of Mapal-Core); `seq { … }` is a statement block in stage position whose body is the ordinary block production.
 
 ### 3.3 `-pattern->` is a guard
 
@@ -81,7 +81,7 @@ x -> {
 } -> code;
 ```
 
-Booleans use `-true-> / -false->`. `_` is the default. Enum-variant patterns like `-Some(n)->` are full-language — Flow-Core rejects them at parse (P0106, planned for Core+1). Guard arms are pure, and string values may only flow to `print`/`println` (L1206) — not through a guard join.
+Booleans use `-true-> / -false->`. `_` is the default. Enum-variant patterns like `-Some(n)->` are full-language — Mapal-Core rejects them at parse (P0106, planned for Core+1). Guard arms are pure, and string values may only flow to `print`/`println` (L1206) — not through a guard join.
 
 ### 3.4 Variables declare with `<-` or `->`
 
@@ -133,15 +133,15 @@ flowchart TD
     phi --> ret(("ret : i32"))
 ```
 
-The graph is not a separate artifact — it's exactly what the compiler holds internally. Running `flow build --debug` and opening the project in the visual debugger will show you this graph live.
+The graph is not a separate artifact — it's exactly what the compiler holds internally. Running `mapal build --debug` and opening the project in the visual debugger will show you this graph live.
 
-## 5. What makes Flow different
+## 5. What makes Mapal different
 
 **Parallel by default.** Independent morphisms execute concurrently; `seq` is opt-in for ordering. Most mainstream languages flip this — you write sequential code and bolt on threads.
 
 **No garbage collector, no ownership annotations.** Memory is reclaimed at the graph's *last-use frontier* — computed automatically. There is no `&`, `&mut`, or borrow checker.
 
-**Same code, different targets.** CPU, GPU, FPGA, and browser all come from the same source. Each backend is a functor out of Flow-Cat (in the category-theoretic sense), which is the formal basis for "the compiler doesn't change your program's meaning."
+**Same code, different targets.** CPU, GPU, FPGA, and browser all come from the same source. Each backend is a functor out of Mapal-Cat (in the category-theoretic sense), which is the formal basis for "the compiler doesn't change your program's meaning."
 
 **The text is the graph.** Visual debugging, graph rendering, and diff views across IR versions all come from the same representation that the compiler runs on.
 
@@ -166,7 +166,7 @@ The graph is not a separate artifact — it's exactly what the compiler holds in
 
 > **Erratum E5 applied — see docs/spec/ERRATA.md and ADR-0006.**
 >
-> **Cheat-sheet verified against Flow-Core (2026-07-18).** Removed the error-propagation row: the `?` operator is full-language (P0101, out of Core). The loop row's exit arm produces the counter (`-false-> i -> ret;`) — a value-less `-> ret` in a value-returning function is L1306.
+> **Cheat-sheet verified against Mapal-Core (2026-07-18).** Removed the error-propagation row: the `?` operator is full-language (P0101, out of Core). The loop row's exit arm produces the counter (`-false-> i -> ret;`) — a value-less `-> ret` in a value-returning function is L1306.
 
 ---
 

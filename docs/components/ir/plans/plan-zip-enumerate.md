@@ -7,7 +7,7 @@ syntax is untouched — `zip`/`enumerate` already parse as call-shaped stages.
 
 ## Categorical model of the change (Dat + Trn deltas)
 
-Level B firewall: these are compiler-op additions; the Flow-Cat story (naturality) is
+Level B firewall: these are compiler-op additions; the Mapal-Cat story (naturality) is
 recorded as future rewrite laws only.
 
 **New `Operation` objects (discrete category gains two elements):**
@@ -34,7 +34,7 @@ Total on their typed domain — no traps, no effects, deterministic trivially.
 
 ## Work packages (order matters: ir → {lower, interp} → examples/goldens)
 
-### WP1 — flow-ir
+### WP1 — mapal-ir
 1. `Operation::Zip`, `Operation::Enumerate` (graph.rs), with doc comments in the
    existing style (cite ADR-0018).
 2. Builder: `zip(...)`/`enumerate(...)` constructors following the existing primitive
@@ -54,7 +54,7 @@ Total on their typed domain — no traps, no effects, deterministic trivially.
    additions (the 4 laws above, marked Future/P4) + ledger note (ADR-0018);
    ir/IMPLEMENTATION.md rows; ir/STATUS.md counts.
 
-### WP2 — flow-lower (after WP1 compiles)
+### WP2 — mapal-lower (after WP1 compiles)
 1. Builtin routing for `zip`/`enumerate` at call-shaped stages, mirroring
    `is_print_builtin` (lib.rs:152) — a `collection_builtin(name)` or extension of the
    existing router; user `fn zip`/`fn enumerate` collision handled exactly as `print`
@@ -70,7 +70,7 @@ Total on their typed domain — no traps, no effects, deterministic trivially.
 6. Docs in the same change: lower/DESIGN.md (builtin section, L-catalogue, morphism
    table), lower/IMPLEMENTATION.md, lower/STATUS.md.
 
-### WP3 — flow-interp (after WP1 compiles; parallel with WP2)
+### WP3 — mapal-interp (after WP1 compiles; parallel with WP2)
 1. Eval arms per the denotation above (follow existing per-op cost/fuel convention).
 2. Tests: value contracts — zip'd add: `c[0]=100`, `c[15]=115` (the zip_demo
    contract); enumerate: indices 0..n-1 as i32 paired correctly; determinism suite
@@ -78,10 +78,10 @@ Total on their typed domain — no traps, no effects, deterministic trivially.
 3. Docs: interp/DESIGN.md eval-arm note + IMPLEMENTATION.md + STATUS.md.
 
 ### WP4 — examples + acceptance (after WP2+WP3)
-1. Rewrite `examples/zip_demo.flow` as the builtin showcase:
+1. Rewrite `examples/zip_demo.mapal` as the builtin showcase:
    `(a,b) -> zip -> map { p -> p.0 + p.1 } -> c` (+ an `enumerate` demo block);
    expected outputs preserved (`c[0]=100`, `c[15]=115`).
-2. Rewrite `examples/vector_add.flow`: header comment updated (the unroll rationale is
+2. Rewrite `examples/vector_add.mapal`: header comment updated (the unroll rationale is
    now historical — say "pre-ADR-0018"), body uses zip form.
 3. Both examples run green through parse→lower→interp; golden trees/IR/interp outputs
    added per each crate's golden conventions.

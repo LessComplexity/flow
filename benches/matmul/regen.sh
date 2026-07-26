@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Emit every bench artifact from its .flow source through the optimizer, so a
+# Emit every bench artifact from its .mapal source through the optimizer, so a
 # bench leg measures the FULL pipeline (S22 item 1).
 #
 # The artifacts are NOT checked in: they are 4.4 MB of compiler output derived
@@ -18,10 +18,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
-cargo build -q --release -p flow-backend-llvm -p flow-backend-cuda --examples
+cargo build -q --release -p mapal-backend-llvm -p mapal-backend-cuda --examples
 
-emit_ll() { cargo run -q --release -p flow-backend-llvm --example emit -- "$@"; }
-emit_cu() { cargo run -q --release -p flow-backend-cuda --example emit -- "$@"; }
+emit_ll() { cargo run -q --release -p mapal-backend-llvm --example emit -- "$@"; }
+emit_cu() { cargo run -q --release -p mapal-backend-cuda --example emit -- "$@"; }
 
 # The CUDA leg legitimately rejects some sources (a `time` builtin has no CUDA
 # realization — it is a recorded ✋ cell, not a bug), so a refusal there must not
@@ -34,8 +34,8 @@ try() { # <label> <command...>
   fi
 }
 
-for src in benches/matmul/*.flow; do
-  stem="${src%.flow}"
+for src in benches/matmul/*.mapal; do
+  stem="${src%.mapal}"
 
   try "$stem.ll" emit_ll "$src" --rewrite
   try "$stem.cu" emit_cu "$src" --rewrite

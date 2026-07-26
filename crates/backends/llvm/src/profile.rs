@@ -6,13 +6,13 @@
 //! keeps the differential suite a valid gate under every profile.
 //!
 //! The split this file exists to enforce (the backend-genericity contract):
-//! **geometry comes from the record, constants come from the profile.** flow-ir
+//! **geometry comes from the record, constants come from the profile.** mapal-ir
 //! never learns a machine fact; the emitter never re-derives graph analysis.
 //! What used to be six literals swept on one M4 Pro is now one table plus
 //! arithmetic, and the arithmetic reproduces those literals for the default
 //! profile — that is the correctness gate for this change.
 
-use flow_ir::Ty;
+use mapal_ir::Ty;
 
 /// One target's machine facts, plus the two policy ratios that are honestly
 /// search space rather than facts (see the field docs).
@@ -36,12 +36,12 @@ pub struct TargetProfile {
     /// Per-core L2 in bytes — the budget the KC rung's k-panel is sized against.
     pub l2_bytes: u64,
     /// Stack ceiling policy: an entry-block block at least this large is placed
-    /// in the `flow_rt_alloc` arena instead of the stack.
+    /// in the `mapal_rt_alloc` arena instead of the stack.
     pub heap_min_bytes: u64,
 }
 
 /// The element width a tile site accumulates at. Tile sites are numeric-gated
-/// by recognition (`flow_ir::algo` requires `is_numeric` for the element, the
+/// by recognition (`mapal_ir::algo` requires `is_numeric` for the element, the
 /// accumulator, the seed and the map target), so the non-numeric arm is
 /// unreachable; it returns the f32 width rather than panicking because a wrong
 /// tile width is a slow kernel, never a wrong answer.

@@ -1,46 +1,46 @@
 #!/bin/bash
 # tile_ab.sh — repeatable local tile A/B (S26 WP4; the S25 A/B was ad-hoc).
 #
-# Usage: tile_ab.sh <file.flow> <label> [runs=3]
+# Usage: tile_ab.sh <file.mapal> <label> [runs=3]
 #
-# Given a .flow file + label: emit tiled, --no-pack, --no-tile, and --contract
+# Given a .mapal file + label: emit tiled, --no-pack, --no-tile, and --contract
 # .ll (plain and --perf variants) into target/tmp/tile_ab/<label>/ via the emit example with `-` +
 # stdout redirect (the emit example's output-file naming keys on --perf only,
 # so `-` avoids the `_perf.ll` collision), compile with
-# `clang -O2 -march=native -ffp-contract=fast` against the flow-rt staticlib,
-# run everything at FLOW_PAR=1, assert tiled stdout byte-equal to untiled,
-# check contracted output numerically, and report min-of-N `FLOW_PERF total
+# `clang -O2 -march=native -ffp-contract=fast` against the mapal-rt staticlib,
+# run everything at MAPAL_PAR=1, assert tiled stdout byte-equal to untiled,
+# check contracted output numerically, and report min-of-N `MAPAL_PERF total
 # ms=` per side.
 set -euo pipefail
 
-FLOW_FILE="${1:?usage: tile_ab.sh <file.flow> <label> [runs]}"
-LABEL="${2:?usage: tile_ab.sh <file.flow> <label> [runs]}"
+MAPAL_FILE="${1:?usage: tile_ab.sh <file.mapal> <label> [runs]}"
+LABEL="${2:?usage: tile_ab.sh <file.mapal> <label> [runs]}"
 RUNS="${3:-3}"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-case "$FLOW_FILE" in /*) ;; *) FLOW_FILE="$PWD/$FLOW_FILE" ;; esac
-[ -f "$FLOW_FILE" ] || { echo "no such file: $FLOW_FILE" >&2; exit 1; }
+case "$MAPAL_FILE" in /*) ;; *) MAPAL_FILE="$PWD/$MAPAL_FILE" ;; esac
+[ -f "$MAPAL_FILE" ] || { echo "no such file: $MAPAL_FILE" >&2; exit 1; }
 
 TMP="$ROOT/target/tmp/tile_ab/$LABEL"
 mkdir -p "$TMP"
-RT="$ROOT/target/release/libflow_rt.a"
+RT="$ROOT/target/release/libmapal_rt.a"
 
 # Big-N allocas live on the stack; macOS rejects `ulimit -s unlimited` (soft
 # stays 8176K), so fall back to the hard limit — runner.py's proven recipe.
 ulimit -s unlimited 2>/dev/null || ulimit -s hard 2>/dev/null || true
-export FLOW_PAR=1
+export MAPAL_PAR=1
 
 echo "== tile A/B: $LABEL =="
-echo "file:   $FLOW_FILE"
+echo "file:   $MAPAL_FILE"
 echo "clang:  $(clang --version | head -1)"
 echo "tmp:    $TMP"
 
-cargo build -q -p flow-rt --release --manifest-path "$ROOT/Cargo.toml"
+cargo build -q -p mapal-rt --release --manifest-path "$ROOT/Cargo.toml"
 
 emit() { # <out.ll> [flags...]
   local out="$1"; shift
-  (cd "$ROOT" && cargo run -q --release -p flow-backend-llvm --example emit -- \
-    "$FLOW_FILE" - --rewrite "$@") > "$out"
+  (cd "$ROOT" && cargo run -q --release -p mapal-backend-llvm --example emit -- \
+    "$MAPAL_FILE" - --rewrite "$@") > "$out"
 }
 
 build() { # <ll> <bin>
@@ -85,7 +85,7 @@ fi
 # that nearly cancels (|sum| << the terms) can't false-fail on contraction
 # noise. f64 gets 1e-9, not machine-eps class — K=4096 accumulation is ~K·eps
 # before cancellation. Default is the loose f32 bound unless proven f64.
-if grep -q 'widen_f64' "$FLOW_FILE"; then
+if grep -q 'widen_f64' "$MAPAL_FILE"; then
   REL_TOL=1e-9
 else
   REL_TOL=1e-4
@@ -132,16 +132,16 @@ time_side() { # <bin> <ref.out> [numeric] -> prints "min r1 r2 ... rN"
   local bin="$1" ref="$2" numeric="${3:-}" ms all=""
   for _ in $(seq 1 "$RUNS"); do
     "$bin" > "$TMP/.run.out"
-    grep -v '^FLOW_PERF' "$TMP/.run.out" > "$TMP/.run.stripped"
+    grep -v '^MAPAL_PERF' "$TMP/.run.out" > "$TMP/.run.stripped"
     if [ "$numeric" = numeric ]; then
       compare_numeric "$ref" "$TMP/.run.stripped"
     elif ! cmp -s "$TMP/.run.stripped" "$ref"; then
-      echo "FAIL: $bin stdout (sans FLOW_PERF) != reference:" >&2
+      echo "FAIL: $bin stdout (sans MAPAL_PERF) != reference:" >&2
       diff "$ref" "$TMP/.run.stripped" >&2 || true
       exit 1
     fi
-    ms="$(sed -n 's/^FLOW_PERF total ms=//p' "$TMP/.run.out" | head -1)"
-    [ -n "$ms" ] || { echo "FAIL: no FLOW_PERF total in $bin output" >&2; exit 1; }
+    ms="$(sed -n 's/^MAPAL_PERF total ms=//p' "$TMP/.run.out" | head -1)"
+    [ -n "$ms" ] || { echo "FAIL: no MAPAL_PERF total in $bin output" >&2; exit 1; }
     all="$all $ms"
   done
   # shellcheck disable=SC2086
@@ -157,7 +157,7 @@ read -r NOPACK_MIN NOPACK_ALL <<< "$NOPACK_TIMES"
 read -r NOTILE_MIN NOTILE_ALL <<< "$NOTILE_TIMES"
 read -r FMA_MIN FMA_ALL <<< "$FMA_TIMES"
 
-echo "-- results (FLOW_PERF total ms, min-of-$RUNS, FLOW_PAR=1)"
+echo "-- results (MAPAL_PERF total ms, min-of-$RUNS, MAPAL_PAR=1)"
 printf '%-10s %12s   runs:%s\n' "tile"   "$TILE_MIN"   "$(printf ' %s' $TILE_ALL)"
 printf '%-10s %12s   runs:%s\n' "no-pack" "$NOPACK_MIN" "$(printf ' %s' $NOPACK_ALL)"
 printf '%-10s %12s   runs:%s\n' "no-tile" "$NOTILE_MIN" "$(printf ' %s' $NOTILE_ALL)"

@@ -19,7 +19,7 @@
 //! built): last-use coloring (capacity becomes max-clique, not sum) and
 //! loop-cone zones with two-slot rotation.
 
-use flow_ir::{CategoryIr, FuncId, MorphismId, ObjectId, Operation, Ty};
+use mapal_ir::{CategoryIr, FuncId, MorphismId, ObjectId, Operation, Ty};
 use slotmap::SecondaryMap;
 use std::collections::HashMap;
 
@@ -196,14 +196,14 @@ fn assign_cell(plan: &mut ArenaPlan, key: ArenaKey, ty: &Ty) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flow_ir::{Dest, FuncKind, IrBuilder, SourceLoc, Value};
+    use mapal_ir::{Dest, FuncKind, IrBuilder, SourceLoc, Value};
 
     const L: SourceLoc = SourceLoc { start: 0, end: 0 };
 
     fn lower_src(src: &str) -> CategoryIr {
-        let po = flow_syntax::parse(src);
+        let po = mapal_syntax::parse(src);
         assert!(po.diagnostics.is_empty(), "parse: {:?}", po.diagnostics);
-        flow_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
+        mapal_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
     }
 
     /// The plan of the module's entry fn.
@@ -224,7 +224,7 @@ mod tests {
         // three 1-cell readback temps (4 B each) — every member 256 B-slot
         // aligned, capacity = 7 × 256.
         let path = format!(
-            "{}/../../../examples/vector_add.flow",
+            "{}/../../../examples/vector_add.mapal",
             env!("CARGO_MANIFEST_DIR")
         );
         let src = std::fs::read_to_string(&path).unwrap();

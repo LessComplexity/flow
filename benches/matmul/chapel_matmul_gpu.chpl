@@ -1,5 +1,5 @@
 // Naive GEMM in Chapel on the GPU locale — the direct-competitor GPU leg:
-// the same per-cell i/j/k math as chapel_matmul.chpl (and the Flow cell fn),
+// the same per-cell i/j/k math as chapel_matmul.chpl (and the Mapal cell fn),
 // with data and the forall on here.gpus[0] so the loop compiles to a GPU
 // kernel. Requires a gpu-enabled chpl (CHPL_LOCALE_MODEL=gpu, CHPL_GPU=nvidia
 // source build — the binary .deb is CPU-locale only).

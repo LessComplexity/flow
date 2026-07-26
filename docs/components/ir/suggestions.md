@@ -29,7 +29,7 @@ _(Suggestion 1 — the §5.1 typing-table golden oracle — applied Session 09: 
   hot-path navigation *with* a consistency mechanism (single writer `add_edge`, append-only-then-seal),
   which is precisely the §5-sanctioned case. The model lists them as total morphisms, not deduced. No
   change (noted in IMPLEMENTATION.md divergences instead).
-- **The two `SourceLoc`s (flow-ir vs flow-syntax) and surface-`Ty` vs IR-`Ty`** — **ledgered
+- **The two `SourceLoc`s (mapal-ir vs mapal-syntax) and surface-`Ty` vs IR-`Ty`** — **ledgered
   STAY-separate** (D8; categorical-model.md §7). Dependency-direction and Core-subset reasons. Cited,
   not re-proposed.
 - **YAGNI scan** — no speculative abstraction found: `Dest`/`FuncKind`/`ObjectKind`/`Operation`

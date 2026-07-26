@@ -1,14 +1,14 @@
-# Deduced queries — how the Flow compiler knows things
+# Deduced queries — how the Mapal compiler knows things
 
 An explainer for engineers who are not compiler people. Every mechanism below is
 real code: the query names (`loop_plan`, `path_plan`, `tile_plan`, `bounds_proof`,
-`last_use_plan`) are functions on `CategoryIr` in `crates/flow-ir/src/algo.rs`, so
+`last_use_plan`) are functions on `CategoryIr` in `crates/mapal-ir/src/algo.rs`, so
 you can grep them and read the source alongside this doc.
 
 ## The one idea
 
 The compiler stores exactly one thing: **the graph**. After lowering, your program
-is a `CategoryIr` (`crates/flow-ir/src/graph.rs`) — a set of *objects* (values:
+is a `CategoryIr` (`crates/mapal-ir/src/graph.rs`) — a set of *objects* (values:
 parameters, constants, temporaries, the return value, loop-merge points) connected
 by *morphisms* (directed edges, each labeled with one `Operation`: `Add`, `Mul`,
 `Index`, `Map`, `Fold`, `Phi`, `Update`, `Print`, the loop trio
@@ -21,7 +21,7 @@ over the sealed graph, computed on demand, never stored. Because the answers are
 never stored, they can never drift out of sync with the code. There is no
 invalidation bug to have.
 
-And the queries don't trust declarations — they **prove** structure. Flow has no
+And the queries don't trust declarations — they **prove** structure. Mapal has no
 `parallel` keyword, no `restrict` pointers, no vector intrinsics. Independence is
 "there is no path between these two nodes" — an exact reachability answer, not a
 programmer's promise. Reuse is fanout the graph can see. A loop is a literal cycle.
@@ -32,14 +32,14 @@ answers a single question and hands the answer to the consumers that need it:
 
 ```mermaid
 graph LR
-    S["source .flow file"] --> G["CategoryIr — the only stored truth"]
+    S["source .mapal file"] --> G["CategoryIr — the only stored truth"]
     G --> LP["loop_plan — which cycle is a well-formed loop?"]
     G --> PP["path_plan — what can run at the same time?"]
     G --> TP["tile_plan — is this map secretly a tiled kernel?"]
     G --> BP["bounds_proof — which bounds checks are dead?"]
     G --> LU["last_use_plan — is this array read again after here?"]
     LP --> DR["interp loop driver + rewrite replayer + backend loop CFGs"]
-    PP --> RT["llvm emitter + flow-rt thread pool"]
+    PP --> RT["llvm emitter + mapal-rt thread pool"]
     TP --> MK["llvm tiled micro-kernel"]
     BP --> GE["guard elision in llvm + cuda"]
     LU --> IU["in-place Update, back-edge freeing"]
@@ -66,7 +66,7 @@ Two disciplines run through everything below:
 **The question in plain words:** which parts of this function are independent, so
 threads can run them at once — and where must the sequential world wait for them?
 
-There are no parallelism annotations in Flow. The graph's paths **are** the
+There are no parallelism annotations in Mapal. The graph's paths **are** the
 concurrency: if no path connects two computations, neither can observe the other,
 so running them simultaneously cannot change the answer.
 
@@ -85,7 +85,7 @@ fn main() {
 The two maps are independent paths across nodes → two tasks. The zip+map depends
 on both → one task with two dependencies. The print is effectful → the host waits.
 
-**How the algorithm works** (`CategoryIr::path_plan`, `crates/flow-ir/src/algo.rs:946`):
+**How the algorithm works** (`CategoryIr::path_plan`, `crates/mapal-ir/src/algo.rs:946`):
 
 1. Put the function's morphisms in execution order (`topo_order`).
 2. Set aside the **host spine**: anything that touches the effect token (prints,
@@ -132,13 +132,13 @@ graph TD
 **Who consumes the answer:** the llvm backend
 (`crates/backends/llvm/src/lib.rs:105`). If the plan isn't `is_single_path()`, it
 emits one `@task{i}` function per task plus a static dependency/rank table, and
-`flow-rt` (`crates/flow-rt/src/lib.rs`) executes it on a work-stealing thread pool
-(`FLOW_PAR` sets the thread count; `FLOW_PAR=1` is the sequential lever). If the
+`mapal-rt` (`crates/mapal-rt/src/lib.rs`) executes it on a work-stealing thread pool
+(`MAPAL_PAR` sets the thread count; `MAPAL_PAR=1` is the sequential lever). If the
 plan looks malformed, the backend drops it and emits plain sequential code —
 again: unrecognized means slow, never wrong.
 
 **Correctness gate:** the differential suite runs the parallel cases against the
-interpreter oracle at `-O0` and `-O2`, with `FLOW_PAR` varied — stdout must be
+interpreter oracle at `-O0` and `-O2`, with `MAPAL_PAR` varied — stdout must be
 byte-equal at any thread count.
 
 ---
@@ -150,7 +150,7 @@ map — are its array reads so regular that lanes can compute neighboring cells 
 lockstep with vector loads and a broadcast? (Matmul, FIR filters, and
 attention-shaped code all match; there is no matrix concept in the recognizer.)
 
-The recognized shape, verbatim from `benches/matmul/matmul4_cap.flow`:
+The recognized shape, verbatim from `benches/matmul/matmul4_cap.mapal`:
 
 ```flow
 16 -> iota -> ta;                 // one counted range: the 16 cells
@@ -169,7 +169,7 @@ Read it as: each cell `c[i*4+j]` is an independent dot product,
 order-pinned. That is exactly what a SIMD unit wants: run 4/8/16 cells in lanes,
 each lane doing its own `acc + x*y`, one lane's `b`-read being the neighbor's.
 
-**How the algorithm works** (`CategoryIr::tile_plan`, `crates/flow-ir/src/algo.rs:510`;
+**How the algorithm works** (`CategoryIr::tile_plan`, `crates/mapal-ir/src/algo.rs:510`;
 the recognition pipeline is `tile_site` → `tile_fold_shape` → `tile_affine`, with
 `tile_trap_free` as the safety gate):
 
@@ -260,7 +260,7 @@ tiled output byte-equal to the oracle — plus a measured number.
 
 **The question in plain words:** is this array index provably within `[0, n)`?
 If yes, the bounds check can be deleted — **the guard was never semantics, it was
-insurance.** An out-of-bounds `Index` traps in Flow; but if the index provably
+insurance.** An out-of-bounds `Index` traps in Mapal; but if the index provably
 can't leave the array, the trap is unreachable and the check is dead weight in
 the hottest loops (it blocks unrolling and vectorization — the S20 finding).
 
@@ -269,7 +269,7 @@ In the matmul example above: `a[i * 4 + k]` where `t ∈ [0, 16)`, so `i = t / 4
 [0, 16)` — provably inside a `[f64; 16]`. Guard deleted.
 
 **How the algorithm works** (`CategoryIr::bounds_proof`,
-`crates/flow-ir/src/algo.rs:2008` — interval analysis over the object graph):
+`crates/mapal-ir/src/algo.rs:2008` — interval analysis over the object graph):
 
 1. **Seed ranges.** Non-negative integer constants know their exact value;
    elements of an `iota(n)` array lie in `[0, n)`; so does the `.0` of an
@@ -303,7 +303,7 @@ graph TD
 **Who consumes the answer:** the llvm and cuda backends skip the bounds check
 (and the trap path) for proven `Index` morphisms
 (`crates/backends/llvm/src/func.rs:47`, `crates/backends/cuda/src/kernel.rs:276`).
-Inside flow-ir itself, `tile_trap_free`, `emission_guarded`, and `path_plan`'s
+Inside mapal-ir itself, `tile_trap_free`, `emission_guarded`, and `path_plan`'s
 trap watermarks all read it to know what can still trap.
 
 **Correctness gate:** the analysis is conservative by construction — anything
@@ -319,8 +319,8 @@ loop? If so: which node is the header, what's the init value, what's the back
 edge, where does it exit, and which body operations *decide* (run every trip)
 versus *advance* (skipped on the exit trip)?
 
-In Flow a loop is a literal cycle in the graph. Surface syntax like
-(`examples/sum_to_n.flow`):
+In Mapal a loop is a literal cycle in the graph. Surface syntax like
+(`examples/sum_to_n.mapal`):
 
 ```flow
 fn sum_to_n(n: i32) -> i32 {
@@ -349,7 +349,7 @@ also receives an edge from outside the cycle (the init arriving).
 **The firing problem, and the exemption.** Dataflow's rule is "fire a node when
 its inputs have fired" — but in a cycle every node waits on another node in the
 cycle: deadlock. The emission scheduler (`topo_order`,
-`crates/flow-ir/src/algo.rs:1383`) breaks it with two rules:
+`crates/mapal-ir/src/algo.rs:1383`) breaks it with two rules:
 
 - a `LoopMerge` completes on its `LoopEnter` alone — **the `LoopBack` edge is
   emitted but never gates** (header-first: the init arrives, the merge fires, the
@@ -369,7 +369,7 @@ graph TD
 ```
 
 **How the recognition algorithm works** (`CategoryIr::loop_plan`,
-`crates/flow-ir/src/algo.rs:1553`):
+`crates/mapal-ir/src/algo.rs:1553`):
 
 1. **Find the cycles.** `loop_structure` runs iterative Tarjan SCC over the
    function's object graph; a non-trivial SCC (more than one node, or a
@@ -414,8 +414,8 @@ graph TD
 everything else compiles as-is.
 
 **Who consumes the answer:** everyone who needs loop attribution derives it from
-this one plan — the interpreter's loop driver (`crates/flow-interp/src/loops.rs:32`),
-the rewrite replayer (`crates/flow-rewrite/src/replay.rs:256`), and both backends
+this one plan — the interpreter's loop driver (`crates/mapal-interp/src/loops.rs:32`),
+the rewrite replayer (`crates/mapal-rewrite/src/replay.rs:256`), and both backends
 (llvm `loops.rs`, cuda `loops.rs`). The code comment explains why it's one query:
 the rule's two hand-maintained copies both regressed in S12, so now there is one
 source of truth.
@@ -431,13 +431,13 @@ against the oracle at both opt levels, traps included.
 read the old array again? If provably not, then "make a fresh array with slot `i`
 changed" — the `Update` operation — can just… change slot `i`. In place. No copy.
 
-The example is `matmul4.flow`'s inner loop: `c[t] <- v` — semantics say a *fresh*
+The example is `matmul4.mapal`'s inner loop: `c[t] <- v` — semantics say a *fresh*
 array with slot `t` replaced. If `c` is never read again except by the next
 update, the "fresh array" can be the same buffer mutated in place (S20 deleted a
 per-iteration 16 KB `memcpy` this way).
 
 **How the algorithm works** (`CategoryIr::last_use_plan`,
-`crates/flow-ir/src/algo.rs:1747`):
+`crates/mapal-ir/src/algo.rs:1747`):
 
 1. **Lay the program out in execution order.** `topo_order` gives every morphism
    a rank; each canonical loop is re-ranked into the order trips actually
@@ -500,7 +500,7 @@ so every gate is biased toward "no".
 This is what makes the project safe to push on, and it has a name and a harness.
 The contract (**R1**): optimized output must be **byte-equal to the interpreter
 oracle** — the interpreter executes the graph itself, so it *is* the meaning —
-at any thread count (`FLOW_PAR`) and any optimization level (every differential
+at any thread count (`MAPAL_PAR`) and any optimization level (every differential
 case compiles and runs at both `-O0` and `-O2`,
 `crates/backends/llvm/tests/differential.rs`). And the standing direction
 (`docs/notes/tile-ladder-direction.md`): the performance claim is earned

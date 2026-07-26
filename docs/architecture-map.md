@@ -9,7 +9,7 @@
 > `tile_plan`, `bounds_proof`, `last_use_plan`):
 > [`architecture/deduced-queries.md`](architecture/deduced-queries.md).
 > **Firewall (ADR-0014):** everything here is Level B — the compiler's own types and
-> passes. Flow-Cat (Level A, `docs/spec/category-ir.md`, frozen) appears only as data.
+> passes. Mapal-Cat (Level A, `docs/spec/category-ir.md`, frozen) appears only as data.
 
 ## 1. Why (one paragraph)
 
@@ -28,13 +28,13 @@ backend exists.
 
 | Type | Shape | Home |
 | --- | --- | --- |
-| `𝕊` (source) | one `.flow` file | input |
-| `Token*` | free monoid of spanned tokens | `flow-syntax` |
-| `Program` | thin spanned parse tree | `flow-syntax` |
-| `CategoryIr` | sealed dataflow graph (objects/morphisms, edge-only dataflow, ADR-0013) | `flow-ir` |
-| `RValue` env | interp value domain over `ObjectId` | `flow-interp` |
+| `𝕊` (source) | one `.mapal` file | input |
+| `Token*` | free monoid of spanned tokens | `mapal-syntax` |
+| `Program` | thin spanned parse tree | `mapal-syntax` |
+| `CategoryIr` | sealed dataflow graph (objects/morphisms, edge-only dataflow, ADR-0013) | `mapal-ir` |
+| `RValue` env | interp value domain over `ObjectId` | `mapal-interp` |
 | `Diagnostic` / `IrError` / `IrViolation` | renderer-free structured errors (three by design — §7.2 of the [audit](architecture/categorical-model.md)) | per crate |
-| `TargetText` | emitted `.ll` / `.cu` / `.v` source | `flow-backend-llvm` (built, S13); `flow-backend-cuda` (built, S15); verilog planned |
+| `TargetText` | emitted `.ll` / `.cu` / `.v` source | `mapal-backend-llvm` (built, S13); `mapal-backend-cuda` (built, S15); verilog planned |
 
 **Trn** — the passes (`⊸` = effectful):
 
@@ -42,7 +42,7 @@ backend exists.
 | --- | --- | --- | --- |
 | `lex` | `𝕊 → LexOutput` | syntax | built |
 | `parse` | `Token* → ParseOutput` | syntax | built |
-| `lower` | `(𝕊 × Program) ⇀ CategoryIr ⊕ Diag*` (partial — domain = Flow-Core) | lower | built |
+| `lower` | `(𝕊 × Program) ⇀ CategoryIr ⊕ Diag*` (partial — domain = Mapal-Core) | lower | built |
 | `validate` | `CategoryIr → Violation*` (independent oracle) | ir | built |
 | `eval`/`run` | `(CategoryIr × Input × Fuel) ⇀ Output ⊸` (fueled, E1) | interp | built |
 | `check` | `Src × Program × CategoryIr → Diag*` (ε = accept) | check | built |
@@ -76,10 +76,10 @@ the E1 `valid/busy/done/result` handshake.
 | check | E2 effect legality + Return exclusivity (typing at boundary; E3 vacuous-by-proof) | tested (25) | [DESIGN](components/check/DESIGN.md) | [IMPL](components/check/IMPLEMENTATION.md) |
 | interp | `eval`/`run` — **the oracle** | built (P3/M1) | [DESIGN](components/interp/DESIGN.md) | [IMPL](components/interp/IMPLEMENTATION.md) |
 | rewrite | plan+replay rewriter: const fold/CSE/DCE + map fusion, R1 property harness + testgen | tested (S12) | [DESIGN](components/rewrite/DESIGN.md) | [IMPL](components/rewrite/IMPLEMENTATION.md) |
-| backend-llvm | `F_LLVM` emit (+ `flow-rt` runtime seam, ADR-0020) | built (P5/M2, S13) | [DESIGN](components/backend-llvm/DESIGN.md) | [IMPL](components/backend-llvm/IMPLEMENTATION.md) |
+| backend-llvm | `F_LLVM` emit (+ `mapal-rt` runtime seam, ADR-0020) | built (P5/M2, S13) | [DESIGN](components/backend-llvm/DESIGN.md) | [IMPL](components/backend-llvm/IMPLEMENTATION.md) |
 | backend-cuda | `F_CUDA` emit (host/device split; kernels + H↔D `Trm`s) | built (P6/M3, S15) | [DESIGN](components/backend-cuda/DESIGN.md) | [IMPL](components/backend-cuda/IMPLEMENTATION.md) |
 | backend-verilog | `F_Verilog` emit + done-protocol | planned (P7/M4) | [DESIGN](components/backend-verilog/DESIGN.md) | [IMPL](components/backend-verilog/IMPLEMENTATION.md) |
-| cli | `flow build\|run\|dump-ir\|test`, `render` | planned (M5) | [DESIGN](components/cli/DESIGN.md) | [IMPL](components/cli/IMPLEMENTATION.md) |
+| cli | `mapal build\|run\|dump-ir\|test`, `render` | planned (M5) | [DESIGN](components/cli/DESIGN.md) | [IMPL](components/cli/IMPLEMENTATION.md) |
 
 Status detail: [`docs/STATUS.md`](STATUS.md) (global roll-up, HANDOFF §7.1.1).
 
@@ -88,7 +88,7 @@ Status detail: [`docs/STATUS.md`](STATUS.md) (global roll-up, HANDOFF §7.1.1).
 | `Trn` / `Dat` | Placements | Why it matters |
 | --- | --- | --- |
 | `validate` | debug-assert after seal AND the property-test harness — never a mandatory production pass | the oracle's independence is the point; "seal Ok ⇒ validate empty" is a *tested* law, not a call chain |
-| running a Flow program | `interp` (built) AND each backend target (planned) | one meaning, many realisations — the differential tests are the commuting squares; the interp fibre is authoritative (HANDOFF §7.3) |
+| running a Mapal program | `interp` (built) AND each backend target (planned) | one meaning, many realisations — the differential tests are the commuting squares; the interp fibre is authoritative (HANDOFF §7.3) |
 | `Print{newline}` effect | interp's writer-style token now; each backend's runtime later | E2: effect order is semantics — every placement must observe the same token order |
 
 ## 5. Coherence checklist (§4.5 / §8) against the implementation
@@ -108,8 +108,8 @@ and counted in its DESIGN §2; every one materialised at both ends per Law 2).
 - [x] 3. Placement totality — every built `Trn` has a crate home (§3 table); no
       floating pass.
 - [x] 4. Dependency mediation — all cross-crate reach is same-`Loc` Cargo edges;
-      `flow-ir` stays the zero-dep hub (the D8 `SourceLoc` copy at one declared seam,
-      `flow_lower::tys::ir_loc`, exists precisely to keep it so).
+      `mapal-ir` stays the zero-dep hub (the D8 `SourceLoc` copy at one declared seam,
+      `mapal_lower::tys::ir_loc`, exists precisely to keep it so).
 - [x] 5. Composition soundness — roll-ups are deduced, not redescribed: `topo`/`sccs`
       recomputed (ir D3/D5), global STATUS deduced from component STATUS, this map
       links down rather than restating.

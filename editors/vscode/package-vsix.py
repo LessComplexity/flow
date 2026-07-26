@@ -15,7 +15,7 @@ ZIP with three things in it, so this builds one directly:
     extension/...            the extension itself
 
     python3 editors/vscode/package-vsix.py
-    code --install-extension editors/vscode/flow-lang-0.1.0.vsix
+    code --install-extension editors/vscode/mapal-lang-0.1.0.vsix
 """
 
 import json
@@ -30,8 +30,8 @@ HERE = pathlib.Path(__file__).parent
 PAYLOAD = [
     "package.json",
     "language-configuration.json",
-    "syntaxes/flow.tmLanguage.json",
-    "icons/flow.svg",
+    "syntaxes/mapal.tmLanguage.json",
+    "icons/mapal.svg",
     "README.md",
 ]
 

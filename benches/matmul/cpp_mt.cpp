@@ -4,7 +4,7 @@
 // min-of-iters timing style — but the outer (row) loop is partitioned across
 // std::thread workers. Row partitioning preserves every cell's k-order, so
 // outputs are byte-equal to the naive build at any thread count.
-//   Width: quota-aware like flow-rt — $THREADS override, else cgroup v2
+//   Width: quota-aware like mapal-rt — $THREADS override, else cgroup v2
 //   cpu.max, else v1 cfs_quota/period (div-ceil), capped by
 //   hardware_concurrency; the box shows 128 threads at a ~61.4-core quota and
 //   a naive hardware_concurrency read would oversubscribe 2x.
@@ -31,7 +31,7 @@ static int thread_width() {
         char q[64] = {0};
         long p = 0;
         if (fscanf(f, "%63s %ld", q, &p) == 2 && strcmp(q, "max") != 0 && p > 0)
-            quota = (atol(q) + p - 1) / p;  // div-ceil, flow-rt's rule
+            quota = (atol(q) + p - 1) / p;  // div-ceil, mapal-rt's rule
         fclose(f);
     }
     if (quota < 0) {  // cgroup v1

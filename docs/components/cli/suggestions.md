@@ -9,6 +9,6 @@
 
 ## Detail
 ### 1. Single diagnostic contract
-Already derived in the Session-06 audit (soft — revisit when `flow-cli` is built); see
+Already derived in the Session-06 audit (soft — revisit when `mapal-cli` is built); see
 [categorical-model.md §7.5](../../architecture/categorical-model.md) item 2. Explicitly
 **not** a merge of `IrError`/`IrViolation` — those stay two (§7.2, oracle independence).

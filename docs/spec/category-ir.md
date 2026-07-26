@@ -1,4 +1,4 @@
-# Flow Language — Category IR Specification v0.2
+# Mapal Language — Category IR Specification v0.2
 
 **Internal representation: a graph-based IR with a category-theoretic semantics.**
 
@@ -25,7 +25,7 @@ Appendices: A. Terminology note — two meanings of "category". B. Complete work
 
 ### 1.1 What this IR is
 
-Flow programs are represented internally as directed graphs. A program is a graph; a function is a subgraph; an optimization is a graph rewrite. The representation has a *semantics* in category theory: each graph denotes a morphism in a specific category, **Flow-Cat**, and every rewrite is justified by a law of that category or of some structure on it (functor laws, naturality, monadic laws).
+Mapal programs are represented internally as directed graphs. A program is a graph; a function is a subgraph; an optimization is a graph rewrite. The representation has a *semantics* in category theory: each graph denotes a morphism in a specific category, **Mapal-Cat**, and every rewrite is justified by a law of that category or of some structure on it (functor laws, naturality, monadic laws).
 
 This document specifies:
 
@@ -33,7 +33,7 @@ This document specifies:
 - the data structures that realize the graph in the compiler,
 - how surface syntax is lowered into the graph,
 - which optimization classes correspond to which categorical laws,
-- how each backend is modeled as a functor out of Flow-Cat.
+- how each backend is modeled as a functor out of Mapal-Cat.
 
 ### 1.2 Why go to the trouble
 
@@ -48,7 +48,7 @@ Graph-based IRs are not new (Sea of Nodes, RVSDG, MLIR). What a categorical sema
 
 ```mermaid
 flowchart LR
-    src[Source .flow] --> lex[Lexer]
+    src[Source .mapal] --> lex[Lexer]
     lex --> par[Parser]
     par --> |minimal parse tree| low[IR builder]
     low --> ir[(Category IR graph)]
@@ -65,26 +65,26 @@ flowchart LR
 
 The parse tree is deliberately thin — there is no separate typed AST phase. Type checking, lifetime analysis, and optimization all run on the graph directly.
 
-> **Note on "skipping the AST".** Earlier drafts claimed Flow "skips the AST entirely." That overstates it: the parser does produce a small tree that the lowering code pattern-matches on. The honest claim is: there is no separate typed intermediate; the graph is the canonical representation from lowering onward.
+> **Note on "skipping the AST".** Earlier drafts claimed Mapal "skips the AST entirely." That overstates it: the parser does produce a small tree that the lowering code pattern-matches on. The honest claim is: there is no separate typed intermediate; the graph is the canonical representation from lowering onward.
 
 ---
 
 ## 2. Categorical foundations
 
-This section defines **Flow-Cat**, the category in which Flow IR graphs are interpreted, together with the extra structure (products, coproducts, exponentials, traces) needed to model real programs. All diagrams are Mermaid; all claims are either definitional or are flagged as theorems to be discharged.
+This section defines **Mapal-Cat**, the category in which Mapal IR graphs are interpreted, together with the extra structure (products, coproducts, exponentials, traces) needed to model real programs. All diagrams are Mermaid; all claims are either definitional or are flagged as theorems to be discharged.
 
-### 2.1 Flow-Cat
+### 2.1 Mapal-Cat
 
 > **Erratum E1 applied — see docs/spec/ERRATA.md and ADR-0002.**
 
-**Definition (Flow-Cat).** The category whose
+**Definition (Mapal-Cat).** The category whose
 
-- **objects** are Flow types (categories in the surface-language sense — see appendix A for the terminological note),
-- **morphisms** `f : A → B` are pure total Flow functions from `A` to `B`,
+- **objects** are Mapal types (categories in the surface-language sense — see appendix A for the terminological note),
+- **morphisms** `f : A → B` are pure total Mapal functions from `A` to `B`,
 - **composition** `g ∘ f : A → C` for `f : A → B`, `g : B → C` is the graph obtained by connecting the output of `f` to the input of `g`,
 - **identity** `id_A : A → A` is the empty-transformation morphism on `A`.
 
-Pure means: no observable side effects. Total means: terminates and produces a value of the target type on every input. Totality holds for this **loop-free core**: Flow-Cat as defined here is the total core, and the total core has **no trace**. Partial and effectful operations are handled in §2.6 via Kleisli categories over appropriate monads — they do not live directly in this total core.
+Pure means: no observable side effects. Total means: terminates and produces a value of the target type on every input. Totality holds for this **loop-free core**: Mapal-Cat as defined here is the total core, and the total core has **no trace**. Partial and effectful operations are handled in §2.6 via Kleisli categories over appropriate monads — they do not live directly in this total core.
 
 **Loops and iteration are not total** and therefore do not live in the total core. They live in the **Kleisli category of the partiality (divergence) monad** — the same §2.6 machinery already used for I/O and errors — where the trace operator is interpreted by **least-fixpoint / Elgot-iteration semantics**. An unbounded loop such as `loop { -> loop; }` is legal and diverges; divergence is a defined outcome of that monad, not an excluded case. See §2.7 and §2.8 for the traced structure on this partial extension, and §4.5 for the lowering.
 
@@ -110,7 +110,7 @@ flowchart LR
 
 ### 2.2 Products — the categorical meaning of tuples
 
-Flow tuples `(A, B)` are **products** in Flow-Cat. The universal property of a product is what makes pairing well-behaved.
+Mapal tuples `(A, B)` are **products** in Mapal-Cat. The universal property of a product is what makes pairing well-behaved.
 
 **Definition (product).** A product of `A` and `B` is an object `A × B` together with two projection morphisms
 
@@ -140,7 +140,7 @@ where `Γ` is the ambient environment object (the tuple of variables in scope) a
 
 ### 2.3 Coproducts — the categorical meaning of tagged unions
 
-`Option<T>`, `Result<T, E>`, and all `match`-able enums are **coproducts** in Flow-Cat.
+`Option<T>`, `Result<T, E>`, and all `match`-able enums are **coproducts** in Mapal-Cat.
 
 **Definition (coproduct).** A coproduct of `A` and `B` is an object `A + B` with two injection morphisms
 
@@ -169,7 +169,7 @@ The `?` operator is Kleisli bind for the Result-monad; see §2.6.
 
 ### 2.5 Exponentials — first-class functions
 
-Flow-Cat is **cartesian closed**: for every pair `A`, `B` there is an exponential object `B^A` (function type `A → B`) with a morphism `eval : B^A × A → B` such that for any `f : C × A → B` there is a unique `curry(f) : C → B^A` with `eval ∘ (curry(f) × id_A) = f`.
+Mapal-Cat is **cartesian closed**: for every pair `A`, `B` there is an exponential object `B^A` (function type `A → B`) with a morphism `eval : B^A × A → B` such that for any `f : C × A → B` there is a unique `curry(f) : C → B^A` with `eval ∘ (curry(f) × id_A) = f`.
 
 ```mermaid
 flowchart LR
@@ -182,11 +182,11 @@ In the IR this means closures are ordinary objects, and function-valued variable
 
 ### 2.6 The effect story — Kleisli categories
 
-Not every Flow operation is pure and total. I/O, mutable state, and errors all break the Flow-Cat assumptions. Each effect gets a **monad** on Flow-Cat, and effectful functions are morphisms in the corresponding **Kleisli category**.
+Not every Mapal operation is pure and total. I/O, mutable state, and errors all break the Mapal-Cat assumptions. Each effect gets a **monad** on Mapal-Cat, and effectful functions are morphisms in the corresponding **Kleisli category**.
 
-**Definition (Kleisli category).** For a monad `(T, η, μ)` on Flow-Cat, the Kleisli category `Flow-Cat_T` has the same objects, with morphisms `A → B` being Flow-Cat morphisms `A → T(B)`. Composition uses the monad's bind.
+**Definition (Kleisli category).** For a monad `(T, η, μ)` on Mapal-Cat, the Kleisli category `Mapal-Cat_T` has the same objects, with morphisms `A → B` being Mapal-Cat morphisms `A → T(B)`. Composition uses the monad's bind.
 
-Monads used in Flow:
+Monads used in Mapal:
 
 | Monad | What it tracks | Used for |
 |---|---|---|
@@ -221,7 +221,7 @@ The copair `[g, ι₂]` means: on `Ok(b)` call `g`; on `Err(e)` re-inject `e` un
 
 Loops and recursion don't fit into a plain category; they require **feedback**. The standard formal account is a **traced monoidal category**: for any morphism `f : A ⊗ U → B ⊗ U`, the trace `Tr^U(f) : A → B` "loops back" the `U` wire.
 
-The traced structure described below lives on the **partial extension** of Flow-Cat (the Kleisli category of the divergence monad, §2.1, §2.6), **not on the total core**. This is forced: a traced cartesian category is equivalent to one carrying a Conway fixed-point operator (Hasegawa 1997), and total functions lack fixpoints in general — `not : Bool → Bool` has no fixpoint — so the total core cannot be traced. Tracing the partial extension is exactly right, because tracing back the `U` wire is where divergence can enter, and the divergence monad already accounts for it via least-fixpoint / Elgot-iteration semantics.
+The traced structure described below lives on the **partial extension** of Mapal-Cat (the Kleisli category of the divergence monad, §2.1, §2.6), **not on the total core**. This is forced: a traced cartesian category is equivalent to one carrying a Conway fixed-point operator (Hasegawa 1997), and total functions lack fixpoints in general — `not : Bool → Bool` has no fixpoint — so the total core cannot be traced. Tracing the partial extension is exactly right, because tracing back the `U` wire is where divergence can enter, and the divergence monad already accounts for it via least-fixpoint / Elgot-iteration semantics.
 
 ```mermaid
 flowchart LR
@@ -231,17 +231,17 @@ flowchart LR
     fb -- U --> f
 ```
 
-In the partial extension of Flow-Cat, the monoidal product is the categorical product (×), `U` is the loop-carried state type, and `Tr^U(f)` is the meaning of a loop whose body transforms `(input, state) ↦ (output, next_state)`. (The trace lives on the partial extension, never on the total core — see the note above.)
+In the partial extension of Mapal-Cat, the monoidal product is the categorical product (×), `U` is the loop-carried state type, and `Tr^U(f)` is the meaning of a loop whose body transforms `(input, state) ↦ (output, next_state)`. (The trace lives on the partial extension, never on the total core — see the note above.)
 
 **Consequence for the IR.** The "back edge" in the graph representation of a loop is not a special field on a Branch morphism — it is literally an edge in the graph, targeting the merge object that plays the role of `U`. See §4.5 for the worked lowering.
 
 **Consequence for Verilog.** Synchronous digital circuits are morphisms in a traced monoidal category where the trace is register feedback. That circuit trace is **guarded** (every register is a unit delay, hence always productive and total), which is a *different* traced structure from the iteration trace of the partial extension here. Relating the two is therefore not automatic — it is a theorem mediated by the done-signal protocol; see §8.3.
 
-### 2.8 Summary of structure on Flow-Cat
+### 2.8 Summary of structure on Mapal-Cat
 
 > **Erratum E1 applied — see docs/spec/ERRATA.md and ADR-0002.**
 
-The **total core** of Flow-Cat is a **bicartesian closed category**:
+The **total core** of Mapal-Cat is a **bicartesian closed category**:
 
 - bicartesian: has both products (tuples) and coproducts (tagged unions),
 - closed: has exponentials (function types).
@@ -250,7 +250,7 @@ The total core is **not** traced. The trace lives one level out, on the **partia
 
 - traced: has trace operators for loops and feedback, on the partial extension only.
 
-The earlier v0.2 claim that Flow-Cat is jointly *total* and *traced cartesian* was inconsistent: by the Hasegawa 1997 correspondence a traced cartesian category carries a Conway fixed-point operator, and total functions have no fixpoints in general (`not : Bool → Bool` has none). Splitting the structure — total core without trace, partial extension with trace — removes the inconsistency without losing any property the compiler relies on. The next sections define the IR data structures that realize morphisms as concrete graphs.
+The earlier v0.2 claim that Mapal-Cat is jointly *total* and *traced cartesian* was inconsistent: by the Hasegawa 1997 correspondence a traced cartesian category carries a Conway fixed-point operator, and total functions have no fixpoints in general (`not : Bool → Bool` has none). Splitting the structure — total core without trace, partial extension with trace — removes the inconsistency without losing any property the compiler relies on. The next sections define the IR data structures that realize morphisms as concrete graphs.
 
 ---
 
@@ -263,10 +263,10 @@ The earlier v0.2 claim that Flow-Cat is jointly *total* and *traced cartesian* w
 ### 3.2 Object, Morphism, Composition
 
 ```rust
-/// An object in Flow-Cat — a value/variable/type-inhabited point.
+/// An object in Mapal-Cat — a value/variable/type-inhabited point.
 struct Object {
     id: ObjectId,
-    ty: Ty,                 // The Flow category (type) of this object
+    ty: Ty,                 // The Mapal category (type) of this object
     value: Option<Value>,   // Compile-time value if known (for constants)
     kind: ObjectKind,       // Parameter | Temporary | Constant | Return | LoopMerge
     loc: SourceLoc,
@@ -573,7 +573,7 @@ struct CategoryIR {
 
 The graph is a DAG exactly when the program has no loops. Loops create cycles through `LoopMerge` objects. Tarjan's SCC algorithm partitions the objects into SCCs; non-trivial SCCs are exactly the loop regions.
 
-Within a single SCC, topological order is undefined (it's a cycle), but Flow's lowering guarantees every non-trivial SCC has a designated `LoopMerge` entry object. That gives a canonical order: loop-header-first, then the body in topo order of the DAG-with-back-edge-removed.
+Within a single SCC, topological order is undefined (it's a cycle), but Mapal's lowering guarantees every non-trivial SCC has a designated `LoopMerge` entry object. That gives a canonical order: loop-header-first, then the body in topo order of the DAG-with-back-edge-removed.
 
 ### 5.3 Serialization — JSON
 
@@ -637,9 +637,9 @@ flowchart LR
 
 Both paths `F(A) → F(C)` must be the same morphism in `D`.
 
-### 6.1 Endofunctors on Flow-Cat
+### 6.1 Endofunctors on Mapal-Cat
 
-An **endofunctor** is a functor `F : C → C`. The important ones in Flow-Cat are the parametric type constructors.
+An **endofunctor** is a functor `F : C → C`. The important ones in Mapal-Cat are the parametric type constructors.
 
 #### 6.1.1 The `List` endofunctor
 
@@ -681,7 +681,7 @@ Every one of these gives the compiler a fusion rewrite for free.
 
 ### 6.2 Bifunctors
 
-`Result<T, E>` depends on two types. Categorically it is a **bifunctor** `Result : Flow-Cat × Flow-Cat → Flow-Cat`. Functoriality in each argument gives:
+`Result<T, E>` depends on two types. Categorically it is a **bifunctor** `Result : Mapal-Cat × Mapal-Cat → Mapal-Cat`. Functoriality in each argument gives:
 
 - `map_ok(g) ∘ map_ok(f) = map_ok(g ∘ f)`
 - `map_err(g) ∘ map_err(f) = map_err(g ∘ f)`
@@ -693,8 +693,8 @@ The third equation is what lets the optimizer reorder unrelated `map_ok` / `map_
 
 The categorical product and coproduct themselves are bifunctors:
 
-- `(−) × (−) : Flow-Cat × Flow-Cat → Flow-Cat`
-- `(−) + (−) : Flow-Cat × Flow-Cat → Flow-Cat`
+- `(−) × (−) : Mapal-Cat × Mapal-Cat → Mapal-Cat`
+- `(−) + (−) : Mapal-Cat × Mapal-Cat → Mapal-Cat`
 
 This justifies rewrites like `(f × g) ∘ (h × k) = (f ∘ h) × (g ∘ k)` — parallel composition of independent morphisms is itself functorial. This is the formal basis for the parallelism analysis in §9.5.
 
@@ -718,7 +718,7 @@ Both paths `F(A) → G(B)` are equal: `η_B ∘ F(f) = G(f) ∘ η_A`.
 
 ### 7.1 Polymorphic operations are natural transformations
 
-A Flow function `head : ∀T. List<T> → Option<T>` is a family of morphisms indexed by `T`. For this family to deserve the name "polymorphic," it must behave the same way at every type — which is exactly naturality with respect to the `map` operations of `List` and `Option`:
+A Mapal function `head : ∀T. List<T> → Option<T>` is a family of morphisms indexed by `T`. For this family to deserve the name "polymorphic," it must behave the same way at every type — which is exactly naturality with respect to the `map` operations of `List` and `Option`:
 
 ```mermaid
 flowchart LR
@@ -744,7 +744,7 @@ big_list -> head -> Option::map(expensive_fn)
 
 without any per-type reasoning. The first form calls `expensive_fn` on every element; the second calls it at most once. The rewrite is justified by naturality of `head` alone.
 
-### 7.2 Catalogue of natural transformations in Flow
+### 7.2 Catalogue of natural transformations in Mapal
 
 | NT | Type (polymorphic signature) | Naturality law (optimization) |
 |---|---|---|
@@ -787,11 +787,11 @@ Confusing these categories blurs what guarantees what. The compiler code organiz
 
 ## 8. Backends as functors
 
-A backend is a functor `F : Flow-Cat → T` where `T` is the target's native category. "The backend preserves program semantics" is then the statement that `F` satisfies the functor laws.
+A backend is a functor `F : Mapal-Cat → T` where `T` is the target's native category. "The backend preserves program semantics" is then the statement that `F` satisfies the functor laws.
 
 ```mermaid
 flowchart LR
-    subgraph FL["Flow-Cat (source)"]
+    subgraph FL["Mapal-Cat (source)"]
         fa((A)) -- f --> fb((B))
         fb -- g --> fc((C))
     end
@@ -806,29 +806,29 @@ flowchart LR
 
 If `F(g) ∘ F(f) = F(g ∘ f)` and `F(id) = id`, then the compiled program computes the same function as the source, provably.
 
-### 8.1 LLVM backend: `F_LLVM : Flow-Cat → LLVM-Cat`
+### 8.1 LLVM backend: `F_LLVM : Mapal-Cat → LLVM-Cat`
 
-- **Objects.** Flow types map to LLVM types: `i32 ↦ i32`, `f32 ↦ float`, `Tuple(A, B) ↦ {F_LLVM(A), F_LLVM(B)}`, `Fn(A, B) ↦ ptr`.
+- **Objects.** Mapal types map to LLVM types: `i32 ↦ i32`, `f32 ↦ float`, `Tuple(A, B) ↦ {F_LLVM(A), F_LLVM(B)}`, `Fn(A, B) ↦ ptr`.
 - **Morphisms.** Primitive ops map to LLVM instructions: `Add ↦ add nsw`, `Mul ↦ mul nsw`, `Phi ↦ select` (or `phi` inside a merge block), etc. Compositions become basic-block sequences.
 - **Trace.** Loops are lowered to LLVM's structured CFG with a header block and back-edge — which is exactly how LLVM already represents traces.
 
 Functoriality is checked by a pass that confirms every primitive has the declared LLVM translation and that composition is honored.
 
-### 8.2 CUDA backend: `F_CUDA : Flow-Cat → CUDA-Cat`
+### 8.2 CUDA backend: `F_CUDA : Mapal-Cat → CUDA-Cat`
 
 - **Objects.** Same primitive mapping as LLVM for scalars. `Array<T, N>` maps to a device pointer. The `Array × Array` product maps to a pair of device pointers.
-- **Morphisms.** A `map`-over-array morphism `List(f)` lowers to a kernel launch whose body is `F_CUDA(f)` — this is the *key* morphism that gives CUDA its parallelism. Because `List` is a functor in both Flow-Cat and CUDA-Cat, map-fusion in the source (§6.1.1) is preserved by the functor and becomes kernel-fusion in the backend — without a separate pass.
+- **Morphisms.** A `map`-over-array morphism `List(f)` lowers to a kernel launch whose body is `F_CUDA(f)` — this is the *key* morphism that gives CUDA its parallelism. Because `List` is a functor in both Mapal-Cat and CUDA-Cat, map-fusion in the source (§6.1.1) is preserved by the functor and becomes kernel-fusion in the backend — without a separate pass.
 - **Memory.** Host/device transfers are *effects*, so they live in Kleisli(IO) in the target. The functor factors through `IO`.
 
-### 8.3 Verilog backend: `F_Verilog : Flow-Cat → Clocked-Cat`
+### 8.3 Verilog backend: `F_Verilog : Mapal-Cat → Clocked-Cat`
 
 > **Erratum E1 applied — see docs/spec/ERRATA.md and ADR-0002.**
 
-Clocked-Cat is the traced monoidal category of synchronous digital circuits: objects are bundles of wires, morphisms are combinational blocks plus registers, the monoidal product is wire-side-by-side, and the trace is register feedback. Crucially, Clocked-Cat's trace is **guarded**: every register is a **unit delay**, so feedback through a register is **always productive** and the traced morphism is **total** — these are ordinary **Mealy-machine** semantics. This is a *different* traced structure from the **iteration trace** on the partial extension of Flow-Cat (§2.7, §2.8), whose semantics is least-fixpoint / Elgot iteration and which may diverge.
+Clocked-Cat is the traced monoidal category of synchronous digital circuits: objects are bundles of wires, morphisms are combinational blocks plus registers, the monoidal product is wire-side-by-side, and the trace is register feedback. Crucially, Clocked-Cat's trace is **guarded**: every register is a **unit delay**, so feedback through a register is **always productive** and the traced morphism is **total** — these are ordinary **Mealy-machine** semantics. This is a *different* traced structure from the **iteration trace** on the partial extension of Mapal-Cat (§2.7, §2.8), whose semantics is least-fixpoint / Elgot iteration and which may diverge.
 
 ```mermaid
 flowchart LR
-    subgraph FL2["Flow-Cat — trace for loops"]
+    subgraph FL2["Mapal-Cat — trace for loops"]
         flbody["body: A×U → B×U"]
         fltrace["Tr^U(body): A → B"]
     end
@@ -840,9 +840,9 @@ flowchart LR
     fltrace -. F_Verilog .-> cctrace
 ```
 
-`F_Verilog` therefore maps an **iteration trace** (Flow-Cat partial extension) to a **guarded trace** (Clocked-Cat). Because these are *different* traced structures, "F commutes with `Tr`" is **not free** — it is a **theorem with content**, and its content is carried by a **done-signal protocol** (`valid_in / busy / done / result` handshake) that lets a circuit that is always total simulate an iteration that may diverge.
+`F_Verilog` therefore maps an **iteration trace** (Mapal-Cat partial extension) to a **guarded trace** (Clocked-Cat). Because these are *different* traced structures, "F commutes with `Tr`" is **not free** — it is a **theorem with content**, and its content is carried by a **done-signal protocol** (`valid_in / busy / done / result` handshake) that lets a circuit that is always total simulate an iteration that may diverge.
 
-**Theorem (trace preservation / done protocol).** Let `body : A×U → B×U` be a loop body, let `Tr^U(body) : A → B` be its iteration trace in the partial extension of Flow-Cat, and let `F_Verilog(Tr^U(body))` be the synthesized circuit with the done-signal protocol. Then for every input `a : A`:
+**Theorem (trace preservation / done protocol).** Let `body : A×U → B×U` be a loop body, let `Tr^U(body) : A → B` be its iteration trace in the partial extension of Mapal-Cat, and let `F_Verilog(Tr^U(body))` be the synthesized circuit with the done-signal protocol. Then for every input `a : A`:
 
 > the iteration `Tr^U(body)(a)` **terminates in `n` steps with value `v`** **⟺** the circuit, started on `a`, **asserts `done` at cycle `n` with output `result = v`**.
 
@@ -852,13 +852,13 @@ This theorem is **discharged informally for now**; its mechanization (Lean/Coq) 
 
 Pipeline depth for FPGAs comes from counting register hops along the longest combinational path in the image of the functor — a graph-theoretic property of the output of `F_Verilog`.
 
-### 8.4 WASM backend: `F_WASM : Flow-Cat → WASM-Cat`
+### 8.4 WASM backend: `F_WASM : Mapal-Cat → WASM-Cat`
 
-Similar to LLVM but targeting WebAssembly's stack machine. The functor is straightforward because WASM supports structured control flow that mirrors Flow's composition.
+Similar to LLVM but targeting WebAssembly's stack machine. The functor is straightforward because WASM supports structured control flow that mirrors Mapal's composition.
 
 ### 8.5 What backend correctness means formally
 
-For any Flow morphism `h : A → B` and any backend functor `F`, the compiled program `F(h)` is correct in the sense that for every way `h` decomposes as `h = h_n ∘ ... ∘ h_1`:
+For any Mapal morphism `h : A → B` and any backend functor `F`, the compiled program `F(h)` is correct in the sense that for every way `h` decomposes as `h = h_n ∘ ... ∘ h_1`:
 
 ```
 F(h) = F(h_n) ∘ ... ∘ F(h_1)
@@ -934,7 +934,7 @@ This does not prove soundness of the laws (that's done once, in this document an
 
 ## 10. Memory model and lifetime analysis
 
-Flow uses **graph-derived lifetimes** rather than ownership types. The idea is direct:
+Mapal uses **graph-derived lifetimes** rather than ownership types. The idea is direct:
 
 1. Each heap-allocated object is produced by some morphism (an allocation).
 2. All uses of that object are morphisms with it as source.
@@ -1046,10 +1046,10 @@ fn render_mermaid(ir: &CategoryIR) -> String {
 
 ## Appendix A — terminological note: "category"
 
-In Flow, the surface-language keyword `category` declares a type (a Flow-Cat object). In category theory, a "category" is an entire system of objects-plus-morphisms-plus-composition. This document uses both meanings and disambiguates by context:
+In Mapal, the surface-language keyword `category` declares a type (a Mapal-Cat object). In category theory, a "category" is an entire system of objects-plus-morphisms-plus-composition. This document uses both meanings and disambiguates by context:
 
-- Lowercase "category" or "Flow-Cat" → the category-theoretic structure.
-- Capitalized "Category" in surface syntax, or "Flow category" → a Flow type, i.e., an object in Flow-Cat.
+- Lowercase "category" or "Mapal-Cat" → the category-theoretic structure.
+- Capitalized "Category" in surface syntax, or "Mapal category" → a Mapal type, i.e., an object in Mapal-Cat.
 
 A future revision may rename the surface keyword to `type` to avoid this collision.
 

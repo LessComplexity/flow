@@ -1,14 +1,14 @@
-# VISION.md — Flow as a portable accelerator layer
+# VISION.md — Mapal as a portable accelerator layer
 
 **Status:** Positioning / north-star — **non-binding**. · **Date:** 2026-06-13 · **Amended 2026-07-25** (§3/§4 O8 co-execution; §5.1 geometry-vs-constants; §7 north star → O8; §9): review record in `docs/notes/2026-07-25-thesis-review.md`, decisions in ADR-0033…0036. Amendments are recorded options, not scope changes — §8 stands.
 
-> This document records *strategic options* for what Flow could become in the
+> This document records *strategic options* for what Mapal could become in the
 > market. It is the "why," not the "what." It **does not** alter the frozen
-> Level-A spec (`docs/spec/category-ir.md` + `ERRATA.md`), the Flow-Core scope
+> Level-A spec (`docs/spec/category-ir.md` + `ERRATA.md`), the Mapal-Core scope
 > (`HANDOFF.md §4`), or the roadmap (`HANDOFF.md §8`). Per the project's own
 > stated risk — *"the single biggest project risk is another year of
 > specification without an implementation"* — nothing here adds scope to the next
-> sessions. The technical thesis is still tested by **M5** (one `sepia.flow`,
+> sessions. The technical thesis is still tested by **M5** (one `sepia.mapal`,
 > three targets); the market thesis only becomes real *after* that demo exists.
 > Changes of direction are made by ADR, not by editing this file.
 
@@ -21,20 +21,20 @@ targets CUDA first, which raises the barrier for any new GPU/ASIC vendor — the
 hardware is useless until the entire software ecosystem is re-ported to it. This
 is a lock-in moat, not only a technology lead.
 
-Flow's bet: **decouple the programming model from the hardware vendor.** A new
-hardware company writes *one* backend for Flow and instantly inherits Flow's
+Mapal's bet: **decouple the programming model from the hardware vendor.** A new
+hardware company writes *one* backend for Mapal and instantly inherits Mapal's
 entire ecosystem — every program, library, and tool. The same source runs on
 CPU, GPU, FPGA, or novel silicon, with the compiler's *correctness argument being
-functoriality*. CUDA uses LLVM to reach PTX; Flow does the same trick one level
+functoriality*. CUDA uses LLVM to reach PTX; Mapal does the same trick one level
 up, with **plug-and-play backends** for both hardware developers (build a target)
 and hardware interpreters (run the ecosystem on it).
 
-## 2. Why Flow is structurally suited (this is not a pivot)
+## 2. Why Mapal is structurally suited (this is not a pivot)
 
 The vision is already latent in the architecture — it does not require redesign:
 
 - **Backend = functor.** `category-ir.md §8` defines a backend as a functor
-  `F : Flow-Cat → T` out of the IR. A new vendor backend is, in the model,
+  `F : Mapal-Cat → T` out of the IR. A new vendor backend is, in the model,
   *adjoining one functor* — the plug-and-play story is literally the spec.
 - **Dataflow → spatial hardware.** A dataflow graph maps to FPGAs/ASICs far more
   naturally than CUDA's SIMT model. The existing Verilog backend is evidence the
@@ -61,7 +61,7 @@ direction; ADR-0035) and displaces O1 as the north star — see §7.
   replacement.
 - **O2 — Domain beachhead: real-time image/signal processing.** Win one vertical
   where dataflow is the native shape (the `HANDOFF.md` stated strategy + the
-  `sepia.flow` demo), then generalize.
+  `sepia.mapal` demo), then generalize.
 - **O3 — Embeddable kernel language (linked lib / FFI).** Compile accelerated
   kernels, export as a C-ABI library callable from Python/C++/Rust — a *guest* in
   existing stacks, no rewrite required.
@@ -92,18 +92,18 @@ direction; ADR-0035) and displaces O1 as the north star — see §7.
 | ID | Option | Primary competition | Key problems / risks | Opportunities |
 | -- | ------ | ------------------- | -------------------- | ------------- |
 | **O1** | Universal compute layer ("anti-CUDA") | CUDA; Mojo/MAX; MLIR; OpenCL; SYCL/oneAPI | Head-on with NVIDIA + the best-funded players; platform cold-start (no users → no vendors → no users); portability ≠ performance at the broadest scope; needs a decade of two-sided subsidy NVIDIA already paid | Largest TAM; the "default parallel language" prize; rides industry-wide anti-lock-in demand |
-| **O2** | Domain beachhead: image/signal processing | Halide; OpenCV+CUDA; MATLAB/Simulink; vendor DSP toolchains; OpenVINO | Niche is itself contested (Halide is strong); must beat tuned libraries on a real workload; risk of staying boxed in the niche | Dataflow is the native shape here; matches the frozen `sepia.flow` demo + stated strategy; concrete buyers; provable correctness is a real edge over Halide's schedule-bug surface |
+| **O2** | Domain beachhead: image/signal processing | Halide; OpenCV+CUDA; MATLAB/Simulink; vendor DSP toolchains; OpenVINO | Niche is itself contested (Halide is strong); must beat tuned libraries on a real workload; risk of staying boxed in the niche | Dataflow is the native shape here; matches the frozen `sepia.mapal` demo + stated strategy; concrete buyers; provable correctness is a real edge over Halide's schedule-bug surface |
 | **O3** | Embeddable kernel lib (FFI / linked lib) | Triton; Numba; Taichi; JAX/Pallas; raw CUDA/C | ABI/FFI + host↔device memory management is where the hard engineering hides; must match kernel performance; "just a kernel DSL" caps the ambition/valuation narrative | **Easiest adoption** — no rewrite, meet users where they are; fastest path to real usage and feedback; composes with every other option |
 | **O4** | Provable cross-target correctness layer | *None portable*; CompCert (CPU-only certified); Vericert (mechanized C→Verilog HLS); MLIR/XLA/TVM are heuristic (bug-for-bug target drift) | "Provable" only as strong as the functor proofs (the E1 trace theorem is still informal); correctness alone doesn't sell if performance is poor; market may not *pay* for correctness | No *portable cross-target* functorial claim among the heuristic pipelines — but Vericert/CompCert are **stronger, single-target, mechanized** proofs: they are the bar to beat, not absent prior art (see `docs/notes/related-work.md`); decisive in safety-critical/regulated domains (CompCert is DO-178C-qualified, SCADE sells exactly this workflow); defensible moat; already the spec's core thesis (§8) |
 | **O5** | Novel-silicon bring-up / vendor enablement | Vendor MLIR backends; TVM BYOC; OpenXLA PJRT plugins | Chicken-and-egg (vendors want an *existing* ecosystem); long enterprise sales cycles; needs ≥1 backend + real users to be credible | Your original "open the market" thesis; new GPU/ASIC startups are a real, growing, underserved buyer; one backend = inherit the whole ecosystem; the correctness oracle is genuinely useful for HW validation |
 | **O6** | AI/ML compute | OpenXLA/XLA; Triton; torch.compile/Inductor; TVM; cuDNN/CUTLASS; Mojo/MAX | Hardest, most-defended ground; dense GEMM/attention favors tuned libs + tensor cores, where general dataflow has **no edge**; fighting NVIDIA's full stack | Largest spend; real upside **if** won via streaming/irregular/heterogeneous dataflow (not dense GEMM); rides anti-CUDA sentiment |
 | **O7** | High-level hardware synthesis (FPGA/ASIC) | Vivado/Intel HLS; Chisel; Bluespec; Spatial/Dahlia; Halide-HLS | FPGA/ASIC market is smaller + specialized; verification & timing-closure depth; Verilog backend today is feedforward + single-loop FSM only | Dataflow → spatial is more natural than SIMT; provable lowering is rare in HLS; differentiated against both the CUDA world and the RTL world; leverages the existing Verilog backend |
-| **O8** | Co-execution across heterogeneous targets | *Thin.* oneAPI/SYCL (single-source, but placement is manual and correctness is not a claim); CUDA unified memory + streams (single-vendor); DaCe/XLA (portability, not simultaneous multi-target placement); MPI/Ray (distribution without a shared semantics) | Largest scope of any option — needs modules, dynamic arrays, a CLI, ≥2 backends consuming the deduced queries, and a cross-`Loc` runtime; placement cost models are hard; nothing ships until the CPU and GPU legs both exist | The one claim with a **structural** reason Flow gets there first: `Loc`/`Trm` are first-class in the method (ADR-0014), placement is already a deduced query (`path_plan`), effects are a linear token chain so cross-`Loc` ordering has a carrier, and no aliasing means "what must be transmitted" is exact reachability. Produces the project's sharpest correctness statement — **byte-equal under any placement**. Subsumes O5/O7 as *participants* rather than destinations |
+| **O8** | Co-execution across heterogeneous targets | *Thin.* oneAPI/SYCL (single-source, but placement is manual and correctness is not a claim); CUDA unified memory + streams (single-vendor); DaCe/XLA (portability, not simultaneous multi-target placement); MPI/Ray (distribution without a shared semantics) | Largest scope of any option — needs modules, dynamic arrays, a CLI, ≥2 backends consuming the deduced queries, and a cross-`Loc` runtime; placement cost models are hard; nothing ships until the CPU and GPU legs both exist | The one claim with a **structural** reason Mapal gets there first: `Loc`/`Trm` are first-class in the method (ADR-0014), placement is already a deduced query (`path_plan`), effects are a linear token chain so cross-`Loc` ordering has a carrier, and no aliasing means "what must be transmitted" is exact reachability. Produces the project's sharpest correctness statement — **byte-equal under any placement**. Subsumes O5/O7 as *participants* rather than destinations |
 
 ## 5. Cross-cutting truths (apply to every option)
 
 1. **The language imposes no inherent performance ceiling — performance lives in
-   the backend, and that cuts both ways.** Flow is not inherently slower. Its
+   the backend, and that cuts both ways.** Mapal is not inherently slower. Its
    pure, single-source/single-target dataflow IR is arguably a *better*
    optimization substrate than C/CUDA: no aliasing ambiguity (no pointers in
    Core), explicit data dependencies, explicit parallelism, and intent (`map f`)
@@ -132,7 +132,7 @@ direction; ADR-0035) and displaces O1 as the north star — see §7.
      cheap, backend-independent (`tile_plan`, `TileRead.ksplit`, `path_plan`).
      **This part ports, and that is now measured, not hoped:** the recognizer
      holds no matrix concept — one affine-address rule — and S28 carried the
-     ladder built on matmul to a FIR window rung (**zero flow-ir change**) and a
+     ladder built on matmul to a FIR window rung (**zero mapal-ir change**) and a
      conv2d micro-kernel in one session, both winning their tables.
    - **Constants** — tile factors, panel sizes, unroll depth, prefetch distance,
      task grain. Facts about a cache hierarchy and a register file, **not** about
@@ -159,7 +159,7 @@ direction; ADR-0035) and displaces O1 as the north star — see §7.
    **Mojo/MAX** (the anti-CUDA-lock-in stack from Chris Lattner — creator of
    LLVM, Clang, and Swift). This
    *validates* the thesis but means "be the universal layer" is a fight on
-   everyone's turf. Flow needs a wedge they lack. (For the verified-correctness
+   everyone's turf. Mapal needs a wedge they lack. (For the verified-correctness
    and one-source→many-targets prior art specifically — Compiling to Categories,
    DaCe, Futhark, Vericert, CompCert, Halide's formal semantics, SCADE — see
    `docs/notes/related-work.md`.)
@@ -267,7 +267,7 @@ flowchart LR
   plays the FPGA/ASIC + functor strengths unlock, and both become *participants*
   in O8 rather than separate destinations.
 - **O8 (co-execution): the north star.** Fewer occupants than O1 and a
-  structural reason Flow arrives first (§3). Gated on modules, dynamic arrays, a
+  structural reason Mapal arrives first (§3). Gated on modules, dynamic arrays, a
   CLI, and ≥2 backends consuming the deduced queries.
 - **O1 (universal layer):** downstream of O8, not a target in itself; earned,
   never assaulted.
@@ -281,7 +281,7 @@ flowchart LR
   edit, no ERRATA entry, no scope change.
 - **M5 remains the test of the technical thesis** — does one source actually run
   correctly on three targets? Market positioning is downstream of that proof.
-- **Roadmap and Flow-Core scope are unchanged** (`HANDOFF.md §4`, §8). This doc
+- **Roadmap and Mapal-Core scope are unchanged** (`HANDOFF.md §4`, §8). This doc
   is the "why" that motivates the existing "what."
 
 ## 9. Open questions (→ future ADRs / decisions)
@@ -301,7 +301,7 @@ flowchart LR
   form of "optimal out of the box" and the most work.
 - **Language discipline:** external phrasing must stay "differentially verified
   against a reference oracle across targets," not "provable" — nothing is
-  machine-proven (`flow-as-implemented.md` §4.4). Mechanizing E1 is worth it only
+  machine-proven (`mapal-as-implemented.md` §4.4). Mechanizing E1 is worth it only
   if the safety-critical market (DO-178C/SCADE territory) is actually targeted,
   since that is the one buyer that pays for it. Decide, don't drift.
 - Is the primary buyer the **developer** (O3 adoption) or the **hardware vendor**

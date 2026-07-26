@@ -15,11 +15,11 @@ Increment map:
 > See `docs/architecture/categorical-model.md` for the cross-cutting model and bridges.
 
 **Scope of this section (the firewall).** This models the **compiler's own**
-internal data and passes — `flow-syntax` as a **Level-B** component — in
+internal data and passes — `mapal-syntax` as a **Level-B** component — in
 FRAMEWORK.md vocabulary. Its `Dat` is the crate's own data types (tokens, AST
 nodes, diagnostic values); its `Trn` is the crate's two passes (`lex`, `parse`).
 It does **not** model the object language: `Chain`/`Stage`/`StageKind` are
-Level-B AST nodes that *represent* Flow-Cat (Level-A) constructs — they are data
+Level-B AST nodes that *represent* Mapal-Cat (Level-A) constructs — they are data
 *inside* this category, never arrows of it. The Level-A object language lives in
 `docs/spec/category-ir.md` and is not restated here (errata E5: the
 category-keyword collision was already paid for; `category` is reserved-and-
@@ -33,7 +33,7 @@ entirely and the model reduces to `Dat` + `Alg` (the pass pipeline) — there is
 backend/runtime seam in this crate to invoke them at. (2) The
 consolidation reading is honest about its near-twins: `GuardDiscr` is *not* a
 parallel copy of `GuardKind` but `GuardKind` **plus** the `OutOfCore` morphism
-(§3 "extend, don't parallel"); and `SourceLoc` is **duplicated** into `flow-ir`
+(§3 "extend, don't parallel"); and `SourceLoc` is **duplicated** into `mapal-ir`
 by a deliberate dependency-direction choice (D8), an accepted stored-copy
 tradeoff at the crate seam, not a modeling smell.
 
@@ -180,23 +180,23 @@ single-source and monotonicity (I2, J2), coverage as a partition of the source
 clean-tree (J3: zero diagnostics ⇒ no `Error` nodes and no rejected-but-kept
 forms — i.e. the in-Core sub-AST is exactly the domain of clean parsing),
 renderer-freedom (I5/J5: no `Display` anywhere — diagnostics are structured
-values, presentation is `flow-cli`'s job), and lex-diagnostic preservation (J6).
+values, presentation is `mapal-cli`'s job), and lex-diagnostic preservation (J6).
 See §8 (I1–I5) and §19 (J1–J6).
 
 ### Bridges (Level-B seams to other crates)
 
 | Bridge | Direction | Stored? | Note |
 | --- | --- | --- | --- |
-| `SourceLoc` | `flow-syntax ↔ flow-ir` | Stored copy (D8) | field-identical `{start,end}`; `flow-ir` defines its **own** to keep zero deps; converted by `flow-lower::tys::ir_loc` |
-| `Diagnostic`/`DiagCode`/`Severity` | `flow-syntax → flow-lower` (verbatim) | Shared type | one `DiagCode` space, L-bands partitioned (LD16); no separate diagnostics crate |
-| `Program` | `flow-syntax → flow-lower` | Crosses as typed payload | the entry datum to `lower` (consumes a clean `Program`) |
-| `Ty`/`TyKind` (surface) | `flow-syntax → flow-ir::Ty` (resolved) | Two distinct objects | resolved by `flow-lower::tys`; do **not** conflate surface `Ty` with IR `Ty` |
-| `unescape_string` | `flow-syntax → flow-lower::emit` | Shared helper | materialises `Str` values the thin tree leaves un-decoded |
-| `Diagnostic` rendering | `flow-syntax → flow-cli` | One-directional | structured values out, presentation downstream (I5/C3/J5) |
+| `SourceLoc` | `mapal-syntax ↔ mapal-ir` | Stored copy (D8) | field-identical `{start,end}`; `mapal-ir` defines its **own** to keep zero deps; converted by `mapal-lower::tys::ir_loc` |
+| `Diagnostic`/`DiagCode`/`Severity` | `mapal-syntax → mapal-lower` (verbatim) | Shared type | one `DiagCode` space, L-bands partitioned (LD16); no separate diagnostics crate |
+| `Program` | `mapal-syntax → mapal-lower` | Crosses as typed payload | the entry datum to `lower` (consumes a clean `Program`) |
+| `Ty`/`TyKind` (surface) | `mapal-syntax → mapal-ir::Ty` (resolved) | Two distinct objects | resolved by `mapal-lower::tys`; do **not** conflate surface `Ty` with IR `Ty` |
+| `unescape_string` | `mapal-syntax → mapal-lower::emit` | Shared helper | materialises `Str` values the thin tree leaves un-decoded |
+| `Diagnostic` rendering | `mapal-syntax → mapal-cli` | One-directional | structured values out, presentation downstream (I5/C3/J5) |
 
 ## 0. Spec basis and binding constraints
 
-Sources, in authority order (HANDOFF §2.2): ADR-0005/0006/0008/0009/0010 · `user-guide.md` §2–3 (as patched: E4, E5) for the Flow-Core surface, **plus §5–§10 and the flow snippets in `category-ir.md` enumerated for full-surface tokenization per C8** (`@`-annotations, `?`, `channel<i32>`, `::`, `200MHz`, …) · `architecture.md` §2.2.1 · HANDOFF §4.1 (Flow-Core scope), §5 items 2/6 · `docs/spec/ERRATA.md` (LC-2).
+Sources, in authority order (HANDOFF §2.2): ADR-0005/0006/0008/0009/0010 · `user-guide.md` §2–3 (as patched: E4, E5) for the Mapal-Core surface, **plus §5–§10 and the flow snippets in `category-ir.md` enumerated for full-surface tokenization per C8** (`@`-annotations, `?`, `channel<i32>`, `::`, `200MHz`, …) · `architecture.md` §2.2.1 · HANDOFF §4.1 (Mapal-Core scope), §5 items 2/6 · `docs/spec/ERRATA.md` (LC-2).
 
 Constraints that bind this design:
 
@@ -204,7 +204,7 @@ Constraints that bind this design:
 |---|---|---|
 | C1 | Handwritten lexer; spans (`SourceLoc`) from day one | HANDOFF §5 item 2 |
 | C2 | Error-recovering: always returns tokens *and* diagnostics, never bails at first error | ADR-0008(a) — names the parser; applied to the lexer by analogy (strictly stronger) |
-| C3 | Diagnostics are structured values (code, severity, span, message, optional fix); **no rendering** in flow-syntax — rendering only in flow-cli | ADR-0008(b) |
+| C3 | Diagnostics are structured values (code, severity, span, message, optional fix); **no rendering** in mapal-syntax — rendering only in mapal-cli | ADR-0008(b) |
 | C4 | Pure `fn(source) -> artifacts`, no global state, no incremental machinery | ADR-0008(d) |
 | C5 | `type` is the type keyword; `category` reserved-and-rejected with a diagnostic pointing at `type` | ADR-0006 (E5) |
 | C6 | `map`/`fold` take a postfix inline block — operator syntax, never a call argument | ADR-0009 (LC-2) |
@@ -228,11 +228,11 @@ impl LineIndex {
 }
 ```
 
-Byte offsets are the canonical representation (LSP-friendly; 0-based offsets convert to either 1-based terminal display or 0-based LSP positions at the consumer). `u32` suffices — Flow-Core programs are single files (HANDOFF §4.2: no modules).
+Byte offsets are the canonical representation (LSP-friendly; 0-based offsets convert to either 1-based terminal display or 0-based LSP positions at the consumer). `u32` suffices — Mapal-Core programs are single files (HANDOFF §4.2: no modules).
 
 ## 2. Diagnostics
 
-Defined in `flow-syntax` and shared by the parser later; `flow-check` will reuse these types (the fixed crate list of HANDOFF §6 has no diagnostics crate, and check depends on syntax for spans anyway).
+Defined in `mapal-syntax` and shared by the parser later; `mapal-check` will reuse these types (the fixed crate list of HANDOFF §6 has no diagnostics crate, and check depends on syntax for spans anyway).
 
 ```rust
 pub struct Diagnostic {
@@ -247,7 +247,7 @@ pub enum Severity { Error, Warning }
 pub struct SuggestedFix { pub span: SourceLoc, pub replacement: String, pub label: &'static str }
 ```
 
-`Debug` is derived (tests snapshot the structured values). `Display`/terminal rendering live in `flow-cli` only (C3).
+`Debug` is derived (tests snapshot the structured values). `Display`/terminal rendering live in `mapal-cli` only (C3).
 
 ### Lexer diagnostic codes
 
@@ -259,10 +259,10 @@ pub struct SuggestedFix { pub span: SourceLoc, pub replacement: String, pub labe
 | L0004 | Error | Reserved keyword `category` | Emit `KwCategory`; message points at `type`; `fix` = replace with `type` (ADR-0006). Parser may still parse the declaration for downstream diagnostics |
 | L0005 | Error | Lone `=` | Message hints `<-` (binding) or `==` (comparison); emit `Error` token |
 | L0006 | Error | Lone `&` or `\|` | Message hints `&&` / `\|\|`; emit `Error` token |
-| L0007 | Error | `/*` block comment | Skip to matching `*/` (or EOF, noted in message) as trivia; Flow has line comments only |
-| L0008 | Error | Integer literal **or guard discriminant** exceeds `u64` | Value clamps to `u64::MAX` (`GuardKind::Int` included — `-99999999999999999999->` must not panic, I1); typed range checks are flow-check's job |
+| L0007 | Error | `/*` block comment | Skip to matching `*/` (or EOF, noted in message) as trivia; Mapal has line comments only |
+| L0008 | Error | Integer literal **or guard discriminant** exceeds `u64` | Value clamps to `u64::MAX` (`GuardKind::Int` included — `-99999999999999999999->` must not panic, I1); typed range checks are mapal-check's job |
 
-Reserved-but-lexable keywords (`executor`, `pub`, `use`, `void`) get **no lexer diagnostic** — they are legal v0.2 surface that is merely out of Flow-Core; scope rejection is the parser's job (C8), with targeted P-codes next increment. (Scoping authority: `executor`/`pub`/`use` are out of Core per HANDOFF §4.2 and keyword-listed in architecture.md §2.2.1; `void` is the discard-fanout form of user-guide §3.3, absent from HANDOFF §4.1's exhaustive in-scope list → out of Core by §4's default-reject rule.) `category` is different: after E5 it is not legal surface at all, so the lexer flags it (C5, "from day one").
+Reserved-but-lexable keywords (`executor`, `pub`, `use`, `void`) get **no lexer diagnostic** — they are legal v0.2 surface that is merely out of Mapal-Core; scope rejection is the parser's job (C8), with targeted P-codes next increment. (Scoping authority: `executor`/`pub`/`use` are out of Core per HANDOFF §4.2 and keyword-listed in architecture.md §2.2.1; `void` is the discard-fanout form of user-guide §3.3, absent from HANDOFF §4.1's exhaustive in-scope list → out of Core by §4's default-reject rule.) `category` is different: after E5 it is not legal surface at all, so the lexer flags it (C5, "from day one").
 
 ## 3. Token model
 
@@ -272,7 +272,7 @@ pub struct Token { pub kind: TokenKind, pub span: SourceLoc }   // Copy
 pub enum TokenKind {
     // payload-free; lexeme text is recovered via span when needed
     Ident, Int, Float, Str,
-    // Flow-Core keywords
+    // Mapal-Core keywords
     KwFn, KwType, KwMut, KwLoop, KwRet, KwSeq, KwMap, KwFold, KwTrue, KwFalse,
     // reserved keywords (lexed, rejected later or at lex time per §2)
     KwCategory, KwExecutor, KwPub, KwUse, KwVoid,
@@ -297,8 +297,8 @@ pub enum GuardKind { True, False, Default /* -_-> */, Int(u64) }
 Design choices and rationale:
 
 - **Payload-free `Ident`/`Int`/`Float`/`Str`** — text is `&source[span]`; `Token` stays `Copy`, and there is exactly one source of truth for the lexeme. Numeric *typed* values (i32 vs i64 vs f32…) are type-directed and parsed in lower/check from the span text. Exception: `Guard(GuardKind::Int(u64))` carries its value because the digits are *inside* the lexeme `-42->` and sub-span re-parsing at every use site would be error-prone.
-- **String values:** the unescaped content differs from the lexeme; `flow-syntax` provides `pub fn unescape_string(lexeme: &str) -> String` (assumes a lexically valid token) used by later phases. Core strings are `print`-only arguments (HANDOFF §4.1).
-- **Keywords vs identifiers.** `map`/`fold` are *hard keywords*: they have special syntax (postfix block, C6), so they are operators of the language, not names. `print` is a **plain identifier**: it has ordinary flow-target syntax (`x -> print;`) and is resolved as a builtin by flow-check — no lexical specialness. Primitive type names (`i32`, `f32`, `bool`, …) are plain identifiers resolved by the type grammar/checker, uniform with user type names like `Pixel`.
+- **String values:** the unescaped content differs from the lexeme; `mapal-syntax` provides `pub fn unescape_string(lexeme: &str) -> String` (assumes a lexically valid token) used by later phases. Core strings are `print`-only arguments (HANDOFF §4.1).
+- **Keywords vs identifiers.** `map`/`fold` are *hard keywords*: they have special syntax (postfix block, C6), so they are operators of the language, not names. `print` is a **plain identifier**: it has ordinary flow-target syntax (`x -> print;`) and is resolved as a builtin by mapal-check — no lexical specialness. Primitive type names (`i32`, `f32`, `bool`, …) are plain identifiers resolved by the type grammar/checker, uniform with user type names like `Pixel`.
 - **`true`/`false`** are keywords (bool literals). A standalone `_` lexes as `Ident` (it only validly occurs inside `-_->`, which is a single Guard token; the parser rejects stray `_`).
 - **`;` is overloaded** by the surface: statement terminator *and* array-type size separator (`[f32; 8]`). One `Semi` token; the parser disambiguates by context.
 
@@ -308,7 +308,7 @@ Design choices and rationale:
 
 - Whitespace: space, `\t`, `\r`, `\n`. Newlines are not significant (statements end with `;`).
 - Line comments: `//` to end of line. Comments may contain arbitrary UTF-8 (the shipped examples use `∘`, `×`, `—` in comments); skipping must be char-boundary safe.
-- `/* … */` is *not* Flow syntax: consumed as trivia with diagnostic L0007 (friendlier than lexing `/` `*`).
+- `/* … */` is *not* Mapal syntax: consumed as trivia with diagnostic L0007 (friendlier than lexing `/` `*`).
 
 **Identifiers / keywords:** `[A-Za-z_][A-Za-z0-9_]*` (ASCII). Match against the keyword table after scanning; otherwise `Ident`. Non-ASCII outside comments/strings → L0001.
 
@@ -389,7 +389,7 @@ Decisions, made once, so neither the implementation nor review re-litigates them
 | W8 | Adjacent unknown chars | One coalesced `Error` token + one L0001 |
 | W9 | Empty input | `[Eof]`, no diagnostics |
 
-## 7. Public API (crate `flow-syntax`)
+## 7. Public API (crate `mapal-syntax`)
 
 ```rust
 // lib.rs re-exports — the whole lexer surface:
@@ -408,7 +408,7 @@ pub fn lex(source: &str) -> LexOutput;
 Module layout:
 
 ```
-crates/flow-syntax/src/
+crates/mapal-syntax/src/
 ├── lib.rs      // re-exports + crate docs
 ├── loc.rs      // SourceLoc, LineCol, LineIndex
 ├── diag.rs     // Diagnostic, DiagCode, Severity, SuggestedFix
@@ -432,13 +432,13 @@ Implementation shape: single forward pass over `source.char_indices()` with boun
 
 Dev-dependencies (first external deps in the workspace, per plan): `insta` (golden snapshots), `proptest` (lexer totality). Both dev-only — the compiler itself stays dependency-free.
 
-1. **Golden token streams (insta), the acceptance surface:** `tests/golden_tokens.rs` lexes each of `examples/{abs,fanout,fir,pipeline,sepia,sum_to_n}.flow` and snapshots the rendered stream — one token per line:
+1. **Golden token streams (insta), the acceptance surface:** `tests/golden_tokens.rs` lexes each of `examples/{abs,fanout,fir,pipeline,sepia,sum_to_n}.mapal` and snapshots the rendered stream — one token per line:
    `{line}:{col} {start}..{end} {Kind} ‹{lexeme}›`
-   (lexeme omitted for `Eof`). Six `.flow` files must produce **zero diagnostics**. Snapshot review is the verification that tokenization is *correct*, not merely stable — reviewers read the `.snap` against the source.
-2. **Golden diagnostics:** `tests/fixtures/lex_errors.flow` exercises every L-code (L0001–L0008, incl. `category` and an over-`u64` guard discriminant); snapshot of `Debug`-formatted `LexOutput` (structured values — not rendering, C3).
-3. **Golden full-surface (C8 evidence):** `tests/fixtures/full_surface.flow` exercises the out-of-Core v0.2 surface — `@executor(ThreadPool)`, `@target_frequency(200MHz)`, `x -> f? -> g?`, `channel<i32>`, `Result<T, E>`, `List::map`, `[head, ...tail]`, `pub`/`use`/`executor`/`void` keywords — and snapshots that everything lexes to the intended **non-Error** tokens with zero diagnostics. This is the positive evidence that C8 holds (the parser can later reject these with precision because the lexer never mangles them).
+   (lexeme omitted for `Eof`). Six `.mapal` files must produce **zero diagnostics**. Snapshot review is the verification that tokenization is *correct*, not merely stable — reviewers read the `.snap` against the source.
+2. **Golden diagnostics:** `tests/fixtures/lex_errors.mapal` exercises every L-code (L0001–L0008, incl. `category` and an over-`u64` guard discriminant); snapshot of `Debug`-formatted `LexOutput` (structured values — not rendering, C3).
+3. **Golden full-surface (C8 evidence):** `tests/fixtures/full_surface.mapal` exercises the out-of-Core v0.2 surface — `@executor(ThreadPool)`, `@target_frequency(200MHz)`, `x -> f? -> g?`, `channel<i32>`, `Result<T, E>`, `List::map`, `[head, ...tail]`, `pub`/`use`/`executor`/`void` keywords — and snapshots that everything lexes to the intended **non-Error** tokens with zero diagnostics. This is the positive evidence that C8 holds (the parser can later reject these with precision because the lexer never mangles them).
 4. **Unit tests** (`lexer.rs` `#[cfg(test)]`): the full §5 worked-consequences table; the §6 ledger rows; operator munch boundaries (`<-` vs `<=` vs `<`, `...`, `::`, `//` vs `/*` vs `/`); string escapes incl. L0002/L0003; float/int boundaries; guard-discriminant overflow (L0008, no panic); CRLF; empty input; `LineIndex` line/col correctness incl. multi-byte chars.
-5. **Property tests** (proptest, small): for arbitrary `String`s — no panic; I1–I3 hold. Plus a generator over "Flow-ish" token soup (keywords/operators/literals joined with random whitespace) asserting I1–I3 and that lexing is deterministic.
+5. **Property tests** (proptest, small): for arbitrary `String`s — no panic; I1–I3 hold. Plus a generator over "Mapal-ish" token soup (keywords/operators/literals joined with random whitespace) asserting I1–I3 and that lexing is deterministic.
 
 Benchmarks: deferred until the parser exists (HANDOFF §7.2 step 6 says "once the component is functional" — the *component* is syntax = lexer **+** parser; a lexer-only microbench has no consumer and low signal, so the component-level criterion bench lands with the parser. Recorded as a deliberate choice in STATUS).
 
@@ -465,7 +465,7 @@ record:
 - `- true ->` / `-true ->` *inside* a guard block (adjacency failure) → targeted "guard arrows are written without spaces" diagnostic.
 - `Ident {` ambiguity: struct literal (`Pixel { r: … }`) vs labeled loop (`outer { … }`) — disambiguation strategy is a parser-design question; Core may restrict loop labels to the `loop` keyword (HANDOFF §4.1 shows only `loop`), making custom labels an out-of-Core rejection. Decide next increment.
 - `KwCategory` recovery: parse the declaration as if `type` so field diagnostics still fire (L0004 already reported).
-- Out-of-Core keyword rejections (`KwExecutor`, `KwPub`, `KwUse`, `KwVoid`, `Question`, `At`, `DotDotDot`) get dedicated P-codes with "out of Flow-Core (HANDOFF §4) — Core+1/post-M5" messages.
+- Out-of-Core keyword rejections (`KwExecutor`, `KwPub`, `KwUse`, `KwVoid`, `Question`, `At`, `DotDotDot`) get dedicated P-codes with "out of Mapal-Core (HANDOFF §4) — Core+1/post-M5" messages.
 
 ---
 
@@ -484,7 +484,7 @@ literal) · `user-guide.md` §2–§3
 (syntax reference as patched), §3.6 precedence table (E4), §5 (`seq`), §8.3/§10.4 exhibits ·
 `architecture.md` §2.2.2 ("recursive descent. Produces a small parse tree", "no type
 inference, name resolution, or constant propagation") · HANDOFF §4 (Core scope; C8
-default-reject) · `examples/*.flow` (the acceptance corpus: must parse with **zero**
+default-reject) · `examples/*.mapal` (the acceptance corpus: must parse with **zero**
 diagnostics).
 
 Additional constraints binding this increment:
@@ -496,7 +496,7 @@ Additional constraints binding this increment:
 | C12 | Every node carries a `SourceLoc` span | category-ir.md §3.2; ADR-0008 |
 | C13 | Out-of-Core v0.2 surface is parsed precisely and rejected with a **dedicated** P-code naming the construct and horizon — never a generic parse error | HANDOFF §4; ADR-0001 |
 | C14 | Lexer diagnostics are never duplicated (L0004 `category`, L0005/6 Error tokens, L0008 overflow); `Error` tokens are skipped, not re-reported | DESIGN §2; crate inventory |
-| C15 | The parser is a module of `flow-syntax` (reuses `pub(crate)` `Diagnostic::error`/`with_fix`) | diag.rs visibility |
+| C15 | The parser is a module of `mapal-syntax` (reuses `pub(crate)` `Diagnostic::error`/`with_fix`) | diag.rs visibility |
 
 ## 14. Grammar
 
@@ -534,7 +534,7 @@ type := IDENT
 ```
 
 The parser does **not** validate scalar names (`i8`, `usize`, `String` parse as `Named`) —
-whether a named type exists/is Core is flow-check's job (C10).
+whether a named type exists/is Core is mapal-check's job (C10).
 
 ### 14.3 Statements, chains, blocks
 
@@ -600,7 +600,7 @@ choice is fixed here, by bounded lookahead at block-item-initial position, in th
 **Termination rule (uniform):** after parsing a chain inside a block — if next is `;`,
 consume (statement); else if next is `}`, the chain is the block's **tail**; else if the
 chain's last stage was a block form, it is a statement without `;` (exhibited:
-fanout.flow `6 -> { … }` followed by `sq -> print;`; `};` also legal, user-guide §5.2);
+fanout.mapal `6 -> { … }` followed by `sq -> print;`; `};` also legal, user-guide §5.2);
 else → P0001 expected `;`. A bare-expression chain (zero stages) is legal **only** as a
 tail or an arm payload; as a `;`-terminated statement it is P0003.
 
@@ -868,7 +868,7 @@ Design notes:
 ## 16. Parser diagnostics (P-codes) and recovery
 
 All severity Error. Messages are plain text naming the construct; out-of-Core messages
-end with the horizon, e.g. "out of Flow-Core (HANDOFF §4); planned for Core+1".
+end with the horizon, e.g. "out of Mapal-Core (HANDOFF §4); planned for Core+1".
 
 **Syntax class:**
 
@@ -906,7 +906,7 @@ end with the horizon, e.g. "out of Flow-Core (HANDOFF §4); planned for Core+1".
 | P0110 | labeled block / labeled jump (ADR-0012): `:search { … }`, `-> :search` — and the un-sigiled loop-shaped `Ident {` heuristic (§14.5) with the "labels are written `:NAME { … }`" hint | parsed as a labeled block / Error stage; Core+1 lifts this code |
 | P0111 | `executor` declaration | skipped |
 | P0112 | `pub` / `use` | skipped |
-| P0113 | `void` — both the fanout stage (`-> void { … }`) and statement-initial `void` (with or without block, e.g. bare `void;` in full_surface.flow) | parsed as fanout when a block follows; bare keyword ⇒ skip + `Stmt::Error` |
+| P0113 | `void` — both the fanout stage (`-> void { … }`) and statement-initial `void` (with or without block, e.g. bare `void;` in full_surface.mapal) | parsed as fanout when a block follows; bare keyword ⇒ skip + `Stmt::Error` |
 | P0114 | collection operator beyond map/fold (`filter { x -> … }`) | op-block-shaped `Ident {` heuristic, §14.4 |
 | P0115 | anonymous block stage (`-> { expr } -> r`, user-guide §8.3) | parsed as StmtBlock; flagged to Sapir (scope reading) |
 | P0116 | destructuring op-block parameter (`map { (x, y) -> … }`) | |
@@ -939,31 +939,31 @@ Panic-mode with per-production sync sets; always build a node (ADR-0008a):
   one token**. Enforced by a `debug_assert!` on cursor monotonicity per iteration and a
   proptest asserting termination.
 
-Multi-error proof: the `parse_errors.flow` fixture contains ≥ 6 independent defects and
+Multi-error proof: the `parse_errors.mapal` fixture contains ≥ 6 independent defects and
 the golden snapshot shows all of them reported with correct spans (no masking).
 
 ## 17. Decision ledger (parser warts & calls — made once, not re-litigated)
 
 | # | Case | Decision |
 |---|---|---|
-| W10 | `};` vs `}` after a block-final stage | Both legal: `;` optional after a chain whose last stage is a block (both exhibited: fanout.flow / user-guide §5.2). Uniform termination rule §14.3 |
+| W10 | `};` vs `}` after a block-final stage | Both legal: `;` optional after a chain whose last stage is a block (both exhibited: fanout.mapal / user-guide §5.2). Uniform termination rule §14.3 |
 | W11 | Block tail | A chain without `;` ending at `}` is the block's value (`bounded`, `Pixel {…}`, `acc + px.r`); applies uniformly, even where a value is meaningless (loop bodies) — semantic rejection is check's job |
 | W12 | `-> - 5` | Always subtraction shorthand, never a negative-literal stage (constant stages are meaningless). Write `0 - 5` or `(-5)` as an expression stage if ever needed |
 | W13 | `X { }` / flow-free `X { x }` statement-initial | Struct literal — under ADR-0012 this is no longer a fork at all: `Ident {` is always a struct literal; labeled blocks are sigiled (`:X { … }`). Empty `type X { }` body likewise allowed — all are check's concern |
 | W14 | `a == b == c` | Comparisons are non-associative → P0007 (parenthesize). Avoids the silent `(a==b)==c : bool` surprise |
-| W15 | Unary `- !` precedence | Not in the §3.6 table (spec gap). Bind tighter than `*` , looser than postfix: `x * -1` ⇒ `x * (-1)` ✓ (abs.flow), `-x.f` ⇒ `-(x.f)`, `!a && b` ⇒ `(!a) && b`. Flagged to Sapir; standard resolution, no ADR |
+| W15 | Unary `- !` precedence | Not in the §3.6 table (spec gap). Bind tighter than `*` , looser than postfix: `x * -1` ⇒ `x * (-1)` ✓ (abs.mapal), `-x.f` ⇒ `-(x.f)`, `!a && b` ⇒ `(!a) && b`. Flagged to Sapir; standard resolution, no ADR |
 | W16 | `Ident<Ident>` in expression position | Surfaces as P0007/P0001, not P0103 — documented imprecision (type-position generics get P0103; no expression exhibit exists in the corpus) |
 | W17 | `<-` chains | One binding per statement (`a <- b <- c` → P0008). Only single-step `<-` is exhibited |
 | W18 | Mixed-direction chains (`a -> b <- c`) | Rejected: `<-` after a `->` stage is P0001 (not exhibited, meaningless under ADR-0005) |
-| W19 | op-block param arity | Parser accepts ≥1 params for both map and fold; the map=1/fold=2 positional law (ADR-0009) is arity/type checking — flow-check's job |
+| W19 | op-block param arity | Parser accepts ≥1 params for both map and fold; the map=1/fold=2 positional law (ADR-0009) is arity/type checking — mapal-check's job |
 | W20 | `ret`/`loop` in expressions | Stage forms only. `ret -> f;` / `loop + 1` → P0001 |
-| W21 | Named-param partial application (`15 -> add.a;`) | Parses as a member-expression stage (grammatically indistinguishable from member access); Core legality is flow-check's call (HANDOFF §4.1 omits it). No parser special case |
+| W21 | Named-param partial application (`15 -> add.a;`) | Parses as a member-expression stage (grammatically indistinguishable from member access); Core legality is mapal-check's call (HANDOFF §4.1 omits it). No parser special case |
 | W22 | Statement-initial `seq` / `map` / `fold` / `void` / stray `Guard` | `seq`/`map`/`fold`: targeted P0001 ("must follow `->`"); `void`: P0113 (out-of-Core keyword, §16); stray `Guard`: P0004. Recover by parsing the block/arm where present |
 | W23 | `?` parsed as expression postfix (level 2), not §3.6 rank 9 | Matches every corpus exhibit (`f? -> g?` binds per stage); rejected via P0101 either way; the real grammar call belongs to the Core+1 error-handling ADR (LC-1). See §14.6 |
 | W24 | All-spaced guard blocks (`{ - true -> x; - false -> y; }`) | Classified GuardBlock via §14.3 rule 1 (P0005 per arm) — the targeted hints fire even with zero clean `Guard` tokens |
 | W25 | The three roles of `:` | Ascription (`x: i32`, after-ident), struct fields (`r: 1.0`, after-ident inside braces), labels (`:outer`, before-ident; ADR-0012) — all position-distinguished, no lookahead conflict. An *un-sigiled* `-> search;` is a plain name stage (variable flow), never a jump |
 
-## 18. Public API (additions to `flow-syntax`)
+## 18. Public API (additions to `mapal-syntax`)
 
 ```rust
 // lib.rs gains:
@@ -989,7 +989,7 @@ pathological nested-`Ident {` scan (ADR-0011, documented).
 | J1 | `parse` is total: any `&str` → `ParseOutput`, never panics, never hangs | depth guard (P0011) + the §16.1 progress lemma (every `*`-loop iteration consumes ≥1 token or exits; `debug_assert!` cursor monotonicity); proptest over arbitrary strings + flow-soup |
 | J2 | Span sanity: every node span within source; child spans ⊆ parent span; sibling statements non-overlapping and ordered | `debug_assert!` in constructors + recursive walker in tests/proptest |
 | J3 | Zero diagnostics ⇒ no `Error` nodes and no rejected-but-kept forms in the tree | golden tests + proptest walker |
-| J4 | Acceptance: all six `examples/*.flow` parse with **zero** diagnostics | golden parse-tree tests |
+| J4 | Acceptance: all six `examples/*.mapal` parse with **zero** diagnostics | golden parse-tree tests |
 | J5 | Presentation-free (C3): no `Display` anywhere in the crate | review; grep |
 | J6 | Lex-diagnostic preservation: `parse(s).diagnostics` ⊇ `lex(s).diagnostics` (same values) | unit + proptest |
 
@@ -1005,14 +1005,14 @@ the failure mode).
 
 1. **Golden parse trees** (`tests/golden_trees.rs`): all six examples; assert zero
    diagnostics + snapshot `tree_{name}`. The acceptance surface (J4).
-2. **Golden parse errors** (`tests/parse_errors.rs` + `tests/fixtures/parse_errors.flow`):
+2. **Golden parse errors** (`tests/parse_errors.rs` + `tests/fixtures/parse_errors.mapal`):
    ≥6 independent syntax defects exercising P0001–P0012 (incl. stray guard W1 with its
    SuggestedFix, spaced guard P0005, mixing P0006, chained comparison P0007, `i<-1` P0009,
    bare-expr statement P0003); snapshot = rendered tree + `Debug` diagnostics. Proves
    multi-error recovery (ADR-0008a).
-3. **Golden out-of-Core** (`tests/out_of_core.rs` + `tests/fixtures/out_of_core.flow`):
+3. **Golden out-of-Core** (`tests/out_of_core.rs` + `tests/fixtures/out_of_core.mapal`):
    every P01xx code fires exactly where intended, incl. parsing the existing
-   `full_surface.flow` lexer fixture and asserting its P-code set (C8 end-to-end: lexer
+   `full_surface.mapal` lexer fixture and asserting its P-code set (C8 end-to-end: lexer
    tokenizes cleanly → parser rejects precisely).
 4. **Unit tests** (`parser.rs` `#[cfg(test)]`): the §3.6 examples verbatim (`a + b -> c`,
    `a -> b + c -> d`, `x -> f.method`); precedence/associativity table; hole-expression

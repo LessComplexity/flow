@@ -19,7 +19,7 @@ Six machine facts are literals in the backend today:
 | `TILE_KC` | 128 | an L2 budget for one k-panel |
 | `tile_nc_for` | `TJ × 32` | its own doc says *"256 KB … the L2 budget that keeps the panel resident"* — a zen3 number |
 | `HEAP_MIN_BYTES` | 256 KB | a stack-ceiling policy |
-| `GRAIN` (flow-rt) | 4096 | slice size vs core count — the same disease at the runtime placement |
+| `GRAIN` (mapal-rt) | 4096 | slice size vs core count — the same disease at the runtime placement |
 
 S30 measured the consequence: with both legs finally emitted optimally, the KC nest still
 loses on M4 Pro at every size **and the deficit grows with N** (+5% @1024 → +14% @4096).
@@ -83,7 +83,7 @@ measured behaviour falls out of the model instead of being hardcoded as a defaul
    cross-compilable by default, and a box run names `zen3` rather than inheriting whatever
    machine the build happened on.
 4. `GRAIN` belongs to the same table conceptually but lives at a different placement
-   (flow-rt, runtime). Out of scope here; recorded so the split is deliberate.
+   (mapal-rt, runtime). Out of scope here; recorded so the split is deliberate.
 
 ## Work items (backend-llvm)
 
@@ -125,7 +125,7 @@ measured behaviour falls out of the model instead of being hardcoded as a defaul
 - **Record fields consumed:** `TileSite.{k, elem}` for the gate and the per-width derivations;
   `TileSite.{rows, c}` are read by the rungs, not by the profile. The profile itself consumes
   **no** graph facts — that is the point of the split, and it is why nothing here touches
-  flow-ir.
+  mapal-ir.
 - **CUDA realization against the record:** the same resolver shape with different fields —
   registers-per-thread and shared-memory bytes in place of `vec_regs`/`l2_bytes`, selecting
   smem tile sizes and thread-tile extents. Named, not executed: `tile_plan` still has exactly
@@ -137,7 +137,7 @@ measured behaviour falls out of the model instead of being hardcoded as a defaul
 
 - **The thread-count deduction needs fields this record does not have.** `docs/next-session.md`
   §"S31 focus" sources "core count, P/E split and their throughput ratio" from `TargetProfile`;
-  no such field is proposed here. Those are facts about a *runtime* placement (flow-rt's pool),
+  no such field is proposed here. Those are facts about a *runtime* placement (mapal-rt's pool),
   the same side of rule 4 as `GRAIN` — so either this record grows a runtime half or the pool
   gets its own profile. Recorded as a collision to settle when that item starts, not resolved
   here.
@@ -146,7 +146,7 @@ measured behaviour falls out of the model instead of being hardcoded as a defaul
   width and a halved row block, simultaneously, on a machine nobody has measured. It is
   self-consistent arithmetic, not a validated configuration; the box leg is what settles it,
   and until then `zen3` must stay explicitly untested rather than shipping as "the AVX2 answer".
-- `GRAIN` (flow-rt) stays hand-set — different placement, same disease (rule 4).
+- `GRAIN` (mapal-rt) stays hand-set — different placement, same disease (rule 4).
 - The `zen3` profile's values are read off documentation, not measured. The box leg is
   what validates them, and until then the profile is labelled untested.
 - Autotuning (ADR-0034) is explicitly out of scope. This plan builds the table the
@@ -214,7 +214,7 @@ differently-shaped near-miss.
    different quantities, each set at its own source.
 4. **The byte-identity gate could not be `regen.sh`.** The 72 checked-in `benches/matmul/*.ll`
    are **stale at HEAD** — proven by stashing this change and regenerating with unmodified
-   HEAD code, which also differs (they predate S30b's `time` migration of the `.flow`
+   HEAD code, which also differs (they predate S30b's `time` migration of the `.mapal`
    sources; `regen.sh` additionally exits 1 on the CUDA leg, which rejects `time` — the
    recorded ✋ cell). Rule 1 was therefore checked the honest way: **A/B emission against HEAD
    over 11 sources × 6 flag combinations = 66 emissions, all byte-identical** (matmul

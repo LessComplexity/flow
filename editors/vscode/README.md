@@ -1,20 +1,20 @@
-# Flow — VS Code support
+# Mapal — VS Code support
 
-Puts the **actual Flow logo** on `.flow` files, plus comment and bracket behaviour.
+Puts the **actual Mapal logo** on `.mapal` files, plus comment and bracket behaviour.
 
 ```
 package.json                 language registration + the file icon
 language-configuration.json  // comments, bracket matching, auto-close
-icons/flow.svg               the mark, square variant
+icons/mapal.svg               the mark, square variant
 ```
 
 ## Why this and not an icon theme
 
 VS Code has no "add one icon" API for file icon themes — a file icon theme is
-**all-or-nothing**, so shipping a Flow-only one would blank the icons for every other file
+**all-or-nothing**, so shipping a Mapal-only one would blank the icons for every other file
 type in your project. That is why this uses `contributes.languages[].icon` instead (VS Code
-≥ 1.66): the icon shows for `.flow` files, and your existing icon theme keeps handling
-everything else. If your active icon theme *does* define an icon for `.flow`, the theme wins —
+≥ 1.66): the icon shows for `.mapal` files, and your existing icon theme keeps handling
+everything else. If your active icon theme *does* define an icon for `.mapal`, the theme wins —
 that is by design.
 
 ## Install
@@ -23,14 +23,14 @@ Not published to the Marketplace, so build a `.vsix` and install it:
 
 ```sh
 python3 editors/vscode/package-vsix.py
-code   --install-extension editors/vscode/flow-lang-0.1.0.vsix   # or:
-cursor --install-extension editors/vscode/flow-lang-0.1.0.vsix
+code   --install-extension editors/vscode/mapal-lang-0.1.0.vsix   # or:
+cursor --install-extension editors/vscode/mapal-lang-0.1.0.vsix
 ```
 
 Then restart the editor. Verify it actually registered — the message alone is not proof:
 
 ```sh
-code --list-extensions | grep flow-lang
+code --list-extensions | grep mapal-lang
 ```
 
 If the `code` command is not on your PATH, use the binary inside the app:
@@ -55,7 +55,7 @@ A CLI install copies the files, so editing the repo afterwards changes nothing i
 Either rebuild and reinstall:
 
 ```sh
-python3 editors/vscode/package-vsix.py && code --install-extension editors/vscode/flow-lang-0.1.0.vsix --force
+python3 editors/vscode/package-vsix.py && code --install-extension editors/vscode/mapal-lang-0.1.0.vsix --force
 ```
 
 or launch a throwaway window that loads the source directly, which is better for grammar work:
@@ -66,14 +66,14 @@ code --extensionDevelopmentPath="$(pwd)/editors/vscode" .
 
 ### Checking it works
 
-1. Open a `.flow` file — the status bar should read **Flow**, not *Plain Text*. If it says Plain
+1. Open a `.mapal` file — the status bar should read **Mapal**, not *Plain Text*. If it says Plain
    Text the extension is not loaded and nothing else matters.
 2. Command palette → `Developer: Inspect Editor Tokens and Scopes`, cursor on a token — should
-   show `source.flow` and a scope such as `support.function.builtin.flow`.
+   show `source.mapal` and a scope such as `support.function.builtin.mapal`.
 
 ## Syntax highlighting
 
-`syntaxes/flow.tmLanguage.json` covers comments, strings, guard arrows (split-scoped — chrome
+`syntaxes/mapal.tmLanguage.json` covers comments, strings, guard arrows (split-scoped — chrome
 as an arrow, discriminant by what it is), labels, `fn` declarations, builtins, bindings, call
 position, arrows, numbers, types, operators, and the reserved-and-rejected `category`.
 
@@ -82,7 +82,7 @@ Run `editors/test.sh` after any edit — it asserts both editors together.
 **Scope names have to be ones themes actually style.** Labels were first scoped
 `entity.name.label`, which is semantically right and looked broken: VS Code's default themes
 give it `#C8C8C8` against an editor foreground of `#CCCCCC`, a 4/255 difference that renders
-as plain text. They are now `keyword.control.label.flow` (`#C586C0`), which is also what the
+as plain text. They are now `keyword.control.label.mapal` (`#C586C0`), which is also what the
 Vim file does — it links labels to `Label`, a Statement-family group. When picking a scope,
 check it against the theme rather than only against the grammar.
 
@@ -99,7 +99,7 @@ the test rather than quietly mis-colouring.
 
 It has the **opposite precedence** to the Neovim file: TextMate takes the *first* matching
 pattern, Vim the *last*. So this file is ordered most-specific first and
-[`../nvim/syntax/flow.vim`](../nvim/syntax/flow.vim) least-specific first. A rule added to one
+[`../nvim/syntax/mapal.vim`](../nvim/syntax/mapal.vim) least-specific first. A rule added to one
 goes at the other end of the other.
 
 And it is **less capable in one specific way**: `x -> name;` is lexically identical whether

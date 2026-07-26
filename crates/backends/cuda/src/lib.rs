@@ -1,9 +1,9 @@
 //! CUDA backend: emits textual CUDA C++ (`.cu`) compiled by `nvcc` on a
 //! remote GPU box (ADR-0020 §1; backend-cuda DESIGN). The entry point
-//! [`emit`] realizes the functor `F_CUDA : Flow-Cat → CUDA-Cat` as a String —
+//! [`emit`] realizes the functor `F_CUDA : Mapal-Cat → CUDA-Cat` as a String —
 //! the translation unit **is** the artifact (ADR-0020). Semantics are the
 //! interpreter oracle's by construction: every `Print`/trap routes through
-//! the shared `flow-rt` runtime on the host (ADR-0020 §2), integer arithmetic
+//! the shared `mapal-rt` runtime on the host (ADR-0020 §2), integer arithmetic
 //! wraps (via unsigned casts — C++ signed overflow is UB, BC2),
 //! `Div`/`Mod`/`Index`/`Update` are guarded, and floats are IEEE at width
 //! (`-fmad=false`, BC9).
@@ -12,7 +12,7 @@
 //! and rising counters, never slotmap bits. The one capability gap (L3) is
 //! the non-canonical loop shape (multi-merge SCC), rejected as
 //! [`EmitError::Unsupported`] — the same scope boundary as interp M1 /
-//! rewrite R6 / llvm BL6, gated by the same `flow_ir::loop_plan` predicate.
+//! rewrite R6 / llvm BL6, gated by the same `mapal_ir::loop_plan` predicate.
 //!
 //! [`kernel`] is the array/device heart: launch-form array-bulk ops (fn top
 //! level) become one `__global__` per STRUCTURAL SHAPE (`k{f_ord}_{s_ord}`
@@ -25,7 +25,7 @@
 //!
 //! [`loops`] is the loop driver: a canonical loop at fn top level becomes
 //! the host-driven guard-first quartet (decide cone → guard → advance cone →
-//! back edge) per `flow_ir::loop_plan`; the fn walk's driver-ownership skip
+//! back edge) per `mapal_ir::loop_plan`; the fn walk's driver-ownership skip
 //! (decide∪advance ∪ SCC incidence, the llvm rule) keeps cone morphisms
 //! single-emitted; a carried array's merge is a host handle whose back edge
 //! is a pointer swap. The last-use plan (plan-last-use §2, suggestions #2 +
@@ -48,7 +48,7 @@
 //! escape test. Loop-cone sites keep per-buffer `cudaMalloc` (v1.1 debt).
 //!
 //! [`EmitOpts::perf_timing`] (suggestions.md #19a) wraps every launch in
-//! CUDA events and prints machine-readable `FLOW_PERF` lines — opt-in via
+//! CUDA events and prints machine-readable `MAPAL_PERF` lines — opt-in via
 //! [`emit_with_opts`]; the default [`emit`] text is byte-identical without
 //! it.
 
@@ -59,7 +59,7 @@ mod loops;
 mod module;
 mod ty;
 
-use flow_ir::{CategoryIr, FuncId, SourceLoc};
+use mapal_ir::{CategoryIr, FuncId, SourceLoc};
 use slotmap::SecondaryMap;
 
 use crate::func::{FnEmit, fn_signature};
@@ -88,8 +88,8 @@ pub struct EmitOpts {
     /// Wrap every kernel launch in CUDA events: one event pair per launch
     /// site (created once per fn invocation), `cudaEventRecord(start)`
     /// before the launch, Record(stop)+Synchronize+ElapsedTime after —
-    /// printing a machine-readable `FLOW_PERF launch=<kernel> ms=<%.4f>`
-    /// line per execution — plus a `FLOW_PERF total ms=<%.4f>` line (the
+    /// printing a machine-readable `MAPAL_PERF launch=<kernel> ms=<%.4f>`
+    /// line per execution — plus a `MAPAL_PERF total ms=<%.4f>` line (the
     /// sum of the fn's launch times) at fn end. Trap checks are unchanged
     /// (the stop event is recorded BEFORE `trap_check_after_launch`); the
     /// elapsed sync adds a host sync only where #14 already skipped the
@@ -142,13 +142,13 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
     // produced locals are checked in DevEmit's declaration walk.)
     kernel::check_fold_acc_budgets(ir)?;
 
-    // Deterministic function names: entry → flow_main, others → fn{ordinal}
+    // Deterministic function names: entry → mapal_main, others → fn{ordinal}
     // (the llvm scheme).
     let mut fnames: SecondaryMap<FuncId, String> = SecondaryMap::new();
     let entry = ir.entry();
     for (ord, (id, _)) in ir.funcs().enumerate() {
         let name = if id == entry {
-            "flow_main".to_string()
+            "mapal_main".to_string()
         } else {
             format!("fn{ord}")
         };
@@ -156,9 +156,9 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
     }
 
     let mut out = String::new();
-    out.push_str("// flow-backend-cuda emitted translation unit\n");
+    out.push_str("// mapal-backend-cuda emitted translation unit\n");
     out.push_str(
-        "// build: nvcc -std=c++17 -fmad=true -arch=sm_89 prog.cu libflow_rt.a -lpthread -ldl -lm -o prog\n",
+        "// build: nvcc -std=c++17 -fmad=true -arch=sm_89 prog.cu libmapal_rt.a -lpthread -ldl -lm -o prog\n",
     );
     out.push_str(
         "// DESIGN §4 (amended S24b, Sapir): -fmad=true is the product/perf default; conformance runs pin -fmad=false for oracle bit-parity. Host -march=native/-mfma stays forbidden in conformance.\n\n",

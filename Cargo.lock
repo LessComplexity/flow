@@ -239,116 +239,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
-name = "flow-backend-cuda"
-version = "0.0.1"
-dependencies = [
- "flow-interp",
- "flow-ir",
- "flow-lower",
- "flow-rewrite",
- "flow-syntax",
- "insta",
- "proptest",
- "slotmap",
- "tempfile",
-]
-
-[[package]]
-name = "flow-backend-llvm"
-version = "0.0.1"
-dependencies = [
- "flow-interp",
- "flow-ir",
- "flow-lower",
- "flow-rewrite",
- "flow-syntax",
- "insta",
- "proptest",
- "slotmap",
- "tempfile",
-]
-
-[[package]]
-name = "flow-backend-verilog"
-version = "0.0.1"
-
-[[package]]
-name = "flow-check"
-version = "0.0.1"
-dependencies = [
- "flow-ir",
- "flow-lower",
- "flow-syntax",
-]
-
-[[package]]
-name = "flow-cli"
-version = "0.0.1"
-
-[[package]]
-name = "flow-interp"
-version = "0.0.1"
-dependencies = [
- "criterion",
- "flow-ir",
- "flow-lower",
- "flow-syntax",
- "slotmap",
-]
-
-[[package]]
-name = "flow-ir"
-version = "0.0.1"
-dependencies = [
- "criterion",
- "insta",
- "proptest",
- "slotmap",
-]
-
-[[package]]
-name = "flow-lower"
-version = "0.0.1"
-dependencies = [
- "criterion",
- "flow-ir",
- "flow-syntax",
- "insta",
- "proptest",
-]
-
-[[package]]
-name = "flow-rewrite"
-version = "0.0.1"
-dependencies = [
- "criterion",
- "flow-interp",
- "flow-ir",
- "flow-lower",
- "flow-syntax",
- "insta",
- "proptest",
- "slotmap",
-]
-
-[[package]]
-name = "flow-rt"
-version = "0.0.1"
-dependencies = [
- "flow-interp",
- "flow-ir",
-]
-
-[[package]]
-name = "flow-syntax"
-version = "0.0.1"
-dependencies = [
- "criterion",
- "insta",
- "proptest",
-]
-
-[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -537,6 +427,116 @@ name = "log"
 version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
+
+[[package]]
+name = "mapal-backend-cuda"
+version = "0.0.1"
+dependencies = [
+ "insta",
+ "mapal-interp",
+ "mapal-ir",
+ "mapal-lower",
+ "mapal-rewrite",
+ "mapal-syntax",
+ "proptest",
+ "slotmap",
+ "tempfile",
+]
+
+[[package]]
+name = "mapal-backend-llvm"
+version = "0.0.1"
+dependencies = [
+ "insta",
+ "mapal-interp",
+ "mapal-ir",
+ "mapal-lower",
+ "mapal-rewrite",
+ "mapal-syntax",
+ "proptest",
+ "slotmap",
+ "tempfile",
+]
+
+[[package]]
+name = "mapal-backend-verilog"
+version = "0.0.1"
+
+[[package]]
+name = "mapal-check"
+version = "0.0.1"
+dependencies = [
+ "mapal-ir",
+ "mapal-lower",
+ "mapal-syntax",
+]
+
+[[package]]
+name = "mapal-cli"
+version = "0.0.1"
+
+[[package]]
+name = "mapal-interp"
+version = "0.0.1"
+dependencies = [
+ "criterion",
+ "mapal-ir",
+ "mapal-lower",
+ "mapal-syntax",
+ "slotmap",
+]
+
+[[package]]
+name = "mapal-ir"
+version = "0.0.1"
+dependencies = [
+ "criterion",
+ "insta",
+ "proptest",
+ "slotmap",
+]
+
+[[package]]
+name = "mapal-lower"
+version = "0.0.1"
+dependencies = [
+ "criterion",
+ "insta",
+ "mapal-ir",
+ "mapal-syntax",
+ "proptest",
+]
+
+[[package]]
+name = "mapal-rewrite"
+version = "0.0.1"
+dependencies = [
+ "criterion",
+ "insta",
+ "mapal-interp",
+ "mapal-ir",
+ "mapal-lower",
+ "mapal-syntax",
+ "proptest",
+ "slotmap",
+]
+
+[[package]]
+name = "mapal-rt"
+version = "0.0.1"
+dependencies = [
+ "mapal-interp",
+ "mapal-ir",
+]
+
+[[package]]
+name = "mapal-syntax"
+version = "0.0.1"
+dependencies = [
+ "criterion",
+ "insta",
+ "proptest",
+]
 
 [[package]]
 name = "memchr"

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="80" height="80"
+     role="img" aria-labelledby="flow-icon-title">
+  <title id="flow-icon-title">Mapal</title>
+  <!-- Square file-icon variant of the mark: same graph, padded to a 1:1 box and
+       stroked a little heavier so it survives being drawn at 16x16 in a file
+       tree. No text — at that size a wordmark is mud. -->
+  <g fill="none" stroke="#14B8A6" stroke-width="6"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 22 H42" />
+    <path d="M22 58 H42" />
+    <path d="M42 22 V58" />
+    <path d="M42 40 H60" />
+    <circle cx="14" cy="22" r="7" />
+    <circle cx="14" cy="58" r="7" />
+    <circle cx="67" cy="40" r="7" fill="#14B8A6" />
+  </g>
+</svg>

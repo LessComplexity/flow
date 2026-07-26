@@ -61,7 +61,7 @@ by construction, which the differential suite enforces.
 ## Tests
 
 - differential: unchanged suite must stay green — byte-equal vs untiled and vs the interp
-  oracle at -O0/-O2, both nests, f32 and f64, `FLOW_PAR` splits. This is the R1 gate and
+  oracle at -O0/-O2, both nests, f32 and f64, `MAPAL_PAR` splits. This is the R1 gate and
   it is the whole safety argument for rule 1.
 - golden: the tiled goldens re-pin DELIBERATELY (the emission changes shape); assert
   structurally that the main path contains **no** accumulator `alloca`/`load`/`store` and
@@ -72,7 +72,7 @@ by construction, which the differential suite enforces.
 
 ## Measurement (done-when)
 
-- `tile_ab.sh matmul1024_cap_f32`, FLOW_PAR=1, min-of-3: the KC-off leg must not regress
+- `tile_ab.sh matmul1024_cap_f32`, MAPAL_PAR=1, min-of-3: the KC-off leg must not regress
   from 19.8 ms; the KC-on leg must close most of the 56.3 → 19.8 gap. If KC-on lands near
   KC-off, the S29 verdict flips from "the order is bad" to "the order was never measured"
   and the box leg becomes worth running.

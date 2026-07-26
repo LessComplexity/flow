@@ -1,0 +1,18 @@
+---
+source: crates/mapal-rewrite/tests/golden.rs
+expression: "format!(\"{:#?}\", res.report)"
+---
+RewriteReport {
+    rounds: 3,
+    applied: [
+        (
+            Inline,
+            1,
+        ),
+        (
+            ConstFold,
+            3,
+        ),
+    ],
+    skipped_non_canonical: false,
+}

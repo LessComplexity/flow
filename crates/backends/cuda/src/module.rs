@@ -1,9 +1,9 @@
-//! Module frame (DESIGN §2–§4, §8): the `.cu` prelude (includes + `flow-rt`
+//! Module frame (DESIGN §2–§4, §8): the `.cu` prelude (includes + `mapal-rt`
 //! `extern "C"` decls + the trap-flag/error machinery), the `FlowProd_*`
 //! struct definitions, the `Str` host globals, and the `main` wrapper.
 //!
 //! **Harness build recipe (DESIGN §4/§6):**
-//! `nvcc -std=c++17 -fmad=false -arch=sm_89 prog.cu libflow_rt.a -lpthread -ldl -lm -o prog`
+//! `nvcc -std=c++17 -fmad=false -arch=sm_89 prog.cu libmapal_rt.a -lpthread -ldl -lm -o prog`
 //! `-fmad=false` pins device float parity with the interpreter oracle (no FMA
 //! contraction); `--use_fast_math` and host `-march=native`/`-mfma` are
 //! forbidden (§4). The link tail is the pinned Linux default (§6.6).
@@ -14,26 +14,26 @@
 //! every launch **that can trap** (#14's `TrapCaps` trim: provably trap-free
 //! launches pass no flag and skip the readback) — `cudaGetLastError` (the
 //! exit-102 infra protocol) plus a host-synchronizing D→H `cudaMemcpy` of the
-//! flag; nonzero ⇒ `flow_trap(kind - 1)` on the host (exit 101). The flag
-//! stores the flow-rt kind **plus one**: 0 must stay the quiescent value (the
+//! flag; nonzero ⇒ `mapal_trap(kind - 1)` on the host (exit 101). The flag
+//! stores the mapal-rt kind **plus one**: 0 must stay the quiescent value (the
 //! memset zeroing), so a device div_zero guard stores `1u` and an index_oob
-//! guard stores `2u`; the readback decodes to the flow-rt encoding (0 =
+//! guard stores `2u`; the readback decodes to the mapal-rt encoding (0 =
 //! div_zero, 1 = index_oob). A bare-kind store would collide — div_zero's 0
 //! would read back as "no trap", crossing the R1 classes. Host-side scalar
-//! traps (Div/Mod guards) call `flow_trap` directly. Every
+//! traps (Div/Mod guards) call `mapal_trap` directly. Every
 //! `cudaMalloc`/`cudaMemcpy` return is asserted by `cu_check`; on error the
 //! process prints to stderr and exits **102** — the harness-visible
 //! infra-failure class, never an R1 data point.
 
 use std::collections::HashSet;
 
-use flow_ir::{CategoryIr, ObjectId, ObjectKind, Ty, Value};
+use mapal_ir::{CategoryIr, ObjectId, ObjectKind, Ty, Value};
 use slotmap::SecondaryMap;
 
 use crate::ty::{lower_ty, prod_shape};
 
-/// The `.cu` prelude: includes, the `flow-rt` `extern "C"` block (exact
-/// signatures from `flow-rt/src/lib.rs` — `usize` → `size_t`, `*const u8` →
+/// The `.cu` prelude: includes, the `mapal-rt` `extern "C"` block (exact
+/// signatures from `mapal-rt/src/lib.rs` — `usize` → `size_t`, `*const u8` →
 /// `const uint8_t*`), and the trap-flag + exit-102 machinery (DESIGN §3).
 /// `trap_check_after_launch` is WP3's launch-site hook; it stays
 /// `[[maybe_unused]]` because scalar-only modules have no launches.
@@ -45,17 +45,17 @@ pub(crate) const PRELUDE: &str = r#"#include <cstdint>
 #include <cuda_runtime.h>
 
 extern "C" {
-void flow_print_i32(int32_t v, bool newline);
-void flow_print_i64(int64_t v, bool newline);
-void flow_print_u8(uint8_t v, bool newline);
-void flow_print_bool(bool v, bool newline);
-void flow_print_f32(float v, bool newline);
-void flow_print_f64(double v, bool newline);
-void flow_print_str(const uint8_t* ptr, size_t len, bool newline);
-// Matches the Rust `-> !` (flow-rt/src/lib.rs): lets the compiler drop the
+void mapal_print_i32(int32_t v, bool newline);
+void mapal_print_i64(int64_t v, bool newline);
+void mapal_print_u8(uint8_t v, bool newline);
+void mapal_print_bool(bool v, bool newline);
+void mapal_print_f32(float v, bool newline);
+void mapal_print_f64(double v, bool newline);
+void mapal_print_str(const uint8_t* ptr, size_t len, bool newline);
+// Matches the Rust `-> !` (mapal-rt/src/lib.rs): lets the compiler drop the
 // dead fall-through after host guards. C++11 attribute, legal on an
 // extern "C" declaration; host-only, so no device-pass concern.
-[[noreturn]] void flow_trap(uint32_t kind);
+[[noreturn]] void mapal_trap(uint32_t kind);
 }
 
 // --- trap flag + CUDA error protocol (DESIGN §3) ---------------------------
@@ -80,23 +80,23 @@ static void trap_init() {
 // a provably trap-free kernel takes no trap argument and skips this
 // readback): cudaGetLastError
 // (exit-102 protocol), then a host-synchronizing D→H read of the flag (the
-// memcpy is the sync point); nonzero kind ⇒ flow_trap(kind - 1) on the host
+// memcpy is the sync point); nonzero kind ⇒ mapal_trap(kind - 1) on the host
 // (exit 101) — the flag stores kind + 1 (0 = quiescent after trap_init's
-// memset; 1 = div_zero, 2 = index_oob), decoded here to the flow-rt kinds.
+// memset; 1 = div_zero, 2 = index_oob), decoded here to the mapal-rt kinds.
 [[maybe_unused]] static void trap_check_after_launch() {
     cu_check(cudaGetLastError(), "kernel launch");
     unsigned int kind = 0;
     cu_check(cudaMemcpy(&kind, d_trap, sizeof(unsigned int), cudaMemcpyDeviceToHost),
              "cudaMemcpy(d_trap)");
     if (kind != 0) {
-        flow_trap(kind - 1);
+        mapal_trap(kind - 1);
     }
 }
 "#;
 
 /// A private `Str` constant global: its symbol name and byte length. `Print`
-/// of a `Str` passes the pointer + explicit `len` to `flow_print_str` (DESIGN
-/// §1; the C array NUL-terminates, but flow-rt reads exactly `len` bytes).
+/// of a `Str` passes the pointer + explicit `len` to `mapal_print_str` (DESIGN
+/// §1; the C array NUL-terminates, but mapal-rt reads exactly `len` bytes).
 pub(crate) struct StrGlobal {
     pub name: String,
     pub bytes: Vec<u8>,
@@ -237,8 +237,8 @@ pub(crate) fn emit_prod_structs(prods: &[ProdStruct]) -> String {
     out
 }
 
-/// The `main` wrapper (DESIGN §4, llvm BL8 port). Calls `flow_main` after
-/// `trap_init`, prints a non-erased scalar return through `flow-rt` with
+/// The `main` wrapper (DESIGN §4, llvm BL8 port). Calls `mapal_main` after
+/// `trap_init`, prints a non-erased scalar return through `mapal-rt` with
 /// newline = true (the `Unit → i32` closed shape, so the differential
 /// observes it), frees the trap flag at exit, returns 0. Open entries get a
 /// value-initialized argument so emission stays total (llvm's zeroinitializer
@@ -260,10 +260,10 @@ pub(crate) fn emit_main_wrapper(ir: &CategoryIr) -> String {
 
     match lower_ty(output_ty) {
         None => {
-            out.push_str(&format!("  flow_main({arg});\n"));
+            out.push_str(&format!("  mapal_main({arg});\n"));
         }
         Some(rty) => {
-            out.push_str(&format!("  {rty} r = flow_main({arg});\n"));
+            out.push_str(&format!("  {rty} r = mapal_main({arg});\n"));
             if let Some(call) = print_call(output_ty, "r") {
                 out.push_str(&format!("  {call}\n"));
             }
@@ -276,26 +276,26 @@ pub(crate) fn emit_main_wrapper(ir: &CategoryIr) -> String {
     out
 }
 
-/// The `flow-rt` print statement for a scalar return value operand (BL8
-/// result print). `None` for a type flow-rt cannot print through this path
+/// The `mapal-rt` print statement for a scalar return value operand (BL8
+/// result print). `None` for a type mapal-rt cannot print through this path
 /// (aggregates, arrays — L1207).
 fn print_call(ty: &Ty, operand: &str) -> Option<String> {
     let func = print_dispatch(ty)?;
     Some(format!("{func}({operand}, true);"))
 }
 
-/// The `flow-rt` print function for a printable scalar, or `None` for
+/// The `mapal-rt` print function for a printable scalar, or `None` for
 /// non-printables (aggregates/arrays — the wrapper simply doesn't print).
-/// u8 routes to `flow_print_u8`; no `zeroext` ceremony — the C++ ABI passes
+/// u8 routes to `mapal_print_u8`; no `zeroext` ceremony — the C++ ABI passes
 /// `uint8_t`/`bool` natively.
 pub(crate) fn print_dispatch(ty: &Ty) -> Option<&'static str> {
     match ty {
-        Ty::Int { bits: 32, .. } => Some("flow_print_i32"),
-        Ty::Int { bits: 64, .. } => Some("flow_print_i64"),
-        Ty::Int { bits: 8, .. } => Some("flow_print_u8"),
-        Ty::Bool => Some("flow_print_bool"),
-        Ty::Float { bits: 32 } => Some("flow_print_f32"),
-        Ty::Float { bits: 64 } => Some("flow_print_f64"),
+        Ty::Int { bits: 32, .. } => Some("mapal_print_i32"),
+        Ty::Int { bits: 64, .. } => Some("mapal_print_i64"),
+        Ty::Int { bits: 8, .. } => Some("mapal_print_u8"),
+        Ty::Bool => Some("mapal_print_bool"),
+        Ty::Float { bits: 32 } => Some("mapal_print_f32"),
+        Ty::Float { bits: 64 } => Some("mapal_print_f64"),
         _ => None,
     }
 }
@@ -303,7 +303,7 @@ pub(crate) fn print_dispatch(ty: &Ty) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flow_ir::{Dest, FuncKind, IrBuilder, SourceLoc};
+    use mapal_ir::{Dest, FuncKind, IrBuilder, SourceLoc};
 
     const L: SourceLoc = SourceLoc { start: 0, end: 0 };
 
@@ -405,9 +405,9 @@ mod tests {
     }
 
     fn lower_src(src: &str) -> CategoryIr {
-        let po = flow_syntax::parse(src);
+        let po = mapal_syntax::parse(src);
         assert!(po.diagnostics.is_empty(), "parse: {:?}", po.diagnostics);
-        flow_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
+        mapal_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
     }
 
     #[test]
@@ -416,7 +416,7 @@ mod tests {
         let globals = collect_str_globals(&ir);
         let text = emit_str_globals(&globals);
         assert_eq!(text, "static const char str0[] = \"hi\";\n");
-        // The explicit byte length rides along for flow_print_str.
+        // The explicit byte length rides along for mapal_print_str.
         let g = globals.iter().next().unwrap().1;
         assert_eq!(g.bytes.len(), 2);
     }
@@ -451,8 +451,8 @@ mod tests {
         let w = emit_main_wrapper(&ir);
         assert_eq!(
             w,
-            "int main() {\n  trap_init();\n  int32_t r = flow_main();\n  \
-             flow_print_i32(r, true);\n  \
+            "int main() {\n  trap_init();\n  int32_t r = mapal_main();\n  \
+             mapal_print_i32(r, true);\n  \
              cu_check(cudaFree(d_trap), \"cudaFree(d_trap)\");\n  return 0;\n}\n"
         );
     }
@@ -461,26 +461,26 @@ mod tests {
     fn main_wrapper_erased_return_just_calls() {
         let ir = build_main(Ty::Unit, Ty::Unit, None);
         let w = emit_main_wrapper(&ir);
-        assert!(w.contains("  flow_main();\n"), "{w}");
-        assert!(!w.contains("flow_print"), "{w}");
+        assert!(w.contains("  mapal_main();\n"), "{w}");
+        assert!(!w.contains("mapal_print"), "{w}");
     }
 
     #[test]
     fn main_wrapper_open_input_value_initializes() {
         let ir = build_main(Ty::i32(), Ty::i32(), None);
         let w = emit_main_wrapper(&ir);
-        assert!(w.contains("flow_main(int32_t{})"), "{w}");
+        assert!(w.contains("mapal_main(int32_t{})"), "{w}");
         // An array input is a handle: nullptr, not a braced value.
         let ir = build_main(arr(Ty::i32(), 4), arr(Ty::i32(), 4), None);
         let w = emit_main_wrapper(&ir);
-        assert!(w.contains("flow_main(nullptr)"), "{w}");
+        assert!(w.contains("mapal_main(nullptr)"), "{w}");
     }
 
     #[test]
     fn main_wrapper_does_not_free_returned_array() {
         // §2: an array returned from main is reclaimed by context teardown
         // (recorded, not leak-policed) — the wrapper must NOT cudaFree the
-        // returned handle (flow_main already transferred the duty). (main
+        // returned handle (mapal_main already transferred the duty). (main
         // cannot declare a return in surface syntax — L1002 — so IrBuilder.)
         let mut b = IrBuilder::new();
         let f = b
@@ -496,13 +496,13 @@ mod tests {
         }
         let ir = b.seal(f).unwrap();
         let w = emit_main_wrapper(&ir);
-        assert!(w.contains("int32_t* r = flow_main();"), "{w}");
+        assert!(w.contains("int32_t* r = mapal_main();"), "{w}");
         assert!(!w.contains("cudaFree(r)"), "{w}");
-        // And flow_main's own epilogue must not free it either (the escape).
+        // And mapal_main's own epilogue must not free it either (the escape).
         let cu = crate::emit(&ir).unwrap();
         let main_start = cu
-            .find("static int32_t* flow_main() {")
-            .expect("flow_main def");
+            .find("static int32_t* mapal_main() {")
+            .expect("mapal_main def");
         let main_end = cu[main_start..].find("\n}\n").unwrap() + main_start;
         let def = &cu[main_start..main_end];
         for line in def.lines().filter(|l| l.contains("cudaFree")) {
@@ -515,17 +515,17 @@ mod tests {
 
     #[test]
     fn prelude_has_rt_decls_and_exit_102_protocol() {
-        // Exact flow-rt signatures (flow-rt/src/lib.rs); flow_trap is
+        // Exact mapal-rt signatures (mapal-rt/src/lib.rs); mapal_trap is
         // [[noreturn]] — the Rust `-> !` (F9).
         for decl in [
-            "void flow_print_i32(int32_t v, bool newline);",
-            "void flow_print_i64(int64_t v, bool newline);",
-            "void flow_print_u8(uint8_t v, bool newline);",
-            "void flow_print_bool(bool v, bool newline);",
-            "void flow_print_f32(float v, bool newline);",
-            "void flow_print_f64(double v, bool newline);",
-            "void flow_print_str(const uint8_t* ptr, size_t len, bool newline);",
-            "[[noreturn]] void flow_trap(uint32_t kind);",
+            "void mapal_print_i32(int32_t v, bool newline);",
+            "void mapal_print_i64(int64_t v, bool newline);",
+            "void mapal_print_u8(uint8_t v, bool newline);",
+            "void mapal_print_bool(bool v, bool newline);",
+            "void mapal_print_f32(float v, bool newline);",
+            "void mapal_print_f64(double v, bool newline);",
+            "void mapal_print_str(const uint8_t* ptr, size_t len, bool newline);",
+            "[[noreturn]] void mapal_trap(uint32_t kind);",
         ] {
             assert!(PRELUDE.contains(decl), "missing: {decl}");
         }
@@ -540,10 +540,10 @@ mod tests {
     fn prelude_trap_check_decodes_kind_plus_one() {
         // §3's flag encoding: the flag stores kind + 1 (0 = quiescent after
         // the memset; 1 = div_zero, 2 = index_oob); the host readback decodes
-        // to the flow-rt kinds 0/1 — the exact decode text, pinned (a bare
-        // `flow_trap(kind)` would misread a device div_zero's 0-store as
+        // to the mapal-rt kinds 0/1 — the exact decode text, pinned (a bare
+        // `mapal_trap(kind)` would misread a device div_zero's 0-store as
         // "no trap" and index_oob's 1 as div_zero).
-        assert!(PRELUDE.contains("flow_trap(kind - 1);"), "{PRELUDE}");
+        assert!(PRELUDE.contains("mapal_trap(kind - 1);"), "{PRELUDE}");
         // trap_init is unchanged: memset 0 stays the quiescent value.
         assert!(PRELUDE.contains("cudaMemset(d_trap, 0, sizeof(unsigned int))"));
     }

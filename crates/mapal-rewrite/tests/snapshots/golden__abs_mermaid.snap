@@ -1,0 +1,20 @@
+---
+source: crates/mapal-rewrite/tests/golden.rs
+expression: res.ir.to_mermaid()
+---
+flowchart LR
+    subgraph f0["fn main"]
+        f0o0(("io"))
+        f0o1(("ret: io"))
+        f0o2(("-7: i32"))
+        f0o3(("0: i32"))
+        f0o4(("-1: i32"))
+        f0o5(("false: bool"))
+        f0o6(("7: i32"))
+        f0o7(("(io, i32)"))
+        f0o8(("io"))
+        f0o0 -- "Pair 0/2" --> f0o7
+        f0o6 -- "Pair 1/2" --> f0o7
+        f0o7 -- "Println" --> f0o8
+        f0o8 -- "Output" --> f0o1
+    end

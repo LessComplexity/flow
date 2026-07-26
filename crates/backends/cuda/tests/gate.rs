@@ -3,20 +3,20 @@
 //! path on a canonical loop (WP4: the host-driven quartet emits), and
 //! determinism of `emit` on the same sealed IR.
 
-use flow_backend_cuda::{EmitError, emit};
-use flow_ir::{CategoryIr, Dest, FuncKind, IrBuilder, Operation, SourceLoc, Ty, Value};
+use mapal_backend_cuda::{EmitError, emit};
+use mapal_ir::{CategoryIr, Dest, FuncKind, IrBuilder, Operation, SourceLoc, Ty, Value};
 
 const L: SourceLoc = SourceLoc { start: 0, end: 0 };
 
 fn lower_src(src: &str) -> CategoryIr {
-    let po = flow_syntax::parse(src);
+    let po = mapal_syntax::parse(src);
     assert!(po.diagnostics.is_empty(), "parse: {:?}", po.diagnostics);
-    flow_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
+    mapal_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
 }
 
 fn build_example(name: &str) -> CategoryIr {
     let path = format!(
-        "{}/../../../examples/{}.flow",
+        "{}/../../../examples/{}.mapal",
         env!("CARGO_MANIFEST_DIR"),
         name
     );
@@ -25,8 +25,8 @@ fn build_example(name: &str) -> CategoryIr {
 }
 
 /// A multi-merge nested loop (two loops cross-fed into one SCC): not the
-/// canonical quartet. Shape copied from `flow-backend-llvm/tests/golden_ll.rs`
-/// (itself from `flow-rewrite/tests/identity.rs`).
+/// canonical quartet. Shape copied from `mapal-backend-llvm/tests/golden_ll.rs`
+/// (itself from `mapal-rewrite/tests/identity.rs`).
 fn multi_merge_nested_loop() -> CategoryIr {
     let mut b = IrBuilder::new();
     let f = b
@@ -98,7 +98,7 @@ fn main() {
     let ir = lower_src(src);
     let cu = emit(&ir).unwrap();
     assert!(cu.contains("int main()"), "{cu}");
-    assert!(cu.contains("flow_trap(0)"), "{cu}");
+    assert!(cu.contains("mapal_trap(0)"), "{cu}");
 }
 
 /// L2 on the emit surface: `emit` twice on the same sealed IR yields identical

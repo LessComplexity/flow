@@ -1,0 +1,20 @@
+[package]
+name = "mapal-rewrite"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mapal-ir = { path = "../mapal-ir" }
+slotmap = "1.0"
+
+[dev-dependencies]
+mapal-syntax = { path = "../mapal-syntax" }
+mapal-lower = { path = "../mapal-lower" }
+mapal-interp = { path = "../mapal-interp" }
+proptest = "1.11.0"
+insta = "1.47.2"
+criterion = "0.5.1"
+
+[[bench]]
+name = "rewrite_scale"
+harness = false

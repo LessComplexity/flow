@@ -7,7 +7,7 @@
 
 | Object | Form / shape | Realised at | State |
 | --- | --- | --- | --- |
-| `RewritePlan` (alias?/constify?/drop/fuse?/inline?/lift?) | product of 6 plan channels | `crates/flow-rewrite/src/plan.rs:RewritePlan` | built |
+| `RewritePlan` (alias?/constify?/drop/fuse?/inline?/lift?) | product of 6 plan channels | `crates/mapal-rewrite/src/plan.rs:RewritePlan` | built |
 | `FusionSpec` | product (f, g) | `plan.rs:FusionSpec` | built |
 | `LiftSpec` / `LiftKind` | product (kind, counter, count, captures, body cone/result); sum {Fold(acc, seed), Map} | `plan.rs:{LiftSpec,LiftKind}` | built |
 | `RewriteResult` | product (ir, report) — `Debug` only (CategoryIr not Clone) | `src/driver.rs:RewriteResult` | built |
@@ -27,7 +27,7 @@
 | `analyze_map_fusion` | `&CategoryIr → RewritePlan` (layer 1: out-degree-1 Map∘Map with loop-free + single-full-writer bodies (P3); map(id) → alias under P1/P2. **S34: `is_identity_body` quantifies over the body's WHOLE morphism set** — Return writer `Output(param)` *and* every other owned morphism `Output`/`Pair`/`is_pure`; a body that also traps denotes `id ∘ trap : A ⇀ A`, not `id_A`) | `src/functor_laws.rs:{analyze_map_fusion,is_identity_body}` | built |
 | `analyze_inline` | `&CategoryIr → RewritePlan` (mark a `Call` site iff callee morphisms ≤ `INLINE_MAX_BODY` ∧ callee ≠ entry ∧ **callee loop-free** (`loop_structure(g).is_empty()` — nested-SCC prevention, S27) ∧ no `Call` cycle; Calls inside Map/Fold body fns ARE planned (graph-wide walk); the Map/Fold morphisms themselves never elaborated. **S27: in the default `rewrite()` list, first**) | `src/inline.rs:analyze_inline` | built |
 | `analyze_lift` | `&CategoryIr → RewritePlan` (consume `loop_plan`; R-LF/R-LM exact two-component state, const `K >= 1`, 0/+1 counter, pure/token-free cone, exact exit; map additionally one identity `Update`, c-free value, `n == K`; `covers_loop_body` rejects unselected decide/advance work before whole-SCC replacement; key `lift` by merge) | `src/lift.rs:analyze_lift` | built |
-| `replay` | `(&CategoryIr, &RewritePlan) ⇀ CategoryIr` (recipe classification §1.1; **S29: `TimeMs` rebuilt via `fb.time_ms(feed(src))` — the bare token source, `dest` unused, exactly the `Print` shape**; loop quartet facts delegated to `flow_ir::CategoryIr::loop_plan`; fused and lifted body synthesis; lift replay mints count object + `Iota`, captured Map/Fold, marks old SCC/routes complete; call substitution via `inline_call`/`inline_return`; fn-level DCE via post-plan reference liveness) | `src/replay.rs:replay` (+ `synthesize_lifted_body`, `reconstruct_lifted_loop`, `emit_lifted_return`) | built |
+| `replay` | `(&CategoryIr, &RewritePlan) ⇀ CategoryIr` (recipe classification §1.1; **S29: `TimeMs` rebuilt via `fb.time_ms(feed(src))` — the bare token source, `dest` unused, exactly the `Print` shape**; loop quartet facts delegated to `mapal_ir::CategoryIr::loop_plan`; fused and lifted body synthesis; lift replay mints count object + `Iota`, captured Map/Fold, marks old SCC/routes complete; call substitution via `inline_call`/`inline_return`; fn-level DCE via post-plan reference liveness) | `src/replay.rs:replay` (+ `synthesize_lifted_body`, `reconstruct_lifted_loop`, `emit_lifted_return`) | built |
 | `rewrite` / `rewrite_with` | `CategoryIr → RewriteResult` (by-value; default fixpoint `Inline→LiftLoops→ConstFold→Cse→Dce→MapFusion`, `MAX_ROUNDS=32`; non-canonical ⇒ whole-graph identity; validate debug-asserted per replay) | `src/driver.rs:rewrite{,_with}` | built |
 
 ## Test / harness → code

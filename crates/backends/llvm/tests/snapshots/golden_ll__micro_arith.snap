@@ -2,28 +2,28 @@
 source: crates/backends/llvm/tests/golden_ll.rs
 expression: ll
 ---
-; flow-backend-llvm emitted module
-declare void @flow_print_i32(i32, i1 zeroext)
-declare void @flow_print_i64(i64, i1 zeroext)
-declare void @flow_print_u8(i8 zeroext, i1 zeroext)
-declare void @flow_print_bool(i1 zeroext, i1 zeroext)
-declare void @flow_print_f32(float, i1 zeroext)
-declare void @flow_print_f64(double, i1 zeroext)
-declare void @flow_print_str(ptr, i64, i1 zeroext)
-declare double @flow_time_ms()
-declare void @flow_trap(i32) noreturn
+; mapal-backend-llvm emitted module
+declare void @mapal_print_i32(i32, i1 zeroext)
+declare void @mapal_print_i64(i64, i1 zeroext)
+declare void @mapal_print_u8(i8 zeroext, i1 zeroext)
+declare void @mapal_print_bool(i1 zeroext, i1 zeroext)
+declare void @mapal_print_f32(float, i1 zeroext)
+declare void @mapal_print_f64(double, i1 zeroext)
+declare void @mapal_print_str(ptr, i64, i1 zeroext)
+declare double @mapal_time_ms()
+declare void @mapal_trap(i32) noreturn
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
-declare ptr @flow_par_begin(i32)
-declare void @flow_par_task(ptr, i32, i32, ptr, i64, i32, i64, i32, i32)
-declare void @flow_par_pin(ptr, i32)
-declare void @flow_par_dep(ptr, i32, i32)
-declare void @flow_par_launch(ptr, ptr)
-declare void @flow_par_wait(ptr, ptr, i32)
-declare void @flow_par_check(ptr, i64)
-declare void @flow_par_trap(i64, i32)
-declare void @flow_par_watermark(i64)
-declare void @flow_par_run_pinned(ptr, i32)
-declare void @flow_par_finish(ptr)
+declare ptr @mapal_par_begin(i32)
+declare void @mapal_par_task(ptr, i32, i32, ptr, i64, i32, i64, i32, i32)
+declare void @mapal_par_pin(ptr, i32)
+declare void @mapal_par_dep(ptr, i32, i32)
+declare void @mapal_par_launch(ptr, ptr)
+declare void @mapal_par_wait(ptr, ptr, i32)
+declare void @mapal_par_check(ptr, i64)
+declare void @mapal_par_trap(i64, i32)
+declare void @mapal_par_watermark(i64)
+declare void @mapal_par_run_pinned(ptr, i32)
+declare void @mapal_par_finish(ptr)
 
 define internal i32 @fn0({ i32, i32 } %arg) {
 entry:
@@ -62,7 +62,7 @@ entry:
   %t16 = icmp eq i32 %t15, 0
   br i1 %t16, label %bb17, label %bb18
 bb17:
-  call void @flow_trap(i32 0)
+  call void @mapal_trap(i32 0)
   unreachable
 bb18:
   %t19 = icmp eq i32 %t15, -1
@@ -84,7 +84,7 @@ bb24:
   %t30 = icmp eq i32 %t29, 0
   br i1 %t30, label %bb31, label %bb32
 bb31:
-  call void @flow_trap(i32 0)
+  call void @mapal_trap(i32 0)
   unreachable
 bb32:
   %t33 = icmp eq i32 %t29, -1
@@ -134,31 +134,31 @@ entry:
   ret void
 }
 
-define internal void @flow_main() {
+define internal void @mapal_main() {
 entry:
   %frame = alloca %Frame
   %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
   %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
   %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
-  %h = call ptr @flow_par_begin(i32 1)
-  call void @flow_par_task(ptr %h, i32 0, i32 0, ptr @task0, i64 3, i32 1, i64 0, i32 0, i32 0)
-  call void @flow_par_pin(ptr %h, i32 0)
-  call void @flow_par_launch(ptr %h, ptr %frame)
-  call void @flow_par_wait(ptr %h, ptr @pin0_entries, i32 0)
-  call void @flow_par_check(ptr %h, i64 1)
-  call void @flow_par_run_pinned(ptr %h, i32 0)
-  call void @flow_par_wait(ptr %h, ptr @ckpt0_entries, i32 1)
-  call void @flow_par_check(ptr %h, i64 5)
+  %h = call ptr @mapal_par_begin(i32 1)
+  call void @mapal_par_task(ptr %h, i32 0, i32 0, ptr @task0, i64 3, i32 1, i64 0, i32 0, i32 0)
+  call void @mapal_par_pin(ptr %h, i32 0)
+  call void @mapal_par_launch(ptr %h, ptr %frame)
+  call void @mapal_par_wait(ptr %h, ptr @pin0_entries, i32 0)
+  call void @mapal_par_check(ptr %h, i64 1)
+  call void @mapal_par_run_pinned(ptr %h, i32 0)
+  call void @mapal_par_wait(ptr %h, ptr @ckpt0_entries, i32 1)
+  call void @mapal_par_check(ptr %h, i64 5)
   %t0 = load i32, ptr %o3
   store i32 %t0, ptr %o4
   %t1 = load i32, ptr %o4
-  call void @flow_print_i32(i32 %t1, i1 zeroext true)
-  call void @flow_par_finish(ptr %h)
+  call void @mapal_print_i32(i32 %t1, i1 zeroext true)
+  call void @mapal_par_finish(ptr %h)
   ret void
 }
 
 define i32 @main() {
 entry:
-  call void @flow_main()
+  call void @mapal_main()
   ret i32 0
 }

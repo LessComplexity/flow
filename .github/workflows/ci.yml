@@ -57,7 +57,7 @@ jobs:
       - name: Formatting
         run: cargo fmt --all --check
 
-      # FLOW_REQUIRE_CLANG turns the LLVM differential's skip-with-reason into a hard
+      # MAPAL_REQUIRE_CLANG turns the LLVM differential's skip-with-reason into a hard
       # failure (`crates/backends/llvm/tests/differential.rs::clang`), so this single
       # run proves it compiled rather than skipped. It replaces a second full run of
       # the same 1,280-case suite: that cost ~25 min on the two-core Linux runner and
@@ -65,9 +65,9 @@ jobs:
       - name: Test (release)
         run: cargo test --workspace --release
         env:
-          FLOW_REQUIRE_CLANG: 1
+          MAPAL_REQUIRE_CLANG: 1
           # Empty on macOS ⇒ platform default (ld64, already fast).
-          FLOW_LD: ${{ runner.os == 'Linux' && 'lld' || '' }}
+          MAPAL_LD: ${{ runner.os == 'Linux' && 'lld' || '' }}
 
   # The CUDA backend's 161 tests skip themselves without nvcc, which every hosted
   # runner lacks. Compiling them is still worth gating on: it catches the
@@ -80,5 +80,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p flow-backend-cuda
-      - run: cargo test --release -p flow-backend-cuda --no-run
+      - run: cargo build --release -p mapal-backend-cuda
+      - run: cargo test --release -p mapal-backend-cuda --no-run

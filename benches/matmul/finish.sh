@@ -8,7 +8,7 @@ set -x
 for pair in "matmul128_cap.ll mm_ll_cap_128" "matmul128_cap_f32.ll mm_ll_cap_f32_128" "matmul256_cap.ll mm_ll_cap_256" "matmul256_cap_f32.ll mm_ll_cap_f32_256"; do
   set -- $pair
   if [ -f "$1" ] && [ ! -f "$2" ]; then
-    clang -O2 -march=native "$1" libflow_rt.a -o "$2" -lpthread -ldl -lm || echo "BUILD-FAILED $2"
+    clang -O2 -march=native "$1" libmapal_rt.a -o "$2" -lpthread -ldl -lm || echo "BUILD-FAILED $2"
   fi
 done
 [ -x naive_cuda ] || nvcc -O3 -arch=sm_89 naive_cuda.cu -o naive_cuda || echo "BUILD-FAILED naive_cuda"

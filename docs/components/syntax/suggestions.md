@@ -17,8 +17,8 @@ Per the task's firewall on re-litigating settled reductions:
   `GuardKind` *plus* the `OutOfCore` morphism (pattern arms `-Some(x)->` are not single lexemes,
   so the token level cannot carry `OutOfCore`). "Extend, don't parallel" — they stay distinct by
   design. No change proposed.
-- **Two `SourceLoc`s (`flow-syntax` ↔ `flow-ir`), surface `Ty` vs IR `Ty`.** Explicitly kept
-  separate (D8 stored-copy at the crate seam; distinct objects resolved by `flow-lower::tys`).
+- **Two `SourceLoc`s (`mapal-syntax` ↔ `mapal-ir`), surface `Ty` vs IR `Ty`.** Explicitly kept
+  separate (D8 stored-copy at the crate seam; distinct objects resolved by `mapal-lower::tys`).
   Ledgered in DESIGN Bridges table + `docs/architecture/categorical-model.md` §7. Not touched.
 - **Stored `Int` values (`GuardKind::Int(u64)`, `ExprKind::Int(u64)`).** Would read as a
   deduce-don't-store candidate (value re-derivable from the span digits), but DESIGN §3 / C14

@@ -2,7 +2,7 @@
 //!
 //! For each program (the 10 examples, two sequential loops, trap cases, and a
 //! closed-mode testgen sweep), on **raw and `rewrite()`d** IR: `emit → clang
-//! <prog>.ll libflow_rt.a -o prog → run (time-boxed) → compare per L1` — `Done`
+//! <prog>.ll libmapal_rt.a -o prog → run (time-boxed) → compare per L1` — `Done`
 //! ⇒ exit 0 + stdout byte-equal to the oracle; `Trapped` ⇒ exit 101 (stdout
 //! ignored). Every case is compiled at **both `-O0` and `-O2`** against the same
 //! oracle expectations (the DESIGN §8 `-O2` row — optimization is where
@@ -19,12 +19,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, Once};
 use std::time::{Duration, Instant};
 
-use flow_interp::{Outcome, RValue, RunResult, render, run};
-use flow_ir::{CategoryIr, Operation, Ty};
-use flow_rewrite::{PassId, rewrite};
+use mapal_interp::{Outcome, RValue, RunResult, render, run};
+use mapal_ir::{CategoryIr, Operation, Ty};
+use mapal_rewrite::{PassId, rewrite};
 
-// The testgen program generator (shared with flow-rewrite's differential duty).
-#[path = "../../../flow-rewrite/tests/testgen/mod.rs"]
+// The testgen program generator (shared with mapal-rewrite's differential duty).
+#[path = "../../../mapal-rewrite/tests/testgen/mod.rs"]
 mod testgen;
 
 use proptest::strategy::{Strategy, ValueTree};
@@ -61,7 +61,7 @@ fn clang() -> Option<String> {
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
 
-    // `FLOW_REQUIRE_CLANG` turns skip-with-reason into a hard failure. Every one of
+    // `MAPAL_REQUIRE_CLANG` turns skip-with-reason into a hard failure. Every one of
     // this file's nine skip sites goes through here, so the guard belongs here and
     // nowhere else. CI sets it: a suite that skips itself proves nothing, and the
     // workflow used to prove otherwise by running the whole 1,280-case differential a
@@ -69,8 +69,8 @@ fn clang() -> Option<String> {
     // Linux runner, which hit the 60-minute job timeout on the first run that got far
     // enough to reach it. Failing here makes the FIRST run its own proof.
     assert!(
-        !(found.is_none() && std::env::var("FLOW_REQUIRE_CLANG").is_ok_and(|v| v != "0")),
-        "FLOW_REQUIRE_CLANG is set but clang was not found (CC unset, `which clang` \
+        !(found.is_none() && std::env::var("MAPAL_REQUIRE_CLANG").is_ok_and(|v| v != "0")),
+        "MAPAL_REQUIRE_CLANG is set but clang was not found (CC unset, `which clang` \
          failed) — this suite would have skipped and reported success without \
          compiling anything"
     );
@@ -79,22 +79,22 @@ fn clang() -> Option<String> {
 
 fn rt_lib() -> PathBuf {
     static BUILD: Once = Once::new();
-    // Serialize the flow-rt staticlib build so parallel test binaries don't race.
+    // Serialize the mapal-rt staticlib build so parallel test binaries don't race.
     BUILD.call_once(|| {
         let ok = Command::new("cargo")
-            .args(["build", "-p", "flow-rt"])
+            .args(["build", "-p", "mapal-rt"])
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
-        assert!(ok, "cargo build -p flow-rt failed");
+        assert!(ok, "cargo build -p mapal-rt failed");
     });
     PathBuf::from(format!(
-        "{}/../../../target/debug/libflow_rt.a",
+        "{}/../../../target/debug/libmapal_rt.a",
         env!("CARGO_MANIFEST_DIR")
     ))
 }
 
-/// Compile `.ll` + libflow_rt.a at optimization level `opt` and run, time-boxed.
+/// Compile `.ll` + libmapal_rt.a at optimization level `opt` and run, time-boxed.
 /// `None` on a timeout (the harness fails loudly rather than hanging). Panics if
 /// clang errors.
 fn compile_run(clang: &str, ll: &str, tag: &str, opt: &str) -> Option<(Vec<u8>, i32)> {
@@ -112,10 +112,10 @@ fn compile_exe(clang: &str, ll: &str, tag: &str, opt: &str) -> (tempfile::TempDi
     // Linking dominates a case, and this suite does ~1,280 of them per run.
     // Measured on one representative module (min of 3): compile+link 0.08 s,
     // compile alone 0.02 s, link alone 0.05 s — so ~60% of the cost is the
-    // linker, and Linux's default GNU ld is the slower one. CI sets FLOW_LD=lld
+    // linker, and Linux's default GNU ld is the slower one. CI sets MAPAL_LD=lld
     // there. Unset (the local default) ⇒ platform default linker, so nobody has
     // to install anything to run the suite.
-    if let Ok(ld) = std::env::var("FLOW_LD")
+    if let Ok(ld) = std::env::var("MAPAL_LD")
         && !ld.is_empty()
     {
         cmd.arg(format!("-fuse-ld={ld}"));
@@ -129,14 +129,14 @@ fn compile_exe(clang: &str, ll: &str, tag: &str, opt: &str) -> (tempfile::TempDi
     (dir, exe)
 }
 
-fn run_exe(exe: &Path, secs: u64, flow_par: Option<&str>) -> Option<(Vec<u8>, i32)> {
+fn run_exe(exe: &Path, secs: u64, mapal_par: Option<&str>) -> Option<(Vec<u8>, i32)> {
     let mut command = Command::new(exe);
     command
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .env_remove("FLOW_PAR");
-    if let Some(value) = flow_par {
-        command.env("FLOW_PAR", value);
+        .env_remove("MAPAL_PAR");
+    if let Some(value) = mapal_par {
+        command.env("MAPAL_PAR", value);
     }
     let mut child = command.spawn().unwrap();
     let start = Instant::now();
@@ -188,7 +188,7 @@ fn assert_parity(clang: &str, ir: &CategoryIr, rr: &RunResult, tag: &str) {
     let Some((want_out, want_code)) = expect_native(ir, rr) else {
         return; // diverged — skip
     };
-    let ll = flow_backend_llvm::emit(ir).unwrap_or_else(|e| panic!("{tag}: emit failed: {e:?}"));
+    let ll = mapal_backend_llvm::emit(ir).unwrap_or_else(|e| panic!("{tag}: emit failed: {e:?}"));
     for opt in ["-O0", "-O2"] {
         let tag_o = format!("{tag}/{opt}");
         let (got_out, got_code) = compile_run(clang, &ll, &tag_o, opt)
@@ -205,14 +205,14 @@ fn assert_parity(clang: &str, ir: &CategoryIr, rr: &RunResult, tag: &str) {
 }
 
 fn lower_src(src: &str) -> CategoryIr {
-    let po = flow_syntax::parse(src);
+    let po = mapal_syntax::parse(src);
     assert!(po.diagnostics.is_empty(), "parse: {:?}", po.diagnostics);
-    flow_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
+    mapal_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
 }
 
 fn build_example(name: &str) -> CategoryIr {
     let path = format!(
-        "{}/../../../examples/{}.flow",
+        "{}/../../../examples/{}.mapal",
         env!("CARGO_MANIFEST_DIR"),
         name
     );
@@ -283,7 +283,7 @@ fn main() { (1, 0) -> f -> r; r -> println; }
     assert_parity(&clang, &ir, &rr, "div0");
 
     // Out-of-bounds Update (index 9 into [i32; 4]) — built via IrBuilder.
-    use flow_ir::{Dest, FuncKind, IrBuilder, SourceLoc, Value};
+    use mapal_ir::{Dest, FuncKind, IrBuilder, SourceLoc, Value};
     const L: SourceLoc = SourceLoc { start: 0, end: 0 };
     let mut b = IrBuilder::new();
     let arr_ty = Ty::Array {
@@ -317,9 +317,9 @@ fn main() { (1, 0) -> f -> r; r -> println; }
     assert_parity(&clang, &ir, &rr, "update_oob");
 }
 
-/// The u8 value path (DESIGN §1): the `flow_print_u8` `i8 zeroext` ABI and the
+/// The u8 value path (DESIGN §1): the `mapal_print_u8` `i8 zeroext` ABI and the
 /// u8 `Index` `zext`+guard. DESIGN §1 says a dropped `zeroext` prints garbage for
-/// u8 > 127 on arm64 and *only the differential* can catch it (the flow-rt unit
+/// u8 > 127 on arm64 and *only the differential* can catch it (the mapal-rt unit
 /// table can't). No example or testgen program uses u8, so this is the sole
 /// compile-and-run cover for that class. Built via `IrBuilder` (no surface u8).
 #[test]
@@ -327,7 +327,7 @@ fn differential_u8_index_and_print() {
     let Some(clang) = clang() else {
         return;
     };
-    use flow_ir::{Dest, FuncKind, IrBuilder, SourceLoc, Value};
+    use mapal_ir::{Dest, FuncKind, IrBuilder, SourceLoc, Value};
     const L: SourceLoc = SourceLoc { start: 0, end: 0 };
     let mut b = IrBuilder::new();
     let f = b
@@ -370,7 +370,7 @@ struct Job {
 /// Build a job from an `ir` + its oracle run. `None` if the run diverged (skip).
 fn make_job(ir: &CategoryIr, rr: &RunResult, tag: String) -> Option<Job> {
     let (want_out, want_code) = expect_native(ir, rr)?;
-    let ll = flow_backend_llvm::emit(ir).unwrap_or_else(|e| panic!("{tag}: emit: {e:?}"));
+    let ll = mapal_backend_llvm::emit(ir).unwrap_or_else(|e| panic!("{tag}: emit: {e:?}"));
     Some(Job {
         tag,
         ll,
@@ -596,7 +596,7 @@ fn main() {
     let (Some(want), 0) = expect_native(&ir, &rr).expect("matmul oracle completes") else {
         panic!("matmul oracle must complete");
     };
-    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    let tiled = mapal_backend_llvm::emit(&ir).unwrap();
     // S26 nest: flat [TILE_I * TILE_J] acc scratch, the head/interior/tail row
     // split (biased-`lo` + direct-`hi` udivs bound the interior full-window
     // rows), and a constant-TILE_J lane bound on the main j body. SSA tmp names
@@ -613,11 +613,11 @@ fn main() {
                 .any(|l| l.contains(" = icmp uge i64 ") && l.ends_with(", 16")),
         "split task must contain the TI-blocked tiled row-clipping nest:\n{tiled}"
     );
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -678,7 +678,7 @@ fn main() {
     let (Some(want), 0) = expect_native(&ir, &rr).expect("helper matmul oracle completes") else {
         panic!("helper matmul oracle must complete");
     };
-    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    let tiled = mapal_backend_llvm::emit(&ir).unwrap();
     assert!(
         tiled
             .lines()
@@ -688,11 +688,11 @@ fn main() {
                 .any(|line| line.ends_with(" = alloca [64 x float]")),
         "helper-free MapBody must expose the packed tiled nest and accumulator:\n{tiled}"
     );
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -732,7 +732,7 @@ fn differential_default_rewritten_matmul4_lifts_and_tiles() {
 
     let rr = run(&ir, BUDGET);
     assert_eq!(rr.output, "-275\n3748\n", "interp oracle contract");
-    let ll = flow_backend_llvm::emit(&ir).unwrap();
+    let ll = mapal_backend_llvm::emit(&ir).unwrap();
     assert!(
         ll.lines()
             .any(|line| line.ends_with(" = alloca [64 x float], align 64")),
@@ -744,7 +744,7 @@ fn differential_default_rewritten_matmul4_lifts_and_tiles() {
         let default = run_exe(&exe, TIMEOUT_SECS, None)
             .unwrap_or_else(|| panic!("default_rewritten_matmul4/{opt}: timed out"));
         let one = run_exe(&exe, TIMEOUT_SECS, Some("1"))
-            .unwrap_or_else(|| panic!("default_rewritten_matmul4/{opt}/FLOW_PAR=1: timed out"));
+            .unwrap_or_else(|| panic!("default_rewritten_matmul4/{opt}/MAPAL_PAR=1: timed out"));
         assert_eq!(default.1, 0, "default_rewritten_matmul4/{opt}: exit");
         assert_eq!(
             String::from_utf8_lossy(&default.0),
@@ -753,7 +753,7 @@ fn differential_default_rewritten_matmul4_lifts_and_tiles() {
         );
         assert_eq!(
             default, one,
-            "default_rewritten_matmul4/{opt}: FLOW_PAR=1 parity"
+            "default_rewritten_matmul4/{opt}: MAPAL_PAR=1 parity"
         );
     }
 }
@@ -782,7 +782,7 @@ fn main() {
     let (Some(want), 0) = expect_native(&ir, &rr).expect("FIR oracle completes") else {
         panic!("FIR oracle must complete");
     };
-    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    let tiled = mapal_backend_llvm::emit(&ir).unwrap();
     assert!(
         tiled.contains(" = alloca [64 x float]")
             && tiled
@@ -791,11 +791,11 @@ fn main() {
             && !tiled.contains(" = udiv i64 %lo, 64"),
         "split task must contain the S28 window nest: TI blocks stepping TI·TJ over the lane axis:\n{tiled}"
     );
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -848,7 +848,7 @@ fn main() {
     let (Some(want), 0) = expect_native(&ir, &rr).expect("FIR remainder oracle completes") else {
         panic!("FIR remainder oracle must complete");
     };
-    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    let tiled = mapal_backend_llvm::emit(&ir).unwrap();
     assert!(
         tiled.contains(" = alloca [64 x float]")
             && tiled
@@ -856,11 +856,11 @@ fn main() {
                 .any(|line| line.contains(" = add i64 ") && line.trim_end().ends_with(", 64")),
         "remainder case must contain the window nest's TI·TJ block step:\n{tiled}"
     );
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -868,11 +868,11 @@ fn main() {
 }
 
 /// S28 window-rung split coverage: N=10000 forces >1 split slice at the
-/// default GRAIN=4096 (the harness has no grain knob; FLOW_PAR pins the pool
+/// default GRAIN=4096 (the harness has no grain knob; MAPAL_PAR pins the pool
 /// size, and `slice_ranges` divides the range evenly across slices — not at
-/// GRAIN boundaries). FLOW_PAR=2 gives [0,5000)+[5000,10000): 5000 % 64 = 8,
+/// GRAIN boundaries). MAPAL_PAR=2 gives [0,5000)+[5000,10000): 5000 % 64 = 8,
 /// a mid-block boundary — the second slice's window enters the block loop at
-/// jb=lo and exits through the TI=1 remainder. FLOW_PAR=1 is the single full
+/// jb=lo and exits through the TI=1 remainder. MAPAL_PAR=1 is the single full
 /// range: 156 full blocks plus a constant-TJ remainder tile.
 #[test]
 fn differential_tiled_fir_split() {
@@ -899,16 +899,16 @@ fn main() {
     let (Some(want), 0) = expect_native(&ir, &rr).expect("FIR split oracle completes") else {
         panic!("FIR split oracle must complete");
     };
-    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    let tiled = mapal_backend_llvm::emit(&ir).unwrap();
     assert!(
         tiled.contains(" = alloca [64 x float]"),
         "split case must contain the window nest:\n{tiled}"
     );
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -919,7 +919,7 @@ fn main() {
         let (_untiled_dir, untiled_exe) =
             compile_exe(&clang, &untiled, &format!("{tag_o}/untiled"), opt);
         for par in [None, Some("1"), Some("2")] {
-            let tag_p = format!("{tag_o}/FLOW_PAR={}", par.unwrap_or("default"));
+            let tag_p = format!("{tag_o}/MAPAL_PAR={}", par.unwrap_or("default"));
             let tiled_run = run_exe(&tiled_exe, TIMEOUT_SECS, par)
                 .unwrap_or_else(|| panic!("{tag_p}: tiled run timed out"));
             let untiled_run = run_exe(&untiled_exe, TIMEOUT_SECS, par)
@@ -971,19 +971,19 @@ fn main() {{
 /// locally at 1024 f32, S29), so its tests opt in explicitly. The untiled side
 /// is unchanged, which is the point: the nest must be bit-exact against it.
 fn emit_kc_and_untiled(ir: &CategoryIr) -> (String, String) {
-    let tiled = flow_backend_llvm::emit_with_opts(
+    let tiled = mapal_backend_llvm::emit_with_opts(
         ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             kc_nest: true,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -991,12 +991,12 @@ fn emit_kc_and_untiled(ir: &CategoryIr) -> (String, String) {
 }
 
 fn emit_tiled_and_untiled(ir: &CategoryIr) -> (String, String) {
-    let tiled = flow_backend_llvm::emit(ir).unwrap();
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let tiled = mapal_backend_llvm::emit(ir).unwrap();
+    let untiled = mapal_backend_llvm::emit_with_opts(
         ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -1047,8 +1047,8 @@ fn differential_tiled_conv2d_remainder() {
 
 /// side 92: n = 8464 > 2·GRAIN, so the default pool cuts 3 slices, and
 /// `slice_ranges`' even division lands the boundaries mid-row at j=62 and
-/// j=31 (both % TJ ≠ 0 — mid-tile). FLOW_PAR=1 is the single full range;
-/// FLOW_PAR=2 cuts two slices at a row-aligned boundary.
+/// j=31 (both % TJ ≠ 0 — mid-tile). MAPAL_PAR=1 is the single full range;
+/// MAPAL_PAR=2 cuts two slices at a row-aligned boundary.
 #[test]
 fn differential_tiled_conv2d_split() {
     let Some(clang) = clang() else {
@@ -1071,7 +1071,7 @@ fn differential_tiled_conv2d_split() {
         let (_untiled_dir, untiled_exe) =
             compile_exe(&clang, &untiled, &format!("{tag_o}/untiled"), opt);
         for par in [None, Some("1"), Some("2")] {
-            let tag_p = format!("{tag_o}/FLOW_PAR={}", par.unwrap_or("default"));
+            let tag_p = format!("{tag_o}/MAPAL_PAR={}", par.unwrap_or("default"));
             let tiled_run = run_exe(&tiled_exe, TIMEOUT_SECS, par)
                 .unwrap_or_else(|| panic!("{tag_p}: tiled run timed out"));
             let untiled_run = run_exe(&untiled_exe, TIMEOUT_SECS, par)
@@ -1163,18 +1163,18 @@ fn main() {
     else {
         panic!("matmul r5_c20_k7 oracle must complete");
     };
-    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    let tiled = mapal_backend_llvm::emit(&ir).unwrap();
     assert!(
         tiled.contains(" = alloca [64 x float]")
             && tiled.contains(" = udiv i64 %lo, 20")
             && tiled.contains(" = udiv i64 %hi, 20"),
         "split task must contain the TI-blocked tiled nest:\n{tiled}"
     );
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -1239,18 +1239,18 @@ fn main() {
     else {
         panic!("matmul r6_c32_k5 oracle must complete");
     };
-    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    let tiled = mapal_backend_llvm::emit(&ir).unwrap();
     assert!(
         tiled.contains(" = alloca [64 x float]")
             && tiled.contains(" = udiv i64 %lo, 32")
             && tiled.contains(" = udiv i64 %hi, 32"),
         "split task must contain the TI-blocked tiled nest:\n{tiled}"
     );
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -1294,26 +1294,26 @@ fn main() {
     else {
         panic!("matmul r6_c20_k5_f64 oracle must complete");
     };
-    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    let tiled = mapal_backend_llvm::emit(&ir).unwrap();
     assert!(
         tiled.contains(" = alloca [32 x double]")
             && tiled.contains(" = alloca [120 x double], align 64")
             && tiled.contains("call void @llvm.prefetch.p0("),
         "f64 tiled nest must use TJ=8, packed panels, and prefetch:\n{tiled}"
     );
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
-    let nopack = flow_backend_llvm::emit_with_opts(
+    let nopack = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             packing: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -1396,15 +1396,15 @@ fn main() {
     else {
         panic!("loop-carried pack oracle must complete");
     };
-    let tiled = flow_backend_llvm::emit(&ir).unwrap();
+    let tiled = mapal_backend_llvm::emit(&ir).unwrap();
     let entry = tiled
-        .split("define internal void @flow_main(")
+        .split("define internal void @mapal_main(")
         .nth(1)
         .and_then(|s| s.split("\n}\n").next())
-        .expect("parallel flow_main");
+        .expect("parallel mapal_main");
     assert!(
-        entry.contains("call ptr @flow_par_begin(")
-            && entry.contains("call void @flow_par_launch("),
+        entry.contains("call ptr @mapal_par_begin(")
+            && entry.contains("call void @mapal_par_launch("),
         "entry must retain a multi-path parallel plan:\n{tiled}"
     );
     let loop_task = tiled
@@ -1418,11 +1418,11 @@ fn main() {
         "Seq-loop packing must stay in its task, not the frame:\n{tiled}"
     );
 
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -1434,7 +1434,7 @@ fn main() {
         let default = run_exe(&tiled_exe, TIMEOUT_SECS, None)
             .unwrap_or_else(|| panic!("loop-carried pack/{opt}/default: timed out"));
         let one = run_exe(&tiled_exe, TIMEOUT_SECS, Some("1"))
-            .unwrap_or_else(|| panic!("loop-carried pack/{opt}/FLOW_PAR=1: timed out"));
+            .unwrap_or_else(|| panic!("loop-carried pack/{opt}/MAPAL_PAR=1: timed out"));
         let untiled = run_exe(&untiled_exe, TIMEOUT_SECS, None)
             .unwrap_or_else(|| panic!("loop-carried pack/{opt}/untiled: timed out"));
         assert_eq!(default.1, 0, "loop-carried pack/{opt}: exit code");
@@ -1443,7 +1443,7 @@ fn main() {
             want,
             "loop-carried pack/{opt}: oracle stdout"
         );
-        assert_eq!(default, one, "loop-carried pack/{opt}: FLOW_PAR=1 parity");
+        assert_eq!(default, one, "loop-carried pack/{opt}: MAPAL_PAR=1 parity");
         assert_eq!(default, untiled, "loop-carried pack/{opt}: tiled parity");
     }
 }
@@ -1479,11 +1479,11 @@ fn main() {
     let (Some(want), 0) = expect_native(&ir, &rr).expect("kc 32x32x200 oracle completes") else {
         panic!("kc 32x32x200 oracle must complete");
     };
-    let tiled = flow_backend_llvm::emit_with_opts(
+    let tiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             kc_nest: true,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -1493,11 +1493,11 @@ fn main() {
         "K > TILE_KC must take the KC nest: TI×TJ acc (partials park in `out`) \
          + TI×KC a-panel pack:\n{tiled}"
     );
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -1540,11 +1540,11 @@ fn main() {
     let (Some(want), 0) = expect_native(&ir, &rr).expect("kc middle-panel oracle completes") else {
         panic!("kc middle-panel oracle must complete");
     };
-    let tiled = flow_backend_llvm::emit_with_opts(
+    let tiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             kc_nest: true,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -1553,11 +1553,11 @@ fn main() {
             && tiled.contains(" = alloca [512 x float], align 64"),
         "K=300 must take the KC nest:\n{tiled}"
     );
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -1615,10 +1615,10 @@ fn main() {
 
 /// S29 KC rung, split coverage: rows=31, C=136, K=136 (K % KC = 8 ≠ 0 — one
 /// peeled panel + one short loop panel). n = 4216 > GRAIN ⇒ 2 slices at the
-/// default pool and FLOW_PAR=2; the boundary 2108 lands mid-row at j=68 —
+/// default pool and MAPAL_PAR=2; the boundary 2108 lands mid-row at j=68 —
 /// mid-jb-block (the single block spans [0, 136)), clipping a partial first
 /// tile (panel_lane0 = 4). rows % 4 = 3 keeps the TI=1 tail region live;
-/// FLOW_PAR=1 is the single full range. The gate is tiled == untiled native
+/// MAPAL_PAR=1 is the single full range. The gate is tiled == untiled native
 /// byte-parity (the tile_ab discipline): a 2-slice case needs n > GRAIN, so
 /// with K > TILE_KC the fold-step count necessarily exceeds the interp's
 /// 10M-step budget — the oracle leg is carried by the four smaller KC cases.
@@ -1664,7 +1664,7 @@ fn main() {
         let (_untiled_dir, untiled_exe) =
             compile_exe(&clang, &untiled, &format!("{tag_o}/untiled"), opt);
         for par in [None, Some("1"), Some("2")] {
-            let tag_p = format!("{tag_o}/FLOW_PAR={}", par.unwrap_or("default"));
+            let tag_p = format!("{tag_o}/MAPAL_PAR={}", par.unwrap_or("default"));
             let tiled_run = run_exe(&tiled_exe, TIMEOUT_SECS, par)
                 .unwrap_or_else(|| panic!("{tag_p}: tiled run timed out"));
             let untiled_run = run_exe(&untiled_exe, TIMEOUT_SECS, par)
@@ -1709,11 +1709,11 @@ fn main() {
     let (Some(want), 0) = expect_native(&ir, &rr).expect("kc f64 oracle completes") else {
         panic!("kc f64 oracle must complete");
     };
-    let tiled = flow_backend_llvm::emit_with_opts(
+    let tiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             kc_nest: true,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -1722,19 +1722,19 @@ fn main() {
             && tiled.contains(" = alloca [512 x double], align 64"),
         "f64 KC nest must use TI×TJ=32 acc + TI×KC=512 apack:\n{tiled}"
     );
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
-    let nopack = flow_backend_llvm::emit_with_opts(
+    let nopack = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             packing: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -1955,7 +1955,7 @@ fn differential_iota_fill() {
     let Some(clang) = clang() else {
         return;
     };
-    use flow_ir::{Dest, FuncKind, IrBuilder, SourceLoc, Value};
+    use mapal_ir::{Dest, FuncKind, IrBuilder, SourceLoc, Value};
     const L: SourceLoc = SourceLoc { start: 0, end: 0 };
     let mut b = IrBuilder::new();
     let f = b
@@ -2037,7 +2037,7 @@ fn main() {
 "#;
     let ir = lower_src(src);
     let rr = run(&ir, BUDGET);
-    let ll = flow_backend_llvm::emit(&ir).unwrap();
+    let ll = mapal_backend_llvm::emit(&ir).unwrap();
     assert!(
         ll.contains("i32 1, ptr @task") && ll.contains("i64 65536"),
         "the large map must use a split task:\n{ll}"
@@ -2046,7 +2046,7 @@ fn main() {
 }
 
 /// plan-s29 emission item 4 (heap lowering): an entry frame at or above the
-/// 256 KB threshold moves from `alloca` to the `flow_rt_alloc` arena — the
+/// 256 KB threshold moves from `alloca` to the `mapal_rt_alloc` arena — the
 /// change that lets 2048² f32 run at all on macOS (64 MB hard stack ceiling).
 /// The observable must not move: byte-equal to the interp oracle at -O0 AND
 /// -O2. The fold is load-bearing — it reads EVERY cell, so an arena block
@@ -2069,14 +2069,14 @@ fn differential_heap_lowered_arrays() {
         );
         let ir = lower_src(&src);
         let rr = run(&ir, BUDGET);
-        let ll = flow_backend_llvm::emit(&ir).unwrap();
+        let ll = mapal_backend_llvm::emit(&ir).unwrap();
         assert_eq!(
-            ll.contains("%frame = call ptr @flow_rt_alloc(i64 "),
+            ll.contains("%frame = call ptr @mapal_rt_alloc(i64 "),
             heap,
             "n={n}: the entry frame is arena-placed iff it crosses the threshold:\n{ll}"
         );
         assert_eq!(
-            ll.contains("call void @flow_rt_free_all()"),
+            ll.contains("call void @mapal_rt_free_all()"),
             heap,
             "n={n}: the teardown pairs with the arena:\n{ll}"
         );
@@ -2112,8 +2112,8 @@ fn main() {
     )
     .output;
     assert_eq!(prefix, "0\n");
-    let ll = flow_backend_llvm::emit(&ir).unwrap();
-    assert!(ll.contains("call void @flow_par_trap(i64 "));
+    let ll = mapal_backend_llvm::emit(&ir).unwrap();
+    assert!(ll.contains("call void @mapal_par_trap(i64 "));
     for opt in ["-O0", "-O2"] {
         let (_dir, exe) = compile_exe(&clang, &ll, "parallel_trap_order", opt);
         let (out, code) = run_exe(&exe, TIMEOUT_SECS, None)
@@ -2148,17 +2148,17 @@ fn differential_parallel_env_matrix() {
     let (Some(want), 0) = expect_native(&ir, &rr).expect("oracle completes") else {
         panic!("parallel env fixture must complete");
     };
-    let ll = flow_backend_llvm::emit(&ir).unwrap();
+    let ll = mapal_backend_llvm::emit(&ir).unwrap();
     for opt in ["-O0", "-O2"] {
         let (_dir, exe) = compile_exe(&clang, &ll, "parallel_env_matrix", opt);
-        for flow_par in [Some("1"), Some("8"), None] {
-            let (out, code) = run_exe(&exe, TIMEOUT_SECS, flow_par)
-                .unwrap_or_else(|| panic!("parallel_env_matrix/{opt}/{flow_par:?}: timed out"));
-            assert_eq!(code, 0, "parallel_env_matrix/{opt}/{flow_par:?}");
+        for mapal_par in [Some("1"), Some("8"), None] {
+            let (out, code) = run_exe(&exe, TIMEOUT_SECS, mapal_par)
+                .unwrap_or_else(|| panic!("parallel_env_matrix/{opt}/{mapal_par:?}: timed out"));
+            assert_eq!(code, 0, "parallel_env_matrix/{opt}/{mapal_par:?}");
             assert_eq!(
                 String::from_utf8_lossy(&out),
                 want,
-                "parallel_env_matrix/{opt}/{flow_par:?}"
+                "parallel_env_matrix/{opt}/{mapal_par:?}"
             );
         }
     }
@@ -2167,7 +2167,7 @@ fn differential_parallel_env_matrix() {
 /// plan-time-builtin: a self-bracketing program. The bracketed work is
 /// byte-identical to its untimed twin (the clock changes no answer), and the
 /// printed `elapsed` is a finite f64 ≥ 0 at `-O0`/`-O2` under both the default
-/// pool and `FLOW_PAR=1`. The FLOW_PAR legs are the S29 regression pin: before
+/// pool and `MAPAL_PAR=1`. The MAPAL_PAR legs are the S29 regression pin: before
 /// `path_plan` fenced on `TimeMs` the second read fired while the bracketed
 /// tasks were still in flight, and before the result's consumer cone was held
 /// on the host spine the subtraction raced the host's write of the clock value
@@ -2208,16 +2208,16 @@ fn main() {
     )
     .output;
     assert_eq!(untimed, "49147\n");
-    let ll = flow_backend_llvm::emit(&lower_src(src)).unwrap();
+    let ll = mapal_backend_llvm::emit(&lower_src(src)).unwrap();
     for opt in ["-O0", "-O2"] {
         let (_dir, exe) = compile_exe(&clang, &ll, "time_bracket", opt);
-        for flow_par in [None, Some("1")] {
+        for mapal_par in [None, Some("1")] {
             let tag = format!(
-                "time_bracket/{opt}/FLOW_PAR={}",
-                flow_par.unwrap_or("default")
+                "time_bracket/{opt}/MAPAL_PAR={}",
+                mapal_par.unwrap_or("default")
             );
-            let (out, code) =
-                run_exe(&exe, TIMEOUT_SECS, flow_par).unwrap_or_else(|| panic!("{tag}: timed out"));
+            let (out, code) = run_exe(&exe, TIMEOUT_SECS, mapal_par)
+                .unwrap_or_else(|| panic!("{tag}: timed out"));
             assert_eq!(code, 0, "{tag}: exit code");
             let out = String::from_utf8_lossy(&out);
             let (checksum, elapsed) = out.split_at(untimed.len());
@@ -2247,7 +2247,7 @@ fn differential_parallel_run_twice() {
     let (Some(want), 0) = expect_native(&ir, &rr).expect("oracle completes") else {
         panic!("parallel repeat fixture must complete");
     };
-    let ll = flow_backend_llvm::emit(&ir).unwrap();
+    let ll = mapal_backend_llvm::emit(&ir).unwrap();
     for opt in ["-O0", "-O2"] {
         let (_dir, exe) = compile_exe(&clang, &ll, "parallel_run_twice", opt);
         let first = run_exe(&exe, TIMEOUT_SECS, None)
@@ -2307,12 +2307,12 @@ fn main() {
         panic!("zen3 shape oracle must complete");
     };
 
-    let generic = flow_backend_llvm::emit(&ir).unwrap();
-    let zen3 = flow_backend_llvm::emit_with_opts(
+    let generic = mapal_backend_llvm::emit(&ir).unwrap();
+    let zen3 = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             target: "zen3",
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();
@@ -2321,11 +2321,11 @@ fn main() {
         "zen3 must actually re-tile (TJ 16 -> 32, TI 4 -> 2), else this proves nothing"
     );
 
-    let untiled = flow_backend_llvm::emit_with_opts(
+    let untiled = mapal_backend_llvm::emit_with_opts(
         &ir,
-        &flow_backend_llvm::EmitOpts {
+        &mapal_backend_llvm::EmitOpts {
             tiling: false,
-            ..flow_backend_llvm::EmitOpts::default()
+            ..mapal_backend_llvm::EmitOpts::default()
         },
     )
     .unwrap();

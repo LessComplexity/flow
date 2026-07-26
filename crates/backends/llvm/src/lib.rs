@@ -1,8 +1,8 @@
 //! LLVM backend: emits textual LLVM IR (`.ll`) piped to `clang` (ADR-0020 §1;
 //! backend-llvm DESIGN). The entry point [`emit`] realizes the functor
-//! `F_LLVM : Flow-Cat → LLVM-Cat` as a String — the translation unit **is** the
+//! `F_LLVM : Mapal-Cat → LLVM-Cat` as a String — the translation unit **is** the
 //! artifact (ADR-0020). Semantics are the interpreter oracle's by construction:
-//! every `Print`/trap routes through the shared `flow-rt` runtime (ADR-0020 §2),
+//! every `Print`/trap routes through the shared `mapal-rt` runtime (ADR-0020 §2),
 //! integer arithmetic wraps, `Div`/`Mod`/`Index`/`Update` are guarded (an S20
 //! `bounds_proof`-proven `Index` elides its statically-dead guard), and floats
 //! are IEEE at width.
@@ -21,7 +21,7 @@ mod ty;
 
 pub use crate::profile::TargetProfile;
 
-use flow_ir::{CategoryIr, FuncId, MorphismId, Operation, PathPlan, SourceLoc, TaskKind};
+use mapal_ir::{CategoryIr, FuncId, MorphismId, Operation, PathPlan, SourceLoc, TaskKind};
 use slotmap::SecondaryMap;
 
 use crate::func::{FnAttrs, FnEmit, packing_site};
@@ -43,7 +43,7 @@ pub enum EmitError {
 /// Emission options. [`emit`] delegates to these product defaults.
 #[derive(Clone, Copy, Debug)]
 pub struct EmitOpts {
-    /// Bracket `flow_main` with the flow-rt compute timer.
+    /// Bracket `mapal_main` with the mapal-rt compute timer.
     pub perf_timing: bool,
     /// Tile recognized matmul-shaped map sites.
     pub tiling: bool,
@@ -135,12 +135,12 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
     // clean fns get `readonly nounwind` (+ `willreturn`), unclean fns nothing.
     let attrs = FnAttrs::analyze(ir);
 
-    // Deterministic function names: entry → @flow_main, others → @fn{ordinal}.
-    let mut fnames: SecondaryMap<flow_ir::FuncId, String> = SecondaryMap::new();
+    // Deterministic function names: entry → @mapal_main, others → @fn{ordinal}.
+    let mut fnames: SecondaryMap<mapal_ir::FuncId, String> = SecondaryMap::new();
     let entry = ir.entry();
     for (ord, (id, _)) in ir.funcs().enumerate() {
         let name = if id == entry {
-            "flow_main".to_string()
+            "mapal_main".to_string()
         } else {
             format!("fn{ord}")
         };
@@ -213,7 +213,7 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
     }
 
     let mut out = String::new();
-    out.push_str("; flow-backend-llvm emitted module\n");
+    out.push_str("; mapal-backend-llvm emitted module\n");
     out.push_str(RT_DECLS);
     if prefetch {
         out.push_str(PREFETCH_DECL);
@@ -228,7 +228,7 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
     // a re-derived predicate — the call IS the requirement, so the two cannot
     // drift the way a `prefetch`-style pre-pass could. (PAR/PERF must gate on a
     // predicate: they are decided before any body exists.)
-    if funcs.contains("@flow_rt_alloc") {
+    if funcs.contains("@mapal_rt_alloc") {
         out.push_str(HEAP_DECLS);
     }
     out.push('\n');

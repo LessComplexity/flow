@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Generate matmul{N}_cap.flow — the capture-form matmul (ADR-0027): one map
+"""Generate matmul{N}_cap.mapal — the capture-form matmul (ADR-0027): one map
 over cells, inner fold over captured arrays. The one-kernel form — the S16
 benchmark's unblock. `--width f32` widens the generated values to f32 (default
-f64) and names the output matmul{N}_cap_f32.flow — the like-for-like variant
+f64) and names the output matmul{N}_cap_f32.mapal — the like-for-like variant
 against the f32 baselines (rust_naive/numpy/naive_cuda).
 
 S30: the kernel map is bracketed by the `time` builtin and the elapsed printed as
 `iter ms=` — the baselines' own format. The generated legs are therefore
-COMPUTE-ONLY like every baseline, and FLOW_PERF (which brackets all of
-`flow_main`, data generation included) is no longer needed to time them."""
+COMPUTE-ONLY like every baseline, and MAPAL_PERF (which brackets all of
+`mapal_main`, data generation included) is no longer needed to time them."""
 import sys
 
 def gen(n: int, width: str = "f64") -> str:
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     if width not in ("f32", "f64"):
         sys.exit(f"--width must be f32 or f64, got {width!r}")
     n = int(argv[0])
-    default = f"matmul{n}_cap_f32.flow" if width == "f32" else f"matmul{n}_cap.flow"
+    default = f"matmul{n}_cap_f32.mapal" if width == "f32" else f"matmul{n}_cap.mapal"
     out = argv[1] if len(argv) > 1 else default
     with open(out, "w") as f:
         f.write(gen(n, width))

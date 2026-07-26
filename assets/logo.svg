@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 82 80" width="82" height="80"
-     role="img" aria-labelledby="flow-logo-title">
-  <title id="flow-logo-title">Flow</title>
+     role="img" aria-labelledby="mapal-logo-title">
+  <title id="mapal-logo-title">Mapal</title>
   <!-- Two inputs join and flow into one output: a dataflow graph, which is what a
-       Flow program literally is.
+       Mapal program literally is.
 
        The colour is baked in rather than `currentColor` on purpose. GitHub renders
        markdown images in an <img>, which is a separate document — `currentColor`
