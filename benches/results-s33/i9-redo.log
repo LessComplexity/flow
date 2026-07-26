@@ -1,0 +1,38 @@
+START [live procs of mine: 0
+0 | load 1.22]
+###### 4096 f32 (naive-1t not run: >10 min/iteration, deliberately skipped)
+4096   cpp-mt         32219.4552 34839.0016 37429.6040
+4096   rust-mt        33696.6036 38000.3812 39274.9675
+4096   numpy-1t       786.2400 788.7124 797.9437
+4096   numpy-thr       96.0516  99.7371 177.7514
+###### matmul f64 1024
+1024   flow-fma-1t     30.6523  30.8121  31.5219
+1024   cpp-1t         2223.3047 2249.8659 2262.5705
+1024   cpp-mt         132.6074 136.7377 143.9905
+MID [live procs of mine: 0
+0 | load 9.05]
+###### shapes 1t PRE vs POST
+  fir65    POST   0.0849   0.0862   0.1087
+  fir65    PRE    0.1151   0.1176   0.1214
+  fir1m    POST   1.3516   1.3689   1.3929
+  fir1m    PRE    1.4537   1.4818   1.5024
+  conv512  POST   0.0372   0.0375   0.0380
+  conv512  PRE    0.0370   0.0378   0.0614
+###### CONFOUND: OpenBLAS thread sweep, numpy 1024 f32
+  OBLAS=1    12.2216  12.2702  12.4435
+  OBLAS=4     3.3840   3.3973   3.4226
+  OBLAS=8     1.7026   1.7177   4.8371
+  OBLAS=16    2.4406   2.4431   2.4541
+  OBLAS=24    2.1933   2.2187   2.2324
+  OBLAS=32    1.5055   1.5125  25.2706
+  default     1.5036   1.5056   3.0835
+###### Flow width sweep, matmul1024 f32
+  FLOW_PAR=1    15.1436  21.8158  26.5371
+  FLOW_PAR=4     6.5347   8.5376   8.8318
+  FLOW_PAR=8     3.7519   4.6968   4.8951
+  FLOW_PAR=16    2.2649   2.5221   3.2227
+  FLOW_PAR=24    1.6574   1.8679   2.1351
+  FLOW_PAR=32    0.0001   1.5259   1.8178
+END [live procs of mine: 0
+0 | load 11.65]
+###### DONE-REDO

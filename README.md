@@ -64,8 +64,17 @@ Each answer is a fact about your program, computed once and available to every b
 
 ## Where it stands
 
-All numbers below are from **one machine** — an Apple M4 Pro (10 performance + 4 efficiency
-cores) — kernel time only, best of three. They have not been reproduced elsewhere.
+The tables below are from an **Apple M4 Pro** (10 performance + 4 efficiency cores), kernel
+time only. The headline results — matrix multiply at every size, and conv2d — have now been
+**reproduced on a second, unrelated machine**: an Intel i9-14900F (AVX2). That machine *changes
+one of the conclusions below*, so it gets its own section further down.
+
+**The statistic matters here.** Single-threaded cells are the *minimum* of N runs. Multi-threaded
+cells are the *median*, because a race in our work-stealing pool can let a kernel finish before
+the clock that is supposed to bracket it starts, which makes a threaded run's self-timing
+spuriously *short*. Roughly 3–4% of threaded runs are affected, so a minimum is the wrong
+statistic for them and gets worse the more runs you take. It is a known P0 bug, not a property of
+the generated code — details in `docs/performance/matmul/s33.md` §5.
 
 ### About the baselines, before the table
 
@@ -76,45 +85,54 @@ threads, but they are what someone writes *before* optimising. Beating them by a
 factor demonstrates that the automatic blocking works; it is not a claim about beating
 expert-tuned code.
 
-**The expert-tuned comparison is the NumPy column, and matrix multiply is where we lose
-it.**
+**The expert-tuned comparison is the NumPy column, and on this machine matrix multiply is where
+we lose it** — by 3.4×. Hold that number: the second-machine section shows it is a fact about
+Apple silicon rather than about our code generation.
 
 ### Matrix multiply, f32
 
 | N | Flow | C++ (naive, threaded) | Rust (naive, threaded) | NumPy (1 thread) | NumPy (threaded) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 1024 | **4.1 ms** | 142 | 132 | 1.29 | 0.69 |
-| 4096 | **173 ms** | 33,176 | 33,599 | 86.2 | 43.7 |
+| 1024 | **2.23 ms** | 140 | 133 | 1.30 | 0.68 |
+| 4096 | **151 ms** | 33,065 | 33,548 | 84.6 | 44.1 |
 
-Against the naive baselines the margin grows with size — 11× at 512², 192× at 4096² —
+Against the naive baselines the margin grows with size — 63× at 1024², 219× at 4096² —
 because they have no cache blocking and fall apart once the data stops fitting, while
-Flow's blocking is generated. **Against NumPy we are 4× behind** at 4096.
+Flow's blocking is generated. **Against NumPy we are 3.4× behind** at 4096.
 
 ### Other shapes
 
 | workload | Flow | C++ (naive, threaded) | NumPy (1 thread) |
 | --- | ---: | ---: | ---: |
-| FIR filter, 1M samples | **0.42 ms** | 1.45 | 6.21 |
-| conv2d 3×3, 1024×1024 | 0.42 ms | **0.13** | 1.56 |
+| FIR filter, 1M samples | **0.27 ms** | 1.42 | 6.10 |
+| conv2d 3×3, 1024×1024 | **0.089 ms** | 0.14 | 1.55 |
 
 Two things to read carefully here:
 
-- **conv2d is our loss, and half of what is left is not the kernel.** Our convolution used
-  to compute one output row at a time, re-loading all three image rows for each — 24 vector
-  loads per 36 multiply-adds, where our matrix kernel manages 4 per 32. Blocking over output
-  rows is now built, and it is deduced rather than special-cased: the compiler notices from
-  the recorded address coefficients that the read *slides* across rows, which is the same
-  fact that makes matrix multiply's read row-invariant. That closed the single-thread gap
-  from 2.09× to **1.56×** (0.53 ms → 0.40) and raised the kernel's arithmetic intensity by
-  50%. The parallel number barely moved, and measurement says why: at its best thread count
-  conv2d is 1.83× behind, at the default it is 2.67× behind, so **most of the remaining
-  parallel deficit is scheduling, not arithmetic.** That is the next item below.
-- **The NumPy comparisons are not like-for-like.** Those are Flow on 14 cores against
-  NumPy on one, because the harness never runs a threaded NumPy leg for these shapes. And
-  NumPy has no real conv2d kernel here — the baseline is a Python loop over nine array
-  slices, so that column says more about the baseline than about NumPy.
+- **conv2d used to be our loss, and the reason it looked like one is worth telling.** This row
+  read *Flow 0.42 vs C++ 0.13* for five sessions — a 3.2× loss — and we spent most of that time
+  hunting a defect in the convolution kernel, eliminating eight hypotheses by measurement
+  (register pressure, weight broadcasting, arithmetic intensity, pointer aliasing, alias
+  metadata, and more). All eight were correctly refuted, because **the kernel was never the
+  problem.** Our timed region included something the C++ baseline's did not: the first write to
+  the output array, which is where Linux and macOS actually hand out the physical memory behind
+  a fresh allocation. The kernel was paying for the operating system zeroing 4 MB of pages.
+  `std::vector<float> out(n)` zero-fills on construction, so the C++ baseline pre-paid that cost
+  *above* its own timer. Making our allocator hand back memory that is already resident moved
+  the cost to where it belongs — and the row inverted. Per core, conv2d is now **1.21× ahead**
+  of naive C++ on *both* NEON and AVX2 (measured separately on each). Two hardware counters
+  agreed to within 4% on the diagnosis before the fix was written. Full account:
+  `docs/performance/conv2d-per-core-gap.md`.
+- **The NumPy comparisons are not like-for-like, and for these two shapes they cannot be.**
+  Those are Flow on 14 cores against NumPy on one — not because the harness declines to run a
+  threaded NumPy leg, but because **no threaded NumPy kernel exists for either shape**: FIR is
+  `np.correlate`, single-threaded C that ignores the BLAS thread settings entirely, and conv2d is
+  a Python loop over nine whole-array `out += w[k]*slice` passes — nine reads and nine writes of
+  4 MB, so it is memory-bound rather than compute-bound. That column says more about the baseline
+  than about NumPy. On the one shape where NumPy *does* have a real threaded kernel — matrix
+  multiply — we report it threaded, and we lose.
 
-### Why NumPy wins matrix multiply
+### Why NumPy wins matrix multiply — and the machine where it doesn't
 
 Not a better compiler — **different hardware**. On this chip NumPy's matmul runs on a
 matrix coprocessor, separate from the ordinary vector units. A single-threaded NumPy call
@@ -126,6 +144,53 @@ Our own kernel runs at roughly **75% of one core's vector peak**. That denominat
 4×128-bit fused-multiply-add pipes at about 4.4 GHz; Apple publishes neither number, so
 treat it as a model rather than a datasheet.
 
+That was the explanation. Here is the test of it. Run the identical benchmark on a machine with
+**no matrix coprocessor** — an Intel i9-14900F, where NumPy goes through OpenBLAS 0.3.30 on the
+same AVX2 units Flow compiles to — and the gap should collapse. It does:
+
+| 1024² f32 | Flow vs NumPy (1 thread) | Flow vs NumPy (threaded) | NumPy's backend |
+| --- | ---: | ---: | --- |
+| M4 Pro | NumPy **13.5×** ahead | NumPy **3.3×** ahead | Accelerate → AMX coprocessor |
+| i9-14900F | NumPy **1.21×** ahead | **dead even** (1.53 vs 1.51 ms) | OpenBLAS → AVX2 |
+
+Same compiler, same generated code, same NumPy source — only the silicon differs. **On equal
+vector hardware our generated matrix kernel is level with a hand-tuned assembly BLAS.** That is
+the strongest performance claim in this project, and the one we were least expecting to make.
+
+**"Level" means parity, not victory, and the full picture is worth printing rather than the one
+cell that flatters us.** On the i9, across all four sizes:
+
+| N | 1 thread | threaded |
+| ---: | --- | --- |
+| 512 | NumPy ahead 1.11× | NumPy ahead **1.24×** |
+| 1024 | NumPy ahead 1.21× | **tie** |
+| 2048 | NumPy ahead 1.20× | **Flow ahead 1.08×** |
+| 4096 | NumPy ahead 1.20× | NumPy ahead **1.06×** |
+
+Single-threaded we are **a flat 1.20× behind** at every large size — 146 GFLOP/s against
+OpenBLAS's 174, both perfectly size-invariant. Flat is the interesting part: it means this is a
+steady micro-kernel deficit, not blocking or cache behaviour falling apart. Threaded, we close it
+and land within ±10%, ahead at exactly one size.
+
+Three honest qualifications. That run used our **untuned `generic`** profile — nothing about it was
+specialised for Raptor Lake, which makes the 20% more impressive and also means some of it is
+probably recoverable. OpenBLAS was built `DYNAMIC_ARCH` and picked an AVX2 kernel — the right
+kernel for a chip with no AVX-512, but not hand-selected for it. And we verified OpenBLAS really
+does use all 32 threads by default (1.5036 ms default vs 1.5055 forced), so the threaded comparison
+is not us quietly using more cores.
+
+**Why threaded closes what single-threaded does not** — and this one is a hypothesis, not a result.
+Scaling from 1 thread to 32, Flow gets 9.2–9.8× where OpenBLAS gets 7.1–8.1×. This chip is
+*hybrid*: 8 fast P-cores and 16 slow E-cores. OpenBLAS partitions statically, so every panel waits
+on whichever thread drew an E-core; Flow uses work stealing over deliberately over-decomposed
+pieces, so a finished core just takes more work. Supporting evidence: OpenBLAS's own scaling is
+non-monotonic here — 8 threads (1.70 ms) beats 16 threads (2.44 ms). If that explanation is right,
+the advantage should shrink on a homogeneous machine, and **we have not tested one.** Until we do,
+this is "better on this chip", not "a better scheduler".
+
+The flat 20% single-threaded gap, on the same units with no hardware excuse, is the honest
+remaining target.
+
 ### Two builds, and which one the table used
 
 Flow emits two faces of the same program:
@@ -135,8 +200,9 @@ Flow emits two faces of the same program:
   same licence the C++ and Rust baselines get from `-ffp-contract=fast`. Checked against
   the conformance build to a relative tolerance, not bit-for-bit.
 
-**Every Flow number above is the contract build.** The default is 25–45% slower — at 4096²
-it is 249 ms parallel and 2,249 ms single-threaded, against 173 and 1,302. Clone the repo,
+**Every Flow number above is the contract build.** The default is 50–75% slower at 1024² and
+above, and up to 2.2× slower at 512² — at 4096² it is 226 ms parallel and 2,203 ms
+single-threaded, against 151 and 1,256. Clone the repo,
 run the default emitter, and you will get the slower pair. That is the honest trade: the
 bit-exact guarantee at the top of this page belongs to the default build, and the
 benchmark table does not.
@@ -224,20 +290,29 @@ most of the language, `fir.flow` for a loop.
    hand now switches *itself* off on a machine whose cache makes it pointless.
 2. ~~**conv2d row blocking.**~~ **Done** — see above. Deduced from the recorded read
    structure, not written for convolution.
-3. **Scheduling deduced per region, at compile time.** Every parallel dispatch currently
-   splits into exactly one piece per core, which leaves the work-stealing queues empty — a
-   fast core that finishes cannot help a slow one, so every dispatch waits for the slowest
-   piece. Separating *how many pieces* from *how many cores* is done; choosing them per
-   region is not. Measured with the sizes forced by hand, the right choice is worth
-   **1.46–1.78×** on three different kernels, and which direction to move is predicted by
-   the same recorded fact that drives row blocking — a sliding read re-pays its overlap at
-   every boundary, an invariant one does not. **These numbers are not in the table above:
-   nothing here is on by default until the compiler picks the sizes itself.**
-4. **Matrix units.** CPUs are growing dedicated matrix hardware (Arm SME, Intel AMX) and
-   GPUs have had it for years. Same idea, same catch: they fix their own arithmetic
-   ordering, so results stop being bit-identical. That gets an explicit opt-in, never a
-   silent default.
-5. **Then GPUs in earnest**, then co-execution.
+3. ~~**Scheduling deduced per region, at compile time.**~~ **Mostly done, and now on by
+   default** — so unlike last time, its effect *is* in the table above. A parallel dispatch used
+   to split into exactly one piece per core, leaving the work-stealing queues empty: a fast core
+   that finished could not help a slow one, so every dispatch waited for the slowest piece. The
+   compiler now derives the piece count per region, and which direction to move is predicted by
+   the same recorded fact that drives row blocking — a sliding read re-pays its overlap at every
+   boundary, an invariant one does not. What remains is deriving the size from the *program*
+   rather than from the machine alone, deducing the width, and composing plans across a wide
+   dependency graph.
+4. **A race in the work-stealing pool — the one thing here that is a bug, not a gap.** When a
+   thread waits on a checkpoint it helps with whatever work is available, including work *past*
+   the checkpoint it is waiting for. A kernel can therefore finish before the clock meant to
+   bracket it starts, and about 3–4% of threaded runs self-time far too low. It does not affect
+   results, only measurements — but it affects them in the direction that flatters us, which is
+   the dangerous direction, and it is why every threaded figure on this page is a median rather
+   than a minimum. Fix is scoped: help only with work at or below the watermark being waited on.
+5. **Matrix units.** CPUs are growing dedicated matrix hardware (Arm SME, Intel AMX) and
+   GPUs have had it for years. The cross-machine result above is the argument for it: on a chip
+   without a matrix unit our generated kernel is level with hand-tuned OpenBLAS, so the remaining
+   4× on the M4 is not something better code generation reaches — it is a different execution
+   unit. Same catch, though: matrix units fix their own arithmetic ordering, so results stop
+   being bit-identical. That gets an explicit opt-in, never a silent default.
+6. **Then GPUs in earnest**, then co-execution.
 
 ---
 
