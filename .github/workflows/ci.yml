@@ -10,11 +10,17 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# A superseded run proves nothing about the tip, and the Linux leg holds a runner
+# for ~30 minutes. Newest commit per ref wins.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -46,18 +52,15 @@ jobs:
       - name: Formatting
         run: cargo fmt --all --check
 
+      # FLOW_REQUIRE_CLANG turns the LLVM differential's skip-with-reason into a hard
+      # failure (`crates/backends/llvm/tests/differential.rs::clang`), so this single
+      # run proves it compiled rather than skipped. It replaces a second full run of
+      # the same 1,280-case suite: that cost ~25 min on the two-core Linux runner and
+      # hit the 60-minute job timeout the first time a run got far enough to reach it.
       - name: Test (release)
         run: cargo test --workspace --release
-
-      # Proves the differential actually ran rather than skipping. `clang` is
-      # installed above, so a skip here means the discovery path broke.
-      - name: Assert the differential was not skipped
-        run: |
-          cargo test --release -p flow-backend-llvm --test differential -- --nocapture 2>&1 | tee out.txt
-          if grep -qi "skip" out.txt; then
-            echo "::error::the LLVM differential suite skipped — clang discovery is broken, so this run proved nothing"
-            exit 1
-          fi
+        env:
+          FLOW_REQUIRE_CLANG: 1
 
   # The CUDA backend's 161 tests skip themselves without nvcc, which every hosted
   # runner lacks. Compiling them is still worth gating on: it catches the

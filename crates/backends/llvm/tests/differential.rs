@@ -54,12 +54,27 @@ fn clang() -> Option<String> {
     if let Ok(cc) = std::env::var("CC") {
         return Some(cc);
     }
-    let out = Command::new("which").arg("clang").output().ok()?;
-    if out.status.success() {
-        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
-    } else {
-        None
-    }
+    let found = Command::new("which")
+        .arg("clang")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+
+    // `FLOW_REQUIRE_CLANG` turns skip-with-reason into a hard failure. Every one of
+    // this file's nine skip sites goes through here, so the guard belongs here and
+    // nowhere else. CI sets it: a suite that skips itself proves nothing, and the
+    // workflow used to prove otherwise by running the whole 1,280-case differential a
+    // SECOND time with `--nocapture` and grepping for "skip" — ~25 min on a two-core
+    // Linux runner, which hit the 60-minute job timeout on the first run that got far
+    // enough to reach it. Failing here makes the FIRST run its own proof.
+    assert!(
+        !(found.is_none() && std::env::var("FLOW_REQUIRE_CLANG").is_ok_and(|v| v != "0")),
+        "FLOW_REQUIRE_CLANG is set but clang was not found (CC unset, `which clang` \
+         failed) — this suite would have skipped and reported success without \
+         compiling anything"
+    );
+    found
 }
 
 fn rt_lib() -> PathBuf {
