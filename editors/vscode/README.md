@@ -19,41 +19,57 @@ that is by design.
 
 ## Install
 
-Not published to the Marketplace. Load it from disk:
+Not published to the Marketplace, so build a `.vsix` and install it:
 
 ```sh
-# The target MUST be absolute. `ln -s` resolves a relative target against the LINK's
-# directory, not your shell's cwd, so `ln -s editors/vscode ...` silently creates a
-# link to ~/.vscode/extensions/editors/vscode, which does not exist. A broken link is
-# skipped in silence — the extension simply never appears.
-ln -s "$(pwd)/editors/vscode" ~/.vscode/extensions/flow-lang     # from the repo root
-
-# Cursor:  ~/.cursor/extensions/
-# Remote:  ~/.vscode-server/extensions/
+python3 editors/vscode/package-vsix.py
+code   --install-extension editors/vscode/flow-lang-0.1.0.vsix   # or:
+cursor --install-extension editors/vscode/flow-lang-0.1.0.vsix
 ```
 
-Then **fully quit and reopen** the editor (Cmd-Q, not just closing the window). Verify:
+Then restart the editor. Verify it actually registered — the message alone is not proof:
 
 ```sh
-[ -f ~/.vscode/extensions/flow-lang/package.json ] && echo OK || echo BROKEN LINK
+code --list-extensions | grep flow-lang
 ```
 
-Two checks inside the editor, in order:
+If the `code` command is not on your PATH, use the binary inside the app:
+`"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"`.
 
-1. Open a `.flow` file — the status bar should read **Flow**, not *Plain Text*. If it says
-   Plain Text, the extension is not loaded at all.
-2. `Developer: Inspect Editor Tokens and Scopes` from the command palette, cursor on a
-   token — the *textmate scopes* line should show `source.flow`. If the language is Flow but
-   scopes show only `source.flow` with no token scope, the grammar loaded but that token has
-   no rule.
+### Do not just copy the folder in
 
-If the language mode is still Plain Text after a full restart, copy instead of symlinking —
-some setups will not scan a symlinked extension directory:
+Dropping this directory (or a symlink to it) into `~/.vscode/extensions` **does not work** on
+current VS Code or Cursor. They keep `extensions.json` in that directory as the authoritative
+registry and do not scan for unregistered folders, so a hand-placed extension is ignored
+**in silence** — no error, no icon, no highlighting, indistinguishable from a broken
+extension. Only the CLI install writes the registry entry.
+
+That is also why `package-vsix.py` exists: `vsce` is the normal way to build a `.vsix` and it
+needs npm, whereas a `.vsix` is just a ZIP holding `extension.vsixmanifest`,
+`[Content_Types].xml` and an `extension/` directory. The script builds one directly and
+asserts the archive contains all three before claiming success.
+
+### Iterating on the extension
+
+A CLI install copies the files, so editing the repo afterwards changes nothing in the editor.
+Either rebuild and reinstall:
 
 ```sh
-rm -f ~/.vscode/extensions/flow-lang
-cp -R editors/vscode ~/.vscode/extensions/flow-lang
+python3 editors/vscode/package-vsix.py && code --install-extension editors/vscode/flow-lang-0.1.0.vsix --force
 ```
+
+or launch a throwaway window that loads the source directly, which is better for grammar work:
+
+```sh
+code --extensionDevelopmentPath="$(pwd)/editors/vscode" .
+```
+
+### Checking it works
+
+1. Open a `.flow` file — the status bar should read **Flow**, not *Plain Text*. If it says Plain
+   Text the extension is not loaded and nothing else matters.
+2. Command palette → `Developer: Inspect Editor Tokens and Scopes`, cursor on a token — should
+   show `source.flow` and a scope such as `support.function.builtin.flow`.
 
 ## Syntax highlighting
 

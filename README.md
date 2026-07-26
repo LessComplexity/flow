@@ -275,11 +275,13 @@ require("flow.icon").setup()          -- optional: nvim-web-devicons / mini.icon
 **VS Code / Cursor** — symlink the extension and restart:
 
 ```sh
-# from the repo root — the target must be ABSOLUTE, or the link silently dangles
-ln -s "$(pwd)/editors/vscode" ~/.vscode/extensions/flow-lang
+python3 editors/vscode/package-vsix.py
+code --install-extension editors/vscode/flow-lang-0.1.0.vsix   # or `cursor`
 ```
 
-Then fully quit and reopen. A `.flow` file should show **Flow** in the status bar.
+Then restart. A `.flow` file should show **Flow** in the status bar. Copying the folder into
+`~/.vscode/extensions` does *not* work — VS Code reads `extensions.json` as its registry and
+ignores unregistered directories silently.
 
 **The logo as a terminal glyph.** The Rust and C++ marks in a file tree are font glyphs, not
 images — Nerd Fonts ships those brand logos as characters. So Flow's mark ships as a

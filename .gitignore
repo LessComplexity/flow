@@ -6,3 +6,6 @@ __pycache__/
 # the sources and the emitter are the record, not their output.
 benches/matmul/*.ll
 benches/matmul/*.cu
+
+# built artifact — regenerate with package-vsix.py
+editors/vscode/*.vsix
