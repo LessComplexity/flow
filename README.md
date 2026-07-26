@@ -1,19 +1,21 @@
-<p align="center">
-  <img src="assets/logo-wordmark.svg" alt="Flow" width="320">
-</p>
+<div align = center>
+
+<img src="assets/logo-wordmark.svg" width="320" alt="Flow">
+
+<br>
+
+[![Badge Workflow]][Workflow]
+[![Badge License]][License]
+![Badge Language]
+[![Badge Pull Requests]][Pull Requests]
+[![Badge Issues]][Issues]
+![Badge Determinism]<br>
+
+<br>
+
+</div>
 
 # Flow
-
-<!-- The license badge is static on purpose: GitHub reports NOASSERTION for
-     Apache-2.0 WITH LLVM-exception, so shields' dynamic one reads "not
-     identifiable by github". The exception is real and the badge should say so. -->
-<p align="center">
-  <a href="https://github.com/LessComplexity/flow/actions/workflows/ci.yml"><img alt="build status" src="https://img.shields.io/github/actions/workflow/status/LessComplexity/flow/ci.yml?branch=main&style=flat-square&label=build&labelColor=1e293b"></a>
-  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0_WITH_LLVM--exception-14b8a6?style=flat-square&labelColor=1e293b"></a>
-  <a href="https://github.com/LessComplexity/flow/search?l=rust"><img alt="top language" src="https://img.shields.io/github/languages/top/LessComplexity/flow?style=flat-square&color=14b8a6&labelColor=1e293b"></a>
-  <a href="https://github.com/LessComplexity/flow/issues"><img alt="open issues" src="https://img.shields.io/github/issues/LessComplexity/flow?style=flat-square&color=14b8a6&labelColor=1e293b"></a>
-  <a href="https://github.com/LessComplexity/flow/pulls"><img alt="open pull requests" src="https://img.shields.io/github/issues-pr/LessComplexity/flow?style=flat-square&color=14b8a6&labelColor=1e293b"></a>
-</p>
 
 <!--toc:start-->
 
@@ -291,7 +293,7 @@ code --install-extension editors/vscode/flow-lang-0.1.0.vsix   # or `cursor`
 ```
 
 Then restart. A `.flow` file should show **Flow** in the status bar. Copying the folder into
-`~/.vscode/extensions` does *not* work — VS Code reads `extensions.json` as its registry and
+`~/.vscode/extensions` does _not_ work — VS Code reads `extensions.json` as its registry and
 ignores unregistered directories silently.
 
 **The logo as a terminal glyph.** The Rust and C++ marks in a file tree are font glyphs, not
@@ -372,3 +374,23 @@ it ships off. All four steps are in the repo, wrong explanation included.
 for the same reason. Apache-2.0 carries an explicit patent grant; the exception keeps the
 runtime Flow links into your binaries from imposing attribution requirements on _your_
 program's output.
+
+<!----------------------------------{ Badges }---------------------------------->
+
+<!-- The licence badge is static because GitHub classifies Apache-2.0 WITH
+     LLVM-exception as NOASSERTION, so shields' dynamic one renders the words
+     "not identifiable by github". The exception is real; the badge says so. -->
+
+[Badge Workflow]: https://github.com/LessComplexity/flow/actions/workflows/ci.yml/badge.svg
+[Badge License]: https://img.shields.io/badge/license-Apache--2.0_WITH_LLVM--exception-blue
+[Badge Language]: https://img.shields.io/github/languages/top/LessComplexity/flow
+[Badge Pull Requests]: https://img.shields.io/github/issues-pr/LessComplexity/flow
+[Badge Issues]: https://img.shields.io/github/issues/LessComplexity/flow
+[Badge Determinism]: https://img.shields.io/badge/output-byte--identical-14b8a6
+
+<!-----------------------------------{ Links }----------------------------------->
+
+[Workflow]: https://github.com/LessComplexity/flow/actions/workflows/ci.yml
+[License]: LICENSE
+[Pull Requests]: https://github.com/LessComplexity/flow/pulls
+[Issues]: https://github.com/LessComplexity/flow/issues
