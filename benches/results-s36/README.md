@@ -5,6 +5,10 @@ compiler at `35fb681` (**pre**, the clock read on the host spine) and once at `8
 (**post**, the clock read as a pinned DAG node) — then run under an identical protocol.
 Nothing else differs: same runtime, same clang/gcc flags, same machine, same session.
 
+**Start with [`BEFORE-AFTER.md`](BEFORE-AFTER.md)** — every shape, both machines, before
+beside after in one table. It is generated from the logs below by
+`make_before_after.py`; regenerate with `python3 benches/results-s36/make_before_after.py`.
+
 Machine tags (S26 standing rule):
 
 - `mac_pre.log` / `mac_post.log` — Apple M4 Pro, 10 P + 4 E, NEON, Homebrew clang 22.1.8,
