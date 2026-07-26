@@ -275,8 +275,11 @@ require("flow.icon").setup()          -- optional: nvim-web-devicons / mini.icon
 **VS Code / Cursor** — symlink the extension and restart:
 
 ```sh
-ln -s /path/to/flow/editors/vscode ~/.vscode/extensions/flow-lang
+# from the repo root — the target must be ABSOLUTE, or the link silently dangles
+ln -s "$(pwd)/editors/vscode" ~/.vscode/extensions/flow-lang
 ```
+
+Then fully quit and reopen. A `.flow` file should show **Flow** in the status bar.
 
 **The logo as a terminal glyph.** The Rust and C++ marks in a file tree are font glyphs, not
 images — Nerd Fonts ships those brand logos as characters. So Flow's mark ships as a

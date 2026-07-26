@@ -22,17 +22,58 @@ that is by design.
 Not published to the Marketplace. Load it from disk:
 
 ```sh
-ln -s /path/to/flow/editors/vscode ~/.vscode/extensions/flow-lang
+# The target MUST be absolute. `ln -s` resolves a relative target against the LINK's
+# directory, not your shell's cwd, so `ln -s editors/vscode ...` silently creates a
+# link to ~/.vscode/extensions/editors/vscode, which does not exist. A broken link is
+# skipped in silence — the extension simply never appears.
+ln -s "$(pwd)/editors/vscode" ~/.vscode/extensions/flow-lang     # from the repo root
+
+# Cursor:  ~/.cursor/extensions/
+# Remote:  ~/.vscode-server/extensions/
 ```
 
-Then restart VS Code. (`~/.vscode-server/extensions/` for remote, `~/.cursor/extensions/` for
-Cursor.)
+Then **fully quit and reopen** the editor (Cmd-Q, not just closing the window). Verify:
 
-## What it does not do
+```sh
+[ -f ~/.vscode/extensions/flow-lang/package.json ] && echo OK || echo BROKEN LINK
+```
 
-**No syntax highlighting.** That needs a TextMate grammar, which would be a second
-implementation of the highlighting rules that already exist for Neovim in
-[`../nvim/syntax/flow.vim`](../nvim/syntax/flow.vim) — two hand-maintained copies of the same
-regexes, drifting apart. Not worth it before the real answer, which is one LSP server driving
-both editors with the compiler's own parse (ADR-0008). Until then this extension is the icon
-and the editing niceties only.
+Two checks inside the editor, in order:
+
+1. Open a `.flow` file — the status bar should read **Flow**, not *Plain Text*. If it says
+   Plain Text, the extension is not loaded at all.
+2. `Developer: Inspect Editor Tokens and Scopes` from the command palette, cursor on a
+   token — the *textmate scopes* line should show `source.flow`. If the language is Flow but
+   scopes show only `source.flow` with no token scope, the grammar loaded but that token has
+   no rule.
+
+If the language mode is still Plain Text after a full restart, copy instead of symlinking —
+some setups will not scan a symlinked extension directory:
+
+```sh
+rm -f ~/.vscode/extensions/flow-lang
+cp -R editors/vscode ~/.vscode/extensions/flow-lang
+```
+
+## Syntax highlighting
+
+`syntaxes/flow.tmLanguage.json` covers comments, strings, guard arrows (split-scoped — chrome
+as an arrow, discriminant by what it is), labels, `fn` declarations, builtins, bindings, call
+position, arrows, numbers, types, operators, and the reserved-and-rejected `category`.
+
+**Two things to know if you edit it.**
+
+It has the **opposite precedence** to the Neovim file: TextMate takes the *first* matching
+pattern, Vim the *last*. So this file is ordered most-specific first and
+[`../nvim/syntax/flow.vim`](../nvim/syntax/flow.vim) least-specific first. A rule added to one
+goes at the other end of the other.
+
+And it is **less capable in one specific way**: `x -> name;` is lexically identical whether
+`name` is a new variable or a call to a no-value function. The Vim file resolves it by scanning
+the buffer for `fn` declarations; TextMate has no way to know what has been declared, so here
+every `-> name;` reads as a binding. A terminal call to your own function will be coloured as a
+variable.
+
+That divergence is the argument for not maintaining two grammars forever. The real fix is one
+LSP server driving both editors from the compiler's own parse (ADR-0008), at which point both
+hand-written grammars become fallbacks.
