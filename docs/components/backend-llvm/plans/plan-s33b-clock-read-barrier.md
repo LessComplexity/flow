@@ -153,8 +153,14 @@ thread count:
 | i9-14900F, unpinned (32T) | 5 / 7 | **0 / 7** | 12 | **0** |
 | i9-14900F, pinned (8P/16T) | 3 / 7 | **0 / 7** | 9 | **0** |
 
-Largest post-fix reading anywhere: gather at 11.6× on 16 hardware threads. The `MAPAL_PAR=1`
-control is unmoved on both machines (pinned box: conv2d 0.0496 → 0.0503, matmul 17.3485 → 17.3874)
+Post-fix maxima: Mac 8.6× (matmul), pinned box 11.6× (gather, 16 hardware threads), unpinned box
+24.4× (transpose — inside the 32-thread bound but above 24 physical cores, and an artifact of the
+same governor ramp: against that cell's 1t *min* rather than its ramp-inflated median it is 3.8×).
+Two limits worth stating: `reduce` and `saxpy` never exhibited the defect in any pre log, so their
+post-fix result is a control rather than a repair; and n=100 with zero hits bounds the residual rate
+near 3%/run at 95%, it does not zero it. The `MAPAL_PAR=1`
+control is unmoved on the pinned box and the Mac (pinned: conv2d 0.0496 → 0.0503, matmul 17.3485 →
+17.3874; the unpinned box swings up to 34% on a leg that cannot race, which is the ramp)
 and all seven shapes print byte-identical output pre and post. Acceptance 1 and 3 therefore hold on
 a second architecture, and acceptance 2's amendment below is confirmed there: the residual par
 spread tracks kernel size and pool dispatch, and both ends of it are physically reachable.

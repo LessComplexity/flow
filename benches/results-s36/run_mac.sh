@@ -3,7 +3,7 @@
 # min AND median AND the sub-0.01 ms race counter per cell.
 set -euo pipefail
 R="/Volumes/LessComplex/Personal/Flow"
-TMP="$R/target/tmp/i9"
+TMP="${TMP:-$R/target/tmp/i9}"   # the PRE leg lives in target/tmp/i9pre; TAG alone does not switch it
 RUNS="${RUNS:-30}"
 TAG="${TAG:-post}"
 RT="$R/target/release/libmapal_rt.a"

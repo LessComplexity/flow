@@ -17,7 +17,7 @@ stats() {
             printf "%-28s min=%9.4f  median=%9.4f  max=%9.4f  min/med=%5.3f  n=%3d  sub0.01=%d\n", \
                 label, v[0], med, v[n-1], (med > 0 ? v[0]/med : 0), n, race }'
 }
-echo "== pinned box run ($TAG, P-cores 0-15) =="; uptime
+echo "== pinned box run ($TAG, $DIR, P-cores 0-15) =="; uptime
 for bin in mapal_*_"$TAG"; do
     shape="${bin#mapal_}"; shape="${shape%_$TAG}"
     for i in $(seq 1 "$RUNS"); do MAPAL_PAR=1 taskset -c 0 "./$bin"; done 2>/dev/null | stats "$shape 1t@P-core"

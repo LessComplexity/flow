@@ -59,8 +59,18 @@ single-threaded time by more than the thread count. Define a cell **impossible**
 | i9, pinned (8P/16T) | **3 / 7** | **0 / 7** | 9 | **0** |
 
 Worst pre-fix readings: fir 154× and conv2d 99× on the pinned box, transpose 59×, matmul 1494× on
-the Mac. Largest post-fix reading anywhere: gather at **11.6× on 16 hardware threads** — inside the
-bound, on the machine that has the threads to deliver it.
+the Mac — and 24,666× for matmul on the unpinned box. Post-fix maxima: **Mac 8.6×** (matmul),
+**pinned box 11.6×** (gather, on 16 hardware threads), **unpinned box 24.4×** (transpose). That last
+one is inside the 32-thread bound but above the machine's 24 physical cores, and it is the governor
+ramp again: the cell's 1t *median* is 10.1216 against a 1t *min* of 1.5598, and measured against the
+min the same ratio is 3.8×. The pinned column is the one to quote.
+
+**Two things this campaign does not establish, stated because they are easy to over-read.** First,
+`reduce` and `saxpy` never showed the defect in any pre log (worst pre ratio 5.6×, `sub0.01=0` in
+all six of their pre cells) — of the 14 shape × machine pairs, at most 8 ever exhibited it, so for
+the rest "post-fix clean" is a control, not a repair. Second, n = 100 bounds the post-fix rate
+rather than zeroing it: no hits in 100 runs puts the one-sided 95% bound near 3% per run, well under
+the 5–8% pre-fix rates on the affected cells, but not a proof that a rarer variant does not exist.
 
 ## 4. The single-threaded control
 

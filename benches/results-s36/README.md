@@ -16,8 +16,11 @@ Machine tags (S26 standing rule):
 - `box_pinned.log` — the same box with `taskset`: 1t on **one P-core thread**, par on the
   **8 P-cores** (CPUs 0–15; 16–31 are E-cores at 4.3 GHz). Contains both the post and pre
   sections, in that order. This is the cleanest data in the set — see the caveat below.
-- `mac_shapes_ab.log` / `mac_ladder2_ab.log` — the published harnesses re-run post-fix
-  (`RUNS=15`), including the C++/Rust/NumPy legs and the value verification.
+- `mac_shapes_ab.log` — the fir/conv2d harness re-run post-fix (`RUNS=15`): C++, Rust and
+  NumPy legs plus the cross-leg value verification on its last line.
+- `mac_ladder2_ab.log` — the four ladder-v2 classes re-run post-fix (`RUNS=15`): C++ and
+  NumPy legs, **no Rust leg and no verification line** — that harness is timing-only by
+  design, which is a gap worth closing in it.
 
 `run_box.sh`, `run_mac.sh`, `run_pinned.sh` are the drivers, kept so the protocol is
 reproducible rather than described. Each keeps **every sample** and reports min, median,
@@ -39,8 +42,14 @@ apparent **1494×** on 14 cores. It never tripped the 0.01 ms counter, because t
 threshold was calibrated on fir, whose kernel is three orders of magnitude smaller. Any
 fixed millisecond threshold is a proxy; the thread ceiling is a bound.
 
-Post-fix every cell is inside the bound on both machines, in all three configurations:
-the largest apparent speedup anywhere is gather at 11.6× on the box's 16 hardware threads.
+Post-fix every cell is inside the bound on both machines, in all three configurations. In the
+pinned run — the one to quote — the largest apparent speedup is gather at **11.6×** on 16
+hardware threads. The largest *anywhere* is `transpose_1024` on the **unpinned** box at
+**24.4×**: inside the 32-thread bound but above the machine's 24 physical cores, and it is
+an artifact of the same governor ramp described below — that cell's 1t *median* is 10.1216
+against a 1t *min* of 1.5598, and against the min the same ratio is 3.8×. Post-fix maxima
+per configuration: Mac 8.6× (matmul), unpinned box 24.4× (transpose), pinned box 11.6×
+(gather).
 
 ## Two caveats, recorded rather than corrected
 
@@ -73,4 +82,22 @@ unpinned box numbers are published as context rather than as a measurement.
 
 Value identity is a separate check with its own artifact: `value_identity.log` runs each
 pre and post binary, strips the timing line, and compares the rest verbatim. All seven
-shapes are identical on the par leg and on the 1t leg.
+shapes are identical, on both the par leg and the 1t leg.
+
+## What this campaign does *not* establish
+
+**It is not "the race is gone on all seven shapes" in the strong sense.** `reduce` and
+`saxpy` never exhibited the defect in any pre log — worst pre ratio 5.6×, `sub0.01=0` in
+all six of their pre cells. Of the 14 shape × machine pairs, at most 8 ever showed it.
+For the other 6 the post-fix result is a *control*, not a repair: nothing was there to
+remove.
+
+**And n = 100 cannot prove zero.** These logs bound the post-fix rate rather than zeroing
+it: with no hits in 100 runs, the one-sided 95% bound is roughly 3% per run — well below
+the 5–8% pre-fix rates on the affected cells, and enough to say the defect is gone at the
+magnitude it was found, but not enough to say a rarer variant does not exist.
+
+**The drivers here are session artifacts, not a maintained harness.** `run_mac.sh` takes
+`TMP` from the environment (the pre leg reads `target/tmp/i9pre`, the post leg
+`target/tmp/i9`); a `TAG=pre` run alone does **not** switch the binaries it links. That
+sharp edge is why the pre and post binary sets live in separate directories.

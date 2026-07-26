@@ -1,6 +1,8 @@
-== S36b value identity: pre-fix (35fb681) vs post-fix (896fb3c) binaries, MAPAL_PAR=par ==
+== S36b value identity: pre-fix (35fb681) vs post-fix (896fb3c) binaries ==
 Timing line stripped (it is the thing that changed); every other line compared verbatim.
+Binaries: target/tmp/i9pre/mac_<shape>_pre  vs  target/tmp/i9/mac_<shape>_post
 
+-- MAPAL_PAR=par
 fir_65536          IDENTICAL   output: 2169 1405 
 conv2d_512         IDENTICAL   output: 1752 103 
 saxpy_1048576      IDENTICAL   output: -104.5 25.5 
@@ -9,7 +11,12 @@ transpose_1024     IDENTICAL   output: -37 15
 gather_1048576     IDENTICAL   output: 37 -40 
 matmul1024_f32     IDENTICAL   output: 11107 91690 
 
-1t leg (MAPAL_PAR=1):
-fir_65536          IDENTICAL
-conv2d_512         IDENTICAL
-matmul1024_f32     IDENTICAL
+-- MAPAL_PAR=1
+fir_65536          IDENTICAL   output: 2169 1405 
+conv2d_512         IDENTICAL   output: 1752 103 
+saxpy_1048576      IDENTICAL   output: -104.5 25.5 
+reduce_1048576     IDENTICAL   output: -136 
+transpose_1024     IDENTICAL   output: -37 15 
+gather_1048576     IDENTICAL   output: 37 -40 
+matmul1024_f32     IDENTICAL   output: 11107 91690 
+
