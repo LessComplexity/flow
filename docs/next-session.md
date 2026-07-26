@@ -1,110 +1,121 @@
-# Next Session (S33)
+# Next Session (S34)
 
-Written: 2026-07-26 · end of S31+S32 · by: Claude (orchestrator; category-architect skill)
-Session log: `sessions/2026-07-26-s31-s32-deduced-blocking-and-scheduling.md` — **read §3 before
-proposing any conv2d hypothesis.**
+Written: 2026-07-26 · end of S33 · by: Claude (orchestrator; category-architect skill)
+Session log: `sessions/2026-07-26-s33-boundary-openblas-parity-open-source.md` — **read §5 and §7
+before touching either P0.**
 
 ## Where things stand (≤6 lines)
 
-S31+S32 are committed and green (`b6a1663`, 72 suites, fmt clean, tree clean). Shipped:
-`TargetProfile` (machine facts as data), `i_reuse`-driven row blocking (**conv2d −25% at 1t**),
-and per-region slice sizing (**matmul 1.41–1.43× at the default width**). One diagnosis is
-**OPEN**: conv2d's kernel is **1.55× slower than naive C++ on BOTH NEON and AVX2**, with
-**eight hypotheses already eliminated**. Cache is exonerated on both machines; IPC is the gap
-(cpp 3.11 vs flow 1.57).
+S33 closed the S31/S32 P0 by **inverting** it: conv2d was never slow — Flow's timed window
+included the output array's first-touch page-zeroing, which the C++ baseline pre-pays outside its
+own timer. Shipped `reside`; conv2d is now **1.21× ahead** of naive C++ per core on both NEON and
+AVX2. Second machine measured: on AVX2, where numpy is OpenBLAS rather than AMX, Flow's generated
+GEMM reaches **parity** (1t a flat 1.20× behind, threaded ±10%). The repo is **public** with CI.
+**CI is red, correctly** — it found a rewriter bug on its first run. 18 commits, `1daddaa..a6aa0da`.
 
 ## FIRST commands (resume checks, in order)
 
 ```sh
-git log --oneline -6                       # S31/S32; HEAD should be b6a1663
-git status --short                         # expect empty
-cargo test --workspace --release 2>&1 | grep -c "test result: ok"   # expect 72
-cat docs/performance/conv2d-per-core-gap.md          # the OPEN diagnosis
-ssh -o BatchMode=yes <perf-box> 'nproc'   # the perf box, key auth
+git log --oneline -3                  # HEAD should be a6aa0da
+git status --short                    # expect empty
+gh run list --limit 3                 # expect RED on ubuntu-latest — that is P0 #1
+cargo test -q -p flow-rewrite --release --test property open_default   # reproduces P0 #1, ~0.2s
+sh editors/test.sh                    # 61 assertions, expect green
+ssh -o BatchMode=yes <perf-box> 'cat /proc/loadavg'   # the measurement machine, key auth
 ```
 
-## S33 focus: finish the diagnosis, then finish the plan
+## S34 focus
 
-### 1. The conv2d per-core gap (P0)
+### 1. P0 — the rewriter deletes a trap that must fire
 
-**Do not re-propose any of the eight refuted hypotheses** (session log §3): the 2.9×
-accumulator, the ordering argument, an env-vs-compiler path difference, a slow pool, register
-pressure, splat-vs-by-element, heap aliasing, or missing alias metadata. Each was killed by a
-measurement and re-running them wastes a session.
+```
+open_default: before Trapped(DivZero)  !≈  after Done(Scalar(I32(3)))
+```
 
-What is established: same FMA count per output, **fewer** instructions on M4 (more on x86),
-half the loads, equal cache behaviour, **2× lower IPC**, on two unrelated architectures.
-It is a backend stall.
+The original traps on division by zero; after `rewrite()` it returns 3. That breaks the property
+the whole project rests on, and `dead_trapping_div_stays_trapped` already guards it by hand — the
+generator found a shape the guard misses.
 
-The measurement, on the Arch i9 (`perf` works there; vast.ai containers cannot run it):
+**Pre-existing** (reproduces at `1daddaa`), pinned as a proptest seed so CI cannot go green on a
+lucky draw. **The counterexample is NOT minimal** — proptest hit its 192-iteration shrink limit,
+so step one is:
 
 ```sh
-taskset -c 0 perf stat -e cpu_core/cycles/u,cpu_core/instructions/u,\
-cpu_core/ld_blocks.store_forward/u,cpu_core/resource_stalls.any/u ./binary
+PROPTEST_MAX_SHRINK_ITERS=1000000 cargo test -p flow-rewrite --release --test property open_default
 ```
 
-Hybrid CPU: events need the `cpu_core/` prefix and the process must be pinned, or counters come
-back `<not counted>`. **Do not pull `cache-misses`** — exonerated twice, independently.
+Then find which pass drops it. `rewrite()` runs Inline → LiftLoops → const-fold → CSE → DCE, and
+`check_open` compares after **each** pass as well as the full pipeline, so the per-pass assertion
+message names the culprit. Suspect DCE (the trap is dead by construction) or the
+`MapArr`/`Update`/`Iota` interaction the dumped program shows.
 
-**Prerequisite: a repeat-loop bench.** The kernel is ~0.4 ms in a ~2 ms process, so counters are
-process-level. The obvious construction fails and why is recorded in session log §7 (LLVM hoists
-a loop-invariant map; a runtime fold seed de-recognises the tile site). Untried routes: a driver
-re-randomising the image between reps, or a `main` calling the kernel fn N times.
+### 2. P0 — `flow_par_wait` lets workers run ahead of the clock
 
-### 2. Finish plan-s32 (P1)
+Workers do not stop at checkpoints, so a kernel can finish before the clock meant to bracket it is
+read. 3–4% of threaded runs; one live case read **0.0001 ms** for a 1024² matmul. `FLOW_PAR=1` is
+0/100, so every single-threaded number in the repo is sound.
 
-Shipped: step 1 (pool receives sizes) and half of step 2 (the floor + deduced over-decomposition).
-Missing:
+**Do NOT retry the runtime-only dispatch ceiling.** It was built, measured and reverted;
+`plan-s33b-clock-read-barrier.md` §4 records both reasons as do-not-retry. Short version: launch
+must dispatch immediately, and **at launch the runtime does not know where the first checkpoint
+is** — only the emitter does. Make the clock read a DAG node with edges both ways.
 
-- **`work_per_element` in flow-ir** — the one legal flow-ir addition, and without it *nothing*
-  derives a size from the program itself; today's sizing comes from `TI × c` only.
-- **`width` deduction** — always emitted 0.
-- **Step 3, plan composition** — `levels` over `path_plan.deps`; `∥` apportions lanes by width
-  with `rank` as tie-break, `▸` maxes them. Not started.
-- **The five benchmark programs** (plan §4). `mixed_widths.flow` (conv2d@1024 then matmul@8192)
-  is Sapir's own case and **cannot be expressed today** — every bench is a single-site pipeline,
-  which is why the DAG rung has never been exercised.
+The sharp acceptance criterion: `watermark_wait_can_finish_before_task_completion` and
+`wait_helps_while_the_background_worker_is_busy` must pass **unmodified** — they are the guard rail
+the first attempt tripped.
 
-### 3. Cheap wins
+### 3. Then the measurement debt this creates
 
-- Fold tap 0 into an `fmul` instead of `movi` + `fmla` — 16 of 274 instructions (~6%);
-  both kernels waste it.
-- Refresh the 72 stale `benches/matmul/*.ll` (pre-existing; they predate S30b's `time` migration
-  and `regen.sh` exits 1 on the CUDA leg, which rejects `time`).
+- **Re-confirm S32's scheduling verdict** (1.41–1.43×) under a median. Every `par` minimum in
+  S28–S32 is suspect.
+- **Re-measure conv2d and fir through `shapes_ab.sh`.** The S33 figures are hand-linked; do not
+  publish them as harness numbers.
+- **matmul boundary immunity** is expected <1% but unverified at 4096.
 
-## Measurement rules (learned the hard way — session log §4)
+## Rules that bit this session (log §7)
 
-1. **Quote min, never median.** Whichever binary runs second gains 2–6% on the median and 0% on
-   the min.
-2. **Match `-march` across binaries** or the comparison is void. This flipped an i9 result from
-   1.28× to 1.55×.
-3. **Bare timings only.** `perf` costs +31…45%, **asymmetrically** between binaries.
-4. **Pin with `taskset`**; shared/hybrid hosts give bimodal results.
-5. **Static instruction counts are not dynamic ones.** Isolate the inner loop by back-edge.
+1. **Pin, always.** Two unpinned readings on the hybrid i9 produced confident wrong conclusions.
+2. **`ref-cycles`, not `cycles`, separates frequency from time.**
+3. **`cargo test` does not rebuild `target/release/libflow_rt.a`** — a stale staticlib presents
+   exactly as a fix that does nothing. `cargo build -p flow-rt --release` before any hand-linked leg.
+4. **`calloc` is not a pre-fault.** Page size is decided by alignment, not request size.
+5. **Compare ratios within one run, never against a recorded baseline.** cpp-1t fir drifted 41%
+   between sessions. I broke this rule once and the A/B refuted me.
+6. **Verify a kill.** An orphan survived a parent-only `kill` and corrupted two measurement rounds
+   (~20% on threaded cells). Assert live-process count and loadavg in the script's own output.
+7. **A test that passes wrongly is worse than none.** Three happened this session, all caught by
+   **negative control** — break the rule on purpose and check the test notices.
+8. **min for 1t, median for par** — inverted from the old rule, because this race makes *fast*
+   outliers. Reverts once P0 #2 is fixed.
 
 ## Gotchas / warnings
 
-- **The Arch i9 is the measurement machine**: `<perf-box>`, **SSH key auth
-  installed — no password needed**. No clang there: cross-compile `.ll` on the Mac
-  (`clang -target x86_64-unknown-linux-gnu -march=raptorlake -c`) and link with gcc.
-  `flow-rt` needs a standalone `Cargo.toml` (the repo's uses workspace inheritance).
-  `~/flowbench` holds the built binaries.
-- **vast.ai cannot run perf** — `CAP_PERFMON` dropped, `perf_event_paranoid=4`, `/proc/sys`
-  read-only. Its Zen 3 "7×" result is an outlier; do not cite it.
-- **`zen3` profile is unvalidated**: −1.4% on Zen 3, +0.5% on i9, both within noise.
-- **`oversub` is 1 for `Sliding` reads by design** — conv re-pays its window overlap at every
-  slice boundary. Do not "fix" this.
-- `kc_nest` stays default-OFF: it loses even past its own derived threshold (K=8192).
-- Repo lives on `/Volumes` — after any path move, `cargo clean -p` the CARGO_MANIFEST_DIR-baking
-  packages.
-- The fma legs are numerically-equal-not-byte-equal BY DESIGN.
+- **The Arch i9 is the measurement machine**, key auth, `<perf-box>`. No clang there:
+  cross-compile `.ll` on the Mac (`-target x86_64-unknown-linux-gnu -march=raptorlake`) and link
+  with gcc. `~/flowbench` (182 MB) and `~/flowbench_pre` (21 MB, the pre-`reside` runtime) are both
+  built and left in place.
+- **`reside` pins pages to the touching thread's NUMA node.** Irrelevant single-socket, live on a
+  dual-socket EPYC. A/B it or make `reside` lane-aware before any multi-socket run.
+- **The scheduler advantage is heterogeneity tolerance, not a better scheduler.** On uniform cores
+  OpenBLAS beats us — 41% on 8 P-cores. Do not restate it as a general claim.
+- **The i9 1t gap ran on the untuned `generic` profile** — some of the 20% is probably recoverable.
+- Emitted `.ll`/`.cu` are no longer tracked; `benches/matmul/regen.sh` derives its own worklist and
+  reports CUDA refusals (the `time` builtin has no CUDA seam) instead of aborting.
+- **VS Code extensions must be installed as a `.vsix`** — a copied or symlinked folder is ignored
+  *silently*, because VS Code reads `extensions.json` as its registry.
+  `python3 editors/vscode/package-vsix.py`, then `--install-extension`.
+- Editor grammars have **opposite precedence** (Vim last-match-wins, TextMate earliest-match-wins).
+  A rule added to one goes at the other end of the other. `sh editors/test.sh` after any edit.
+- **Repo is public.** The perf box address is scrubbed to `<perf-box>`; keep it that way.
+- `kc_nest` stays default-OFF; `oversub` is 1 for `Sliding` reads by design; the fma legs are
+  numerically-equal-not-byte-equal BY DESIGN.
 
 ## Standing direction (Sapir — unchanged)
 
 - **Compute-only legs; numpy in every verdict table; scale everything up.**
+- **Parallel-first by construction.**
 - **Backend-genericity contract (ADR-0032):** a rung is either a generic graph fact in a flow-ir
   query or emitter-local cashing with zero flow-ir change. flow-ir never learns machine facts.
 - **Type system = precision contracts; backend config = performance tailors.**
-- **Compile time decides the SIZES, runtime decides the ASSIGNMENT** (plan-s32 §2.5) — the rule
-  that settles what belongs in the emitter vs the pool.
+- **Compile time decides the SIZES, runtime decides the ASSIGNMENT.**
 - **Nothing goes in the README that a default build does not deliver.**
