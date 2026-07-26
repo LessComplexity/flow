@@ -5,9 +5,15 @@ compiler at `35fb681` (**pre**, the clock read on the host spine) and once at `8
 (**post**, the clock read as a pinned DAG node) — then run under an identical protocol.
 Nothing else differs: same runtime, same clang/gcc flags, same machine, same session.
 
-**Start with [`BEFORE-AFTER.md`](BEFORE-AFTER.md)** — every shape, both machines, before
+**Two generated summaries, both rebuilt from the logs below:**
+[`LANGUAGES.md`](LANGUAGES.md) — Mapal vs C++ vs Rust vs NumPy, every shape, both
+machines, post-fix (the real gap). [`BEFORE-AFTER.md`](BEFORE-AFTER.md) — every shape, both machines, before
 beside after in one table. It is generated from the logs below by
 `make_before_after.py`; regenerate with `python3 benches/results-s36/make_before_after.py`.
+
+`lang_mac.log` / `lang_i9.log` are the per-language raw runs behind `LANGUAGES.md`
+(`compare_languages.sh`, n = 30 per cell, matmul n = 5; the i9 legs all run under
+`taskset -c 0-15` so every language sees the same 8 P-cores).
 
 Machine tags (S26 standing rule):
 

@@ -1,0 +1,67 @@
+== per-language comparison (post-fix) ==
+Darwin 25.3.0 arm64
+Homebrew clang version 22.1.8
+rustc 1.95.0 (59807616e 2026-04-14)
+numpy 2.4.6
+RUNS=30  ladder N=1048576 side=1024  fir=65536 conv2d=512 matmul=1024
+
+-- build baselines
+shape      leg              min ms     median
+---------- ------------ ---------- ----------
+saxpy      mapal-1t         0.4705     0.4716
+saxpy      mapal-par        0.1538     0.1789
+saxpy      cpp-1t           0.2882     0.5573
+saxpy      cpp-mt           0.1849     0.2047
+saxpy      rust-1t          0.2111     0.3251
+saxpy      rust-mt          0.2212     0.2588
+saxpy      numpy            0.1583     0.1591
+
+reduce     mapal-1t         0.4974     0.4976
+reduce     mapal-par        0.5205     0.5458
+reduce     cpp-1t           0.4969     0.4999
+reduce     cpp-mt           0.8912     0.9207
+reduce     rust-1t          0.4978     0.5061
+reduce     rust-mt          0.1683     0.1872
+reduce     numpy            0.0978     0.1024
+
+transpose  mapal-1t         0.8337     0.8902
+transpose  mapal-par        0.2101     0.2882
+transpose  cpp-1t           0.7550     0.8362
+transpose  cpp-mt           0.2395     0.2574
+transpose  rust-1t          0.8087     0.8882
+transpose  rust-mt          0.2428     0.2675
+transpose  numpy            0.7607     0.8021
+
+gather     mapal-1t         0.4715     0.4987
+gather     mapal-par        0.1277     0.1571
+gather     cpp-1t           0.4580     0.4676
+gather     cpp-mt           0.1509     0.1764
+gather     rust-1t          0.4823     0.4870
+gather     rust-mt          0.1772     0.2046
+gather     numpy            1.9539     2.0000
+
+fir        mapal-1t         0.1202     0.1203
+fir        mapal-par        0.0377     0.0651
+fir        cpp-1t           1.0150     1.3151
+fir        cpp-mt           0.1804     0.2041
+fir        rust-1t          0.6878     0.8070
+fir        rust-mt          0.1856     0.2110
+fir        numpy            0.3529     0.3829
+
+conv2d     mapal-1t         0.0677     0.0705
+conv2d     mapal-par        0.0476     0.0628
+conv2d     cpp-1t           0.0637     0.0639
+conv2d     cpp-mt           0.1155     0.1300
+conv2d     rust-1t          0.4383     0.4514
+conv2d     rust-mt          0.1763     0.1959
+conv2d     numpy            0.3957     0.4007
+
+matmul1024 mapal-1t        30.6853    30.7631
+matmul1024 mapal-par        3.5956     3.6504
+matmul1024 cpp-1t         825.3288   825.3288
+matmul1024 cpp-mt         124.8056   124.8056
+matmul1024 rust-1t        805.4320   805.4320
+matmul1024 rust-mt        117.4593   117.4593
+matmul1024 numpy-1t         1.2863     1.2863
+matmul1024 numpy-mt         0.6869     0.6869
+COMPARISON DONE
