@@ -1,7 +1,8 @@
-# ADR-0037: The language is named **Mapal**; source files are `.mp`
+# ADR-0037: The language is named **Mapal**; source files are `.mapal`
 
 Date: 2026-07-26 (S34) · Status: **accepted — decided by Sapir 2026-07-26 ("Let's go with Mapal.
-Sounds the best")**. Number final: ADR-0037. Supersedes nothing — "Flow" was never fixed by an
+Sounds the best" · confirmed at close: "Mapal is definitive. The extension name might change")**.
+The **name** is settled; the **extension** is explicitly revisable (D4). Number final: ADR-0037. Supersedes nothing — "Flow" was never fixed by an
 ADR, which is part of what made this cheap.
 
 ## Context — what forced the decision
@@ -27,7 +28,7 @@ URLs, so inbound links survive.
 
 ## Decision
 
-**D1 — The language is `Mapal`. Source files are `.mp`.**
+**D1 — The language is `Mapal`. Source files are `.mapal` (provisional — see D4).**
 
 מפל (*mapal*) is Hebrew for **waterfall** — flow falling through stages, which is what a pass
 pipeline and a dataflow graph both are. Three properties decided it over ~150 checked
@@ -54,13 +55,44 @@ unrelated sector which has left **every software namespace open**.
 | language / project | Flow | **Mapal** |
 | implemented subset | Flow-Core | **Mapal-Core** |
 | Level-A categorical model | Flow-Cat | **Mapal-Cat** |
-| source extension | `.flow` | **`.mp`** |
+| source extension | `.flow` | **`.mapal`** (provisional, D4) |
 | CLI binary | `flow` | **`mapal`** |
 | crates | `flow-ir`, `flow-rt`, … | `mapal-ir`, `mapal-rt`, … (modules `mapal_ir`, …) |
 | runtime ABI symbols | `flow_rt_*`, `flow_par_*`, `flow_trap`, `flow_main`, `flow_print_*` | `mapal_rt_*`, `mapal_par_*`, `mapal_trap`, `mapal_main`, `mapal_print_*` |
 | environment variables | `FLOW_PAR`, `FLOW_PERF`, `FLOW_FILE`, `FLOW_SLICE`, `FLOW_LD`, `FLOW_REQUIRE_CLANG`, `FLOW_EMIT_SWEEP_MERMAID`, `FLOW_BENCH_MAX_N` | `MAPAL_*` for each |
 | editor filetype / TextMate scope | `flow` / `source.flow` | `mapal` / `source.mapal` |
 | bench leg labels | `flow-llvm-*`, `flow-cuda-*` | `mapal-llvm-*`, `mapal-cuda-*` |
+
+**D4 — The extension is `.mapal`, and it is provisional.** Sapir, 2026-07-26: *"Mapal is
+definitive. The extension name might change."* The name and the extension are therefore decided
+at different confidence levels, and this section is what a future change reads first.
+
+It took two attempts, and the failure is worth recording because a test caught it rather than a
+human:
+
+- **`.flow` → `.mp`** was the first choice — short, obvious. It is **MetaPost**. Every Vim and
+  Neovim install ships `syntax/mp.vim`, which sources METAFONT's groups and wins the filetype
+  race, so `editors/test.sh` failed 29 highlighting assertions with `mfNumeric` leaking in.
+  GitHub's Linguist would have mislabelled all 49 source files the same way. Nobody would have
+  thought to test "does the extension we picked already belong to someone" — the editor suite
+  did it for free.
+- **`.mp` → `.mapal`**, after checking the alternatives against Linguist's `languages.yml`
+  rather than guessing.
+
+| Extension | Owner | Verdict |
+| --- | --- | --- |
+| `.mapal` | unclaimed in Linguist, unclaimed in Vim | **chosen** — self-documenting, zero collision |
+| `.mal` | unclaimed | the only viable shorter option; note *mal* = "bad" in Spanish, German and French |
+| `.mp` | MetaPost (Vim, in practice) | rejected — proven broken by our own suite |
+| `.mpl` | **JetBrains MPS** (Linguist) | rejected — GitHub would label the files MPS |
+| `.ml` | **OCaml *and* Standard ML** (Linguist); Vim ships `ocaml.vim` | rejected — and the collision sits inside this project's own audience |
+| `.map` | unclaimed in Linguist, but universally source maps (`app.js.map`) and linker maps | rejected on ambiguity |
+
+**Cost of changing it later, measured rather than feared:** one scripted pass — rename 49 files,
+rewrite ~300 references, update `editors/nvim/ftdetect/mapal.vim`, `editors/vscode/package.json`,
+the test fixtures, and re-run the gate. Roughly ten minutes of machine time. Any replacement must
+be checked against Linguist's `languages.yml` *and* `$VIMRUNTIME/syntax/` first, because being
+unclaimed on crates.io says nothing about being unclaimed as a file extension.
 
 **What deliberately keeps the word "flow":** lowercase *flow* remains the name of the language
 construct — `a -> b -> c;` is a **flow statement**, and the model is a **dataflow graph**. That
@@ -86,7 +118,7 @@ lie. This ADR is the pointer that explains why.
 | crate module references | 691 |
 | runtime symbol occurrences | 1,409 |
 | environment-variable occurrences | 202 |
-| `.flow` → `.mp` source files | 49 |
+| `.flow` → `.mapal` source files | 49 |
 | living files rewritten in the docs/editor pass | 323 |
 | TextMate scope names | 83 |
 
