@@ -120,11 +120,14 @@ citing the rule it applies) and the "What is next" list in the README. Read item
 though it is done — a rewrite rule that deleted a trap, found by CI on its first run, is the
 shortest illustration of what "the interpreter defines the language" costs to honour.
 
-**Writing a new ADR.** Copy the shape of an existing one: `ADR-NNNN-slug-candidate.md`, next
-free number, `Status: candidate — NOT decided · number provisional · changes nothing until
-accepted`. Context (with repo evidence, not appeals), the decision, the alternatives you
-rejected and why, and what would falsify it. A candidate ADR binds nothing and costs nobody
-anything — it is the cheapest thing to open.
+**Writing a new ADR.** An ADR is an *Architecture Decision Record* — one file per significant
+decision, recording what was chosen, what was rejected, and why.
+[`docs/decisions/README.md`](docs/decisions/README.md) is the index: it explains the numbering,
+the status vocabulary, where ADRs sit in the authority order, and the full log. Short version:
+next free number, `ADR-NNNN-slug-candidate.md`, `Status: candidate — NOT decided · number
+provisional · changes nothing until accepted`; context argued from repo evidence rather than
+preference, the decision, the alternatives you rejected and why, and what would falsify it. A
+candidate binds nothing and costs nobody anything — it is the cheapest thing to open.
 
 ---
 

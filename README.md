@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD033 MD041 -->
 <div align = center>
 
 <img src="assets/logo-wordmark.svg" width="320" alt="Flow">
@@ -14,6 +15,7 @@
 <br>
 
 </div>
+<!-- markdownlint-enable MD033 -->
 
 # Flow
 
@@ -349,7 +351,8 @@ yet, so neither resolves names the way the compiler does (ADR-0008).
 Everything is written down, including what turned out wrong:
 
 - [`docs/STATUS.md`](docs/STATUS.md) — what is built, with test counts
-- [`docs/decisions/`](docs/decisions/) — every significant decision and the alternatives
+- [`docs/decisions/`](docs/decisions/README.md) — every significant decision and the
+  alternatives it rejected, indexed (ADR = Architecture Decision Record)
 - [`docs/performance/`](docs/performance/) — every benchmark: machine, method, failures
 - [`docs/sessions/`](docs/sessions/) — dated log of every work session, mistakes included
 
