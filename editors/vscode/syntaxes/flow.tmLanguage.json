@@ -161,13 +161,13 @@
       ]
     },
     "labels": {
-      "comment": "ADR-0012: labels carry a `:` sigil on both ends. The negative lookbehind keeps the second colon of `::` from starting a label.",
+      "comment": "ADR-0012: labels carry a `:` sigil on both ends. The negative lookbehind keeps the second colon of `::` from starting a label. SCOPE CHOICE: `entity.name.label` is the semantically obvious scope and was the first one used, but VS Code's default themes style it #C8C8C8 against an editor foreground of #CCCCCC \u2014 a 4/255 difference, i.e. it renders as plain text and reads as 'labels are not highlighted'. `keyword.control` is themed #C586C0 and is defensible: a label IS control flow, and it matches the Vim file, which links labels to `Label` (a Statement-family group most colorschemes colour distinctly). Consistency across the two editors is the tiebreaker.",
       "patterns": [
         {
           "match": "(?<!:)(:[a-zA-Z_]\\w*)(?=\\s*\\{)",
           "captures": {
             "1": {
-              "name": "entity.name.label.flow"
+              "name": "keyword.control.label.flow"
             }
           }
         },
@@ -175,7 +175,7 @@
           "match": "(?<=->)\\s*(?<!:)(:\\w+)(?=\\s*;)",
           "captures": {
             "1": {
-              "name": "entity.name.label.flow"
+              "name": "keyword.control.label.flow"
             }
           }
         }

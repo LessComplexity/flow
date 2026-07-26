@@ -20,3 +20,10 @@ fn main() {
     16 -> iota -> map { t -> t } -> arr;
     Pixel { r: 1.0, g: 2.0, b: 3.0 } -> px;
 }
+
+fn labeled() {
+    :myloop {
+        x -> y;
+        -> :myloop;
+    }
+}

@@ -95,6 +95,8 @@ CASES = [
     (18, "true", "constant.language.boolean.flow", "flowGuardBool"),
     (20, "map", "support.function.builtin.flow", "flowBuiltin"),
     (21, "Pixel", "entity.name.type.flow", "flowTypeName"),
+    (25, ":myloop", "keyword.control.label.flow", "flowLabel"),
+    (27, ":myloop", "keyword.control.label.flow", "flowLabelJump"),
 ]
 
 # Which nvim group each scope family is allowed to correspond to. Enforces that the two
@@ -107,6 +109,7 @@ FAMILY = {
     "keyword.control.return.flow": {"flowRet"},
     "constant.language.boolean.flow": {"flowGuardBool", "flowBoolean"},
     "entity.name.type.flow": {"flowTypeName", "flowGuardVariant"},
+    "keyword.control.label.flow": {"flowLabel", "flowLabelJump"},
 }
 
 
@@ -117,7 +120,8 @@ def main():
 
     for lnum, tok, want, nvim_group in CASES:
         line = lines[lnum - 1]
-        m = re.search(r"\b" + re.escape(tok) + r"\b", line)
+        # A leading `:` has no word boundary before it, so anchor on the token itself.
+        m = re.search(re.escape(tok) + r"(?![\w])", line)
         got = scope_at(line, m.start(), rules) if m else "«no token»"
         ok = got == want
         if not ok:

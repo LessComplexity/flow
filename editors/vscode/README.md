@@ -79,6 +79,13 @@ position, arrows, numbers, types, operators, and the reserved-and-rejected `cate
 
 Run `editors/test.sh` after any edit — it asserts both editors together.
 
+**Scope names have to be ones themes actually style.** Labels were first scoped
+`entity.name.label`, which is semantically right and looked broken: VS Code's default themes
+give it `#C8C8C8` against an editor foreground of `#CCCCCC`, a 4/255 difference that renders
+as plain text. They are now `keyword.control.label.flow` (`#C586C0`), which is also what the
+Vim file does — it links labels to `Label`, a Statement-family group. When picking a scope,
+check it against the theme rather than only against the grammar.
+
 **Three things to know if you edit it.**
 
 The rule that decides outcomes is **earliest match wins**, ties broken by listed order — not

@@ -37,6 +37,11 @@ local cases = {
   -- Keywords must keep outranking the binding match.
   { 18, "true", "flowGuardBool", "guard discriminant keeps its own colour" },
   { 21, "Pixel", "flowTypeName", "PascalCase stays a type, not a binding" },
+
+  -- ADR-0012 labelled blocks. Absent from this fixture until a report of them
+  -- being unhighlighted; neither suite covered them.
+  { 25, ":myloop", "flowLabel", "labelled block declaration" },
+  { 27, ":myloop", "flowLabelJump", "jump to a label" },
 }
 
 local failures = 0
@@ -45,7 +50,9 @@ for _, c in ipairs(cases) do
   local line = vim.fn.getline(lnum)
   -- Whole-word match. A plain substring search finds the `b` inside `double`,
   -- which is how the first version of this test reported a false failure.
-  local col = line:find("%f[%w_]" .. tok .. "%f[^%w_]")
+  -- A leading `:` has no word frontier before it, so match plainly in that case.
+  local col = tok:sub(1, 1) == ":" and line:find(tok, 1, true)
+    or line:find("%f[%w_]" .. tok .. "%f[^%w_]")
   local got = col and vim.fn.synIDattr(vim.fn.synID(lnum, col, 1), "name") or "«no such token»"
   if got == "" then got = "«none»" end
   if got ~= want then
