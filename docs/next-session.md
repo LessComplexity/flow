@@ -1,10 +1,21 @@
-# Next Session (S35)
+# Next Session (S36)
 
-Written: 2026-07-26 · end of S34 · by: Claude (orchestrator; category-architect skill)
-Session log: `sessions/2026-07-26-s34-mapal-rename-and-trap-deleting-rewrite.md` — **read §9
-(method notes) before any rename-shaped or measurement-shaped work.**
+Written: 2026-07-26 · end of S35 · by: Claude (orchestrator; category-architect skill)
+Session log: `sessions/2026-07-26-s35-shape-ladder-and-the-ast-question.md` — **read §9 (method
+notes) before running a gate or regenerating a snapshot.** Previous: S34
+(`sessions/2026-07-26-s34-mapal-rename-and-trap-deleting-rewrite.md`).
 
 ## Where things stand (≤6 lines)
+
+**S35 added four non-compute shape classes and corrected a false claim.** saxpy, reduce,
+transpose and gather are measured and published (losses included); the finding is that a plain
+`map` is not a tile site, so streaming kernels emit **scalar loops** — 3.7× behind naive C++ at
+one thread, hidden by threading. Separately: **the compiler does have an AST**, the README said
+it did not, and that is fixed — the accurate framing is that the syntax is a serialization of the
+execution graph and the graph is what gets optimized. CI went red mid-session on ten snapshots the
+rename invalidated; regenerated, verified against source bytes, **gate green at 971 passed**.
+
+### Previously (S34)
 
 **The project is now `Mapal`; source files are `.mapal` (ADR-0037).** S33's top P0 is closed at the
 root: `map(id) → id` judged a map body by its Return writer alone, so a body that returns its
