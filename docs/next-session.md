@@ -64,20 +64,46 @@ tracks kernel size — 0.57 at fir 65 536, **0.84** at fir 1 048 576, zero sub-0
 either. That is pool wake-up jitter. Min is trustworthy where the kernel dominates wake-up; small
 cells stay on medians for a reason unrelated to the clock (plan-s33b §7).
 
+**And say which FACE you measured.** Every table published before S36c compared Mapal's
+conformance face (zero FMA) against baselines built with `-ffp-contract=fast`. Two commands catch
+it: `grep -c "fmul contract"` on the `.ll`, `objdump | grep -c vfmadd` on the `.o`.
+
 **And check the bound, not just the threshold.** S36b's finding: the "under 0.01 ms" counter is
 calibrated to fir and missed a 1494× reading on matmul. Any par cell whose apparent speedup
 (`1t_median / par_min`) exceeds the machine's thread count is a defect, whatever its absolute
 value — `benches/results-s36/run_pinned.sh` reports min/median per cell so this is checkable at a
 glance (plan-s33b §8).
 
-### 2. P1 — streaming and permutation kernels emit scalar loops
+### 2. P0 — the two layout facts the backend hides from LLVM (S36c §3)
 
-`shape-ladder-v2.md` §finding: the saxpy task has one `fmul` and **zero q-register loads**, while
-the data-generation task in the same binary is full-width NEON. A plain `map` is not a tile site.
-Decide whether a non-tile `map` gets a vectorization rung — **plan first**, per the build flow.
-Done when saxpy 1t is within ~1.2× of naive C++.
+**This replaces "streaming kernels need a vectorization rung".** They do not need a rung; they need
+the emitter to stop hiding two facts it already proves. Both measured with A/B probes:
 
-### 3. One decision still waiting on Sapir
+- **The `%Frame` struct destroys alias analysis.** `-Rpass-analysis=loop-vectorize` says `unsafe
+  dependent memory operations`; an identical loop with two `ptr` params vectorises and the same
+  arrays as fields of one struct do not. `build_frame_layout` already proves disjointness and
+  `update_aliases` records every sharer — the plan set has no memory-disjointness fact and there
+  are zero `!alias.scope`/`!noalias` in `crates/`. **Worth 2.3× on saxpy 1t** (0.5253 → 0.2262).
+- **`iota` is an array, not an index law.** `emit_iota` materialises `[N × i32]` and `emit_map`
+  loads the index back out, so every map over an iota is an indirection. `tile_iota_size` already
+  proves the range but is private to `tile_site`. **Worth 3.1×** (0.3043 → 0.0972).
+
+Together: saxpy 1t **0.0972 vs C++ 0.0945** — parity, zero mapal-ir changes. Plan each first.
+**Correction to the S35 framing this inherited:** a plain map is NOT always scalar — a plain map
+over a contiguous i32 array is 4-wide NEON in the same binary. The scalar cases are maps over a
+**zipped** array or over an **iota**, and both layouts are ours.
+
+### 3. P1 — the recurrence question (planned, not started)
+
+`components/ir/plans/plan-s37-scan-recurrence.md` — Sapir's scan generalisation, worked through:
+one `Scan` object with `window`/`jump`/`carry`, and a **partial** `combine`/`unit` pair that exists
+exactly when the recurrence is splittable. Integers deduce structurally (ADR-0028's exact-op set,
+accepted and never built); floats need the ADR-0032 D1 precision lattice, which `Ty` does not carry.
+The trap to avoid: deducing the slice COUNT from `pool.threads` makes a float answer depend on the
+machine — the Rust baseline has exactly that bug. Steps 1–2 (integer tree reduce) need no new type
+machinery.
+
+### 4. One decision still waiting on Sapir
 
 **Halve the per-push differential cross product.** 1,391 s of a ~1,475 s Ubuntu test step — 94%.
 320 generated programs × {raw, rewritten} × {`-O0`, `-O2`} = 1,280 compile-and-runs per push.
