@@ -1164,11 +1164,23 @@ impl CategoryIr {
             }
         }
 
+        // plan-s33b: a clock read is a DAG node, not a spine instruction. It is
+        // token-bearing, so it would be host by `is_token` — but then the only
+        // ordering it has is `before` (the source-order fence below), and the
+        // tasks written AFTER it are free to start the moment their data is
+        // ready, which is before the host reaches the read. Making it a task
+        // gives it `after` too, as ordinary dependency edges (§3: one mechanism,
+        // not two). A clock inside an effectful loop region stays host —
+        // `host_loop_member` still claims it — and keeps its checkpoint.
+        let is_clock = |m: MorphismId| matches!(self.morphisms[m].op, Operation::TimeMs);
         let is_host = |m: MorphismId| {
-            is_token(m) || host_loop_member.contains_key(m) || host_cone.contains_key(m)
+            (is_token(m) && !is_clock(m))
+                || host_loop_member.contains_key(m)
+                || host_cone.contains_key(m)
         };
         let is_scalar = |m: MorphismId| {
             !is_host(m)
+                && !is_clock(m)
                 && !loop_of.contains_key(m)
                 && !matches!(
                     self.morphisms[m].op,
@@ -1225,6 +1237,10 @@ impl CategoryIr {
                             n.min(u32::MAX as u64) as u32,
                         )
                     }
+                    // plan-s33b: the read alone, never grouped with the scalar
+                    // arithmetic around it — the whole point is that its edges
+                    // fence work, and a shared task would drag that work inside.
+                    Operation::TimeMs => (TaskKind::Seq { morphisms: vec![m] }, 1),
                     _ => {
                         if scalar_seen.contains_key(m) {
                             continue;
@@ -1297,6 +1313,34 @@ impl CategoryIr {
                     .unwrap_or(0)
             })
             .collect();
+        // The mirror key, for the `after` half of a clock read's fence: the
+        // first SOURCE position a task occupies, for the same reason.
+        let task_min_loc: Vec<u32> = tasks
+            .iter()
+            .map(|task| {
+                let members: &[MorphismId] = match &task.kind {
+                    TaskKind::Split { site, .. } => std::slice::from_ref(site),
+                    TaskKind::Seq { morphisms } => morphisms,
+                };
+                members
+                    .iter()
+                    .map(|&m| self.morphisms[m].loc.start)
+                    .min()
+                    .unwrap_or(0)
+            })
+            .collect();
+        // The clock-read tasks, with the source position they fence on.
+        let clock_tasks: Vec<(TaskId, u32)> = tasks
+            .iter()
+            .enumerate()
+            .filter_map(|(task_id, task)| match &task.kind {
+                TaskKind::Seq { morphisms } => morphisms
+                    .first()
+                    .filter(|&&m| morphisms.len() == 1 && is_clock(m))
+                    .map(|&m| (task_id, self.morphisms[m].loc.start)),
+                TaskKind::Split { .. } => None,
+            })
+            .collect();
 
         // A task produces every target written by one of its morphisms. Product
         // slot writers are in the same scalar component, hence the same task.
@@ -1338,8 +1382,44 @@ impl CategoryIr {
                 {
                     task.pinned = true;
                 }
+                // The read runs on the host spine at its own topo position, the
+                // same as a trap-capable call: a worker running it would put the
+                // clock wherever the pool happened to be, which is the ordering
+                // this task exists to remove.
+                if matches!(morph.op, Operation::TimeMs) {
+                    task.pinned = true;
+                }
             }
             task.deps.sort_unstable();
+        }
+
+        // plan-s33b: the clock read's edges, both ways. `before` is the S29
+        // fence restated as dependencies — every task written entirely earlier
+        // must be Done. `after` is the half that was missing: every task written
+        // entirely later cannot be dispatched until the read has happened, so
+        // the interval `t1 - t0` is one the bracketed work cannot leave early.
+        // Source order is the key for both halves, for the reason recorded at
+        // `task_max_loc`: pure work has no dataflow relation to a clock read.
+        // The two sets are disjoint (`max < start` vs `min > start`) and a
+        // clock task is in neither of its own, so no edge can close a cycle.
+        for &(clock, start) in &clock_tasks {
+            for id in 0..tasks.len() {
+                if id == clock {
+                    continue;
+                }
+                if task_max_loc[id] < start {
+                    if !tasks[clock].deps.contains(&id) {
+                        tasks[clock].deps.push(id);
+                    }
+                } else if task_min_loc[id] > start && !tasks[id].deps.contains(&clock) {
+                    tasks[id].deps.push(clock);
+                }
+            }
+        }
+        if !clock_tasks.is_empty() {
+            for task in &mut tasks {
+                task.deps.sort_unstable();
+            }
         }
 
         // Critical-path weight to a sink. A scalar component may first appear
@@ -1381,7 +1461,14 @@ impl CategoryIr {
         let mut checkpoints = Vec::new();
         for (i, &m) in topo.iter().enumerate() {
             let morph = &self.morphisms[m];
-            let checkpoint = matches!(morph.op, Operation::Print { .. } | Operation::TimeMs)
+            // plan-s33b: a clock read that became a task carries its fence in
+            // its own dependency edges, and the emitter's pinned sequence still
+            // emits the `mapal_par_check` at this topo position — a second
+            // wait list here would be the same ordering stated twice (§3).
+            // A clock left on the spine (inside an effectful loop) keeps its
+            // checkpoint, which is the only fence it has.
+            let checkpoint = matches!(morph.op, Operation::Print { .. })
+                || matches!(morph.op, Operation::TimeMs) && !task_of.contains_key(m)
                 || matches!(morph.op, Operation::Call(_)) && is_token(m);
             if !checkpoint {
                 continue;

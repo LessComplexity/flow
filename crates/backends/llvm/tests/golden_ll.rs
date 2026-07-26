@@ -1357,21 +1357,34 @@ fn main() {
         ll.contains("declare double @mapal_time_ms()"),
         "the clock extern is declared:\n{ll}"
     );
+    assert_eq!(
+        ll.matches("call double @mapal_time_ms()").count(),
+        2,
+        "both clock reads survive, neither CSE'd nor DCE'd:\n{ll}"
+    );
     let host = mapal_main(&ll);
-    let reads: Vec<usize> = host
-        .match_indices("call double @mapal_time_ms()")
+    // plan-s33b: each read is a pinned task. It still executes on the host
+    // spine, at its own topo position — `mapal_par_run_pinned` is a host call —
+    // but as a DAG node, so the work written after it has an edge to wait on.
+    let pins: Vec<u32> = host
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("call void @mapal_par_pin(ptr %h, i32 ")
+        })
+        .map(|rest| rest.trim_end_matches(')').parse().expect("pinned task id"))
+        .collect();
+    assert_eq!(pins.len(), 2, "one pinned task per clock read:\n{host}");
+    let runs: Vec<usize> = host
+        .match_indices("call void @mapal_par_run_pinned(")
         .map(|(i, _)| i)
         .collect();
-    assert_eq!(
-        reads.len(),
-        2,
-        "both clock reads land on the host spine, neither CSE'd nor DCE'd:\n{host}"
-    );
+    assert_eq!(runs.len(), 2, "the host spine runs both reads:\n{host}");
     // The `i32 <len>` argument of the last `mapal_par_wait` before `at`.
     let wait_len = |at: usize| -> u32 {
         let w = host[..at]
             .rfind("call void @mapal_par_wait(")
-            .expect("a checkpoint wait precedes each clock read");
+            .expect("a wait precedes each clock read");
         host[w..]
             .lines()
             .next()
@@ -1384,16 +1397,25 @@ fn main() {
             .expect("wait entry count")
     };
     assert!(
-        wait_len(reads[0]) > 0,
+        wait_len(runs[0]) > 0,
         "t0 fences the generation written above the bracket:\n{host}"
     );
     assert!(
-        wait_len(reads[1]) > wait_len(reads[0]),
+        wait_len(runs[1]) > wait_len(runs[0]),
         "t1 fences that PLUS the bracketed kernel — strictly more than t0, \
          which is what makes the interval the work written between them:\n{host}"
     );
+    // The half that was missing: the bracketed work depends on t0, so it cannot
+    // be dispatched before the read that opens the bracket happens.
     assert!(
-        host.find("fsub double").expect("the elapsed subtraction") > reads[1],
+        host.contains(&format!(
+            "call void @mapal_par_dep(ptr %h, i32 {}, i32 ",
+            pins[0]
+        )),
+        "the work written after t0 waits for it:\n{host}"
+    );
+    assert!(
+        host.find("fsub double").expect("the elapsed subtraction") > runs[1],
         "the clock values' consumer cone stays on the host spine, after both reads:\n{host}"
     );
 }

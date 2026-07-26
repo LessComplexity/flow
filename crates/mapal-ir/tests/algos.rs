@@ -2753,12 +2753,13 @@ fn time_bracket_fixture() -> (mapal_ir::CategoryIr, mapal_ir::FuncId) {
 
 #[test]
 fn path_time_ms_fences_only_the_tasks_entirely_before_the_read() {
-    // plan-time-builtin composition rule 1. A `TimeMs` on the spine consumes
-    // only the token, so it has NO value producer to wait for and would read
-    // the clock while the tasks it brackets are still in flight. It therefore
-    // fences: every task written ENTIRELY before it in the SOURCE must
-    // complete. Source order, because the graph supplies none — which is what
-    // makes `t1 - t0` the work written between the two reads.
+    // plan-time-builtin composition rule 1. A `TimeMs` consumes only the token,
+    // so it has NO value producer to wait for and would read the clock while
+    // the tasks it brackets are still in flight. It therefore fences: every
+    // task written ENTIRELY before it in the SOURCE must complete. Source
+    // order, because the graph supplies none — which is what makes `t1 - t0`
+    // the work written between the two reads. plan-s33b turns the read into a
+    // task, so the fence is stated as that task's `deps`.
     let (ir, f) = time_bracket_fixture();
     let plan = ir.path_plan(f);
     let reads = func_ops(&ir, f, |op| op == Operation::TimeMs);
@@ -2769,47 +2770,82 @@ fn path_time_ms_fences_only_the_tasks_entirely_before_the_read() {
     );
     let gen_task = task_for(&plan, func_ops(&ir, f, |op| op == Operation::Iota)[0]);
     let readout = task_for(&plan, func_ops(&ir, f, |op| op == Operation::Index)[0]);
-    let checkpoint = |m: MorphismId| {
-        let topo = topo_pos(&ir, f, m);
-        plan.checkpoints
-            .iter()
-            .find(|c| c.topo == topo)
-            .expect("every TimeMs is a checkpoint")
-    };
-    let fences = |m: MorphismId, task: usize| {
-        checkpoint(m).wait.contains(&WaitEntry {
-            task,
-            threshold: None,
-        })
-    };
+    let clock = |m: MorphismId| task_for(&plan, m);
+    let fences = |m: MorphismId, task: usize| plan.tasks[clock(m)].deps.contains(&task);
 
+    // Each read is its own task, pinned to the host spine: a worker running it
+    // would put the clock wherever the pool happened to be.
+    for &m in &reads {
+        assert!(
+            plan.tasks[clock(m)].pinned,
+            "a clock read runs on the host spine"
+        );
+    }
     // t0 opens the bracket: the generation is written above it, so the read
-    // waits for its COMPLETION (threshold None, not a topo threshold) — that
-    // is what excludes generation from the interval. The kernel below it is
-    // untouched.
+    // depends on it — that is what excludes generation from the interval. The
+    // kernel below it is untouched.
     assert!(
         fences(reads[0], gen_task),
         "t0 fences the generation written above it: {:?}",
-        checkpoint(reads[0]).wait
+        plan.tasks[clock(reads[0])].deps
     );
     assert!(
         !fences(reads[0], kernel),
         "t0 does not fence the kernel it opens: {:?}",
-        checkpoint(reads[0]).wait
+        plan.tasks[clock(reads[0])].deps
     );
     // t1 closes it: the kernel is now written above, so it is fenced too.
     assert!(
         fences(reads[1], kernel) && fences(reads[1], gen_task),
         "t1 fences the bracketed kernel: {:?}",
-        checkpoint(reads[1]).wait
+        plan.tasks[clock(reads[1])].deps
     );
     // …and the fence is "written before", not "everything": the post-bracket
-    // readout task (the `y[0]` Index, written after t1) is untouched by both.
+    // readout task (the `y[0]` Index, written after t1) is in neither.
     assert!(
         !fences(reads[0], readout) && !fences(reads[1], readout),
         "neither read fences work written below it: {:?} / {:?}",
-        checkpoint(reads[0]).wait,
-        checkpoint(reads[1]).wait
+        plan.tasks[clock(reads[0])].deps,
+        plan.tasks[clock(reads[1])].deps
+    );
+}
+
+#[test]
+fn path_time_ms_holds_back_the_work_written_after_it() {
+    // plan-s33b, the half that was missing. `before` alone lets the bracketed
+    // work START before the read that opens the bracket: the moment its inputs
+    // are ready the DAG unlocks it, while the host is still walking toward the
+    // clock. `t1 - t0` then measures an interval the work has already left —
+    // measured at 6/100 threaded runs of fir 65 536 reading under 0.01 ms for a
+    // ~0.07 ms kernel. The read is a DAG node, so `after` is ordinary edges.
+    let (ir, f) = time_bracket_fixture();
+    let plan = ir.path_plan(f);
+    let reads = func_ops(&ir, f, |op| op == Operation::TimeMs);
+    let t0 = task_for(&plan, reads[0]);
+    let t1 = task_for(&plan, reads[1]);
+    let kernel = task_for(
+        &plan,
+        func_ops(&ir, f, |op| matches!(op, Operation::Map { .. }))[0],
+    );
+    let gen_task = task_for(&plan, func_ops(&ir, f, |op| op == Operation::Iota)[0]);
+    let readout = task_for(&plan, func_ops(&ir, f, |op| op == Operation::Index)[0]);
+
+    assert!(
+        plan.tasks[kernel].deps.contains(&t0),
+        "the bracketed kernel cannot be dispatched before the read that opens the bracket: {:?}",
+        plan.tasks[kernel].deps
+    );
+    assert!(
+        plan.tasks[readout].deps.contains(&t1),
+        "work written after the closing read waits for it: {:?}",
+        plan.tasks[readout].deps
+    );
+    // The generation is written above t0, so it is a dependency OF the read,
+    // never a dependent — holding it back would put it inside the interval.
+    assert!(
+        !plan.tasks[gen_task].deps.contains(&t0) && !plan.tasks[gen_task].deps.contains(&t1),
+        "work written above a read is never held by it: {:?}",
+        plan.tasks[gen_task].deps
     );
 }
 
@@ -2844,6 +2880,14 @@ fn path_time_ms_consumer_cone_stays_on_the_host_spine() {
         };
         for &m in members {
             let morph = ir.morphism(m).unwrap();
+            // plan-s33b: the READ itself is a task — pinned, so the host spine
+            // still executes it, at its own topo position, and the frame slot
+            // is written there. What must not escape is the CONSUMER cone: a
+            // pooled task reading that slot still races the write.
+            if matches!(morph.op, Operation::TimeMs) {
+                assert!(task.pinned, "the clock read stays on the host spine");
+                continue;
+            }
             assert!(
                 !clock.contains(&morph.source) && !clock.contains(&morph.target),
                 "clock-cone {:?} escaped onto a task",

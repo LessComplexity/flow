@@ -1,7 +1,10 @@
 # plan-s33b — a clock read must be a barrier in both directions
 
-Status: **OPEN. One approach built, measured, and REVERTED** — see §4. Component: `mapal-rt`
-(backend-llvm's runtime seam) **plus the emitter**, which is the finding.
+Status: **SHIPPED S36 (2026-07-27), §3 as written.** The fix landed in `mapal-ir`'s `path_plan`,
+not in the runtime or the emitter: `crates/mapal-rt/` has a zero-line diff and the emitter needed
+no new concept — the pinned-task machinery built for trap-capable calls already carried it. One
+earlier approach was built, measured and REVERTED; §4 records why, and it stays do-not-retry.
+Results and the revised acceptance are in §7.
 
 ## 1. The defect
 
@@ -105,3 +108,39 @@ that shadows the DAG (§3).
 
 The `par` numbers stay medians until check 1 passes. Nothing about this changes the 1t figures,
 which were never affected (`MAPAL_PAR=1` is 0/100 by construction).
+
+## 7. As built (S36) — results, and what acceptance 2 actually says
+
+**Where it landed.** `CategoryIr::path_plan` (`crates/mapal-ir/src/algo.rs`). A `TimeMs` morphism
+stops being host-only (`is_clock` lifts it out of `is_host`/`is_scalar`), becomes its own
+single-morphism `Seq` task with `pinned = true`, and gets edges both ways off `Morphism.loc.start`:
+tasks with `task_max_loc < start` become its `deps`, tasks with `task_min_loc > start` gain a dep
+**on** it. The two sets are disjoint and a read is in neither of its own, so no clock edge can close
+a cycle. A `TimeMs` still on the spine — inside an effectful loop region — keeps its `Checkpoint`;
+one that became a task drops it, because the pinned sequence already emits the `mapal_par_check` at
+that topo position and a second wait list would state the same ordering twice (§3).
+
+**Measured (M4 Pro, `benches/shapes/fir_65536.mapal`, `MAPAL_PAR=14`, 100 runs each):**
+
+| | readings < 0.01 ms | min | median | min/median |
+| --- | ---: | ---: | ---: | ---: |
+| before | **6/100** | 0.000125 | 0.0666 | 0.22 |
+| after | **0/100** | 0.0423 | 0.0745 | 0.57 |
+
+| # | Check | Verdict |
+| --- | --- | --- |
+| 1 | The race is gone | **MET** — 0/100 against a 6/100 baseline re-measured on the same HEAD |
+| 2 | Min usable for par | **MET as amended below** |
+| 3 | No value change | **MET** — fir prints byte-identical (`2169`/`1405`); gate green at 972 passed, 0 failed; `shapes_ab.sh` verification "baselines byte-equal; Mapal FMA rel-error ≤ 1e-4" |
+| 4 | Launch contract intact | **MET** — `crates/mapal-rt/` untouched; `watermark_wait_can_finish_before_task_completion` and `wait_helps_while_the_background_worker_is_busy` pass unmodified |
+| 5 | Cost named | **MET** — total wall time of the fir binary is unchanged (median 2.73 → 2.62 ms, min 2.44 → 2.47, n=25). The self-timed interval RISES ~12% because work that used to start before `t0` is now inside the bracket: the fix does not slow the program, it stops the measurement from excluding work it was supposed to contain |
+| 6 | S32 re-confirmed | **open** — unblocked by 1–5, but it needs the pre-S32 A/B leg rebuilt, which is its own campaign |
+
+**Acceptance 2, amended by measurement.** "Min and median within noise on every par cell" is not
+achievable and was never about this race: the residual gap tracks kernel size, because what is left
+is pool wake-up jitter. fir 65 536 (~0.07 ms of kernel) sits at min/median 0.57; fir 1 048 576
+(~0.39 ms) at **0.84**, and neither has a single sub-0.01 reading in 60–100 runs. The distribution
+is unimodal and continuous from the low tail up — a race leaves a cluster three orders of magnitude
+below the body, which is what 6/100 looked like. So the honest rule is: **min is trustworthy again
+where the kernel is large enough to dominate pool wake-up, and the tiny cells stay on medians for a
+reason that has nothing to do with the clock.**
