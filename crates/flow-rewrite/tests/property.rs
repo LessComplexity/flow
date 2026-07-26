@@ -23,6 +23,17 @@ use testgen::{Prog, Step, build, prog_strategy};
 const BUDGET: u64 = 200_000;
 const L: SourceLoc = SourceLoc { start: 0, end: 0 };
 
+/// The order `rewrite()` actually runs (driver.rs). Mirrored here so the composition
+/// bisect below walks the real pipeline rather than an invented order.
+const DEFAULT_ORDER: &[PassId] = &[
+    PassId::Inline,
+    PassId::LiftLoops,
+    PassId::ConstFold,
+    PassId::Cse,
+    PassId::Dce,
+    PassId::MapFusion,
+];
+
 const ALL: &[PassId] = &[
     PassId::ConstFold,
     PassId::Cse,
@@ -102,6 +113,24 @@ fn check_open(prog: &Prog) -> Result<(), TestCaseError> {
             prop_assert!(
                 approx_outcome(&after, before),
                 "{pass:?}: {before:?} !≈ {after:?}"
+            );
+        }
+    }
+
+    // Pass-COMPOSITION bisect. The loop above proves every pass is individually
+    // behaviour-preserving, so a pipeline failure is an INTERACTION and `full:` alone
+    // does not say between what. Walking prefixes of the real pipeline order names the
+    // shortest composition that breaks, which is the difference between a clue and an
+    // answer. Added after `open_default` failed with only `full:` to go on.
+    for n in 1..=DEFAULT_ORDER.len() {
+        let prefix = &DEFAULT_ORDER[..n];
+        let res = rewrite_with(build(prog).ir, prefix);
+        prop_assert!(validate(&res.ir).is_empty(), "prefix {prefix:?}: invalid");
+        for (arg, before) in orig.args.iter().zip(&befores) {
+            let after = eval_call(&res.ir, res.ir.entry(), arg.clone(), BUDGET);
+            prop_assert!(
+                approx_outcome(&after, before),
+                "prefix {prefix:?}: {before:?} !≈ {after:?}"
             );
         }
     }

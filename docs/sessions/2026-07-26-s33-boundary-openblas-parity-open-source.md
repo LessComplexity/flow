@@ -281,5 +281,13 @@ Code: `crates/flow-rt/src/lib.rs` (`reside`). New: `.github/workflows/ci.yml`,
 `benches/results-s33/*`, `crates/flow-rewrite/tests/property.proptest-regressions`. Removed: 112
 emitted `.ll`/`.cu`. Rewritten: `benches/matmul/regen.sh`, `README.md`.
 
-Gate: `cargo test --workspace --release` **72 suites green on macOS**; `fmt` clean; editor suites
-61 assertions green. **CI red on ubuntu-latest for §5a, deliberately.**
+Gate: **RED, deliberately.** `cargo test --workspace --release` fails in
+`flow-rewrite`'s `property::open_default` — §5a. `fmt` clean; editor suites 61 assertions green;
+every other suite green.
+
+> **Corrected at close.** This line first read "72 suites green on macOS", which was true when the
+> body of this log was written and became false the moment the proptest seed was committed —
+> pinning the counterexample turns the *local* gate red as well as CI's. Corrected rather than left
+> standing, because a wrong gate claim is exactly what a future session would rely on. Recorded
+> here instead of silently, per §7's rule that a test (or a claim) which reads green wrongly is
+> worse than none.

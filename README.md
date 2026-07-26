@@ -196,7 +196,7 @@ Clone and run the default emitter and you get the slower pair.
 | GPU backend (CUDA)     | working — 640 compile-and-runs on an RTX 4090, July 2026; **not re-validated on hardware since.** No `time` builtin           |
 | FPGA backend (Verilog) | not started                                                                                                                   |
 | Command-line tool      | **not built** — `flow` prints "not yet implemented" and exits 1                                                               |
-| Tests                  | ~950; 161 are CUDA's and skip without `nvcc`. **One known failure**, below                                                     |
+| Tests                  | ~950; 161 are CUDA's and skip without `nvcc`. **4 known failures** — one bug, four entry points, below                          |
 | CI                     | `cargo fmt` + full suite on Linux and macOS, per push. Currently **red**, for a real reason                                    |
 
 **What byte-identical covers today:** 10 examples plus 320 generated programs, raw and

@@ -11,43 +11,63 @@ included the output array's first-touch page-zeroing, which the C++ baseline pre
 own timer. Shipped `reside`; conv2d is now **1.21× ahead** of naive C++ per core on both NEON and
 AVX2. Second machine measured: on AVX2, where numpy is OpenBLAS rather than AMX, Flow's generated
 GEMM reaches **parity** (1t a flat 1.20× behind, threaded ±10%). The repo is **public** with CI.
-**CI is red, correctly** — it found a rewriter bug on its first run. 18 commits, `1daddaa..a6aa0da`.
+**Both CI and the local gate are red, correctly** — CI found a rewriter bug on its first run, and
+pinning the seed makes it reproduce locally too. 4 of 9 `flow-rewrite` property tests fail: one bug,
+four entry points, and the trigger is narrowed to **`MapFusion` in composition** (§1).
 
 ## FIRST commands (resume checks, in order)
 
 ```sh
-git log --oneline -3                  # HEAD should be a6aa0da
+git log --oneline -3                  # HEAD is the S33 close commit
 git status --short                    # expect empty
 gh run list --limit 3                 # expect RED on ubuntu-latest — that is P0 #1
-cargo test -q -p flow-rewrite --release --test property open_default   # reproduces P0 #1, ~0.2s
+cargo test -q -p flow-rewrite --release --test property   # P0 #1: expect 4 FAILED, ~0.4s
 sh editors/test.sh                    # 61 assertions, expect green
 ssh -o BatchMode=yes <perf-box> 'cat /proc/loadavg'   # the measurement machine, key auth
 ```
 
 ## S34 focus
 
-### 1. P0 — the rewriter deletes a trap that must fire
+### 1. P0 — the rewriter deletes a trap that must fire → **start at `MapFusion`**
 
 ```
-open_default: before Trapped(DivZero)  !≈  after Done(Scalar(I32(3)))
+prefix [Inline, LiftLoops, ConstFold, Cse, Dce, MapFusion]:
+    Trapped(DivZero)  !≈  Done(Scalar(I32(3)))
 ```
 
 The original traps on division by zero; after `rewrite()` it returns 3. That breaks the property
-the whole project rests on, and `dead_trapping_div_stays_trapped` already guards it by hand — the
-generator found a shape the guard misses.
+the whole project rests on. `dead_trapping_div_stays_trapped` still passes, so the generated shape
+is one the hand-written guard does not cover.
 
-**Pre-existing** (reproduces at `1daddaa`), pinned as a proptest seed so CI cannot go green on a
-lucky draw. **The counterexample is NOT minimal** — proptest hit its 192-iteration shrink limit,
-so step one is:
+**Already narrowed — do not re-derive it.** S33 added a pass-composition bisect to `check_open`,
+because the original failure said only `full:`, which is a clue rather than an answer. It
+establishes two things:
+
+- **Every pass is individually trap-preserving** (the pre-existing per-pass loop proves that).
+- **`Inline → LiftLoops → ConstFold → Cse → Dce` preserves the trap; adding `MapFusion` loses
+  it.** Prefixes 1–5 pass; prefix 6 fails.
+
+So it is an **interaction**, and **map fusion is the trigger**. Look at the fusion rule in
+`crates/flow-rewrite/src/graph_rewrites.rs`, and ask what happens when the two maps being fused
+have a body whose result is unused but whose evaluation traps — the earlier five passes are what
+put the graph into that shape.
+
+**Scope: 4 of 9 property tests fail** — `open_default`, `open_trap_free`, `closed_default`,
+`closed_trap_free`. One bug, four entry points: proptest replays the persisted seed against every
+property in the file, and each uses a different strategy.
+
+```sh
+cargo test -q -p flow-rewrite --release --test property        # all four, ~0.4s
+```
+
+The counterexample is **not minimal** (proptest hit its 192-iteration shrink limit). If the
+`MapFusion` lead does not resolve it quickly, shrink harder:
 
 ```sh
 PROPTEST_MAX_SHRINK_ITERS=1000000 cargo test -p flow-rewrite --release --test property open_default
 ```
 
-Then find which pass drops it. `rewrite()` runs Inline → LiftLoops → const-fold → CSE → DCE, and
-`check_open` compares after **each** pass as well as the full pipeline, so the per-pass assertion
-message names the culprit. Suspect DCE (the trap is dead by construction) or the
-`MapArr`/`Update`/`Iota` interaction the dumped program shows.
+**Do not un-pin the seed to get a green build.**
 
 ### 2. P0 — `flow_par_wait` lets workers run ahead of the clock
 
