@@ -7,71 +7,71 @@ LexOutput {
         Token {
             kind: Error,
             span: SourceLoc {
-                start: 208,
-                end: 211,
+                start: 209,
+                end: 212,
             },
         },
         Token {
             kind: Str,
             span: SourceLoc {
-                start: 279,
-                end: 288,
+                start: 280,
+                end: 289,
             },
         },
         Token {
             kind: Str,
             span: SourceLoc {
-                start: 347,
-                end: 360,
+                start: 348,
+                end: 361,
             },
         },
         Token {
             kind: KwCategory,
             span: SourceLoc {
-                start: 432,
-                end: 440,
+                start: 433,
+                end: 441,
             },
         },
         Token {
             kind: Ident,
             span: SourceLoc {
-                start: 441,
-                end: 444,
+                start: 442,
+                end: 445,
             },
         },
         Token {
             kind: Error,
             span: SourceLoc {
-                start: 466,
-                end: 467,
+                start: 467,
+                end: 468,
             },
         },
         Token {
             kind: Error,
             span: SourceLoc {
-                start: 502,
-                end: 503,
+                start: 503,
+                end: 504,
             },
         },
         Token {
             kind: Error,
             span: SourceLoc {
-                start: 504,
-                end: 505,
+                start: 505,
+                end: 506,
             },
         },
         Token {
             kind: Int,
             span: SourceLoc {
-                start: 605,
-                end: 631,
+                start: 607,
+                end: 633,
             },
         },
         Token {
             kind: Semi,
             span: SourceLoc {
-                start: 631,
-                end: 632,
+                start: 633,
+                end: 634,
             },
         },
         Token {
@@ -81,29 +81,29 @@ LexOutput {
                 ),
             ),
             span: SourceLoc {
-                start: 742,
-                end: 765,
+                start: 744,
+                end: 767,
             },
         },
         Token {
             kind: Ident,
             span: SourceLoc {
-                start: 766,
-                end: 767,
+                start: 768,
+                end: 769,
             },
         },
         Token {
             kind: Semi,
             span: SourceLoc {
-                start: 767,
-                end: 768,
+                start: 769,
+                end: 770,
             },
         },
         Token {
             kind: Eof,
             span: SourceLoc {
-                start: 769,
-                end: 769,
+                start: 771,
+                end: 771,
             },
         },
     ],
@@ -114,8 +114,8 @@ LexOutput {
             ),
             severity: Error,
             span: SourceLoc {
-                start: 208,
-                end: 211,
+                start: 209,
+                end: 212,
             },
             message: "unexpected character(s): `$$$`",
             fix: None,
@@ -126,8 +126,8 @@ LexOutput {
             ),
             severity: Error,
             span: SourceLoc {
-                start: 279,
-                end: 288,
+                start: 280,
+                end: 289,
             },
             message: "unterminated string literal (reached end of line or end of input before the closing `\"`)",
             fix: None,
@@ -138,8 +138,8 @@ LexOutput {
             ),
             severity: Error,
             span: SourceLoc {
-                start: 351,
-                end: 353,
+                start: 352,
+                end: 354,
             },
             message: "unknown escape sequence; character taken literally",
             fix: None,
@@ -150,15 +150,15 @@ LexOutput {
             ),
             severity: Error,
             span: SourceLoc {
-                start: 432,
-                end: 440,
+                start: 433,
+                end: 441,
             },
             message: "`category` is not a keyword in Mapal; the type-definition keyword is `type`",
             fix: Some(
                 SuggestedFix {
                     span: SourceLoc {
-                        start: 432,
-                        end: 440,
+                        start: 433,
+                        end: 441,
                     },
                     replacement: "type",
                     label: "replace `category` with `type`",
@@ -171,8 +171,8 @@ LexOutput {
             ),
             severity: Error,
             span: SourceLoc {
-                start: 466,
-                end: 467,
+                start: 467,
+                end: 468,
             },
             message: "unexpected `=`; use `<-` for binding or `==` for comparison",
             fix: None,
@@ -183,8 +183,8 @@ LexOutput {
             ),
             severity: Error,
             span: SourceLoc {
-                start: 502,
-                end: 503,
+                start: 503,
+                end: 504,
             },
             message: "unexpected `&`; Mapal uses `&&` for logical and",
             fix: None,
@@ -195,8 +195,8 @@ LexOutput {
             ),
             severity: Error,
             span: SourceLoc {
-                start: 504,
-                end: 505,
+                start: 505,
+                end: 506,
             },
             message: "unexpected `|`; Mapal uses `||` for logical or",
             fix: None,
@@ -207,8 +207,8 @@ LexOutput {
             ),
             severity: Error,
             span: SourceLoc {
-                start: 551,
-                end: 564,
+                start: 553,
+                end: 566,
             },
             message: "block comments (`/* */`) are not Mapal syntax; use line comments (`//`)",
             fix: None,
@@ -219,8 +219,8 @@ LexOutput {
             ),
             severity: Error,
             span: SourceLoc {
-                start: 605,
-                end: 631,
+                start: 607,
+                end: 633,
             },
             message: "integer literal exceeds the maximum value (u64::MAX); value clamped",
             fix: None,
@@ -231,8 +231,8 @@ LexOutput {
             ),
             severity: Error,
             span: SourceLoc {
-                start: 742,
-                end: 765,
+                start: 744,
+                end: 767,
             },
             message: "guard discriminant exceeds the maximum value (u64::MAX); value clamped",
             fix: None,

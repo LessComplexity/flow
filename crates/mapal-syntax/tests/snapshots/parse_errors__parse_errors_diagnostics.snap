@@ -2,18 +2,18 @@
 source: crates/mapal-syntax/tests/parse_errors.rs
 expression: "render_diagnostics(&src, &out.diagnostics)"
 ---
-P0012 495..498 10:1 statements are not allowed at the top level; wrap them in a function
-P0003 591..597 14:5 a bare expression is not a statement; flow it (`-> target`) or make it the block tail
-L0008 778..801 21:5 guard discriminant exceeds the maximum value (u64::MAX); value clamped
-P0004 778..801 21:5 stray guard arrow outside a guard block; `-7-> x` reads as a guard arm. If you meant a negated value flowing to a target, add a space: `-7 -> x`
-    fix 778..801 "-99999999999999999999 ->" — add a space inside the would-be guard arrow
-P0005 922..931 27:9 guard arrows are written without interior spaces
-    fix 922..931 "-true->" — remove the spaces inside the guard arrow
-P0006 1081..1090 36:9 statement mixed with guard arms in the same block; a guard block contains only arms. If you meant a guard arm, remove the space: `-7->`
-P0007 1192..1193 42:11 comparison operators are non-associative; parenthesize (e.g. `(a < b) < c`)
-P0008 1281..1283 47:12 only one `<-` binding per statement (W17); chained `<-` is not Mapal-Core
-P0009 1382..1384 52:7 `<-` cannot appear inside an expression; `i<-1` lexes as `i <- 1`. For a comparison write `i < -1`
-    fix 1382..1384 "< -" — did you mean `< -` (comparison with a negative)?
-P0010 1469..1471 57:10 empty block `{}` in stage position — classified as a zero-branch fanout
-P0001 1539..1540 61:11 expected `:` and a parameter type
-P0002 1650..1651 66:12 unclosed `{`
+P0012 496..499 10:1 statements are not allowed at the top level; wrap them in a function
+P0003 592..598 14:5 a bare expression is not a statement; flow it (`-> target`) or make it the block tail
+L0008 779..802 21:5 guard discriminant exceeds the maximum value (u64::MAX); value clamped
+P0004 779..802 21:5 stray guard arrow outside a guard block; `-7-> x` reads as a guard arm. If you meant a negated value flowing to a target, add a space: `-7 -> x`
+    fix 779..802 "-99999999999999999999 ->" — add a space inside the would-be guard arrow
+P0005 923..932 27:9 guard arrows are written without interior spaces
+    fix 923..932 "-true->" — remove the spaces inside the guard arrow
+P0006 1082..1091 36:9 statement mixed with guard arms in the same block; a guard block contains only arms. If you meant a guard arm, remove the space: `-7->`
+P0007 1193..1194 42:11 comparison operators are non-associative; parenthesize (e.g. `(a < b) < c`)
+P0008 1282..1284 47:12 only one `<-` binding per statement (W17); chained `<-` is not Mapal-Core
+P0009 1383..1385 52:7 `<-` cannot appear inside an expression; `i<-1` lexes as `i <- 1`. For a comparison write `i < -1`
+    fix 1383..1385 "< -" — did you mean `< -` (comparison with a negative)?
+P0010 1470..1472 57:10 empty block `{}` in stage position — classified as a zero-branch fanout
+P0001 1540..1541 61:11 expected `:` and a parameter type
+P0002 1651..1652 66:12 unclosed `{`

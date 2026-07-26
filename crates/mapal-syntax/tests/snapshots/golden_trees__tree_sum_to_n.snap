@@ -1,6 +1,5 @@
 ---
 source: crates/mapal-syntax/tests/golden_trees.rs
-assertion_line: 24
 expression: rendered
 ---
 12:1 Program
