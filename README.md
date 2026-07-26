@@ -37,18 +37,13 @@
 
 <!--toc:end-->
 
-**A parallel-first language: you describe _what_ to compute, the compiler works out _how_.**
+**Parallel-first programming language.** Source translates directly to a categorical
+dataflow/execution graph instead of a traditional AST -> optimisations a traditional compiler
+cannot see. Same code -> runs everywhere: CPU, GPU, FPGA, ASIC.
 
-A Mapal program is a dataflow graph. The compiler reads that graph and deduces the
-optimisation facts once — what runs concurrently, which reads repeat, which axes can be
-split, which indices are provably in bounds — then hands them to any backend. You never
-write a thread, a lock, a SIMD intrinsic, or a tuning pragma.
-
-> **The same program gives byte-identical output at `-O0` or `-O2`, on one thread or all of
-> them.** Not "close enough" — the same bits, checked against an interpreter that defines
-> what the language means.
-
-Read that as engineering discipline, not a theorem: nothing here is machine-proven.
+The graph is read once and the facts are deduced from it: what runs concurrently, which reads
+repeat, which axes split, which indices are provably in bounds -> handed to every backend.
+No threads, no locks, no intrinsics, no tuning pragmas in the source.
 
 ```flow
 fn main() {
