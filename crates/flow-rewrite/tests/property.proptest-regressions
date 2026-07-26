@@ -1,0 +1,5 @@
+# Seeds for failure cases proptest has generated. It is automatically read
+# and these particular cases re-run before any novel cases are generated.
+#
+# Found by CI (ubuntu-latest, run 30194203518) on the first run of the workflow.
+cc 83c9f34e0dd9009ae4bb231cd682d20a8674c2f2b73a79f4f1488125c57e9286

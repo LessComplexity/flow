@@ -196,8 +196,8 @@ Clone and run the default emitter and you get the slower pair.
 | GPU backend (CUDA)     | working — 640 compile-and-runs on an RTX 4090, July 2026; **not re-validated on hardware since.** No `time` builtin           |
 | FPGA backend (Verilog) | not started                                                                                                                   |
 | Command-line tool      | **not built** — `flow` prints "not yet implemented" and exits 1                                                               |
-| Tests                  | ~950 green; 161 are CUDA's and skip without `nvcc`                                                                            |
-| CI                     | `cargo fmt` + full suite on Linux and macOS, per push                                                                         |
+| Tests                  | ~950; 161 are CUDA's and skip without `nvcc`. **One known failure**, below                                                     |
+| CI                     | `cargo fmt` + full suite on Linux and macOS, per push. Currently **red**, for a real reason                                    |
 
 **What byte-identical covers today:** 10 examples plus 320 generated programs, raw and
 rewritten, at `-O0` and `-O2` against the interpreter — 1,280 comparisons per run, CPU
@@ -302,16 +302,23 @@ yet, so neither resolves names the way the compiler does (ADR-0008).
 3. ~~**Per-region scheduling**~~ — mostly done and on by default. Remaining: derive the size
    from the _program_, deduce the width, compose plans across a wide DAG
    ([plan-s32](docs/components/backend-llvm/plans/plan-s32-deduced-scheduling.md)).
-4. **A pool race** — the one item here that is a bug, not a gap. A waiting thread helps with
+4. **The rewriter can delete a trap that must fire.** Found by CI on its first run: a
+   randomised property test drew a program whose original form traps with a division by
+   zero and whose rewritten form returns `3`. That breaks the guarantee this whole page
+   rests on — the rewriter must preserve what the interpreter observes, traps included.
+   Pre-existing (reproduces at every commit tried) and now pinned as a proptest
+   regression seed, so CI stays red until it is fixed rather than passing by luck of the
+   draw. This is the highest-priority item in the project.
+5. **A pool race** — a measurement bug rather than a correctness one. A waiting thread helps with
    work past the checkpoint it waits on, so a kernel can finish before the clock bracketing
    it starts. Affects measurements only, in the direction that flatters us, which is why
    threaded figures are medians
    ([plan-s33b](docs/components/backend-llvm/plans/plan-s33b-clock-read-barrier.md)).
-5. **Matrix units** (Arm SME, Intel AMX). The cross-machine result is the argument: without
+6. **Matrix units** (Arm SME, Intel AMX). The cross-machine result is the argument: without
    a matrix unit we match OpenBLAS, so the M4's remaining gap is a different execution unit,
    not better codegen. They fix their own arithmetic ordering, so this gets an explicit
    opt-in, never a silent default.
-6. **Then GPUs in earnest**, then co-execution.
+7. **Then GPUs in earnest**, then co-execution.
 
 ---
 
