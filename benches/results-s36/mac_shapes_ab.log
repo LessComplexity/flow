@@ -1,0 +1,37 @@
+== shapes A/B ==
+clang:   Homebrew clang version 22.1.8
+rustc:   rustc 1.95.0 (59807616e 2026-04-14)
+python:  Python 3.14.5
+MAPAL_PAR=par RUNS=15 FIR_N=65536 CONV_SIDE=512
+tmp:     /Volumes/LessComplex/Personal/Flow/target/tmp/shapes_ab
+-- build baselines
+-- emit + build Mapal legs
+warning: overriding the module target triple with arm64-apple-macosx26.0.0 [-Woverride-module]
+1 warning generated.
+warning: overriding the module target triple with arm64-apple-macosx26.0.0 [-Woverride-module]
+1 warning generated.
+warning: overriding the module target triple with arm64-apple-macosx26.0.0 [-Woverride-module]
+1 warning generated.
+warning: overriding the module target triple with arm64-apple-macosx26.0.0 [-Woverride-module]
+1 warning generated.
+-- verification references
+-- timing
+
+-- results (min-of-15 ms)
+shape    leg                        min ms
+-------- -------------------- ------------
+fir:65536 mapal-conf-par           0.053459
+fir:65536 mapal-fma-par        0.043167000000000004
+fir:65536 cpp-1t                   1.129916
+fir:65536 cpp-mt                   0.188125
+fir:65536 rust-1t                  1.264875
+fir:65536 rust-mt                  0.218333
+fir:65536 numpy-1t                 0.364958
+conv2d:512 mapal-conf-par       0.049374999999999995
+conv2d:512 mapal-fma-par            0.042291
+conv2d:512 cpp-1t                   0.063875
+conv2d:512 cpp-mt                   0.104042
+conv2d:512 rust-1t                  0.431792
+conv2d:512 rust-mt                  0.156250
+conv2d:512 numpy-1t                 0.396375
+verification: baselines byte-equal; Mapal FMA rel-error <= 1e-4 -- OK

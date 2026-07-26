@@ -1,0 +1,23 @@
+== S36 mac run (pre) ==
+Darwin 25.3.0 arm64
+Apple M4 Pro
+Homebrew clang version 22.1.8
+RUNS=100
+-- link mapal legs
+
+-- mapal legs (all samples kept)
+conv2d_512 mapal-1t        min=    0.0671  median=    0.0687  max=    0.1324  n=100  sub0.01=0
+conv2d_512 mapal-par       min=    0.0001  median=    0.0485  max=    0.0952  n=100  sub0.01=8
+fir_65536 mapal-1t         min=    0.1200  median=    0.1227  max=    0.2595  n=100  sub0.01=0
+fir_65536 mapal-par        min=    0.0001  median=    0.0581  max=    0.0992  n=100  sub0.01=5
+gather_1048576 mapal-1t    min=    0.4281  median=    0.4600  max=    0.8554  n=100  sub0.01=0
+gather_1048576 mapal-par   min=    0.0500  median=    0.1370  max=    0.2207  n=100  sub0.01=0
+matmul1024_f32 mapal-1t    min=   30.7709  median=   31.2213  max=   44.5580  n=100  sub0.01=0
+matmul1024_f32 mapal-par   min=    0.0209  median=    3.6234  max=    4.0247  n=100  sub0.01=0
+reduce_1048576 mapal-1t    min=    0.4958  median=    0.4991  max=    0.9518  n=100  sub0.01=0
+reduce_1048576 mapal-par   min=    0.5014  median=    0.5343  max=    0.6530  n=100  sub0.01=0
+saxpy_1048576 mapal-1t     min=    0.4698  median=    0.4730  max=    0.9012  n=100  sub0.01=0
+saxpy_1048576 mapal-par    min=    0.1105  median=    0.1666  max=    0.2635  n=100  sub0.01=0
+transpose_1024 mapal-1t    min=    0.8266  median=    0.8580  max=    1.5675  n=100  sub0.01=0
+transpose_1024 mapal-par   min=    0.2101  median=    0.2400  max=    0.3554  n=100  sub0.01=0
+MAC DONE (pre)

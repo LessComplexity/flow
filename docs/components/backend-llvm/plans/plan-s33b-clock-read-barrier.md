@@ -136,6 +136,29 @@ that topo position and a second wait list would state the same ordering twice (�
 | 5 | Cost named | **MET** — total wall time of the fir binary is unchanged (median 2.73 → 2.62 ms, min 2.44 → 2.47, n=25). The self-timed interval RISES ~12% because work that used to start before `t0` is now inside the bracket: the fix does not slow the program, it stops the measurement from excluding work it was supposed to contain |
 | 6 | S32 re-confirmed | **open** — unblocked by 1–5, but it needs the pre-S32 A/B leg rebuilt, which is its own campaign |
 
+## 8. Cross-machine validation (S36b) — the acceptance re-checked on a second machine
+
+`benches/results-s36/` — seven shapes, each emitted by the compiler at `35fb681` (pre) and
+`896fb3c` (post) from a worktree so both binaries exist at once; n = 100 per cell; three machine
+configurations. **8,400 timed runs.**
+
+The sharp test is not the 0.01 ms counter, which is calibrated to fir and missed a **1494×**
+reading on matmul (par min 0.0209 ms against a 31.22 ms 1t median — above the threshold, so the
+counter recorded zero). A cell is *impossible* when `1t_median / par_min` exceeds the machine's
+thread count:
+
+| Configuration | impossible, PRE | impossible, POST | sub-0.01 ms, PRE | sub-0.01 ms, POST |
+| --- | ---: | ---: | ---: | ---: |
+| M4 Pro, unpinned (14) | 3 / 7 | **0 / 7** | 13 | **0** |
+| i9-14900F, unpinned (32T) | 5 / 7 | **0 / 7** | 12 | **0** |
+| i9-14900F, pinned (8P/16T) | 3 / 7 | **0 / 7** | 9 | **0** |
+
+Largest post-fix reading anywhere: gather at 11.6× on 16 hardware threads. The `MAPAL_PAR=1`
+control is unmoved on both machines (pinned box: conv2d 0.0496 → 0.0503, matmul 17.3485 → 17.3874)
+and all seven shapes print byte-identical output pre and post. Acceptance 1 and 3 therefore hold on
+a second architecture, and acceptance 2's amendment below is confirmed there: the residual par
+spread tracks kernel size and pool dispatch, and both ends of it are physically reachable.
+
 **Acceptance 2, amended by measurement.** "Min and median within noise on every par cell" is not
 achievable and was never about this race: the residual gap tracks kernel size, because what is left
 is pool wake-up jitter. fir 65 536 (~0.07 ms of kernel) sits at min/median 0.57; fir 1 048 576

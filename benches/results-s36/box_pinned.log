@@ -1,0 +1,36 @@
+== pinned box run (post, P-cores 0-15) ==
+ 22:15:40 up  1:05,  2 users,  load average: 0.14, 0.33, 0.19
+conv2d_512 1t@P-core         min=   0.0492  median=   0.0503  max=   0.2896  min/med=0.980  n=100  sub0.01=0
+conv2d_512 par@8P            min=   0.0173  median=   0.1047  max=   0.1808  min/med=0.165  n=100  sub0.01=0
+fir_65536 1t@P-core          min=   0.1029  median=   0.1076  max=   0.5845  min/med=0.956  n=100  sub0.01=0
+fir_65536 par@8P             min=   0.0218  median=   0.1342  max=   0.2340  min/med=0.162  n=100  sub0.01=0
+gather_1048576 1t@P-core     min=   2.0651  median=   2.1011  max=  10.3879  min/med=0.983  n=100  sub0.01=0
+gather_1048576 par@8P        min=   0.1809  median=   0.7575  max=   1.4879  min/med=0.239  n=100  sub0.01=0
+matmul1024_f32 1t@P-core     min=  16.4923  median=  17.3874  max=  25.1804  min/med=0.949  n=100  sub0.01=0
+matmul1024_f32 par@8P        min=   2.5101  median=   2.6634  max=   2.8133  min/med=0.942  n=100  sub0.01=0
+reduce_1048576 1t@P-core     min=   0.3836  median=   0.3839  max=   0.4625  min/med=0.999  n=100  sub0.01=0
+reduce_1048576 par@8P        min=   0.3911  median=   1.9762  max=   2.0471  min/med=0.198  n=100  sub0.01=0
+saxpy_1048576 1t@P-core      min=   0.4982  median=   0.5202  max=   0.9328  min/med=0.958  n=100  sub0.01=0
+saxpy_1048576 par@8P         min=   0.0955  median=   0.4945  max=   0.7828  min/med=0.193  n=100  sub0.01=0
+transpose_1024 1t@P-core     min=   2.6919  median=   2.7488  max=   7.5778  min/med=0.979  n=100  sub0.01=0
+transpose_1024 par@8P        min=   0.3356  median=   0.8322  max=   1.4271  min/med=0.403  n=100  sub0.01=0
+ 22:15:48 up  1:05,  2 users,  load average: 0.27, 0.35, 0.19
+PINNED DONE (post)
+== pinned box run (pre, P-cores 0-15) ==
+ 22:15:48 up  1:05,  2 users,  load average: 0.27, 0.35, 0.19
+conv2d_512 1t@P-core         min=   0.0486  median=   0.0496  max=   0.2642  min/med=0.980  n=100  sub0.01=0
+conv2d_512 par@8P            min=   0.0005  median=   0.0789  max=   0.1952  min/med=0.006  n=100  sub0.01=5
+fir_65536 1t@P-core          min=   0.1024  median=   0.1080  max=   0.5622  min/med=0.948  n=100  sub0.01=0
+fir_65536 par@8P             min=   0.0007  median=   0.1101  max=   0.2225  min/med=0.007  n=100  sub0.01=4
+gather_1048576 1t@P-core     min=   2.0652  median=   2.0950  max=   8.6325  min/med=0.986  n=100  sub0.01=0
+gather_1048576 par@8P        min=   0.1785  median=   0.8022  max=   1.5428  min/med=0.223  n=100  sub0.01=0
+matmul1024_f32 1t@P-core     min=  16.4812  median=  17.3485  max=  19.8792  min/med=0.950  n=100  sub0.01=0
+matmul1024_f32 par@8P        min=   2.2026  median=   2.6467  max=   2.8885  min/med=0.832  n=100  sub0.01=0
+reduce_1048576 1t@P-core     min=   0.3632  median=   0.3832  max=   0.4321  min/med=0.948  n=100  sub0.01=0
+reduce_1048576 par@8P        min=   0.3770  median=   1.9493  max=   2.2889  min/med=0.193  n=100  sub0.01=0
+saxpy_1048576 1t@P-core      min=   0.5243  median=   0.5477  max=   1.7105  min/med=0.957  n=100  sub0.01=0
+saxpy_1048576 par@8P         min=   0.1168  median=   0.4519  max=   0.8817  min/med=0.258  n=100  sub0.01=0
+transpose_1024 1t@P-core     min=   2.6993  median=   2.7577  max=   7.4819  min/med=0.979  n=100  sub0.01=0
+transpose_1024 par@8P        min=   0.0465  median=   0.7689  max=   1.7972  min/med=0.060  n=100  sub0.01=0
+ 22:15:55 up  1:05,  2 users,  load average: 0.33, 0.36, 0.20
+PINNED DONE (pre)

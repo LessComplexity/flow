@@ -1,0 +1,42 @@
+== shape ladder v2 A/B ==
+clang:  Homebrew clang version 22.1.8
+python: Python 3.14.5
+N=1048576 SIDE=1024 RUNS=15
+Darwin arm64
+-- build baselines
+-- emit + build Mapal legs
+warning: overriding the module target triple with arm64-apple-macosx26.0.0 [-Woverride-module]
+1 warning generated.
+warning: overriding the module target triple with arm64-apple-macosx26.0.0 [-Woverride-module]
+1 warning generated.
+warning: overriding the module target triple with arm64-apple-macosx26.0.0 [-Woverride-module]
+1 warning generated.
+warning: overriding the module target triple with arm64-apple-macosx26.0.0 [-Woverride-module]
+1 warning generated.
+
+shape      leg                    ms
+---------- -------------- ----------
+saxpy      mapal-1t           0.5411
+saxpy      mapal-par          0.1829
+saxpy      cpp-1t             0.2929
+saxpy      cpp-mt             0.1547
+saxpy      numpy              0.1745
+
+reduce     mapal-1t           0.6195
+reduce     mapal-par          0.5891
+reduce     cpp-1t             0.4969
+reduce     cpp-mt             0.8762
+reduce     numpy              0.0988
+
+transpose  mapal-1t           0.9599
+transpose  mapal-par          0.2545
+transpose  cpp-1t             0.7760
+transpose  cpp-mt             0.2492
+transpose  numpy              0.7624
+
+gather     mapal-1t           0.5261
+gather     mapal-par          0.1530
+gather     cpp-1t             0.4598
+gather     cpp-mt             0.1494
+gather     numpy              1.9563
+

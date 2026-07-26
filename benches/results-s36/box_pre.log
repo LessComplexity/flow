@@ -1,0 +1,32 @@
+== S36 box run (pre, /home/lesscomplex/s36bench_pre) ==
+Linux 7.1.3-arch1-2 x86_64
+32
+model name	: Intel(R) Core(TM) i9-14900F
+gcc (GCC) 16.1.1 20260625
+ 22:13:41 up  1:03,  2 users,  load average: 0.75, 0.45, 0.20
+RUNS=100
+-- link mapal legs
+
+-- mapal legs (all samples kept)
+conv2d_512 mapal-1t        min=    0.0553  median=    0.2825  max=    0.8228  n=100  sub0.01=0
+conv2d_512 mapal-par       min=    0.0009  median=    0.1386  max=    0.7305  n=100  sub0.01=3
+fir_65536 mapal-1t         min=    0.4226  median=    0.5793  max=    1.4487  n=100  sub0.01=0
+fir_65536 mapal-par        min=    0.0008  median=    0.1632  max=    0.4429  n=100  sub0.01=7
+gather_1048576 mapal-1t    min=    2.2162  median=    9.3537  max=   12.4802  n=100  sub0.01=0
+gather_1048576 mapal-par   min=    0.1386  median=    0.8162  max=    1.3968  n=100  sub0.01=0
+matmul1024_f32 mapal-1t    min=   16.5026  median=   19.7328  max=   36.7255  n=100  sub0.01=0
+matmul1024_f32 mapal-par   min=    0.0008  median=    9.1033  max=   11.6728  n=100  sub0.01=2
+reduce_1048576 mapal-1t    min=    0.3877  median=    1.8797  max=    3.2764  n=100  sub0.01=0
+reduce_1048576 mapal-par   min=    1.8125  median=    1.9982  max=    4.0680  n=100  sub0.01=0
+saxpy_1048576 mapal-1t     min=    0.5076  median=    1.7606  max=    3.2372  n=100  sub0.01=0
+saxpy_1048576 mapal-par    min=    0.3136  median=    0.7204  max=    0.9221  n=100  sub0.01=0
+transpose_1024 mapal-1t    min=    1.6670  median=    7.5462  max=   14.9252  n=100  sub0.01=0
+transpose_1024 mapal-par   min=    0.1150  median=    0.9616  max=    1.5574  n=100  sub0.01=0
+
+-- cleanliness
+ 22:13:57 up  1:04,  2 users,  load average: 0.80, 0.48, 0.22
+%CPU COMMAND
+ 1.0 nordvpnd
+ 0.2 tailscaled
+ 0.1 containerd
+BOX DONE (pre)
