@@ -266,6 +266,102 @@ fn dead_trapping_div_stays_trapped() {
     );
 }
 
+/// A map body that returns its parameter *and* computes a dead trapping `Div`
+/// denotes `id ∘ trap`, not `id` — so `map(id) → id` must NOT fire and delete it
+/// (S34, `plan-s34-identity-map-trap.md`). This is the hand-written form of the
+/// proptest counterexample: there, `proj₀ ∘ pack` folded to the parameter first,
+/// which is how a body reaches identity shape with a live trap still in it.
+#[test]
+fn identity_map_body_with_dead_trap_stays_trapped() {
+    let mut b = IrBuilder::new();
+    let body = b
+        .declare(FuncKind::MapBody, "id_with_trap", Ty::i32(), Ty::i32(), L)
+        .unwrap();
+    {
+        let mut fb = b.build_fn(body).unwrap();
+        let x = fb.input();
+        let zero = fb.constant(Value::I32(0), L).unwrap();
+        // Dead inside the body, and impure: DCE keeps it (R4), so must fusion.
+        let _dead = fb
+            .binop(Operation::Div, x, zero, Dest::Fresh(None), L)
+            .unwrap();
+        fb.output(x, None, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let f = b
+        .declare(FuncKind::Named, "main", Ty::Unit, Ty::i32(), L)
+        .unwrap();
+    {
+        let mut fb = b.build_fn(f).unwrap();
+        let n = fb.constant(Value::I32(4), L).unwrap();
+        let arr = fb.iota(n, Dest::Fresh(None), L).unwrap();
+        let mapped = fb.map(body, arr, Dest::Fresh(None), L).unwrap();
+        let zero = fb.constant(Value::I32(0), L).unwrap();
+        let elem = fb.index(mapped, zero, Dest::Fresh(None), L).unwrap();
+        fb.output(elem, None, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(f).unwrap();
+    assert!(matches!(
+        run(&ir, BUDGET).outcome,
+        Outcome::Trapped(TrapKind::DivZero)
+    ));
+
+    let res = rewrite(ir);
+    assert!(validate(&res.ir).is_empty());
+    assert!(
+        matches!(
+            run(&res.ir, BUDGET).outcome,
+            Outcome::Trapped(TrapKind::DivZero)
+        ),
+        "map(id) eliminated a body whose dead Div must trap: {:?}",
+        res.report.applied
+    );
+}
+
+/// The positive control for the guard above: a genuinely pure identity body IS
+/// still forwarded (`map(id) → id`), so the arm keeps its reason to exist.
+#[test]
+fn pure_identity_map_is_still_eliminated() {
+    let mut b = IrBuilder::new();
+    let body = b
+        .declare(FuncKind::MapBody, "ident", Ty::i32(), Ty::i32(), L)
+        .unwrap();
+    {
+        let mut fb = b.build_fn(body).unwrap();
+        let x = fb.input();
+        fb.output(x, None, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let f = b
+        .declare(FuncKind::Named, "main", Ty::Unit, Ty::i32(), L)
+        .unwrap();
+    {
+        let mut fb = b.build_fn(f).unwrap();
+        let n = fb.constant(Value::I32(4), L).unwrap();
+        let arr = fb.iota(n, Dest::Fresh(None), L).unwrap();
+        let mapped = fb.map(body, arr, Dest::Fresh(None), L).unwrap();
+        let zero = fb.constant(Value::I32(0), L).unwrap();
+        let elem = fb.index(mapped, zero, Dest::Fresh(None), L).unwrap();
+        fb.output(elem, None, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(f).unwrap();
+    let before = run(&ir, BUDGET);
+
+    let res = rewrite(ir);
+    assert!(validate(&res.ir).is_empty());
+    assert!(
+        res.report
+            .applied
+            .iter()
+            .any(|&(p, n)| p == PassId::MapFusion && n > 0),
+        "map(id) no longer fires on a pure identity body: {:?}",
+        res.report.applied
+    );
+    assert!(approx(&run(&res.ir, BUDGET), &before));
+}
+
 /// Two independent traps: the run traps regardless of rebuild-order permutation
 /// (`Trapped(k₁) ≈ Trapped(k₂)`).
 #[test]

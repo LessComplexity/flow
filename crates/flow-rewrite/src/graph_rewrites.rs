@@ -78,7 +78,12 @@ pub fn analyze_dce(ir: &CategoryIr) -> RewritePlan {
 /// Whether `op` is a pure, total value op: its only effect is its result, it
 /// never traps and never diverges (DESIGN §3.1 "always removable" row). `Div`,
 /// `Mod`, `Index`, `Call`, `Map`, `Fold`, `Print` are conservatively impure.
-fn is_pure(op: Operation) -> bool {
+///
+/// The crate's single "pure and total" predicate: DCE uses it to decide what a
+/// dead cone may drop, and [`crate::functor_laws`] uses it to decide whether a
+/// map body denotes the *identity morphism* — the same question, so the same
+/// list. Two lists would drift, and a drift here deletes observable behaviour.
+pub(crate) fn is_pure(op: Operation) -> bool {
     use Operation::*;
     matches!(
         op,

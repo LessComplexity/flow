@@ -1,5 +1,13 @@
 # Next Session (S34)
 
+> **S34 UPDATE (2026-07-26, in progress): item 1 below is DONE — the gate is green.** The
+> deleter was the `map(id) → id` arm, not fusion: `is_identity_body` judged a body by its Return
+> writer alone, so `id + dead trapping Div` read as the identity and the whole `Map` was aliased
+> away. Guard now quantifies over the body's whole morphism set via the shared
+> `graph_rewrites::is_pure`. All four entry points were one bug; seed retained; negative-
+> controlled. See `components/rewrite/plans/plan-s34-identity-map-trap.md`. Item 2
+> (`flow_par_wait` clock race) is untouched and is now the top P0.
+
 Written: 2026-07-26 · end of S33 · by: Claude (orchestrator; category-architect skill)
 Session log: `sessions/2026-07-26-s33-boundary-openblas-parity-open-source.md` — **read §5 and §7
 before touching either P0.**

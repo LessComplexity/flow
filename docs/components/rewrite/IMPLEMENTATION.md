@@ -1,7 +1,7 @@
 # rewrite — implementation map
 
 > The functor DESIGN.md ("Categorical model") → code (ADR-0017). Rows updated WITH
-> the model and the code, in the same change (FRAMEWORK §6.3). Last: 2026-07-25 · S29 (`TimeMs` replay arm — identity only, no pass plans it). Previously 2026-07-24 · S27b (`LiftLoops` shipped after Inline; R-LF/R-LM plan+replay; matmul4 reaches `tile_plan`). Previously S27 (Inline default-first; loop-bearing-callee guard; cap 256; body Call stripping).
+> the model and the code, in the same change (FRAMEWORK §6.3). Last: 2026-07-26 · S34 (`map(id) → id` read the Return writer only and deleted trapping bodies — the P0; `is_pure` is now the crate-wide purity predicate, shared by DCE and the identity law). Previously 2026-07-25 · S29 (`TimeMs` replay arm — identity only, no pass plans it). Previously 2026-07-24 · S27b (`LiftLoops` shipped after Inline; R-LF/R-LM plan+replay; matmul4 reaches `tile_plan`). Previously S27 (Inline default-first; loop-bearing-callee guard; cap 256; body Call stripping).
 
 ## Objects (Dat) → code
 
@@ -24,7 +24,7 @@
 | `analyze_const_fold` | `&CategoryIr → RewritePlan` (layer 3: oracle-exact folds, integer/bool identities, proj∘pack, index-of-const, **index∘update L-a (ADR-0021 §3: const equal in-bounds indices ⇒ alias to the Update value operand)**, phi-select; P1/P2 + token guard in `forward`) | `src/equations.rs:analyze_const_fold` | built |
 | `analyze_cse` | `&CategoryIr → RewritePlan` (layer 4: value numbering, BTreeMap string keys, positions not id bits; excludes non-Temporary/token/SCC/internal-pack; **no constant dedup** — P1, headroom) | `src/graph_rewrites.rs:analyze_cse` | built |
 | `analyze_dce` | `&CategoryIr → RewritePlan` (layer 4: backward liveness from keep-roots {Returns, SCC objects (RW11), non-pure results (R4), LoopExit targets}; pure-only removal — conservative as-built) | `src/graph_rewrites.rs:analyze_dce` | built |
-| `analyze_map_fusion` | `&CategoryIr → RewritePlan` (layer 1: out-degree-1 Map∘Map with loop-free + single-full-writer bodies (P3); map(id) → alias under P1/P2) | `src/functor_laws.rs:analyze_map_fusion` | built |
+| `analyze_map_fusion` | `&CategoryIr → RewritePlan` (layer 1: out-degree-1 Map∘Map with loop-free + single-full-writer bodies (P3); map(id) → alias under P1/P2. **S34: `is_identity_body` quantifies over the body's WHOLE morphism set** — Return writer `Output(param)` *and* every other owned morphism `Output`/`Pair`/`is_pure`; a body that also traps denotes `id ∘ trap : A ⇀ A`, not `id_A`) | `src/functor_laws.rs:{analyze_map_fusion,is_identity_body}` | built |
 | `analyze_inline` | `&CategoryIr → RewritePlan` (mark a `Call` site iff callee morphisms ≤ `INLINE_MAX_BODY` ∧ callee ≠ entry ∧ **callee loop-free** (`loop_structure(g).is_empty()` — nested-SCC prevention, S27) ∧ no `Call` cycle; Calls inside Map/Fold body fns ARE planned (graph-wide walk); the Map/Fold morphisms themselves never elaborated. **S27: in the default `rewrite()` list, first**) | `src/inline.rs:analyze_inline` | built |
 | `analyze_lift` | `&CategoryIr → RewritePlan` (consume `loop_plan`; R-LF/R-LM exact two-component state, const `K >= 1`, 0/+1 counter, pure/token-free cone, exact exit; map additionally one identity `Update`, c-free value, `n == K`; `covers_loop_body` rejects unselected decide/advance work before whole-SCC replacement; key `lift` by merge) | `src/lift.rs:analyze_lift` | built |
 | `replay` | `(&CategoryIr, &RewritePlan) ⇀ CategoryIr` (recipe classification §1.1; **S29: `TimeMs` rebuilt via `fb.time_ms(feed(src))` — the bare token source, `dest` unused, exactly the `Print` shape**; loop quartet facts delegated to `flow_ir::CategoryIr::loop_plan`; fused and lifted body synthesis; lift replay mints count object + `Iota`, captured Map/Fold, marks old SCC/routes complete; call substitution via `inline_call`/`inline_return`; fn-level DCE via post-plan reference liveness) | `src/replay.rs:replay` (+ `synthesize_lifted_body`, `reconstruct_lifted_loop`, `emit_lifted_return`) | built |
@@ -45,6 +45,18 @@
 | bench | `benches/rewrite_scale.rs` |
 
 ## Notes / divergences
+
+**S34 — the identity law was checked at the wrong scope.** `map(id) → id` asked only what the
+body *returns*. But the oracle evaluates a body's whole graph — which is precisely why
+`analyze_dce` pins impure dead cones live (R4) — so a body returning its parameter while also
+computing `x / x` denotes `id ∘ trap`, a **partial** morphism. Eliminating that map deleted the
+trap: `Trapped(DivZero)` → `Done(0)`. The two halves of the crate now agree by construction —
+`graph_rewrites::is_pure` is `pub(crate)` and both DCE ("may this dead cone go?") and the
+identity law ("does this body denote `id`?") read the same list, because they are the same
+question. Cost: a body containing `Widen`/`Iota`/`Fill` (total, but outside `is_pure`) no
+longer forwards. Admitting them is a separate, testable change; refusing a legal rewrite costs
+an optimisation, allowing an illegal one costs R1. Full account:
+`plans/plan-s34-identity-map-trap.md`.
 
 **S29 — `TimeMs` needed one line of code and no rule.** The clock read is excluded from every
 pass by predicates that already existed: `graph_rewrites.rs:is_pure` is an allow-list (`TimeMs`

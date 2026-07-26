@@ -17,6 +17,7 @@ use slotmap::SecondaryMap;
 
 use flow_ir::{CategoryIr, FuncId, MorphismId, ObjectId, ObjectKind, Operation};
 
+use crate::graph_rewrites::is_pure;
 use crate::plan::{FusionSpec, RewritePlan};
 
 /// Analyze `ir` for the two layer-1 functor laws (DESIGN §4).
@@ -144,18 +145,38 @@ pub fn analyze_map_fusion(ir: &CategoryIr) -> RewritePlan {
     plan
 }
 
-/// Whether `body` is exactly the identity `MapBody`: its Return has a single
-/// `Output` writer whose source is the body's own input Parameter.
+/// Whether `body` **denotes the identity morphism**: its Return has a single
+/// `Output` writer sourced from the body's own input Parameter, *and* every other
+/// morphism it owns is pure and total.
+///
+/// The second half is not belt-and-braces — it is the law's precondition. The
+/// oracle evaluates a body's whole graph (which is why DCE pins impure dead cones
+/// live, R4), so a body that returns its parameter *and* computes a dead `x / x`
+/// denotes `id ∘ trap : A ⇀ A`, not `id_A`. Eliminating that map deletes the
+/// trap — a proptest counterexample did exactly that (S34,
+/// `plans/plan-s34-identity-map-trap.md`): `Trapped(DivZero)` became `Done(0)`.
+///
+/// `Pair` is admitted as structural (a product build has no observable of its
+/// own). `Widen`/`Iota`/`Fill` are total and would be admissible, but they are
+/// outside [`is_pure`]; refusing a legal rewrite costs an optimisation, allowing
+/// an illegal one costs the guarantee.
 fn is_identity_body(ir: &CategoryIr, body: FuncId) -> bool {
     let def = match ir.func(body) {
         Some(d) => d,
         None => return false,
     };
     let ins = ir.in_edges(def.output);
-    ins.len() == 1 && {
-        let m = ir.morphism(ins[0]).expect("ret in-edge");
-        m.op == Operation::Output && m.source == def.input
+    if ins.len() != 1 {
+        return false;
     }
+    let m = ir.morphism(ins[0]).expect("ret in-edge");
+    if m.op != Operation::Output || m.source != def.input {
+        return false;
+    }
+    def.morphisms.iter().all(|&mm| {
+        let op = ir.morphism(mm).expect("body morphism").op;
+        matches!(op, Operation::Output | Operation::Pair { .. }) || is_pure(op)
+    })
 }
 
 /// Whether `body`'s Return has exactly one writer and it is a full-value writer
