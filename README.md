@@ -4,6 +4,17 @@
 
 # Flow
 
+<!-- The license badge is static on purpose: GitHub reports NOASSERTION for
+     Apache-2.0 WITH LLVM-exception, so shields' dynamic one reads "not
+     identifiable by github". The exception is real and the badge should say so. -->
+<p align="center">
+  <a href="https://github.com/LessComplexity/flow/actions/workflows/ci.yml"><img alt="build status" src="https://img.shields.io/github/actions/workflow/status/LessComplexity/flow/ci.yml?branch=main&style=flat-square&label=build&labelColor=1e293b"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0_WITH_LLVM--exception-14b8a6?style=flat-square&labelColor=1e293b"></a>
+  <a href="https://github.com/LessComplexity/flow/search?l=rust"><img alt="top language" src="https://img.shields.io/github/languages/top/LessComplexity/flow?style=flat-square&color=14b8a6&labelColor=1e293b"></a>
+  <a href="https://github.com/LessComplexity/flow/issues"><img alt="open issues" src="https://img.shields.io/github/issues/LessComplexity/flow?style=flat-square&color=14b8a6&labelColor=1e293b"></a>
+  <a href="https://github.com/LessComplexity/flow/pulls"><img alt="open pull requests" src="https://img.shields.io/github/issues-pr/LessComplexity/flow?style=flat-square&color=14b8a6&labelColor=1e293b"></a>
+</p>
+
 <!--toc:start-->
 
 - [Flow](#flow)
