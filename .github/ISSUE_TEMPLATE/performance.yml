@@ -1,0 +1,79 @@
+name: Performance / measurement
+description: A slow path, a benchmark you cannot reproduce, or a number in this repo you believe is wrong.
+labels: ["performance"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Numbers here are treated as claims that can be refuted, including ours. If you think one
+        is wrong, this is the right form — bring the control that refutes it.
+
+        The house rules (CONTRIBUTING → *Proving a performance change*): **pin the CPU**;
+        **min for single-threaded cells, median for threaded ones**; **compare ratios inside one
+        run**, never against a number from another session; time the **kernel**, not the harness,
+        on both legs.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of report is this
+      options:
+        - A number in this repo does not reproduce for me
+        - A number in this repo is measured wrongly
+        - Flow is slower than X on this shape
+        - A change I want to propose, with measurements
+    validations:
+      required: true
+
+  - type: input
+    id: claim
+    attributes:
+      label: Which claim
+      description: The README row, the `docs/performance/` table, or the benchmark you are talking about.
+      placeholder: "README → Matrix multiply f32 M4 Pro, 1024² row"
+    validations:
+      required: true
+
+  - type: textarea
+    id: machine
+    attributes:
+      label: Machine
+      description: CPU/GPU model, core layout (P/E split if hybrid), RAM, OS, governor or power mode. Container? State the CPU quota.
+    validations:
+      required: true
+
+  - type: textarea
+    id: method
+    attributes:
+      label: Method
+      description: The exact commands. Runs per cell, statistic used, pinning, what was inside the timed window, how the two legs were interleaved.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: numbers
+    attributes:
+      label: Numbers
+      description: Both legs, raw. Include the cells where your side loses — a table with only wins is not a measurement.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected
+    attributes:
+      label: Which published numbers this affects
+      description: If you are right, which README rows or `docs/performance/` tables become stale? Say "none" if none.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Method check
+      options:
+        - label: The CPU was pinned (or I say below why it could not be).
+        - label: Single-threaded cells are minima; threaded cells are medians.
+        - label: Both legs ran on the same machine in the same session.
+        - label: I rebuilt everything the legs link (`cargo build -p flow-rt --release` for a hand-linked leg — `cargo test` does not rebuild it).

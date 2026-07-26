@@ -1,0 +1,69 @@
+name: Proposal (language, op, backend, algorithm)
+description: Something Flow should be able to do, or should do differently. The step before an ADR.
+labels: ["proposal"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Proposals are welcome and unclaimed — recursion, modules, closures, sum types, a new
+        backend, a different scheduling or blocking algorithm. **Check `docs/decisions/` first:**
+        most of the interesting ideas already have an ADR arguing both sides, and picking one of
+        those up is more useful than restarting it.
+
+        A proposal that survives becomes an ADR (`ADR-NNNN-slug-candidate.md`, status *candidate*,
+        binds nothing until accepted). This form is the sketch that decides whether to write one.
+
+  - type: input
+    id: existing
+    attributes:
+      label: Existing ADR
+      description: Which ADR covers this, if any — link it. "None found" is a fine answer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What it adds, and what forces it
+      description: The concrete gap, with repo evidence — a program you cannot write, a rejection you hit, a measured wall. Not "it would be nice to have".
+    validations:
+      required: true
+
+  - type: textarea
+    id: model
+    attributes:
+      label: The model
+      description: |
+        Sketch it the way this project designs (FRAMEWORK.md). Objects and morphisms with
+        signatures (`f : A → B`), which are partial, which are *deduced* rather than stored. For
+        anything physical, say which `Loc` it runs at and which `Trm` carries the data there.
+        A morphism table beats three paragraphs.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: surface
+    attributes:
+      label: Surface, if it changes the language
+      description: How it is written in `.flow`, and what the interpreter does with it — the oracle has to define it before any backend can emit it.
+      render: text
+
+  - type: textarea
+    id: cost
+    attributes:
+      label: Cost, and what would falsify it
+      description: What this makes harder, which invariant it strains (byte-identical output, trap preservation, Core scope in HANDOFF §4), and what evidence would show it is the wrong idea.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: implement
+    attributes:
+      label: Would you implement it?
+      options:
+        - Yes, I want to build it
+        - Yes, if someone confirms the direction first
+        - No — proposing only
+    validations:
+      required: true

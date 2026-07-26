@@ -336,6 +336,13 @@ Everything is written down, including what turned out wrong:
 - [`docs/performance/`](docs/performance/) — every benchmark: machine, method, failures
 - [`docs/sessions/`](docs/sessions/) — dated log of every work session, mistakes included
 
+**Contributing:** [`CONTRIBUTING.md`](CONTRIBUTING.md) — the model-first workflow, the
+measurement rules, and the [open ADRs](docs/decisions/) anyone can pick up (dynamic arrays,
+generics, sum types, an external-backend SDK, co-execution, `scan`). Recursion, modules and
+closures are not in the language yet and have no ADR — writing one is the contribution that
+unblocks the code. Forks welcome; the one house rule is that a change arrives with the
+evidence of what it did, and says which published numbers it moves.
+
 Worked example of why that last one is kept: a cache-blocking pass measured 3× _slower_ than
 what it replaced; the first published explanation was wrong and a control refuted it; the
 real cause was an accumulator bouncing through stack memory 92 times per inner loop. Fixing

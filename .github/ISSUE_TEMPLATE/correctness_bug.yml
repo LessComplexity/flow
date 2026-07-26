@@ -1,0 +1,80 @@
+name: Correctness bug
+description: A wrong result, a crash, a rejected program that should compile, or a backend that disagrees with the interpreter.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **The interpreter defines the language.** If a backend disagrees with it, the backend is
+        wrong — say which side you believe and why. A trap, a divergence, or an out-of-bounds is
+        observable behaviour: a change that deletes one is a bug even when the value is unused.
+
+        Memory unsafety or an unsound proof that removes a check? That is [a private security
+        report](https://github.com/LessComplexity/flow/security/advisories/new), not this form.
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproducer
+      description: The smallest `.flow` source (or IR, or command) that shows it. Smaller beats realistic.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: What you got, and what it should have been
+      description: Exact output from both sides, pasted, not paraphrased — interpreter vs backend, or before vs after a rewrite.
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where it shows up
+      multiple: true
+      options:
+        - Interpreter (the oracle itself)
+        - Rewriter (flow-rewrite)
+        - LLVM backend
+        - CUDA backend
+        - Parser / lowering / type check
+        - Runtime (flow-rt)
+        - Editor tooling
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: Output of `git rev-parse --short HEAD`.
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: OS and toolchain
+      placeholder: "macOS 15.3 / rustc 1.8x.x / clang 18 — or: Ubuntu 24.04, no clang"
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: What you already ruled out, which passes you bisected, whether `FLOW_PAR=1` changes it, whether it reproduces at an older commit.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the open issues and `docs/` — this is not one of the known failures listed in the README.
+          required: true
+        - label: It reproduces on `main`.
+          required: true

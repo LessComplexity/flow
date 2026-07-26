@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/LessComplexity/flow/security/advisories/new
+    about: Memory unsafety, an unsound proof that elides a check, runtime unsafety — report it privately, not here. See SECURITY.md.
+  - name: How this project works
+    url: https://github.com/LessComplexity/flow/blob/main/CONTRIBUTING.md
+    about: The model-first workflow, the measurement rules, and the open ADRs you can pick up.
+  - name: Open ADRs
+    url: https://github.com/LessComplexity/flow/tree/main/docs/decisions
+    about: Every significant decision and the alternatives it rejected. Candidates are unclaimed work.
