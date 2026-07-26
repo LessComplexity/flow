@@ -122,7 +122,65 @@ for title, path, note in [
         out.append(f"| `{shape}` | {CLASS[shape]} | " + " | ".join(cells_txt) + f" | {ratio} |")
     out += [""]
 
+# The FMA face: the same shapes emitted with --contract (single-rounding FMA), which is
+# what every baseline already gets from -ffp-contract=fast / BLAS.
+FMA = {}
+for tag, path in (("mac", "lang_mac_fma.log"), ("i9", "lang_i9_fma.log")):
+    if (HERE / path).exists():
+        FMA[tag] = load(HERE / path)
+if FMA:
+    out += ["## The FMA face — the fair comparison",
+            "",
+            "Every table above is Mapal's **conformance** face: `EmitOpts::contract` defaults off,",
+            "the ladder harness never passes `--contract`, and the emitted object contains **zero**",
+            "FMA instructions (verified: `objdump -d matmul1024_f32.o | grep -c vfmadd` = 0). Every",
+            "baseline meanwhile gets FMA for free — C++/Rust via `-ffp-contract=fast`, NumPy via BLAS.",
+            "So the tables above compare Mapal's bit-exact face against everyone else's fused one.",
+            "",
+            "Re-emitted with `--contract` (28 `vfmadd` in the same object), same protocol:",
+            "",
+            "| machine | shape | conformance | **FMA** | best baseline | FMA gap |",
+            "| --- | --- | ---: | ---: | ---: | ---: |"]
+    BASE = {("mac", "matmul1024"): ("NumPy/Accelerate", 0.6869), ("i9", "matmul1024"): ("NumPy/OpenBLAS", 1.7411),
+            ("mac", "fir"): ("C++ mt", 0.2041), ("i9", "fir"): ("C++ mt", 0.2373),
+            ("mac", "conv2d"): ("C++ mt", 0.1300), ("i9", "conv2d"): ("Rust mt", 0.1578)}
+    conf_logs = {"mac": load(HERE / "lang_mac.log"), "i9": load(HERE / "lang_i9.log")}
+    for tag in ("mac", "i9"):
+        for shape in ("matmul1024", "fir", "conv2d"):
+            if tag not in FMA or shape not in FMA[tag]:
+                continue
+            conf = pick(conf_logs[tag].get(shape, {}), "mapal-par", True)
+            fma = pick(FMA[tag][shape], "mapal-par", True)
+            name, base = BASE[(tag, shape)]
+            gap = f"**{base/fma:.2f}x faster**" if fma < base else f"{fma/base:.2f}x slower"
+            out.append(f"| {tag} | `{shape}` | {fmt(conf)} | **{fmt(fma)}** | {fmt(base)} ({name}) | {gap} |")
+    out += ["",
+            "**On identical hardware with both sides fused, the OpenBLAS gap is 1.23x, not 1.85x.**",
+            "On the Mac, Accelerate keeps a 3.3x lead because it reaches the AMX matrix unit, which is",
+            "hardware Mapal does not target — that column is not a compiler comparison.",
+            ""]
+
 out += [
+    "## Two rows that are NOT performance gaps",
+    "",
+    "**`reduce` parallel is a semantics comparison, not a speed one.** Mapal's fold is a",
+    "strict left fold and stays on one lane; Rust's `run_reduce` splits into",
+    "`thread_width()` chunks and folds the partials, and NumPy's `np.sum` is pairwise —",
+    "**both compute a different function**, and Rust's answer even depends on the machine's",
+    "thread count. At one thread, where all three compute the same left fold, **Mapal is the",
+    "fastest of the three** on the i9: 0.3668 vs C++ 0.3821 vs Rust 0.3821. Reassociating a",
+    "float sum is a permission the language has not granted (ADR-0032 D1's precision",
+    "lattice, unimplemented) and a tree shape it has not pinned (ADR-0028, accepted, never",
+    "built) — not an optimisation it failed to find.",
+    "",
+    "**The i9's sub-5 ms cells are frequency, not work.** That box runs `powersave` with",
+    "`intel_pstate`. Measured with `perf` on the reduce kernel: the timed window costs a",
+    "constant **2.1 M core cycles** in every configuration, while wall time ranges 0.38–2.01",
+    "ms purely with the boost clock — at a *fixed* thread count, widening the affinity mask",
+    "alone walks the median from 0.397 ms (2 CPUs) to 2.006 ms (16 CPUs), because a pool",
+    "spread over more idle cores keeps them all at the ~1.07 GHz floor. Read the i9's small",
+    "cells as cycles or not at all; the Mac column is the honest wall-clock one.",
+    "",
     "## Reading it",
     "",
     "**NumPy is not one baseline.** On `matmul` and `reduce` it is a BLAS/vectorised",

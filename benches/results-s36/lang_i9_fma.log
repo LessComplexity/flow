@@ -1,0 +1,16 @@
+shape      leg              min ms     median
+---------- ------------ ---------- ----------
+saxpy      mapal-1t         0.6733     1.0066
+saxpy      mapal-par        0.1595     0.2915
+reduce     mapal-1t         0.3685     0.3871
+reduce     mapal-par        0.4953     1.0646
+transpose  mapal-1t         2.4716     2.7872
+transpose  mapal-par        0.4221     0.6096
+gather     mapal-1t         1.8815     3.1604
+gather     mapal-par        0.2459     0.3992
+fir        mapal-1t         0.0851     0.0869
+fir        mapal-par        0.0191     0.0286
+conv2d     mapal-1t         0.0364     0.0428
+conv2d     mapal-par        0.0217     0.0357
+matmul1024 mapal-1t        14.8231    14.9553
+matmul1024 mapal-par        2.0585     2.1464

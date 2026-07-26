@@ -67,6 +67,49 @@ gcc 16.1.1 · rustc 1.90 · numpy 2.3.5 on scipy-openblas · every leg under `ta
 | `conv2d` | compute (tiled) | **0.0261** | 0.3492 | 0.1578 | 0.6588 | **6.05× faster** |
 | `matmul1024` | compute (tiled) | 3.2159 | 113.6 | 151.4 | **1.7411** | 1.85× slower |
 
+## The FMA face — the fair comparison
+
+Every table above is Mapal's **conformance** face: `EmitOpts::contract` defaults off,
+the ladder harness never passes `--contract`, and the emitted object contains **zero**
+FMA instructions (verified: `objdump -d matmul1024_f32.o | grep -c vfmadd` = 0). Every
+baseline meanwhile gets FMA for free — C++/Rust via `-ffp-contract=fast`, NumPy via BLAS.
+So the tables above compare Mapal's bit-exact face against everyone else's fused one.
+
+Re-emitted with `--contract` (28 `vfmadd` in the same object), same protocol:
+
+| machine | shape | conformance | **FMA** | best baseline | FMA gap |
+| --- | --- | ---: | ---: | ---: | ---: |
+| mac | `matmul1024` | 3.6504 | **2.2502** | 0.6869 (NumPy/Accelerate) | 3.28x slower |
+| mac | `fir` | 0.0651 | **0.0673** | 0.2041 (C++ mt) | **3.03x faster** |
+| mac | `conv2d` | 0.0628 | **0.0599** | 0.1300 (C++ mt) | **2.17x faster** |
+| i9 | `matmul1024` | 3.2159 | **2.1464** | 1.7411 (NumPy/OpenBLAS) | 1.23x slower |
+| i9 | `fir` | 0.0318 | **0.0286** | 0.2373 (C++ mt) | **8.30x faster** |
+| i9 | `conv2d` | 0.0261 | **0.0357** | 0.1578 (Rust mt) | **4.42x faster** |
+
+**On identical hardware with both sides fused, the OpenBLAS gap is 1.23x, not 1.85x.**
+On the Mac, Accelerate keeps a 3.3x lead because it reaches the AMX matrix unit, which is
+hardware Mapal does not target — that column is not a compiler comparison.
+
+## Two rows that are NOT performance gaps
+
+**`reduce` parallel is a semantics comparison, not a speed one.** Mapal's fold is a
+strict left fold and stays on one lane; Rust's `run_reduce` splits into
+`thread_width()` chunks and folds the partials, and NumPy's `np.sum` is pairwise —
+**both compute a different function**, and Rust's answer even depends on the machine's
+thread count. At one thread, where all three compute the same left fold, **Mapal is the
+fastest of the three** on the i9: 0.3668 vs C++ 0.3821 vs Rust 0.3821. Reassociating a
+float sum is a permission the language has not granted (ADR-0032 D1's precision
+lattice, unimplemented) and a tree shape it has not pinned (ADR-0028, accepted, never
+built) — not an optimisation it failed to find.
+
+**The i9's sub-5 ms cells are frequency, not work.** That box runs `powersave` with
+`intel_pstate`. Measured with `perf` on the reduce kernel: the timed window costs a
+constant **2.1 M core cycles** in every configuration, while wall time ranges 0.38–2.01
+ms purely with the boost clock — at a *fixed* thread count, widening the affinity mask
+alone walks the median from 0.397 ms (2 CPUs) to 2.006 ms (16 CPUs), because a pool
+spread over more idle cores keeps them all at the ~1.07 GHz floor. Read the i9's small
+cells as cycles or not at all; the Mac column is the honest wall-clock one.
+
 ## Reading it
 
 **NumPy is not one baseline.** On `matmul` and `reduce` it is a BLAS/vectorised
