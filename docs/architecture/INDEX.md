@@ -17,6 +17,40 @@ Every modeled component is Level B (the compiler's own data types + passes). The
 object-language Mapal-Cat (Level A) is specified separately in `docs/spec/category-ir.md`
 and is **not** re-modeled here (errata E5 firewall).
 
+## The pipeline, and what each stage owns
+
+Written down because a reader asked whether Mapal has an AST, two answers came back, and only
+the code settled it. It does, and the honest framing is: **the syntax is a serialization of the
+execution graph — the parser's tree is the deserializer's scratch space, and the graph is the
+program.**
+
+| Stage | Signature | Owns | Erases |
+| --- | --- | --- | --- |
+| `lex` + `parse` | `parse(&str) -> ParseOutput { program: Program, diagnostics }` | tokens, spans, **error recovery** (`Item::Error`, `StmtKind::Error`, 32 P-codes) | nothing — it is the only stage that can hold a broken program |
+| `lower` | `lower(&str, &Program) -> Result<CategoryIr, Vec<Diagnostic>>` | name resolution, declaration order (it walks `program.items` **three times**), desugaring, edge construction | `seq` (ADR-0019: *no IR footprint*), surface-form differences (ADR-0031: arrow and call forms collapse to one op), `c[i] <- x` ⇒ `Update`, error nodes (L1000 rejects them) |
+| `check` | `check(&str, &Program, &CategoryIr)` | Return exclusivity (T0101), effect legality (T0201) | — reads **both**, because `Fanout`/`SeqBlock` scope is exactly what lowering erased |
+| everything after | `CategoryIr -> CategoryIr`, `CategoryIr -> String` | **all** optimization and every deduced query — `path_plan`, `tile_plan`, `TileRead`, `bounds_proof` | — the tree is never consulted again |
+
+**Lowering is deliberately not injective**, so the tree and the graph are *not* isomorphic: the
+graph is a quotient of the tree. That is the point — optimization is uniform because syntax is
+normalized away — and it is also why `check` still needs the tree for the one property the graph
+no longer carries.
+
+**Cost of the tree, measured** (`cargo run --release -p mapal-backend-llvm --example
+stage_timing -- <file>`, conv2d_1024, min of 20):
+
+| stage | time | share of a real compile |
+| --- | --- | --- |
+| lex + parse (the tree is built here) | **4.4 µs** | 0.003% |
+| lower (tree → graph) | 78.8 µs | 0.06% |
+| rewrite | 291 µs | 0.21% |
+| emit | 773 µs | 0.55% |
+| `clang -O3` on the emitted IR | **140 ms** | 99.2% |
+
+So "skip the tree and parse straight to the graph" saves microseconds against a compile that is
+99% LLVM, and costs error recovery, declaration-order freedom, and check T0201. Reopening that
+question needs an ADR whose acceptance criteria are those three, not a preference.
+
 ## Models
 
 | Model | Scope | Location | Status |

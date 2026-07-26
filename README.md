@@ -37,9 +37,11 @@
 
 <!--toc:end-->
 
-**Parallel-first programming language.** Source translates directly to a categorical
-dataflow/execution graph instead of a traditional AST -> optimizations a traditional compiler
-cannot see. Same code -> runs everywhere: CPU, GPU, FPGA, ASIC.
+**Parallel-first programming language.** The syntax is a serialization of an execution graph:
+the parser's tree is scratch space, the graph is the program. Optimization happens on that
+graph — dataflow-first, not the control-flow-first IRs (GIMPLE, MIR, LLVM IR) everyone else
+optimizes on -> facts a traditional compiler cannot see. Same code -> runs everywhere: CPU,
+GPU, FPGA, ASIC.
 
 The graph is read once and the facts are deduced from it: what runs concurrently, which reads
 repeat, which axes split, which indices are provably in bounds -> handed to every backend.
