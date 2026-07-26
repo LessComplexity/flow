@@ -7,7 +7,8 @@ non-authoritative: a tree-sitter grammar is deferred until it can be derived fro
 ```
 ftdetect/flow.vim        *.flow -> filetype=flow
 syntax/flow.vim          highlighting
-lua/flow/icon.lua        file icon registration (optional)
+plugin/flow_icon.lua     registers the file icon automatically, adds :FlowIcon
+lua/flow/icon.lua        icon module (glyph, colour, diagnostics)
 test/run.sh              assert the highlighting decisions
 ```
 
@@ -19,7 +20,12 @@ colours and can override any of them.
 **lazy.nvim**
 
 ```lua
-{ dir = "/path/to/flow/editors/nvim", ft = "flow" }
+{
+  dir = "/path/to/flow/editors/nvim",
+  lazy = false, -- NOT ft = "flow": the icon must register at startup, see below
+  -- optional, for the real logo instead of a stock glyph:
+  -- config = function() local i = require("flow.icon"); i.setup({ glyph = i.logo }) end,
+}
 ```
 
 **packer**
@@ -36,17 +42,35 @@ vim.opt.runtimepath:append("/path/to/flow/editors/nvim")
 
 ## File icon
 
-Neovim's icon providers take a **font glyph, not an image**, so this is a Nerd Font character
-in the logo's teal rather than the actual SVG. For the real logo on `.flow` files, see
-[`../vscode/`](../vscode/).
+**Registers itself** — no `setup()` call needed. Works with `mini.icons` (the LazyVim default)
+and `nvim-web-devicons`; whichever is present.
 
-```lua
-require("flow.icon").setup()                 -- nvim-web-devicons and/or mini.icons
-require("flow.icon").setup({ glyph = "" })  -- override if your font lacks U+F0E8
+**`lazy = false` is required**, not optional. A file tree showing a `.flow` file has no `.flow`
+buffer open, so an `ft = "flow"` spec never loads the plugin and the icon never appears.
+
+```vim
+:FlowIcon
 ```
 
-Needs a [Nerd Font](https://www.nerdfonts.com/). Each provider is skipped silently when not
-installed, so this is safe to call unconditionally.
+reports what actually registered, which glyph, whether the font is installed, and — if nothing
+registered — the likely reason.
+
+### Getting the real logo, not an approximation
+
+The Rust and C++ marks in a file tree are **font glyphs**: Nerd Fonts ships those brand logos as
+characters. Providers take a glyph, not an image, so the only way to get Flow's own mark is to
+put it in a font — which [`../../assets/font/`](../../assets/font/) does, one glyph at U+F8F0.
+
+```lua
+local icon = require("flow.icon")
+icon.setup({ glyph = icon.logo })   -- needs FlowIcons.ttf + a terminal fallback mapping
+```
+
+Install steps and per-terminal fallback config are in
+[`assets/font/README.md`](../../assets/font/README.md). Without it the default is the closest
+glyph your Nerd Font already has, so nothing breaks — you just do not get the real mark.
+
+Needs a [Nerd Font](https://www.nerdfonts.com/) either way.
 
 ## What gets highlighted
 
