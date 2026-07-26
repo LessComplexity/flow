@@ -107,14 +107,20 @@ fn compile_exe(clang: &str, ll: &str, tag: &str, opt: &str) -> (tempfile::TempDi
     let llp = dir.path().join("p.ll");
     let exe = dir.path().join("p");
     std::fs::write(&llp, ll).unwrap();
-    let out = Command::new(clang)
-        .arg(opt)
-        .arg(&llp)
-        .arg(rt_lib())
-        .arg("-o")
-        .arg(&exe)
-        .output()
-        .unwrap();
+    let mut cmd = Command::new(clang);
+    cmd.arg(opt).arg(&llp).arg(rt_lib()).arg("-o").arg(&exe);
+    // Linking dominates a case, and this suite does ~1,280 of them per run.
+    // Measured on one representative module (min of 3): compile+link 0.08 s,
+    // compile alone 0.02 s, link alone 0.05 s — so ~60% of the cost is the
+    // linker, and Linux's default GNU ld is the slower one. CI sets FLOW_LD=lld
+    // there. Unset (the local default) ⇒ platform default linker, so nobody has
+    // to install anything to run the suite.
+    if let Ok(ld) = std::env::var("FLOW_LD")
+        && !ld.is_empty()
+    {
+        cmd.arg(format!("-fuse-ld={ld}"));
+    }
+    let out = cmd.output().unwrap();
     assert!(
         out.status.success(),
         "{tag}: clang failed:\n{}\n---\n{ll}",

@@ -39,15 +39,20 @@ jobs:
       # diffs the output against the interpreter oracle. It SKIPS ITSELF when clang
       # is absent, so without this the headline suite passes without testing
       # anything. macOS runners ship clang already.
-      - name: Install clang (Linux)
+      # lld: the differential links ~1,280 tiny binaries per run, and linking is
+      # ~60% of a case (measured: compile+link 0.08 s, compile alone 0.02 s, link
+      # alone 0.05 s). Linux's default GNU ld is the slow one.
+      - name: Install clang + lld (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang
+        run: sudo apt-get update && sudo apt-get install -y clang lld
 
       - name: Report toolchain
         run: |
           rustc --version
           cargo --version
           clang --version | head -1
+          echo "cores: $(getconf _NPROCESSORS_ONLN)"
+          command -v ld.lld && ld.lld --version || echo "lld: not installed (platform default linker)"
 
       - name: Formatting
         run: cargo fmt --all --check
@@ -61,6 +66,8 @@ jobs:
         run: cargo test --workspace --release
         env:
           FLOW_REQUIRE_CLANG: 1
+          # Empty on macOS ⇒ platform default (ld64, already fast).
+          FLOW_LD: ${{ runner.os == 'Linux' && 'lld' || '' }}
 
   # The CUDA backend's 161 tests skip themselves without nvcc, which every hosted
   # runner lacks. Compiling them is still worth gating on: it catches the
