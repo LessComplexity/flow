@@ -152,8 +152,8 @@ S35 `par` cells were measured with the race live and are biased fast.
 | gh auth | **`LessComplexity` is now the active account** | switched this session | `gh auth status` | — |
 | perf box | `<perf-box>`, i9-14900F | idle at close (load 0.33), governor `powersave`, no passwordless sudo | `ssh … uptime` | — |
 | box dirs | `~/s36bench` (post), `~/s36bench_pre` (pre) | ~22 MB each, binaries + logs left in place | `du -sh ~/s36bench*` | delete when done |
-| worktree | `/tmp/s36pre` @ `35fb681` | the pre-fix compiler, **still registered** | `git worktree list` | `git worktree remove /tmp/s36pre` |
-| worktree | `…/scratchpad/pre` @ `1daddaa` | stale since S33, still registered | `git worktree list` | `git worktree prune` |
+| worktree | `/tmp/s36pre` @ `35fb681` | the pre-fix compiler — **removed at close**; its IR and binaries survive in `target/tmp/i9pre/` | `git worktree list` | done |
+| worktree | `…/scratchpad/pre` @ `1daddaa` | stale since S33, still registered; `prune` does NOT clear it (the directory is live under `/private/tmp/claude-501/…`) | `git worktree list` | `git worktree remove --force <path>` |
 | artifacts | `target/tmp/i9`, `target/tmp/i9pre` | both binary sets + raw samples | `ls target/tmp/i9` | disposable |
 
 ## 10. Open items
@@ -168,7 +168,7 @@ S35 `par` cells were measured with the race live and are biased fast.
 | P2 | `ladder2_ab.sh` has no correctness check | §7 | It times four shapes and never compares their values; `shapes_ab.sh` does. Add the same cross-leg comparison | the ladder harness fails loudly on a wrong answer |
 | P2 | Empty-param calls should not need `()` | S35 log §8 | Becomes ADR-0038 | ADR written |
 | P2 | Halve the per-push differential cross product | S34 log §3 | Sapir's call | Ubuntu under ~13 min |
-| P3 | Two stale worktrees; local dir still named `Flow` | §9 | `git worktree remove /tmp/s36pre`, `git worktree prune` | `git worktree list` shows one entry |
+| P3 | One stale worktree left; local dir still named `Flow` | §9 | `git worktree remove --force` the S33 scratchpad entry (`prune` will not clear a live directory) | `git worktree list` shows one entry |
 
 ## 11. Method notes earned
 

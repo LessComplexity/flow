@@ -39,9 +39,10 @@ git worktree list                     # expect TWO stale entries to clean up
 **S36 + S36b are pushed.** `gh`'s active account is now `LessComplexity` (switched in S36b), which
 is the one that can write to the repo — if a push is refused, check `gh auth status` first.
 
-**Two stale worktrees are registered:** `/tmp/s36pre` @ `35fb681` (the pre-fix compiler, built for
-the S36b A/B) and `…/scratchpad/pre` @ `1daddaa` (since S33). `git worktree remove /tmp/s36pre`
-and `git worktree prune`.
+**The S36b pre-fix worktree is removed**; its emitted IR and binaries survive in
+`target/tmp/i9pre/` if the A/B needs re-running. One stale worktree remains from S33
+(`…/scratchpad/pre` @ `1daddaa`) and `git worktree prune` does not clear it — it is a live
+directory under `/private/tmp/claude-501/…`, so it needs `git worktree remove --force <path>`.
 
 ## S37 focus
 
