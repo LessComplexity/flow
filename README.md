@@ -139,27 +139,24 @@ machine reaches the AMX coprocessor, so that column is hardware rather than a co
 
 ### Other shapes — M4 Pro
 
-Threaded, median of 30. The saxpy row was re-measured after the write-only-array change below; the
-other rows are from the previous session's run and are due a refresh on an idle machine alongside
-their baselines. The i9 table further down was taken in one pass and is the more trustworthy of the
-two right now.
+Threaded, median of 100, every leg measured in the same pass so the columns are comparable:
 
 | workload               | class           | Mapal conformance |    Mapal FMA | C++ naive-mt | NumPy 1t |
 | ---------------------- | --------------- | ----------------: | -----------: | -----------: | -------: |
-| FIR filter, 1M samples | compute         |          0.334 ms | **0.299 ms** |         1.45 |     6.13 |
-| conv2d 3×3, 1024×1024  | compute         |          0.104 ms | **0.096 ms** |         0.16 |     1.59 |
-| saxpy, 1M              | streaming       |      **0.093 ms** |     0.090 ms |         0.20 |     0.16 |
-| sum reduction, 1M      | reduction       |          0.546 ms |     0.549 ms |         0.92 | **0.10** |
-| transpose, 1024²       | data movement   |          0.288 ms |     0.269 ms |     **0.26** |     0.76 |
-| gather `x[idx[i]]`, 1M | irregular reads |      **0.157 ms** |     0.160 ms |         0.18 |     1.95 |
+| FIR filter, 1M samples | compute         |          0.372 ms | **0.292 ms** |         1.50 |     6.35 |
+| conv2d 3×3, 1024×1024  | compute         |      **0.114 ms** |     0.115 ms |         0.16 |     1.72 |
+| saxpy, 1M              | streaming       |      **0.115 ms** |     0.116 ms |         0.23 |     0.18 |
+| sum reduction, 1M      | reduction       |          0.582 ms |     0.585 ms |         0.94 | **0.11** |
+| transpose, 1024²       | data movement   |          0.290 ms |     0.308 ms |     **0.26** |     0.83 |
+| gather `x[idx[i]]`, 1M | irregular reads |          0.194 ms |     0.179 ms |     **0.17** |     2.20 |
 
 Per core, conv2d is 1.21× ahead of naive C++ on NEON and AVX2:
 [conv2d-per-core-gap.md](docs/performance/conv2d-per-core-gap.md).
 
-The lower four rows are not compute-bound and they set the honest boundary of the claim. **The
-cause is memory layout, not arithmetic intensity, and it is self-inflicted** — but not in the way
-this section previously claimed, and the correction is worth stating because the wrong diagnosis
-was here for a while.
+Two rows still go to C++ — transpose and gather — and they set the honest boundary of the claim.
+(The reduction is a semantics difference, not a speed one; see below.) **The cause is memory layout,
+not arithmetic intensity, and it is self-inflicted** — but not in the way this section previously
+claimed, and the correction is worth stating because the wrong diagnosis was here for a while.
 
 The compiler now records what `out[i]` **is**, as a graph fact: `iota`'s element is the index,
 `zip`'s is a pair of its two sources' elements, `enumerate`'s needs no rule of its own because it
@@ -229,11 +226,20 @@ through OpenBLAS on the same AVX2 units Mapal targets, the gap is hardware:
 | 1024² f32 | Mapal vs NumPy 1t | Mapal vs NumPy threaded | NumPy backend    |
 | --------- | ----------------- | ----------------------- | ---------------- |
 | M4 Pro    | NumPy 13.5× ahead | NumPy 3.3× ahead        | Accelerate → AMX |
-| i9-14900F | NumPy 1.21× ahead | **tie** (1.53 / 1.51)   | OpenBLAS → AVX2  |
+| i9-14900F | NumPy 1.22× ahead | see both rows below     | OpenBLAS → AVX2  |
 
-Pinned to the i9's 8 P-cores — both legs on identical cores, which is where OpenBLAS is strongest
-(see the row below): single-threaded **1.21× behind** (14.82 vs 12.22 ms), threaded **1.23× behind**
-(2.15 vs 1.74 ms), on the untuned `generic` profile.
+The threaded answer depends on which cores you give it, and both configurations are worth stating
+because they say different things. Median of 15, `performance` governor, product face:
+
+| i9-14900F, 1024² f32     |     Mapal |     NumPy | gap             |
+| ------------------------ | --------: | --------: | --------------- |
+| single-threaded          | 14.88 ms  | 12.21 ms  | 1.22× behind    |
+| threaded, 8 P-cores only |  2.09 ms  |  1.74 ms  | 1.20× behind    |
+| threaded, whole machine  |  1.52 ms  |  1.50 ms  | **tie** (1.01×) |
+
+Pinning to the P-cores is where OpenBLAS is strongest — identical cores, no heterogeneity to
+exploit — and Mapal is 1.20× behind there on the untuned `generic` profile. The whole-machine tie
+is not a better kernel; it is the row below.
 
 The threaded parity is **not** a better scheduler. Same box, 8 threads per row, only CPU
 uniformity varying:
