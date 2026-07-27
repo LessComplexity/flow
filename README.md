@@ -117,8 +117,10 @@ Apple M4 Pro (10 P + 4 E), kernel time only. Baselines: naive triple loops at
 Statistic: single-threaded cells are the minimum of N runs, threaded cells the **median**.
 
 Both build faces are shown. The default is bit-identical to the interpreter and emits no fused
-multiply-add; `--contract` allows single-rounding FMA, which every baseline already gets from
-`-ffp-contract=fast` or from BLAS.
+multiply-add; `--contract` allows single-rounding FMA. The C++ baselines fuse (`-ffp-contract=fast`,
+and it is the C/C++ default anyway); the Rust baselines do **not** — rustc never contracts without
+an explicit `mul_add`, and their objects contain zero FMA instructions; NumPy's speed comes from
+BLAS kernels hand-written with it.
 
 Method, machine specs and raw logs: [`docs/performance/`](docs/performance/) ·
 [`benches/results-s36/`](benches/results-s36/).
@@ -209,9 +211,8 @@ The flat 20% single-threaded kernel gap is the remaining target.
 
 The default emits **zero** FMA instructions — verified on the object, not assumed
 (`objdump -d matmul1024_f32.o | grep -c vfmadd` = 0 by default, 28 with `--contract`). Both faces
-appear in every table above for that reason: the C++ and Rust baselines are built with
-`-ffp-contract=fast` and NumPy goes through BLAS, so publishing only the default would compare a
-bit-exact face against fused ones.
+appear in every table above because the comparison is otherwise uneven in both directions: C/C++
+contracts by default, Rust never does, and NumPy calls kernels written with FMA by hand.
 
 ---
 
