@@ -34,6 +34,30 @@ cargo test --workspace --release --no-fail-fast 2>&1 | grep -E "FAILED|panicked|
 git worktree list                          # one stale entry from S33
 ```
 
+## BLOCKED — needs Sapir, one line
+
+**The i9 cannot be measured in ms right now**, so the shape-table refresh is stuck. Full account:
+`sessions/2026-07-27-s37b-the-i9-cannot-be-measured-in-ms.md`. Both instruments fail:
+
+- **wall clock**: `powersave` governor holds the box at **1100 MHz**; the same binary, same pinning,
+  measured 0.7014 ms and 1.1226 ms in two passes an hour apart — 60% drift. Stable *within* a
+  session, meaningless *between* them.
+- **process-level `perf stat`**: the self-timed kernel is **3.1%** of what it counts (1.25 M of
+  39.9 M ref-cycles); the other 97% is generation, startup and page faults. This is the S33
+  contamination, re-walked.
+
+Unblock, cheapest first:
+
+1. **Set the governor to `performance`** — it is in `scaling_available_governors` and `no_turbo=0`.
+   One `sudo cpupower frequency-set -g performance`, or a passwordless sudoers entry for it.
+   Everything is staged: `RUNS=30 ~/s37bench/i9run.sh` produces the whole table the moment it works.
+2. Or **differenced counters around the `time` bracket** — the durable fix, real runtime work.
+
+Separately, the **M4 Pro table wants an idle Mac** with the C++/NumPy baselines re-run in the same
+pass. This laptop was at load average 3.65 after a day of gates. Only saxpy's row was updated
+(`3f96c5f`), because its change is 2× and unambiguous; the other five moved a few percent today
+while a controlled interleaved A/B says they are flat, i.e. that delta is machine state.
+
 ## S38 focus
 
 ### 1. P0 — trap order is source order (approach A)
