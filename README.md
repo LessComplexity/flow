@@ -140,7 +140,8 @@ machine reaches the AMX coprocessor, so that column is hardware rather than a co
 
 Threaded, median of 30. The saxpy row was re-measured after the write-only-array change below; the
 other rows are from the previous session's run and are due a refresh on an idle machine alongside
-their baselines.
+their baselines. The i9 table further down was taken in one pass and is the more trustworthy of the
+two right now.
 
 | workload               | class           | Mapal conformance |    Mapal FMA | C++ naive-mt | NumPy 1t |
 | ---------------------- | --------------- | ----------------: | -----------: | -----------: | -------: |
@@ -189,6 +190,35 @@ associativity permission the type system does not carry yet —
 
 NumPy has no threaded kernel for FIR or conv2d (`np.correlate` is single-threaded C; conv2d is a
 Python loop over nine array slices), so that column is not like-for-like.
+
+### The same shapes on an i9-14900F
+
+A second machine, and every leg — Mapal both faces, C++, NumPy — measured in one pass on the same
+cores. Median of 100, pinned to the 8 P-cores (`taskset -c 0-15`), `performance` governor:
+
+| workload               |    Mapal conformance |    Mapal FMA | C++ naive-mt | NumPy 1t |
+| ---------------------- | -------------------: | -----------: | -----------: | -------: |
+| FIR filter, 1M samples |             0.224 ms | **0.192 ms** |         1.93 |     5.16 |
+| conv2d 3×3, 1024×1024  |         **0.104 ms** |     0.106 ms |         0.28 |     2.67 |
+| saxpy, 1M              |         **0.118 ms** |     0.122 ms |         0.28 |     0.47 |
+| sum reduction, 1M      |             0.394 ms |     0.393 ms |         5.09 | **0.12** |
+| transpose, 1024²       |         **0.346 ms** |     0.346 ms |         0.40 |     2.33 |
+| gather `x[idx[i]]`, 1M |         **0.221 ms** |     0.223 ms |         0.29 |     1.17 |
+
+Mapal takes every row except the reduction, which is the semantics difference described above —
+NumPy's `sum` is pairwise, Mapal's fold is a left fold, and they are not computing the same thing.
+Note this box wins the streaming and permutation shapes that the M4 Pro does not; the two machines
+disagree about those rows, which is itself worth knowing before quoting either in isolation.
+
+**Methodology, because this box is easy to measure wrong.** It defaults to the `powersave` governor,
+which parks it near 1.1 GHz — the same binary read 0.70 ms and 1.12 ms in two sessions an hour
+apart, a 60% swing that is entirely the frequency ramp. The table above was taken at `performance`
+(5.5 GHz under load), and the ratio between the two settings, 5.0×, matches the clock ratio almost
+exactly. Reaching for `perf stat` instead does not help unless it is differenced around the timed
+region: the self-timed kernel is **3.1%** of what a whole-process count sees, the rest being data
+generation and startup. Two independent 30-run passes agreed within ~5% on every cell above 0.2 ms;
+conv2d and saxpy sit near 0.1 ms and swung up to 40% at that sample size, which is why the published
+table is 100.
 
 ### Against a hand-tuned BLAS, on equal hardware
 
