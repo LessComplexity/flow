@@ -117,18 +117,18 @@ Apple M4 Pro (10 P + 4 E), kernel time only. Baselines: naive triple loops at
 
 Statistic: single-threaded cells are the minimum of N runs, threaded cells the **median**.
 
-Both build faces are shown: the default is bit-identical to the interpreter and emits no FMA,
-`--contract` allows it. C++ and NumPy fuse; Rust does not.
+Both builds are shown. **FMA off** is the default and is bit-identical to the interpreter;
+**FMA on** (`--contract`) allows fused multiply-add. C++ and NumPy fuse; Rust does not.
 
 Method, machine specs and raw logs: [`docs/performance/`](docs/performance/) ·
 [`benches/results-s36/`](benches/results-s36/).
 
 ### Matrix multiply, f32 — M4 Pro
 
-|    N | Mapal conformance |  Mapal FMA | C++ naive-mt | Rust naive-mt | NumPy 1t | NumPy mt |
-| ---: | ----------------: | ---------: | -----------: | ------------: | -------: | -------: |
-| 1024 |           3.65 ms | **2.25 ms** |          125 |           117 |     1.29 |     0.69 |
-| 4096 |            245 ms |  **155 ms** |       33,439 |        33,574 |     90.5 |     44.3 |
+|    N | Mapal FMA off | Mapal FMA on | C++ naive-mt | Rust naive-mt | NumPy 1t | NumPy mt |
+| ---: | ------------: | -----------: | -----------: | ------------: | -------: | -------: |
+| 1024 |       3.65 ms | **2.25 ms**  |          125 |           117 |     1.29 |     0.69 |
+| 4096 |        245 ms | **155 ms**   |       33,439 |        33,574 |     90.5 |     44.3 |
 
 **55× the naive baseline at 1024², 216× at 4096²**, and 3.3× behind NumPy, which here reaches the
 AMX coprocessor — hardware, not codegen (see below).
@@ -137,14 +137,14 @@ AMX coprocessor — hardware, not codegen (see below).
 
 Threaded, median of 100, every leg measured in the same pass so the columns are comparable:
 
-| workload               | class           | Mapal conformance |    Mapal FMA | C++ naive-mt | NumPy 1t |
-| ---------------------- | --------------- | ----------------: | -----------: | -----------: | -------: |
-| FIR filter, 1M samples | compute         |          0.372 ms | **0.292 ms** |         1.50 |     6.35 |
-| conv2d 3×3, 1024×1024  | compute         |      **0.114 ms** |     0.115 ms |         0.16 |     1.72 |
-| saxpy, 1M              | streaming       |      **0.115 ms** |     0.116 ms |         0.23 |     0.18 |
-| sum reduction, 1M      | reduction       |          0.582 ms |     0.585 ms |         0.94 | **0.11** |
-| transpose, 1024²       | data movement   |          0.290 ms |     0.308 ms |     **0.26** |     0.83 |
-| gather `x[idx[i]]`, 1M | irregular reads |          0.194 ms |     0.179 ms |     **0.17** |     2.20 |
+| workload               | class           | Mapal FMA off | Mapal FMA on | C++ naive-mt | NumPy 1t |
+| ---------------------- | --------------- | ------------: | -----------: | -----------: | -------: |
+| FIR filter, 1M samples | compute         |      0.372 ms | **0.292 ms** |         1.50 |     6.35 |
+| conv2d 3×3, 1024×1024  | compute         |  **0.114 ms** |     0.115 ms |         0.16 |     1.72 |
+| saxpy, 1M              | streaming       |  **0.115 ms** |     0.116 ms |         0.23 |     0.18 |
+| sum reduction, 1M      | reduction       |      0.582 ms |     0.585 ms |         0.94 | **0.11** |
+| transpose, 1024²       | data movement   |      0.290 ms |     0.308 ms |     **0.26** |     0.83 |
+| gather `x[idx[i]]`, 1M | irregular reads |      0.194 ms |     0.179 ms |     **0.17** |     2.20 |
 
 Per core, conv2d is 1.21× ahead of naive C++ on NEON and AVX2:
 [conv2d-per-core-gap.md](docs/performance/conv2d-per-core-gap.md).
@@ -159,14 +159,14 @@ kernel, so that column is not like-for-like.
 
 Median of 100, pinned to the 8 P-cores, `performance` governor, every leg in one pass:
 
-| workload               |    Mapal conformance |    Mapal FMA | C++ naive-mt | NumPy 1t |
-| ---------------------- | -------------------: | -----------: | -----------: | -------: |
-| FIR filter, 1M samples |             0.224 ms | **0.192 ms** |         1.93 |     5.16 |
-| conv2d 3×3, 1024×1024  |         **0.104 ms** |     0.106 ms |         0.28 |     2.67 |
-| saxpy, 1M              |         **0.118 ms** |     0.122 ms |         0.28 |     0.47 |
-| sum reduction, 1M      |             0.394 ms |     0.393 ms |         5.09 | **0.12** |
-| transpose, 1024²       |         **0.346 ms** |     0.346 ms |         0.40 |     2.33 |
-| gather `x[idx[i]]`, 1M |         **0.221 ms** |     0.223 ms |         0.29 |     1.17 |
+| workload               | Mapal FMA off | Mapal FMA on | C++ naive-mt | NumPy 1t |
+| ---------------------- | ------------: | -----------: | -----------: | -------: |
+| FIR filter, 1M samples |      0.224 ms | **0.192 ms** |         1.93 |     5.16 |
+| conv2d 3×3, 1024×1024  |  **0.104 ms** |     0.106 ms |         0.28 |     2.67 |
+| saxpy, 1M              |  **0.118 ms** |     0.122 ms |         0.28 |     0.47 |
+| sum reduction, 1M      |      0.394 ms |     0.393 ms |         5.09 | **0.12** |
+| transpose, 1024²       |  **0.346 ms** |     0.346 ms |         0.40 |     2.33 |
+| gather `x[idx[i]]`, 1M |  **0.221 ms** |     0.223 ms |         0.29 |     1.17 |
 
 Every row except the reduction. This box takes the streaming and permutation shapes the M4 Pro
 does not, so neither machine is the whole story
@@ -203,14 +203,14 @@ remaining target.
 
 ### Two builds
 
-| face                        | guarantee                                       | matmul 1024², threaded |
-| --------------------------- | ----------------------------------------------- | ---------------------- |
-| **conformance** (default)   | bit-identical to the interpreter, always        | 3.65 ms                |
-| **contract** (`--contract`) | relative tolerance; single-rounding FMA allowed | **2.25 ms** (1.62×)    |
+| build                     | guarantee                                       | matmul 1024², threaded |
+| ------------------------- | ----------------------------------------------- | ---------------------- |
+| **FMA off** (default)     | bit-identical to the interpreter, always        | 3.65 ms                |
+| **FMA on** (`--contract`) | relative tolerance; single-rounding FMA allowed | **2.25 ms** (1.62×)    |
 
-The default emits **zero** FMA instructions — verified on the object, not assumed. Both faces
-appear in every table because the comparison is otherwise uneven in both directions: C/C++
-contracts by default, Rust never does, NumPy calls hand-written FMA kernels.
+The default emits **zero** FMA instructions — verified on the object, not assumed. Both appear in
+every table because the comparison is otherwise uneven in both directions: C/C++ fuses by default,
+Rust never does, NumPy calls hand-written FMA kernels.
 
 ---
 
