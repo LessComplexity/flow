@@ -138,13 +138,15 @@ machine reaches the AMX coprocessor, so that column is hardware rather than a co
 
 ### Other shapes — M4 Pro
 
-Threaded, median of 30:
+Threaded, median of 30. The saxpy row was re-measured after the write-only-array change below; the
+other rows are from the previous session's run and are due a refresh on an idle machine alongside
+their baselines.
 
 | workload               | class           | Mapal conformance |    Mapal FMA | C++ naive-mt | NumPy 1t |
 | ---------------------- | --------------- | ----------------: | -----------: | -----------: | -------: |
 | FIR filter, 1M samples | compute         |          0.334 ms | **0.299 ms** |         1.45 |     6.13 |
 | conv2d 3×3, 1024×1024  | compute         |          0.104 ms | **0.096 ms** |         0.16 |     1.59 |
-| saxpy, 1M              | streaming       |          0.179 ms |     0.240 ms |         0.20 | **0.16** |
+| saxpy, 1M              | streaming       |      **0.093 ms** |     0.090 ms |         0.20 |     0.16 |
 | sum reduction, 1M      | reduction       |          0.546 ms |     0.549 ms |         0.92 | **0.10** |
 | transpose, 1024²       | data movement   |          0.288 ms |     0.269 ms |     **0.26** |     0.76 |
 | gather `x[idx[i]]`, 1M | irregular reads |      **0.157 ms** |     0.160 ms |         0.18 |     1.95 |
@@ -153,14 +155,30 @@ Per core, conv2d is 1.21× ahead of naive C++ on NEON and AVX2:
 [conv2d-per-core-gap.md](docs/performance/conv2d-per-core-gap.md).
 
 The lower four rows are not compute-bound and they set the honest boundary of the claim. **The
-cause is memory layout, not arithmetic intensity, and it is self-inflicted.** Two facts the backend
-proves and then hides from LLVM: every object is a field of one `%Frame` struct, so alias analysis
-cannot separate them and the loop does not vectorize; and `iota` is materialized as an array rather
-than being an index law, so every map over one is an indirection. Emitting the first is worth
-**2.3×** on saxpy single-threaded and the second **3.1×** — together **0.097 ms against clang -O3's
-0.095**, parity, with no change to the IR. A plain `map` is not the problem: a plain map over a
-contiguous array emits 4-wide NEON. The scalar cases are maps over a **zipped** array and over an
-**iota**.
+cause is memory layout, not arithmetic intensity, and it is self-inflicted** — but not in the way
+this section previously claimed, and the correction is worth stating because the wrong diagnosis
+was here for a while.
+
+The compiler now records what `out[i]` **is**, as a graph fact: `iota`'s element is the index,
+`zip`'s is a pair of its two sources' elements, `enumerate`'s needs no rule of its own because it
+is `zip` over an `iota`. Consumers build the element instead of reading it back out of memory.
+The payoff turned out not to be the arithmetic. Once every consumer rebuilds the element, **the
+array is write-only** — saxpy was materializing 8 MB of zipped pairs per run that nothing read, and
+doing it inside the timed region. Deleting it is worth **0.4769 → 0.0981 ms single-threaded** and
+**0.1860 → 0.0833 ms threaded** (min of alternating runs against the same binary built before the
+change; the table above is medians, so its saxpy row moves by a similar factor).
+
+What was previously claimed here — that one shared `%Frame` struct defeats alias analysis and is
+worth 2.3× — **is false for the code this compiler emits.** LLVM computes non-overlap from constant
+field offsets without help; a struct-field control vectorizes with no metadata at all, and across
+61 tasks in seven shapes exactly one reports `unsafe dependent memory operations` — the dead `zip`
+task above. saxpy's timed loop already vectorized. The 2.3× came from a synthetic probe reproducing
+a pattern the compiler does not actually emit. The predicted destination was nearly right (0.097 ms
+predicted, 0.098 measured) and the predicted mechanism was wrong, which is a good argument for
+measuring the artifact rather than the model of it.
+
+A plain `map` is not the problem: a plain map over a contiguous array emits 4-wide NEON. The scalar
+cases are maps over a **zipped** array and over an **iota**, and both layouts were ours.
 
 The `sum reduction` row is a semantics difference as much as a speed one: NumPy's `sum` is pairwise
 and the C++ baseline splits into per-thread chunks, while a Mapal fold is left-to-right by
