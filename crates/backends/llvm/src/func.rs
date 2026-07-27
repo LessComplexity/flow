@@ -4,8 +4,8 @@
 //! — the piecewise functor application (§8.5).
 
 use mapal_ir::{
-    BoundsProof, CategoryIr, FuncId, FuncKind, LastUsePlan, MorphismId, ObjectId, ObjectKind,
-    Operation, PathPlan, TaskKind, TilePlan, TileSite, Ty, Value, WaitEntry,
+    BoundsProof, CategoryIr, ElemPlan, ElemSrc, FuncId, FuncKind, LastUsePlan, MorphismId,
+    ObjectId, ObjectKind, Operation, PathPlan, TaskKind, TilePlan, TileSite, Ty, Value, WaitEntry,
 };
 use slotmap::SecondaryMap;
 
@@ -306,6 +306,9 @@ pub(crate) struct FnEmit<'a> {
     perf_timing: bool,
     /// Matmul-shaped map sites recognized once for this function.
     tile_plan: Option<TilePlan>,
+    /// plan-s37-stage-structure: the per-element law of each array. Consulted
+    /// at elementwise reads; absence means "load it", i.e. today's behavior.
+    elem: ElemPlan,
     /// Pack tiled two-dimensional right-hand operands.
     packing: bool,
     /// Product-face FMA contraction, used only by the tiled per-cell chain.
@@ -579,6 +582,7 @@ impl<'a> FnEmit<'a> {
             runtime_write: false,
             perf_timing: false,
             tile_plan: tiling.then(|| ir.tile_plan(f)),
+            elem: ir.elem_plan(f),
             packing,
             contract,
             kc_nest,
@@ -761,6 +765,143 @@ impl<'a> FnEmit<'a> {
         let v = self.tmp();
         self.line(format!("{v} = load {cllt}, ptr {ptr}"));
         Some((cllt, v))
+    }
+
+    /// Whether this backend consumes `ElemSrc::Apply` (recomputing a
+    /// classifiable `Map` producer at the read site). Off: see the refusal arm in
+    /// [`FnEmit::emit_elem`] for the measurement. Legality lives in mapal-ir;
+    /// this constant is the CPU backend's profitability answer, and it is `false`.
+    const APPLY_INLINE: bool = false;
+
+    /// Materialize `out[i]` from its element law (`mapal_ir::ElemSrc`) instead
+    /// of loading it, at loop index `iv`. Returns `(llvm type, value operand)`,
+    /// or `None` when the law cannot be realized here — in which case the caller
+    /// keeps the load, which is always correct.
+    ///
+    /// This is the backend half of plan-s37-stage-structure: mapal-ir says what
+    /// the element *is* (legality, machine-independent); the decision to inline
+    /// it rather than read memory is the backend's, because the right answer
+    /// differs per target. On this one it is unconditional for the bodyless
+    /// laws — at most two loads and a `trunc`, never worse than the load it
+    /// replaces.
+    ///
+    /// `Broadcast` is emitted inside the loop rather than hoisted by hand: the
+    /// value is loop-invariant and LICM lifts it, and hand-hoisting would mean
+    /// threading a pre-header through every caller for no measured gain.
+    fn emit_elem(&mut self, law: &ElemSrc, elem_ty: &Ty, iv: &str) -> Option<(String, String)> {
+        match law {
+            // `iota`: the element is the index. ADR-0029 pins the element type
+            // to `i32`, so the source-of-truth check is the type, not the tag —
+            // a wider iota would need its own conversion and must not silently
+            // truncate.
+            ElemSrc::Index => {
+                if *elem_ty != Ty::i32() {
+                    return None;
+                }
+                let v = self.tmp();
+                self.line(format!("{v} = trunc i64 {iv} to i32"));
+                Some(("i32".to_string(), v))
+            }
+            ElemSrc::Broadcast { source, slot } => self.load_component(*source, *slot),
+            ElemSrc::Load { source, slot } => {
+                let arr_ty = match slot {
+                    None => self.obj_ty(*source),
+                    Some(k) => self.obj_ty(*source).component_ty(*k).cloned()?,
+                };
+                let (cllt, _) = array_parts(&arr_ty);
+                let arr_llt = lower_ty(&arr_ty)?;
+                let ptr = self.array_operand_ptr(*source, *slot)?;
+                let ep = self.tmp();
+                self.line(format!(
+                    "{ep} = getelementptr {arr_llt}, ptr {ptr}, i64 0, i64 {iv}"
+                ));
+                let v = self.tmp();
+                self.line(format!("{v} = load {cllt}, ptr {ep}"));
+                Some((cllt, v))
+            }
+            // `zip` / `enumerate`: build the pair in registers instead of
+            // reading it back out of a materialized array of structs.
+            ElemSrc::Pair(a, b) => {
+                let a_ty = elem_ty.component_ty(0).cloned()?;
+                let b_ty = elem_ty.component_ty(1).cloned()?;
+                let (a_llt, a_v) = self.emit_elem(a, &a_ty, iv)?;
+                let (b_llt, b_v) = self.emit_elem(b, &b_ty, iv)?;
+                let pair_llt = lower_ty(elem_ty)?;
+                let p0 = self.tmp();
+                self.line(format!(
+                    "{p0} = insertvalue {pair_llt} poison, {a_llt} {a_v}, 0"
+                ));
+                let p1 = self.tmp();
+                self.line(format!(
+                    "{p1} = insertvalue {pair_llt} {p0}, {b_llt} {b_v}, 1"
+                ));
+                Some((pair_llt, p1))
+            }
+            // A classifiable `Map` producer: recompute its element by calling
+            // the same body the producer calls, on the recursively-built inner
+            // element. Nothing is spliced or merged — this is two calls in one
+            // loop, which is why capture identity is not required.
+            //
+            // REFUSED ON THIS TARGET, on measurement (plan-s37-stage-structure
+            // Table B — profitability is the backend's call, and this is the
+            // backend making it). Recomputing a producer body is only a win
+            // when arithmetic is cheaper than the load it replaces. On a CPU
+            // with the array already materialized it is not: enabling this arm
+            // put two extra calls inside saxpy's timed loop — `fn1` and `fn2`
+            // regenerating `x[i]` and `y0[i]` from the index instead of reading
+            // them — and cost 0.72x at one thread (0.4731 -> 0.6586 ms min).
+            // Gather, the shape it was built for, came out at 1.17x min but
+            // 0.97x median: inside noise.
+            //
+            // The FACT stays in mapal-ir because it is true and machine-
+            // independent; only this consumer declines. A bandwidth-bound
+            // target where registers are cheap should reach a different verdict
+            // — that asymmetry is the whole reason the decision lives here and
+            // not in the query. Re-enable behind an op-count test against an L2
+            // round trip, with a measurement that moves a published cell.
+            ElemSrc::Apply { array, .. } if !Self::APPLY_INLINE => {
+                // Decline, but degrade to reading the producer's materialized
+                // output rather than failing: a refusal nested inside a `Pair`
+                // must not collapse the pair back to an array-of-structs read.
+                let arr = *array;
+                self.emit_elem(
+                    &ElemSrc::Load {
+                        source: arr,
+                        slot: None,
+                    },
+                    elem_ty,
+                    iv,
+                )
+            }
+            ElemSrc::Apply {
+                body,
+                source,
+                captures,
+                inner,
+                array: _,
+            } => {
+                let src_ty = self.obj_ty(*source);
+                let inner_arr_ty = if *captures == 0 {
+                    src_ty.clone()
+                } else {
+                    src_ty.component_ty(*captures).cloned()?
+                };
+                let inner_elem_ty = inner_arr_ty.component_ty(0).cloned()?;
+                let (in_llt, in_v) = self.emit_elem(inner, &inner_elem_ty, iv)?;
+                let out_llt = lower_ty(elem_ty)?;
+                let callee = self.fnames[*body].clone();
+                let arg = if *captures == 0 {
+                    format!("{in_llt} {in_v}")
+                } else {
+                    let arg_ty = self.obj_ty(self.ir.func(*body)?.input);
+                    let arg_llt = lower_body_input_ty(&arg_ty, *captures)?;
+                    self.body_call_arg(*source, *captures, &arg_ty, &arg_llt, &[(&in_llt, &in_v)])
+                };
+                let v = self.tmp();
+                self.line(format!("{v} = call {out_llt} @{callee}({arg})"));
+                Some((out_llt, v))
+            }
+        }
     }
 
     /// Store `(llt, val)` into object `o`'s slot, if it has one.
@@ -6474,12 +6615,33 @@ impl<'a> FnEmit<'a> {
         self.line(format!("{done} = icmp uge i64 {iv}, {hi}"));
         self.line(format!("br i1 {done}, label %{ld}, label %{lb}"));
         self.label_line(&lb);
-        let ep = self.tmp();
-        self.line(format!(
-            "{ep} = getelementptr {src_arr_llt}, ptr {arr_ptr}, i64 0, i64 {iv}"
-        ));
-        let e = self.tmp();
-        self.line(format!("{e} = load {tllt}, ptr {ep}"));
+        // plan-s37-stage-structure: if `elem_plan` knows what `arr[i]` IS, build
+        // it here instead of reading it back out of memory. The intermediate
+        // array is still emitted — this is the query, not a rewrite; whether the
+        // buffer survives is a separate (backend-owned) decision. `None` keeps
+        // the load, which is what every case did before and is always correct.
+        let mapped = if captures == 0 {
+            Some(source)
+        } else {
+            self.pair_source(source, captures)
+        };
+        let law = mapped.and_then(|o| self.elem.src(o)).cloned();
+        let inlined = law
+            .filter(|l| !matches!(l, ElemSrc::Load { .. }))
+            .zip(arr_ty.component_ty(0).cloned())
+            .and_then(|(l, elem_ty)| self.emit_elem(&l, &elem_ty, &iv));
+        let e = match inlined {
+            Some((_, v)) => v,
+            None => {
+                let ep = self.tmp();
+                self.line(format!(
+                    "{ep} = getelementptr {src_arr_llt}, ptr {arr_ptr}, i64 0, i64 {iv}"
+                ));
+                let e = self.tmp();
+                self.line(format!("{e} = load {tllt}, ptr {ep}"));
+                e
+            }
+        };
         // The body call's argument: the bare element (k=0) or the assembled
         // `(c₁…cₖ, elem)` product (k>0), per the body fn's input ty — with
         // Array captures by reference, matching the body fn's signature.
@@ -6538,12 +6700,28 @@ impl<'a> FnEmit<'a> {
         self.line(format!("{done} = icmp uge i64 {iv}, {hi}"));
         self.line(format!("br i1 {done}, label %{ld}, label %{lb}"));
         self.label_line(&lb);
-        let ep = self.tmp();
-        self.line(format!(
-            "{ep} = getelementptr {arr_llt}, ptr {arr_ptr}, i64 0, i64 {iv}"
-        ));
-        let e = self.tmp();
-        self.line(format!("{e} = load {tllt}, ptr {ep}"));
+        // Same element-law consumption as `emit_map` (plan-s37-stage-structure):
+        // a fold over an `iota`/`fill`/`zip` reads the law, not the array. The
+        // accumulator chain is untouched — order and arity are exactly as
+        // before, so the fold's value semantics cannot move.
+        let folded = self.pair_source(source, captures + 1);
+        let law = folded.and_then(|o| self.elem.src(o)).cloned();
+        let inlined = law
+            .filter(|l| !matches!(l, ElemSrc::Load { .. }))
+            .zip(arr_ty.component_ty(0).cloned())
+            .and_then(|(l, elem_ty)| self.emit_elem(&l, &elem_ty, &iv));
+        let e = match inlined {
+            Some((_, v)) => v,
+            None => {
+                let ep = self.tmp();
+                self.line(format!(
+                    "{ep} = getelementptr {arr_llt}, ptr {arr_ptr}, i64 0, i64 {iv}"
+                ));
+                let e = self.tmp();
+                self.line(format!("{e} = load {tllt}, ptr {ep}"));
+                e
+            }
+        };
         let a = self.tmp();
         self.line(format!("{a} = load {acc_llt}, ptr {accslot}"));
         // The step call's argument: the `(c₁…cₖ, acc, elem)` product (k=0:

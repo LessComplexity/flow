@@ -3530,7 +3530,7 @@ where
             L,
         )
         .unwrap();
-    let mut probes = Vec::new();
+    let probes;
     {
         let mut fb = b.build_fn(f).unwrap();
         let inp = fb.input();
@@ -3635,4 +3635,52 @@ fn elem_law_composes_through_nesting() {
         panic!("the inner zip's law should recurse, got {rhs:?}");
     };
     assert_eq!(**inner_l, ElemSrc::Index, "the nested iota resolves too");
+}
+
+/// The `Apply` gate (plan-s37-stage-structure §7 precondition 10). A `Map` may
+/// join the producer family only when its body can be **recomputed at a
+/// consumer's read site** — which a body that can trap cannot, because the trap
+/// would fire at the consumer's index order instead of the producer's. This is
+/// S34's failure class one level up, so it is checked rather than assumed.
+#[test]
+fn elem_map_with_a_trapping_body_is_cut() {
+    fn plan_for(divisor: i32) -> bool {
+        let mut b = IrBuilder::new();
+        let body = b
+            .declare(FuncKind::MapBody, "m", Ty::i32(), Ty::i32(), L)
+            .unwrap();
+        {
+            let mut fb = b.build_fn(body).unwrap();
+            let p = fb.input();
+            let d = fb.constant(Value::I32(divisor), L).unwrap();
+            fb.binop(Operation::Div, p, d, Dest::Ret { slot: None }, L)
+                .unwrap();
+            fb.finish().unwrap();
+        }
+        let f = b
+            .declare(FuncKind::Named, "f", Ty::Unit, Ty::i32(), L)
+            .unwrap();
+        let mapped;
+        {
+            let mut fb = b.build_fn(f).unwrap();
+            let n = fb.constant(Value::I32(16), L).unwrap();
+            let ix = fb.iota(n, Dest::Fresh(None), L).unwrap();
+            mapped = fb.map(body, ix, Dest::Fresh(None), L).unwrap();
+            let zero = fb.constant(Value::I32(0), L).unwrap();
+            fb.index(mapped, zero, Dest::Ret { slot: None }, L).unwrap();
+            fb.finish().unwrap();
+        }
+        let ir = b.seal(f).unwrap();
+        assert!(validate(&ir).is_empty(), "{:?}", validate(&ir));
+        matches!(ir.elem_plan(f).src(mapped), Some(ElemSrc::Apply { .. }))
+    }
+
+    assert!(
+        !plan_for(0),
+        "a body that can divide by zero must be cut, not recomputed"
+    );
+    assert!(
+        plan_for(3),
+        "positive control: a provably safe divisor is classifiable"
+    );
 }

@@ -152,7 +152,7 @@ entry:
 define internal void @task6(i64 %lo, i64 %hi, ptr %frame) {
 entry:
   %s0 = alloca i64
-  %s8 = alloca { ptr, ptr, ptr, i32 }
+  %s7 = alloca { ptr, ptr, ptr, i32 }
   %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
   %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
   %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
@@ -165,22 +165,21 @@ bb1:
   %t5 = icmp uge i64 %t4, %hi
   br i1 %t5, label %bb3, label %bb2
 bb2:
-  %t6 = getelementptr [16 x i32], ptr %o5, i64 0, i64 %t4
-  %t7 = load i32, ptr %t6
-  %t9 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s8, i32 0, i32 0
-  store ptr %o4, ptr %t9
-  %t10 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s8, i32 0, i32 1
-  store ptr %o2, ptr %t10
-  %t11 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s8, i32 0, i32 2
-  store ptr %o3, ptr %t11
-  %t12 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s8, i32 0, i32 3
-  store i32 %t7, ptr %t12
-  %t13 = load { ptr, ptr, ptr, i32 }, ptr %s8
-  %t14 = call i32 @fn2({ ptr, ptr, ptr, i32 } %t13)
-  %t15 = getelementptr [16 x i32], ptr %o7, i64 0, i64 %t4
-  store i32 %t14, ptr %t15
-  %t16 = add i64 %t4, 1
-  store i64 %t16, ptr %s0
+  %t6 = trunc i64 %t4 to i32
+  %t8 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s7, i32 0, i32 0
+  store ptr %o4, ptr %t8
+  %t9 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s7, i32 0, i32 1
+  store ptr %o2, ptr %t9
+  %t10 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s7, i32 0, i32 2
+  store ptr %o3, ptr %t10
+  %t11 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s7, i32 0, i32 3
+  store i32 %t6, ptr %t11
+  %t12 = load { ptr, ptr, ptr, i32 }, ptr %s7
+  %t13 = call i32 @fn2({ ptr, ptr, ptr, i32 } %t12)
+  %t14 = getelementptr [16 x i32], ptr %o7, i64 0, i64 %t4
+  store i32 %t13, ptr %t14
+  %t15 = add i64 %t4, 1
+  store i64 %t15, ptr %s0
   br label %bb1
 bb3:
   ret void

@@ -130,7 +130,7 @@ entry:
   %o7 = alloca double
   %s4 = alloca i64
   %s19 = alloca i64
-  %s27 = alloca { ptr, { i32, double } }
+  %s30 = alloca { ptr, { i32, double } }
   %t0 = getelementptr [4 x double], ptr %o2, i64 0, i64 0
   store double 0x4024000000000000, ptr %t0
   %t1 = getelementptr [4 x double], ptr %o2, i64 0, i64 1
@@ -169,26 +169,29 @@ bb20:
   %t24 = icmp uge i64 %t23, 4
   br i1 %t24, label %bb22, label %bb21
 bb21:
-  %t25 = getelementptr [4 x { i32, double }], ptr %o3, i64 0, i64 %t23
-  %t26 = load { i32, double }, ptr %t25
-  %t28 = getelementptr { ptr, { i32, double } }, ptr %s27, i32 0, i32 0
-  store ptr %o2, ptr %t28
-  %t29 = getelementptr { ptr, { i32, double } }, ptr %s27, i32 0, i32 1
-  store { i32, double } %t26, ptr %t29
-  %t30 = load { ptr, { i32, double } }, ptr %s27
-  %t31 = call double @fn2({ ptr, { i32, double } } %t30)
-  %t32 = getelementptr [4 x double], ptr %o5, i64 0, i64 %t23
-  store double %t31, ptr %t32
-  %t33 = add i64 %t23, 1
-  store i64 %t33, ptr %s19
+  %t25 = trunc i64 %t23 to i32
+  %t26 = getelementptr [4 x double], ptr %o2, i64 0, i64 %t23
+  %t27 = load double, ptr %t26
+  %t28 = insertvalue { i32, double } poison, i32 %t25, 0
+  %t29 = insertvalue { i32, double } %t28, double %t27, 1
+  %t31 = getelementptr { ptr, { i32, double } }, ptr %s30, i32 0, i32 0
+  store ptr %o2, ptr %t31
+  %t32 = getelementptr { ptr, { i32, double } }, ptr %s30, i32 0, i32 1
+  store { i32, double } %t29, ptr %t32
+  %t33 = load { ptr, { i32, double } }, ptr %s30
+  %t34 = call double @fn2({ ptr, { i32, double } } %t33)
+  %t35 = getelementptr [4 x double], ptr %o5, i64 0, i64 %t23
+  store double %t34, ptr %t35
+  %t36 = add i64 %t23, 1
+  store i64 %t36, ptr %s19
   br label %bb20
 bb22:
-  %t34 = call double @fn0(ptr %o5)
-  store double %t34, ptr %o6
-  %t35 = load double, ptr %o6
-  store double %t35, ptr %o7
-  %t36 = load double, ptr %o7
-  call void @mapal_print_f64(double %t36, i1 zeroext true)
+  %t37 = call double @fn0(ptr %o5)
+  store double %t37, ptr %o6
+  %t38 = load double, ptr %o6
+  store double %t38, ptr %o7
+  %t39 = load double, ptr %o7
+  call void @mapal_print_f64(double %t39, i1 zeroext true)
   ret void
 }
 

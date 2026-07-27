@@ -71,8 +71,8 @@ entry:
   %o12 = alloca double
   %s6 = alloca i64
   %s21 = alloca i64
-  %s29 = alloca { ptr, { i32, double } }
-  %s38 = alloca { ptr, i32 }
+  %s32 = alloca { ptr, { i32, double } }
+  %s41 = alloca { ptr, i32 }
   %t0 = getelementptr [4 x double], ptr %o2, i64 0, i64 0
   store double 0x4024000000000000, ptr %t0
   %t1 = getelementptr [4 x double], ptr %o2, i64 0, i64 1
@@ -115,55 +115,58 @@ bb22:
   %t26 = icmp uge i64 %t25, 4
   br i1 %t26, label %bb24, label %bb23
 bb23:
-  %t27 = getelementptr [4 x { i32, double }], ptr %o3, i64 0, i64 %t25
-  %t28 = load { i32, double }, ptr %t27
-  %t30 = getelementptr { ptr, { i32, double } }, ptr %s29, i32 0, i32 0
-  store ptr %o2, ptr %t30
-  %t31 = getelementptr { ptr, { i32, double } }, ptr %s29, i32 0, i32 1
-  store { i32, double } %t28, ptr %t31
-  %t32 = load { ptr, { i32, double } }, ptr %s29
-  %t33 = call double @fn2({ ptr, { i32, double } } %t32)
-  %t34 = getelementptr [4 x double], ptr %o5, i64 0, i64 %t25
-  store double %t33, ptr %t34
-  %t35 = add i64 %t25, 1
-  store i64 %t35, ptr %s21
+  %t27 = trunc i64 %t25 to i32
+  %t28 = getelementptr [4 x double], ptr %o2, i64 0, i64 %t25
+  %t29 = load double, ptr %t28
+  %t30 = insertvalue { i32, double } poison, i32 %t27, 0
+  %t31 = insertvalue { i32, double } %t30, double %t29, 1
+  %t33 = getelementptr { ptr, { i32, double } }, ptr %s32, i32 0, i32 0
+  store ptr %o2, ptr %t33
+  %t34 = getelementptr { ptr, { i32, double } }, ptr %s32, i32 0, i32 1
+  store { i32, double } %t31, ptr %t34
+  %t35 = load { ptr, { i32, double } }, ptr %s32
+  %t36 = call double @fn2({ ptr, { i32, double } } %t35)
+  %t37 = getelementptr [4 x double], ptr %o5, i64 0, i64 %t25
+  store double %t36, ptr %t37
+  %t38 = add i64 %t25, 1
+  store i64 %t38, ptr %s21
   br label %bb22
 bb24:
-  %t36 = getelementptr { ptr, i32 }, ptr %o6, i32 0, i32 0
-  store ptr %o5, ptr %t36
-  %t37 = getelementptr { ptr, i32 }, ptr %o8, i32 0, i32 0
-  store ptr %o5, ptr %t37
-  %t39 = getelementptr { ptr, i32 }, ptr %s38, i32 0, i32 0
+  %t39 = getelementptr { ptr, i32 }, ptr %o6, i32 0, i32 0
   store ptr %o5, ptr %t39
-  %t40 = getelementptr { ptr, i32 }, ptr %o6, i32 0, i32 1
-  %t41 = load i32, ptr %t40
-  %t42 = getelementptr { ptr, i32 }, ptr %s38, i32 0, i32 1
-  store i32 %t41, ptr %t42
-  %t43 = load { ptr, i32 }, ptr %s38
-  %t44 = call double @fn0({ ptr, i32 } %t43)
-  store double %t44, ptr %o7
-  %t45 = getelementptr { ptr, i32 }, ptr %o8, i32 0, i32 1
-  %t46 = load i32, ptr %t45
-  %t47 = sext i32 %t46 to i64
-  %t48 = getelementptr [4 x double], ptr %o5, i64 0, i64 %t47
-  %t49 = load double, ptr %t48
-  store double %t49, ptr %o9
-  %t50 = load double, ptr %o7
-  %t51 = getelementptr { double, double }, ptr %o10, i32 0, i32 0
-  store double %t50, ptr %t51
-  %t52 = load double, ptr %o9
-  %t53 = getelementptr { double, double }, ptr %o10, i32 0, i32 1
-  store double %t52, ptr %t53
+  %t40 = getelementptr { ptr, i32 }, ptr %o8, i32 0, i32 0
+  store ptr %o5, ptr %t40
+  %t42 = getelementptr { ptr, i32 }, ptr %s41, i32 0, i32 0
+  store ptr %o5, ptr %t42
+  %t43 = getelementptr { ptr, i32 }, ptr %o6, i32 0, i32 1
+  %t44 = load i32, ptr %t43
+  %t45 = getelementptr { ptr, i32 }, ptr %s41, i32 0, i32 1
+  store i32 %t44, ptr %t45
+  %t46 = load { ptr, i32 }, ptr %s41
+  %t47 = call double @fn0({ ptr, i32 } %t46)
+  store double %t47, ptr %o7
+  %t48 = getelementptr { ptr, i32 }, ptr %o8, i32 0, i32 1
+  %t49 = load i32, ptr %t48
+  %t50 = sext i32 %t49 to i64
+  %t51 = getelementptr [4 x double], ptr %o5, i64 0, i64 %t50
+  %t52 = load double, ptr %t51
+  store double %t52, ptr %o9
+  %t53 = load double, ptr %o7
   %t54 = getelementptr { double, double }, ptr %o10, i32 0, i32 0
-  %t55 = load double, ptr %t54
+  store double %t53, ptr %t54
+  %t55 = load double, ptr %o9
   %t56 = getelementptr { double, double }, ptr %o10, i32 0, i32 1
-  %t57 = load double, ptr %t56
-  %t58 = fadd double %t55, %t57
-  store double %t58, ptr %o11
-  %t59 = load double, ptr %o11
-  store double %t59, ptr %o12
-  %t60 = load double, ptr %o12
-  call void @mapal_print_f64(double %t60, i1 zeroext true)
+  store double %t55, ptr %t56
+  %t57 = getelementptr { double, double }, ptr %o10, i32 0, i32 0
+  %t58 = load double, ptr %t57
+  %t59 = getelementptr { double, double }, ptr %o10, i32 0, i32 1
+  %t60 = load double, ptr %t59
+  %t61 = fadd double %t58, %t60
+  store double %t61, ptr %o11
+  %t62 = load double, ptr %o11
+  store double %t62, ptr %o12
+  %t63 = load double, ptr %o12
+  call void @mapal_print_f64(double %t63, i1 zeroext true)
   ret void
 }
 

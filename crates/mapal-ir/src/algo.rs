@@ -324,6 +324,33 @@ pub enum ElemSrc {
     /// `Enumerate` needs no constructor here (ADR-0018 already calls `Zip` the
     /// canonical iso `Aⁿ × Bⁿ ≅ (A×B)ⁿ`, and `enumerate a ≅ zip(iota n, a)`).
     Pair(Box<ElemSrc>, Box<ElemSrc>),
+    /// `out[i] = body(inner(i))` — a `Map` whose body is **classifiable**.
+    ///
+    /// The other four producers are bodyless: their op tag is the entire
+    /// formula, zero degrees of freedom, total and trap-free by construction.
+    /// `Map` is not their peer — it carries an arbitrary `FuncId` that may
+    /// trap, diverge, or print. So it enters the family only behind a gate
+    /// (see [`CategoryIr::elem_law`]): the body must be trap-free, loop-free
+    /// and effect-free, because a consumer that recomputes it would otherwise
+    /// be free to delete a trap, turn `Trapped` into `Diverged`, or reorder an
+    /// observable — the S34 failure class one level up.
+    ///
+    /// Capture identity is deliberately **not** required: nothing is spliced.
+    /// The consumer emits a call to the same body, so this is two calls in one
+    /// loop rather than a merged body.
+    Apply {
+        body: FuncId,
+        source: ObjectId,
+        captures: u32,
+        inner: Box<ElemSrc>,
+        /// The producer's own materialized output array. A consumer that
+        /// DECLINES to recompute (profitability is the backend's call) reads
+        /// this instead — so a declined sub-law degrades to a load rather than
+        /// poisoning the law that contains it. Without it, refusing an `Apply`
+        /// nested inside a `Pair` would collapse the whole pair back to an
+        /// array-of-structs read, silently undoing the `Zip` win.
+        array: ObjectId,
+    },
 }
 
 /// The per-fn element-law plan — the deduced query
@@ -1142,7 +1169,11 @@ impl CategoryIr {
             };
             if !matches!(
                 morph.op,
-                Operation::Iota | Operation::Fill | Operation::Zip | Operation::Enumerate
+                Operation::Iota
+                    | Operation::Fill
+                    | Operation::Zip
+                    | Operation::Enumerate
+                    | Operation::Map { .. }
             ) {
                 continue;
             }
@@ -1194,8 +1225,59 @@ impl CategoryIr {
                     },
                 )),
             )),
+            // `Map` joins only when its body is classifiable — see the
+            // `ElemSrc::Apply` doc for why it is not a peer of the other four.
+            Operation::Map { body, captures } if self.body_is_classifiable(body) => {
+                let arr_out = arr;
+                let arr = if captures == 0 {
+                    morph.source
+                } else {
+                    self.pair_slot_source(morph.source, captures)?
+                };
+                let inner = self
+                    .elem_law(arr, in_loop, depth + 1)
+                    .unwrap_or(ElemSrc::Load {
+                        source: morph.source,
+                        slot: (captures > 0).then_some(captures),
+                    });
+                Some(ElemSrc::Apply {
+                    body,
+                    source: morph.source,
+                    captures,
+                    inner: Box::new(inner),
+                    array: arr_out,
+                })
+            }
             _ => None,
         }
+    }
+
+    /// Whether a `Map` body may be **recomputed at a consumer's read site**.
+    ///
+    /// All three conjuncts are load-bearing, and each prevents a distinct way
+    /// the oracle could be contradicted:
+    ///
+    /// - **trap-free** ([`Self::tile_trap_free`], the predicate the tiled path
+    ///   already trusts): a body that can trap must fire at the producer's index
+    ///   order, not at whatever order a consumer happens to read in.
+    /// - **loop-free**: a body containing a loop could turn a `Trapped` outcome
+    ///   into `Diverged` — a different observable class, not a slower path.
+    /// - **effect-free**: `tile_trap_free`'s catch-all arm answers `true` for
+    ///   `Print`/`TimeMs`. Its existing callers are covered by token threading;
+    ///   this one is not, so the check is made here rather than inherited.
+    fn body_is_classifiable(&self, body: FuncId) -> bool {
+        let Some(def) = self.func(body) else {
+            return false;
+        };
+        let effectful = def.morphisms.iter().any(|m| {
+            matches!(
+                self.morphisms.get(*m).map(|x| x.op),
+                Some(Operation::Print { .. } | Operation::TimeMs)
+            )
+        });
+        !effectful
+            && self.loop_structure(body).is_empty()
+            && self.tile_trap_free(body, &self.bounds_proof(body), None)
     }
 
     /// The law of component `slot` of `product`, cutting to a `Load` addressed
