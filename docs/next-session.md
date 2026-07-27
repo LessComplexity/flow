@@ -34,26 +34,26 @@ cargo test --workspace --release --no-fail-fast 2>&1 | grep -E "FAILED|panicked|
 git worktree list                          # one stale entry from S33
 ```
 
-## BLOCKED — needs Sapir, one line
+## RESOLVED during S37b — the i9 governor
 
-**The i9 cannot be measured in ms right now**, so the shape-table refresh is stuck. Full account:
-`sessions/2026-07-27-s37b-the-i9-cannot-be-measured-in-ms.md`. Both instruments fail:
+Sapir set the box to `performance` (5.5 GHz under load, was ~1.1 GHz on `powersave`). **It persists
+until reboot**, so every S36 number on that box was taken under a different governor and is not
+directly comparable to anything measured after 2026-07-27.
 
-- **wall clock**: `powersave` governor holds the box at **1100 MHz**; the same binary, same pinning,
-  measured 0.7014 ms and 1.1226 ms in two passes an hour apart — 60% drift. Stable *within* a
-  session, meaningless *between* them.
-- **process-level `perf stat`**: the self-timed kernel is **3.1%** of what it counts (1.25 M of
-  39.9 M ref-cycles); the other 97% is generation, startup and page faults. This is the S33
-  contamination, re-walked.
+The full shape refresh then ran cleanly and is published — README §"The same shapes on an
+i9-14900F", median of 100, pinned to the 8 P-cores, all four legs in one pass. Mapal takes every row
+except the reduction (the documented pairwise-vs-left-fold semantics difference). Re-run any time
+with `RUNS=100 ~/s37bench/i9run.sh`.
 
-Unblock, cheapest first:
+Two traps that box sets, both hit before the table was right:
+- `powersave` makes wall clock meaningless *between* sessions — same binary, 0.70 ms and 1.12 ms an
+  hour apart. Always check `scaling_governor` and `cpu MHz` first.
+- whole-process `perf stat` is **not** the fallback: the self-timed kernel is 3.1% of what it counts.
+  Differenced counters at `t0`/`t1` would be, and remain unbuilt.
 
-1. **Set the governor to `performance`** — it is in `scaling_available_governors` and `no_turbo=0`.
-   One `sudo cpupower frequency-set -g performance`, or a passwordless sudoers entry for it.
-   Everything is staged: `RUNS=30 ~/s37bench/i9run.sh` produces the whole table the moment it works.
-2. Or **differenced counters around the `time` bracket** — the durable fix, real runtime work.
+## Still open — the M4 Pro table
 
-Separately, the **M4 Pro table wants an idle Mac** with the C++/NumPy baselines re-run in the same
+The **M4 Pro table still wants an idle Mac** with the C++/NumPy baselines re-run in the same
 pass. This laptop was at load average 3.65 after a day of gates. Only saxpy's row was updated
 (`3f96c5f`), because its change is 2× and unambiguous; the other five moved a few percent today
 while a controlled interleaved A/B says they are flat, i.e. that delta is machine state.

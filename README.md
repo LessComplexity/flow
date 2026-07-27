@@ -25,6 +25,7 @@
 - [Results](#results)
   - [Matrix multiply, f32 — M4 Pro](#matrix-multiply-f32--m4-pro)
   - [Other shapes — M4 Pro](#other-shapes--m4-pro)
+  - [The same shapes on an i9-14900F](#the-same-shapes-on-an-i9-14900f)
   - [Against a hand-tuned BLAS, on equal hardware](#against-a-hand-tuned-blas-on-equal-hardware)
   - [Two builds](#two-builds)
 - [Status](#status)
