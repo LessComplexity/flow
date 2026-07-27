@@ -44,6 +44,8 @@ and is therefore permutation-proof by construction. `backends/llvm/tests/differe
 | Chase the saxpy +5.3% | **no (Sapir)** | expected from reordering; mechanism not isolated; the repo already has two P0s refuted after chasing unproven mechanisms |
 | `%Frame` layout as the perf mechanism | **withdrawn — over-claimed** | correlates, but task-interleaving fits conv2d's 1t-faster/par-slower sign flip better. Not S36c's refuted alias-barrier claim (vector counts byte-identical), but not promoted either. |
 | GPU: NVPTX vs CUDA C | **NVPTX (Sapir)** | §6 — the audit's blockers were unverified and failed the test |
+| Guards evaluate every arm (an untaken `7 / 0` traps) | **fix the cause, not the name (Sapir)** | renaming to `select` treats the symptom. "This is a flow with a condition; the condition should execute and thus determine if the path is taken. The IR should expose the flow as conditional, and the backend should treat it accordingly." Verified live: `(1 > 0) -> { -true-> 42; -false-> 7/0 }` exits 101. |
+| README one-line pitch | **adopted (Sapir)** | "The compiler derives several target implementations from one source, while preserving one explicit semantics" — now opens §The idea |
 | `INSTA_UPDATE=always` for the snapshot sweep | kept | multi-example tests abort at the first mismatch (1 snapshot per full gate run; `golden_examples` alone would need 8 more rounds). Old content is in `git HEAD`, nothing committed unreviewed, agents diff `git show HEAD:<path>`. |
 
 ## 3. Tests, checks, benchmarks
@@ -210,6 +212,9 @@ Re-run either perf leg: `ssh 100.81.226.103 'cd ~/s38bench && RUNS=101 ./s38run.
 | P | Item | Reference | Next action | Done when |
 | --- | --- | --- | --- | --- |
 | P0 | **GPU leg via NVPTX** | plan-s38 §6, ADR-0033 | write the plan; decide how graph facts are supplied to a GPU `Loc` | a recognized matmul site runs on the 4090 through PTX, differential bit-exact |
+| P0 | **Guards must be genuinely conditional** | this log §2, `examples/calc.mapal` header | the IR exposes the flow as conditional; the backend honours it. Today `Phi` is strict, so an untaken arm's `Div` still traps — verified, exit 101. Note the type-system context: `Ty` has products (`Tuple`/`Struct`/`Array`) and **no coproducts**, and a branch is a coproduct | an untaken trapping arm does not trap; the differential covers it |
+| P1 | **Beat OpenBLAS at ONE thread** | S33 measurement | 1t is a flat **1.20×** behind at 1024/2048/4096 (146 vs 174 GFLOP/s) — size-invariant, so a steady micro-kernel deficit rather than a blocking failure, and measured on the **untuned `generic` profile** | 1t parity or better on the i9, same-machine, both faces |
+| P1 | **Hardware-specific units in the backend (AMX / tensor cores)** | README "Against a hand-tuned BLAS", suggestion #12 | the M4 numpy gap is Accelerate reaching **AMX** and is explicitly *not* a compiler comparison today; the ADR-0032 shape is a per-`Loc` capability, never a mapal-ir fact | a matmul site emits through a matrix unit on at least one target |
 | P1 | Inlining must stamp spliced morphisms with the call-site position | plan-s38 §6.1 | needs its own counterexample: a trapping helper inlined into a caller with an earlier-positioned trap | counterexample passes |
 | P1 | `SourceLoc` is now a semantic attribute | plan-s38 §6.2 | write the ADR | ADR merged |
 | P1 | **`mapal_par_trap` is resumable, `mapal_trap` is not** | this log §5 | one test: a deferred-trapping op whose independent sibling stores into a frame slot that outlives the fn | test pins the ordering |

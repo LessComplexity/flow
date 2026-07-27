@@ -28,7 +28,36 @@ cargo test --workspace --release --no-fail-fast 2>&1 | grep -E "FAILED|test resu
 git worktree list                                       # 3 stale entries — prune
 ```
 
-## S39 focus
+## S39 focus — Sapir's three directions
+
+**The CPU track is working, so S39 opens on: (1) the GPU, (2) the one-thread gap against OpenBLAS,
+(3) hardware-specific units (AMX, tensor cores) as a backend concern.** Plus one P0 that came out of
+an external review and is a *semantics* bug, not a perf item.
+
+### 0. P0 — guards must be genuinely conditional
+
+**Verified live this session:**
+
+```
+(1 > 0) -> { -true-> 42; -false-> 7 / 0; } -> println
+→ mapal trap: div_zero    exit=101
+```
+
+A program that on any normal reading prints `42` dies instead. `examples/calc.mapal`'s own header
+already documents it — *"EVERY arm is evaluated… a zero divisor traps regardless of the chosen op."*
+
+**Sapir's direction, verbatim:** *"this is a flow with a condition, the condition should execute and
+thus determine if the path is to be taken or not. It shouldn't be more complicated than that — the ir
+should expose this flow as conditional, and the backend should treat it accordingly."*
+
+**Explicitly NOT the fix:** renaming the construct to `select`. That treats the symptom.
+
+Context worth carrying into the plan: `Ty` has products (`Tuple`, `Struct`, `Array`) and **no
+coproducts**, and a branch is a coproduct — so strict `Phi` is the direct consequence of a missing
+half of the type system, the same gap that `scan` (suggestion #13 / ADR-0036) and first-class
+functions will hit. Whether the fix is a coproduct in `Ty` or a conditional-execution edge in the
+graph is the plan's first question. Interacts with S38: making trap *order* source order is polish if
+a trap can fire from a path that was never taken.
 
 ### 1. P0 — the GPU leg, via LLVM NVPTX (Sapir's call, taken on evidence)
 
@@ -66,6 +95,47 @@ Do NOT re-derive these, they are settled:
 - **Unverified, 20 minutes to close:** `TileRead.clane` semantics were never traced into `tile_plan`'s
   recognizer. If a condition assumes lane-contiguity *in a register*, that is a genuine record defect
   and it lands mid-leg.
+
+### 1b. P1 — beat OpenBLAS at ONE thread
+
+The honest remaining scoreboard, from S33 on the i9 (same silicon, OpenBLAS 0.3.30 on the same AVX2
+units): **1t is a flat 1.20× behind at 1024, 2048 and 4096** — 146 vs 174 GFLOP/s. Size-invariant,
+which is the diagnostic: a steady **micro-kernel deficit**, not a blocking or traversal failure.
+Threaded is within ±10%, and full-machine parity exists only because 16 of 32 threads are E-cores
+(S33 tested and *refuted* "our scheduler is better" — Mapal has heterogeneity tolerance; on uniform
+P-cores OpenBLAS is 41% ahead).
+
+Two things make this a fair fight rather than a wall:
+
+- **It was measured on the untuned `generic` profile.** `TargetProfile` (S31) turned six hand-swept
+  literals into one named table plus arithmetic, but the *values* are still hand-set — suggestion #12
+  / ADR-0034 (`flow tune`: constants searched, not set). No hardware excuse is in the 1t number.
+- **The deficit is instruction selection, not schedule.** Deduction already won the loop nest; what
+  is behind is the innermost kernel. That is exactly where 1c applies.
+
+### 1c. P1 — hardware-specific units in the backend (AMX, tensor cores)
+
+**The M4 matmul gap is silicon, not code generation** — numpy reaches AMX through Accelerate, and
+the README correctly says that is *not* a compiler comparison. Making it one means the backend can
+target a matrix unit.
+
+The ADR-0032 shape is already settled and should be stated in the plan up front: a matrix unit is a
+**per-`Loc` capability**, never a mapal-ir fact. `tile_plan` says a site is bit-exactly interleavable;
+whether that site lands on FMA lanes, Apple AMX, Intel AMX tiles, or NVIDIA tensor cores is the
+backend's answer and differs per target. The record already carries the geometry (`TileRead`'s
+affine triple, `i_reuse`, `ksplit`); what is missing is a capability row in `TargetProfile` and an
+emission path per unit.
+
+Sequencing note: **tensor cores are already proven reachable** — this session's probe emitted
+`mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32` from `llvm.nvvm.mma.*`, with 804 intrinsics
+available. So the GPU leg (§1) and this item share a rung. Intel AMX has LLVM intrinsics
+(`llvm.x86.tile*`) and is testable on the i9's successor class but **not on the current box** — check
+`lscpu` for `amx_tile` before planning a leg there. Apple AMX is undocumented and reachable only via
+Accelerate, so on M-series the honest near-term move is a comparison, not an emission target.
+
+**Precision interacts:** tensor-core and AMX paths are not bit-exact against the scalar oracle, so
+they land on ADR-0032 D1's precision lattice — the same reason `--contract` is a separate face today.
+Do not weaken the byte-equality differential to accommodate them; give them their own face.
 
 ### 2. P1 — three obligations plan-s38 leaves open
 

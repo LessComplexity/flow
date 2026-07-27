@@ -62,6 +62,9 @@ That runs across every core of the machine. Nothing in the source says so.
 
 ## The idea
 
+> **The compiler derives several target implementations from one source, while preserving one
+> explicit semantics.**
+
 Fast code is usually fast because a human wrote machine details into the program: tile sizes,
 thread counts, vector widths, memory layouts. Those details do not survive a move to different
 hardware.
