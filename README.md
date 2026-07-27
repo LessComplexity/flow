@@ -117,11 +117,8 @@ Apple M4 Pro (10 P + 4 E), kernel time only. Baselines: naive triple loops at
 
 Statistic: single-threaded cells are the minimum of N runs, threaded cells the **median**.
 
-Both build faces are shown. The default is bit-identical to the interpreter and emits no fused
-multiply-add; `--contract` allows single-rounding FMA. The C++ baselines fuse (`-ffp-contract=fast`,
-and it is the C/C++ default anyway); the Rust baselines do **not** — rustc never contracts without
-an explicit `mul_add`, and their objects contain zero FMA instructions; NumPy's speed comes from
-BLAS kernels hand-written with it.
+Both build faces are shown: the default is bit-identical to the interpreter and emits no FMA,
+`--contract` allows it. C++ and NumPy fuse; Rust does not.
 
 Method, machine specs and raw logs: [`docs/performance/`](docs/performance/) ·
 [`benches/results-s36/`](benches/results-s36/).
@@ -133,9 +130,8 @@ Method, machine specs and raw logs: [`docs/performance/`](docs/performance/) ·
 | 1024 |           3.65 ms | **2.25 ms** |          125 |           117 |     1.29 |     0.69 |
 | 4096 |            245 ms |  **155 ms** |       33,439 |        33,574 |     90.5 |     44.3 |
 
-**55× the naive baseline at 1024², 216× at 4096²**, and **3.3× behind NumPy** — which on this
-machine reaches the AMX coprocessor, so that column is hardware rather than a compiler comparison
-(see below).
+**55× the naive baseline at 1024², 216× at 4096²**, and 3.3× behind NumPy, which here reaches the
+AMX coprocessor — hardware, not codegen (see below).
 
 ### Other shapes — M4 Pro
 
@@ -153,46 +149,15 @@ Threaded, median of 100, every leg measured in the same pass so the columns are 
 Per core, conv2d is 1.21× ahead of naive C++ on NEON and AVX2:
 [conv2d-per-core-gap.md](docs/performance/conv2d-per-core-gap.md).
 
-Two rows still go to C++ — transpose and gather — and they set the honest boundary of the claim.
-(The reduction is a semantics difference, not a speed one; see below.) **The cause is memory layout,
-not arithmetic intensity, and it is self-inflicted** — but not in the way this section previously
-claimed, and the correction is worth stating because the wrong diagnosis was here for a while.
-
-The compiler now records what `out[i]` **is**, as a graph fact: `iota`'s element is the index,
-`zip`'s is a pair of its two sources' elements, `enumerate`'s needs no rule of its own because it
-is `zip` over an `iota`. Consumers build the element instead of reading it back out of memory.
-The payoff turned out not to be the arithmetic. Once every consumer rebuilds the element, **the
-array is write-only** — saxpy was materializing 8 MB of zipped pairs per run that nothing read, and
-doing it inside the timed region. Deleting it is worth **0.4769 → 0.0981 ms single-threaded** and
-**0.1860 → 0.0833 ms threaded** (min of alternating runs against the same binary built before the
-change; the table above is medians, so its saxpy row moves by a similar factor).
-
-What was previously claimed here — that one shared `%Frame` struct defeats alias analysis and is
-worth 2.3× — **is false for the code this compiler emits.** LLVM computes non-overlap from constant
-field offsets without help; a struct-field control vectorizes with no metadata at all, and across
-61 tasks in seven shapes exactly one reports `unsafe dependent memory operations` — the dead `zip`
-task above. saxpy's timed loop already vectorized. The 2.3× came from a synthetic probe reproducing
-a pattern the compiler does not actually emit. The predicted destination was nearly right (0.097 ms
-predicted, 0.098 measured) and the predicted mechanism was wrong, which is a good argument for
-measuring the artifact rather than the model of it.
-
-A plain `map` is not the problem: a plain map over a contiguous array emits 4-wide NEON. The scalar
-cases are maps over a **zipped** array and over an **iota**, and both layouts were ours.
-
-The `sum reduction` row is a semantics difference as much as a speed one: NumPy's `sum` is pairwise
-and the C++ baseline splits into per-thread chunks, while a Mapal fold is left-to-right by
-definition and stays on one lane. At one thread, where all three compute the same function, Mapal
-is the fastest of the three (0.367 vs 0.382 vs 0.382 on the i9). Splitting a fold needs an
-associativity permission the type system does not carry yet —
-[plan-s37-scan-recurrence.md](docs/components/ir/plans/plan-s37-scan-recurrence.md).
-
-NumPy has no threaded kernel for FIR or conv2d (`np.correlate` is single-threaded C; conv2d is a
-Python loop over nine array slices), so that column is not like-for-like.
+Transpose and gather still go to C++ — the boundary of the claim. The reduction is a semantics
+difference, not a speed one: NumPy's `sum` is pairwise, a Mapal fold is left-to-right, and splitting
+one needs an associativity permission the type system does not carry yet
+([plan](docs/components/ir/plans/plan-s37-scan-recurrence.md)). NumPy has no threaded FIR or conv2d
+kernel, so that column is not like-for-like.
 
 ### The same shapes on an i9-14900F
 
-A second machine, and every leg — Mapal both faces, C++, NumPy — measured in one pass on the same
-cores. Median of 100, pinned to the 8 P-cores (`taskset -c 0-15`), `performance` governor:
+Median of 100, pinned to the 8 P-cores, `performance` governor, every leg in one pass:
 
 | workload               |    Mapal conformance |    Mapal FMA | C++ naive-mt | NumPy 1t |
 | ---------------------- | -------------------: | -----------: | -----------: | -------: |
@@ -203,43 +168,23 @@ cores. Median of 100, pinned to the 8 P-cores (`taskset -c 0-15`), `performance`
 | transpose, 1024²       |         **0.346 ms** |     0.346 ms |         0.40 |     2.33 |
 | gather `x[idx[i]]`, 1M |         **0.221 ms** |     0.223 ms |         0.29 |     1.17 |
 
-Mapal takes every row except the reduction, which is the semantics difference described above —
-NumPy's `sum` is pairwise, Mapal's fold is a left fold, and they are not computing the same thing.
-Note this box wins the streaming and permutation shapes that the M4 Pro does not; the two machines
-disagree about those rows, which is itself worth knowing before quoting either in isolation.
-
-**Methodology, because this box is easy to measure wrong.** It defaults to the `powersave` governor,
-which parks it near 1.1 GHz — the same binary read 0.70 ms and 1.12 ms in two sessions an hour
-apart, a 60% swing that is entirely the frequency ramp. The table above was taken at `performance`
-(5.5 GHz under load), and the ratio between the two settings, 5.0×, matches the clock ratio almost
-exactly. Reaching for `perf stat` instead does not help unless it is differenced around the timed
-region: the self-timed kernel is **3.1%** of what a whole-process count sees, the rest being data
-generation and startup. Two independent 30-run passes agreed within ~5% on every cell above 0.2 ms;
-conv2d and saxpy sit near 0.1 ms and swung up to 40% at that sample size, which is why the published
-table is 100.
+Every row except the reduction. This box takes the streaming and permutation shapes the M4 Pro
+does not, so neither machine is the whole story
+([why this box is easy to measure wrong](docs/sessions/2026-07-27-s37b-the-i9-cannot-be-measured-in-ms.md)).
 
 ### Against a hand-tuned BLAS, on equal hardware
 
-On the M4, NumPy's matmul runs on the AMX coprocessor. On an i9-14900F, where NumPy goes
-through OpenBLAS on the same AVX2 units Mapal targets, the gap is hardware:
+On the M4, NumPy's matmul runs on the AMX coprocessor and is 3.3× ahead threaded — a different
+execution unit, not better codegen. On an i9-14900F, where NumPy goes through OpenBLAS on the same
+AVX2 units Mapal targets, 1024² f32:
 
-| 1024² f32 | Mapal vs NumPy 1t | Mapal vs NumPy threaded | NumPy backend    |
-| --------- | ----------------- | ----------------------- | ---------------- |
-| M4 Pro    | NumPy 13.5× ahead | NumPy 3.3× ahead        | Accelerate → AMX |
-| i9-14900F | NumPy 1.22× ahead | see both rows below     | OpenBLAS → AVX2  |
+| i9-14900F, 1024² f32     |    Mapal |    NumPy | gap          |
+| ------------------------ | -------: | -------: | ------------ |
+| single-threaded          | 14.88 ms | 12.21 ms | 1.22× behind |
+| threaded, 8 P-cores      |  2.09 ms |  1.74 ms | 1.20× behind |
+| threaded, whole box      |  1.52 ms |  1.50 ms | **tie**      |
 
-The threaded answer depends on which cores you give it, and both configurations are worth stating
-because they say different things. Median of 15, `performance` governor, product face:
-
-| i9-14900F, 1024² f32     |     Mapal |     NumPy | gap             |
-| ------------------------ | --------: | --------: | --------------- |
-| single-threaded          | 14.88 ms  | 12.21 ms  | 1.22× behind    |
-| threaded, 8 P-cores only |  2.09 ms  |  1.74 ms  | 1.20× behind    |
-| threaded, whole machine  |  1.52 ms  |  1.50 ms  | **tie** (1.01×) |
-
-Pinning to the P-cores is where OpenBLAS is strongest — identical cores, no heterogeneity to
-exploit — and Mapal is 1.20× behind there on the untuned `generic` profile. The whole-machine tie
-is not a better kernel; it is the row below.
+The whole-machine tie is not a better kernel; it is the row below.
 
 The threaded parity is **not** a better scheduler. Same box, 8 threads per row, only CPU
 uniformity varying:
@@ -250,12 +195,11 @@ uniformity varying:
 | 8 P-cores (uniform) | 2.44 ms |  1.72 | **NumPy by 41%** |
 | 4 P + 4 E (mixed)   | 3.38 ms |  5.57 | **Mapal by 65%** |
 
-Swapping four E-cores for four 35%-faster ones bought OpenBLAS nothing (5.59 → 5.57): it
-partitions statically, so every panel waits on the slowest thread. Mapal went 5.89 → 3.38.
-That is **heterogeneity tolerance** -> it matters on consumer CPUs and claims nothing about a
-homogeneous server. Detail: [s33.md §4](docs/performance/matmul/s33.md).
-
-The flat 20% single-threaded kernel gap is the remaining target.
+Swapping four E-cores for four faster ones bought OpenBLAS nothing (5.59 → 5.57) — it partitions
+statically, so every panel waits on the slowest thread. Mapal went 5.89 → 3.38. That is
+**heterogeneity tolerance**: it matters on consumer CPUs and claims nothing about a homogeneous
+server ([detail](docs/performance/matmul/s33.md)). The 20% single-threaded kernel gap is the
+remaining target.
 
 ### Two builds
 
@@ -264,10 +208,9 @@ The flat 20% single-threaded kernel gap is the remaining target.
 | **conformance** (default)   | bit-identical to the interpreter, always        | 3.65 ms                |
 | **contract** (`--contract`) | relative tolerance; single-rounding FMA allowed | **2.25 ms** (1.62×)    |
 
-The default emits **zero** FMA instructions — verified on the object, not assumed
-(`objdump -d matmul1024_f32.o | grep -c vfmadd` = 0 by default, 28 with `--contract`). Both faces
-appear in every table above because the comparison is otherwise uneven in both directions: C/C++
-contracts by default, Rust never does, and NumPy calls kernels written with FMA by hand.
+The default emits **zero** FMA instructions — verified on the object, not assumed. Both faces
+appear in every table because the comparison is otherwise uneven in both directions: C/C++
+contracts by default, Rust never does, NumPy calls hand-written FMA kernels.
 
 ---
 
