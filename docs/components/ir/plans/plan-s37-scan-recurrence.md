@@ -231,7 +231,43 @@ algebra:
 Together they put saxpy 1t at **0.0972 vs C++ 0.0945** — parity — with *zero* mapal-ir changes and
 nothing to do with this plan. Sequence accordingly: those two first, this second.
 
-## 8. Open questions for Sapir
+## 8. The same type change unlocks FMA — and FMA should become an op, not a flag
+
+Raised by Sapir: *"by default compilers do the fma and we don't, why? Maybe this should be the
+default? Or should/can it be deduced at mapal ir?"*
+
+**It cannot be deduced, for the same reason reassociation cannot.** Fusing `(a*b)+c` changes the
+value; nothing in the dataflow graph says whether the program wants one rounding or two. It is a
+permission on the same ADR-0032 D1 lattice — `exact | contract | tf32-class` — and it is
+unrepresentable today for the same reason: `Ty` carries no contract dimension. **One type change
+answers both questions.**
+
+**The premise deserves checking, and it is only half true.** C and C++ contract by default; **Rust
+does not** — `rustc -O -C target-cpu=native` produces zero FMA instructions on our own matmul
+baselines, against two per C++ leg (measured on the objects). NumPy's FMA comes from hand-written
+BLAS kernels, not a compiler default. Mapal's `exact` default puts it where Rust is, which is a
+defensible place, not an oversight.
+
+**Why the default cannot simply be flipped today.** Contraction is currently a *flag*:
+`EmitOpts::contract` attaches a `contract` fast-math flag to the emitted `fmul`/`fadd` and **LLVM
+then decides which pairs actually fuse**. There is no `Fma` in `graph.rs` and no `mul_add` in
+`mapal-interp`. So the oracle cannot predict the fusion set, and the differential suite's
+byte-for-byte `assert_eq!` against the interpreter — 1,280 compile-and-runs per push — would have
+to weaken to a tolerance. That is trading the project's strongest correctness property for 1.6×.
+
+**The fix is the same move this plan makes for `combine`: put the decision in the graph.**
+
+| step | change | why it matters |
+| --- | --- | --- |
+| 1 | `Operation::Fma` in Core; `lower` emits it for `a*b+c` **when the contract permits** | the fusion set becomes a graph fact, not an LLVM outcome |
+| 2 | `mapal-interp` evaluates it with `f32::mul_add` | IEEE-guaranteed single rounding ⟹ bit-identical to the hardware instruction, so byte-equality with the oracle **survives** |
+| 3 | `Ty` gains the ADR-0032 D1 contract dimension | `exact` forbids the lowering; `contract` permits it — per type, not per compiler invocation |
+| 4 | default becomes `contract` | naive code gets the fast build; `exact` stays reachable for anyone who needs unfused left-to-right semantics |
+
+Step 2 is the load-bearing one and it is why "make it an op" beats "flip the flag": a permission
+expressed as an op is testable against the oracle, a permission expressed as a backend flag is not.
+
+## 9. Open questions for Sapir
 
 1. **Does `Scan` replace `Fold` in Core, or join it?** Consolidation (§3) says replace — `Fold` is
    `Scan` with `window=1, jump=1, emit=last`. That is a Core op change with an ADR and a migration.

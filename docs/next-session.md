@@ -1,8 +1,10 @@
 # Next Session (S37)
 
-Written: 2026-07-27 · end of S36b · by: Claude (orchestrator; category-architect skill)
-Session logs: `sessions/2026-07-27-s36b-cross-machine-validation.md` (the validation campaign) and
-`sessions/2026-07-27-s36-clock-read-barrier.md` (the fix) — **read S36 §10 and S36b §11 before
+Written: 2026-07-27 · end of S36d (the S36 block) · by: Claude (orchestrator; category-architect skill)
+Session logs, in order: `sessions/2026-07-27-s36-clock-read-barrier.md` (the fix),
+`-s36b-cross-machine-validation.md` (8,400-run A/B), `-s36c-the-real-gaps.md` (the two corrections
+and the two layout findings), `-s36d-readme-editors-and-the-fma-question.md` (front page, tooling,
+FMA) — **read S36 §10 and S36b §11 before
 republishing any `par` number.** Previous: S35
 (`sessions/2026-07-26-s35-shape-ladder-and-the-ast-question.md`).
 
@@ -92,6 +94,20 @@ Together: saxpy 1t **0.0972 vs C++ 0.0945** — parity, zero mapal-ir changes. P
 **Correction to the S35 framing this inherited:** a plain map is NOT always scalar — a plain map
 over a contiguous i32 array is 4-wide NEON in the same binary. The scalar cases are maps over a
 **zipped** array or over an **iota**, and both layouts are ours.
+
+### 2b. P1 — `Operation::Fma`, and why `--contract` is not the default
+
+Fusing cannot be deduced: it changes the value, so it is a permission on ADR-0032 D1's lattice
+(`exact | contract | tf32-class`) — the same one fold reassociation rides — and `Ty` carries no
+contract dimension. It cannot simply be flipped either: contraction is a *flag* LLVM interprets, so
+`mapal-interp` cannot predict the fusion set and the 1,280-run byte-equality oracle would have to
+weaken to a tolerance. Make it an op (`Operation::Fma`, interp evaluates with `f32::mul_add`, whose
+IEEE single rounding is bit-identical to the instruction) and byte-equality survives a fused build —
+then the default can flip, worth **1.62×** on matmul 1024². Plan: `plan-s37-scan-recurrence.md` §8;
+backlog row: ir suggestion #3.
+
+**And note for any future baseline comparison: Rust does not contract by default** (0 FMA in both
+matmul baselines with `-O -C target-cpu=native`), C/C++ do, NumPy's comes from hand-written BLAS.
 
 ### 3. P1 — the recurrence question (planned, not started)
 
