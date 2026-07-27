@@ -18,5 +18,3 @@ fn main() {
     c[0] -> println;
     c[16383] -> println;
 }
-
-

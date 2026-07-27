@@ -7,7 +7,6 @@ fn main() {
     9 -> iota -> kr;
     kr -> map { t -> (t * 5 + 3) % 31 - 15 -> widen_f32 } -> w;
     1048576 -> iota -> ts;
-
     () -> time -> t0;
     ts -> map { t ->
         t / 1024 -> i;
@@ -15,7 +14,6 @@ fn main() {
         (0.0, kr) -> fold { acc, k -> acc + w[k] * img[(i + k / 3) * 1026 + j + k % 3] }
     } -> y;
     () -> time -> t1;
-
     y[0] -> println;
     y[1048575] -> println;
     "iter ms=" -> print;
