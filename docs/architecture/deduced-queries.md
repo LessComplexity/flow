@@ -61,6 +61,112 @@ Two disciplines run through everything below:
 
 ---
 
+## Where queries sit — the whole compiler in one picture
+
+Before the individual queries, the shape of the thing they live in. It is small
+enough to hold in your head, and holding it is what keeps the rest of this
+document from reading as a pile of terms.
+
+```mermaid
+graph LR
+    SRC["source .mapal"] -->|"lex · parse"| AST["AST"]
+    AST -->|"lower"| G["CategoryIr<br/>the only stored truth"]
+    G --> GATE{{"validate · check<br/>gates — Graph → Diagnostics"}}
+    G --> Q["deduced queries<br/><i>pure views, never stored</i>"]
+    G --> RW["rewrite<br/>Graph → Graph"]
+    G --> BE["backends<br/>Graph × Facts × Machine → code<br/>llvm · cuda · verilog"]
+    G --> IN["interp — the oracle<br/>eval : Graph → Values"]
+    Q -.->|"facts"| RW
+    Q -.->|"facts"| BE
+    RW -->|"new graph — every fact recomputed"| G
+    BE -.->|"must be byte-equal"| IN
+    style G fill:#4f8cf7,color:#fff
+    style Q fill:#f7c04f,color:#000
+    style RW fill:#7fc47f,color:#000
+    style BE fill:#7fc47f,color:#000
+    style IN fill:#f77f7f,color:#fff
+    style GATE fill:#9a9a9a,color:#fff
+    style AST fill:#4f8cf7,color:#fff
+    style SRC fill:#4f8cf7,color:#fff
+```
+
+**There are exactly two kinds of arrow, and the difference is the whole design.**
+
+| aspect | a **rewrite** | a **query** |
+| --- | --- | --- |
+| type | `Graph → Graph` | `Graph → Facts` |
+| touches the graph? | yes — it replaces it | no |
+| justified by | an **equation** — a functor law | a **proof** — this cycle *is* a loop |
+| can be wrong about | **values** | performance, placement |
+| what it owes | byte-equality vs the oracle | soundness; silence is always safe |
+
+Write the reference semantics as `eval : Graph → Values` — that is the
+interpreter, `mapal-interp`, executing the graph directly. Then each arrow's
+correctness condition is one line:
+
+- `lower` preserves surface semantics — checked by goldens plus running `eval` on
+  what it produced.
+- `validate` is a **gate**, not a transformation: `Graph → Violation*`.
+- `check` is also a gate: it discharges exactly the obligations `eval` assumes.
+- **`rewrite` must satisfy `eval ∘ rewrite = eval`.** That is literally what the
+  1,280-run differential checks, byte for byte, at `-O0` and `-O2`.
+- **A query owes nothing to `eval`** — it cannot be wrong about values, because
+  it does not touch them. Absence of a fact is always safe: no tile site means
+  untiled, no proof means keep the bounds check.
+- **`emit` must satisfy `run ∘ emit = eval`** — same oracle, and its machine-fact
+  decisions (`TargetProfile`, elision, thread width) are required to be *invisible
+  in the bytes*.
+
+Both correctness conditions factor through the same `eval`. One oracle, two
+arrows — that is the entire safety story of this compiler.
+
+### The rule that follows
+
+**Move work from `rewrite` into `query` wherever it will go.** A wrong query costs
+performance; a wrong rewrite costs correctness. S34 is the standing example: the
+`map(id) → id` rewrite judged a map body by its return value alone, so a body that
+returned its parameter *and* computed a dead trapping division read as the
+identity — `Trapped(DivZero)` silently became `Done(0)`. A query structurally
+cannot do that. This is not a style preference; it is the type signature.
+
+That is why `tile_plan` is a query and not a "tiling pass". The same reasoning
+decided the shape of the next one: `elem_plan` (**planned, not built** — *what is
+`out[i]`, as a closed function of `i`?*,
+`components/ir/plans/plan-s37-stage-structure.md`) will *record* that an
+intermediate array could be skipped rather than deleting it. The graph survives;
+the backend decides.
+
+### Two honest caveats to the picture above
+
+- **It is a cycle, not a pipeline.** The rewriter reads queries too — `lift.rs:31`
+  and `replay.rs:291` consume `loop_plan` — and after a rewrite every fact is
+  simply recomputed. That is safe and cheap precisely because queries are pure
+  functions of the graph with nothing stored to invalidate.
+- **Queries are a menu, not a stage.** `path_plan` is consumed by llvm,
+  `emission_plan` by cuda; each backend pulls the facts its target needs and
+  ignores the rest. Nothing "runs the analysis phase."
+
+### Who decides what
+
+The split that falls out is the one rule to remember when reading any query:
+
+> **mapal-ir answers "is this legal?" — machine-independent value semantics.
+> The backend answers "is this worth it?" — and gets a different answer per target.**
+
+Recompute-versus-store is the clearest case: on a GPU, bandwidth is the bottleneck
+and registers are cheap, so recomputing usually wins; on a CPU it depends on the
+body's cycle count against an L2 round trip; on an FPGA "store" is BRAM and
+"recompute" is silicon area. Same graph, three answers. So the cost model cannot
+live in mapal-ir — and mapal-ir never learns a machine fact (ADR-0032).
+
+The shipped example is matmul. A developer writes it as a plain `map` over a
+`fold`, which reads like an ordinary loop nest. `tile_plan` records only geometry.
+`TargetProfile` holds the machine constants and derives the tile sizes from them.
+What comes out is register-blocked, packed and panel-resident, and nobody wrote
+any of that down.
+
+---
+
 ## `path_plan` — what can run at the same time?
 
 **The question in plain words:** which parts of this function are independent, so

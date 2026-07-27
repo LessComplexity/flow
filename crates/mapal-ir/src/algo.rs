@@ -291,6 +291,77 @@ enum Rng {
     EnumIdx(u64),
 }
 
+/// The per-element law of an array object: **what `out[i]` is, as a closed
+/// function of the loop index** (plan-s37-stage-structure §3).
+///
+/// An array whose law is known does not have to exist. `iota` writes a million
+/// `i32`s so a consuming `map` can read them back, but `ix[i]` *is* `i` — the
+/// array is a stored copy of a deduced morphism (FRAMEWORK §5), paid for with a
+/// store pass, a load pass, and an opaque memory object LLVM refuses to
+/// vectorize through (`cannot identify array bounds`).
+///
+/// This type says only what the element **is**. Whether to use that instead of
+/// loading — recompute vs. keep in memory, and whether inlining blows a cache,
+/// register or occupancy budget — is a per-target question the **backend** owns:
+/// on a GPU bandwidth is scarce and registers are cheap, on a CPU it is a body's
+/// cycle count against an L2 round trip, on an FPGA it is BRAM against silicon
+/// area. Same graph, three answers, so there is deliberately no cost, op-count
+/// or read-count field here (ADR-0032: mapal-ir never learns a machine fact).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ElemSrc {
+    /// `out[i] = i` — the loop index itself (`Iota`).
+    Index,
+    /// `out[i] = x` for a loop-invariant `x` (`Fill`): component `slot` of
+    /// `source`, which the emitter already loads once above the loop head.
+    Broadcast { source: ObjectId, slot: u32 },
+    /// **The cut.** No closed form, so the array materializes and the element is
+    /// loaded — exactly today's behavior, which is why cutting is always sound.
+    /// `(source, slot)` is the pair `array_operand_ptr` / `load_component`
+    /// already take, so consuming this needs no new pointer plumbing.
+    Load { source: ObjectId, slot: Option<u32> },
+    /// Structural pairing with no arithmetic of its own: `Zip` is
+    /// `Pair(·, ·)` and `Enumerate` is `Pair(Index, ·)` — which is why
+    /// `Enumerate` needs no constructor here (ADR-0018 already calls `Zip` the
+    /// canonical iso `Aⁿ × Bⁿ ≅ (A×B)ⁿ`, and `enumerate a ≅ zip(iota n, a)`).
+    Pair(Box<ElemSrc>, Box<ElemSrc>),
+}
+
+/// The per-fn element-law plan — the deduced query
+/// `elem : IR × FuncId → ElemPlan`, the BL7 pattern alongside [`tile_plan`] and
+/// [`last_use_plan`] (plan-s37-stage-structure).
+///
+/// **Only non-[`ElemSrc::Load`] laws are recorded.** Absence means "load it",
+/// which is the status quo — so, like every query here, saying nothing is always
+/// safe and a consumer that ignores the plan entirely is still correct.
+///
+/// Non-destructive by design: this records that an intermediate array *could* be
+/// skipped and never removes it. The graph, the count `Constant` that
+/// `validate`'s `IotaCountMismatch` ties, and every downstream recognizer's
+/// witness all survive — which is what leaves the elide-vs-materialize decision
+/// with the backend, and what keeps a deliberate materialization (S27 rung-3
+/// packing) expressible.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ElemPlan {
+    src: SecondaryMap<ObjectId, ElemSrc>,
+}
+
+impl ElemPlan {
+    /// The element law of `arr`, or `None` when it must be loaded.
+    pub fn src(&self, arr: ObjectId) -> Option<&ElemSrc> {
+        self.src.get(arr)
+    }
+
+    /// How many arrays in the fn have a closed-form element law.
+    pub fn len(&self) -> usize {
+        self.src.len()
+    }
+
+    /// Whether no array in the fn has one.
+    pub fn is_empty(&self) -> bool {
+        self.src.is_empty()
+    }
+}
+
 /// The per-fn last-use plan (docs/components/ir/plans/plan-last-use.md §2 —
 /// the deduced query `last_use : IR × FuncId → LastUsePlan`, the BL7 pattern
 /// alongside [`loop_plan`]): per-object death positions plus the escape and
@@ -1010,10 +1081,140 @@ impl CategoryIr {
         let Ty::Array { size, .. } = &self.objects.get(array)?.ty else {
             return None;
         };
+        // Consumes the STRUCTURE fact, not the op tag. This used to read
+        // `op == Operation::Iota`, which asks what the node is TAGGED rather
+        // than what the array's element IS — and `tile_site` calls this twice
+        // per site (the outer mapped array and the inner fold's trip count),
+        // with a silent fallback to the scalar emitter when it answers `None`.
+        // A tag check goes stale the moment anything else can produce an index
+        // law; a fact check follows. Behavior today is identical — `Iota` is
+        // still the only producer of `ElemSrc::Index` — and the cost of getting
+        // this wrong is pinned in `tests/tile_sites_pin.rs` (4.0x on matmul
+        // 1024, docs/performance/matmul/s25.md:46-48).
+        matches!(self.elem_law_local(array), Some(ElemSrc::Index)).then_some(*size)
+    }
+
+    /// The one-step element law of `array` from its producer alone: the local
+    /// half of [`elem_plan`]'s recursion, with no loop-residence or depth guard
+    /// (the caller owns those). Returns `None` for the cut.
+    fn elem_law_local(&self, array: ObjectId) -> Option<ElemSrc> {
         let [definer] = self.in_edges(array) else {
             return None;
         };
-        (self.morphisms.get(*definer)?.op == Operation::Iota).then_some(*size)
+        match self.morphisms.get(*definer)?.op {
+            Operation::Iota => Some(ElemSrc::Index),
+            Operation::Fill => Some(ElemSrc::Broadcast {
+                source: self.morphisms.get(*definer)?.source,
+                slot: 0,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The deduced query `elem : IR × FuncId → ElemPlan` — for each array in
+    /// `f`, what `out[i]` is as a closed function of the index
+    /// (plan-s37-stage-structure §3.1).
+    ///
+    /// The law is the unique homomorphism from the producer DAG into the
+    /// [`ElemSrc`] term algebra: `Iota ↦ Index`, `Fill ↦ Broadcast`,
+    /// `Zip ↦ Pair(·,·)`, `Enumerate ↦ Pair(Index, ·)`, **everything else ↦ the
+    /// cut**. Stage composition is nothing more than the recursion continuing
+    /// past a cut: `Consumer[mid[i]] ∘ Producer{L} = Consumer[L(i)]`.
+    ///
+    /// Producers are recognized by an exact op-tag set rather than by "carries
+    /// no body", because trap-freedom is a documented guarantee of these four
+    /// tags specifically (`graph.rs`) — a future bodyless-looking op, or a
+    /// `Call` whose totality is underivable, must not be admitted by shape.
+    pub fn elem_plan(&self, f: FuncId) -> ElemPlan {
+        let mut plan = ElemPlan::default();
+        let Some(def) = self.func(f) else {
+            return plan;
+        };
+        let mut in_loop: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+        for scc in self.loop_structure(f) {
+            for o in scc.objects {
+                in_loop.insert(o, ());
+            }
+        }
+        for &m in &def.morphisms {
+            let Some(morph) = self.morphisms.get(m) else {
+                continue;
+            };
+            if !matches!(
+                morph.op,
+                Operation::Iota | Operation::Fill | Operation::Zip | Operation::Enumerate
+            ) {
+                continue;
+            }
+            if let Some(law) = self.elem_law(morph.target, &in_loop, 0) {
+                plan.src.insert(morph.target, law);
+            }
+        }
+        plan
+    }
+
+    /// `elem_law_local` plus the three guards, recursing through structural
+    /// producers. `None` is the cut.
+    ///
+    /// Guards, each preventing a specific wrong answer: a **single in-edge**
+    /// (a multi-producer object has no unique law to substitute); **outside
+    /// every loop SCC** (a loop-carried array's value differs per iteration, so
+    /// recomputing at read time would observe a different iteration than the
+    /// load did); and a **depth cap of 16** (the `tile_iota_size` /
+    /// `element_range` precedent — bounds query cost, and cutting early is
+    /// always sound). The cap is what keeps this within J1's spirit: recursion
+    /// depth is bounded by a constant, never by graph size.
+    fn elem_law(
+        &self,
+        arr: ObjectId,
+        in_loop: &SecondaryMap<ObjectId, ()>,
+        depth: u32,
+    ) -> Option<ElemSrc> {
+        if depth >= 16 || in_loop.contains_key(arr) {
+            return None;
+        }
+        let [definer] = self.in_edges(arr) else {
+            return None;
+        };
+        let morph = self.morphisms.get(*definer)?;
+        match morph.op {
+            Operation::Iota | Operation::Fill => self.elem_law_local(arr),
+            // `Zip`'s source is the 2-tuple product of the two arrays (ADR-0018).
+            Operation::Zip => Some(ElemSrc::Pair(
+                Box::new(self.elem_component(morph.source, 0, in_loop, depth + 1)),
+                Box::new(self.elem_component(morph.source, 1, in_loop, depth + 1)),
+            )),
+            // `Enumerate`'s source is the bare array; the index half is free.
+            Operation::Enumerate => Some(ElemSrc::Pair(
+                Box::new(ElemSrc::Index),
+                Box::new(self.elem_law(morph.source, in_loop, depth + 1).unwrap_or(
+                    ElemSrc::Load {
+                        source: morph.source,
+                        slot: None,
+                    },
+                )),
+            )),
+            _ => None,
+        }
+    }
+
+    /// The law of component `slot` of `product`, cutting to a `Load` addressed
+    /// as `(product, slot)` — the form the emitters' pointer helpers take.
+    fn elem_component(
+        &self,
+        product: ObjectId,
+        slot: u32,
+        in_loop: &SecondaryMap<ObjectId, ()>,
+        depth: u32,
+    ) -> ElemSrc {
+        let cut = ElemSrc::Load {
+            source: product,
+            slot: Some(slot),
+        };
+        match self.pair_slot_source(product, slot) {
+            Some(component) => self.elem_law(component, in_loop, depth).unwrap_or(cut),
+            None => cut,
+        }
     }
 
     fn tile_literal_u64(&self, object: ObjectId) -> Option<u64> {

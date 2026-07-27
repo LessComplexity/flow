@@ -1,8 +1,8 @@
 //! SCC / topo / loop-structure / deep-graph tests (DESIGN §16 item 4).
 
 use mapal_ir::{
-    Dest, FuncKind, IrBuilder, MorphismId, Operation, PathPlan, SourceLoc, TaskKind, TileKSplit,
-    TileRead, TileSite, Ty, Value, WaitEntry, validate,
+    Dest, ElemSrc, FuncKind, IrBuilder, MorphismId, ObjectId, Operation, PathPlan, SourceLoc,
+    TaskKind, TileKSplit, TileRead, TileSite, Ty, Value, WaitEntry, validate,
 };
 use proptest::prelude::*;
 
@@ -3506,4 +3506,133 @@ proptest! {
             }
         }
     }
+}
+
+// --- elem_plan (plan-s37-stage-structure) ---------------------------------
+//
+// The query answers "what is out[i]?" for each array. Only non-`Load` laws are
+// recorded — absence means "load it", which is the status quo, so a consumer
+// that ignores the plan is still correct.
+
+/// `fn m(a: ([i32;16], ())) -> i32` with a body the caller fills; returns the
+/// sealed graph, its FuncId, and whatever the body handed back.
+fn elem_fixture<F>(build: F) -> (mapal_ir::CategoryIr, mapal_ir::FuncId, Vec<ObjectId>)
+where
+    F: FnOnce(&mut mapal_ir::FnBuilder<'_>, ObjectId) -> Vec<ObjectId>,
+{
+    let mut b = IrBuilder::new();
+    let f = b
+        .declare(
+            FuncKind::Named,
+            "m",
+            Ty::Tuple(vec![i32_arr(16), Ty::Unit]),
+            Ty::i32(),
+            L,
+        )
+        .unwrap();
+    let mut probes = Vec::new();
+    {
+        let mut fb = b.build_fn(f).unwrap();
+        let inp = fb.input();
+        let a = fb.proj(inp, 0, Dest::Fresh(None), L).unwrap();
+        probes = build(&mut fb, a);
+        // Keep the fn well-formed: return a[0].
+        let zero = fb.constant(Value::I32(0), L).unwrap();
+        fb.index(a, zero, Dest::Ret { slot: None }, L).unwrap();
+        fb.finish().unwrap();
+    }
+    let ir = b.seal(f).unwrap();
+    assert!(validate(&ir).is_empty(), "{:?}", validate(&ir));
+    (ir, f, probes)
+}
+
+#[test]
+fn elem_iota_is_the_index() {
+    let (ir, f, p) = elem_fixture(|fb, _a| {
+        let n = fb.constant(Value::I32(16), L).unwrap();
+        vec![fb.iota(n, Dest::Fresh(None), L).unwrap()]
+    });
+    assert_eq!(ir.elem_plan(f).src(p[0]), Some(&ElemSrc::Index));
+}
+
+#[test]
+fn elem_fill_is_a_broadcast() {
+    let (ir, f, p) = elem_fixture(|fb, _a| {
+        let x = fb.constant(Value::I32(7), L).unwrap();
+        let n = fb.constant(Value::I32(16), L).unwrap();
+        vec![fb.fill(x, n, Dest::Fresh(None), L).unwrap()]
+    });
+    assert!(matches!(
+        ir.elem_plan(f).src(p[0]),
+        Some(ElemSrc::Broadcast { slot: 0, .. })
+    ));
+}
+
+/// `zip(iota, a)` — the left half resolves to the index law, the right half
+/// cuts to a load. This is the shape saxpy's timed window is built from, and
+/// the reason `Zip` needed no special case: it is `Pair(·, ·)`.
+#[test]
+fn elem_zip_pairs_a_resolved_half_with_a_cut_half() {
+    let (ir, f, p) = elem_fixture(|fb, a| {
+        let n = fb.constant(Value::I32(16), L).unwrap();
+        let ix = fb.iota(n, Dest::Fresh(None), L).unwrap();
+        vec![fb.zip(ix, a, Dest::Fresh(None), L).unwrap()]
+    });
+    let plan = ir.elem_plan(f);
+    let Some(ElemSrc::Pair(lhs, rhs)) = plan.src(p[0]) else {
+        panic!("zip should carry a Pair law, got {:?}", plan.src(p[0]));
+    };
+    assert_eq!(**lhs, ElemSrc::Index, "the iota half resolves");
+    assert!(
+        matches!(**rhs, ElemSrc::Load { slot: Some(1), .. }),
+        "the parameter half cuts to a load addressed as (product, 1), got {rhs:?}"
+    );
+}
+
+/// `Enumerate` needs no constructor of its own: it is `Pair(Index, ·)`, which
+/// is the same statement as `enumerate a ≅ zip(iota n, a)`.
+#[test]
+fn elem_enumerate_is_pair_of_index_and_the_source() {
+    let (ir, f, p) = elem_fixture(|fb, a| vec![fb.enumerate(a, Dest::Fresh(None), L).unwrap()]);
+    let plan = ir.elem_plan(f);
+    let Some(ElemSrc::Pair(lhs, rhs)) = plan.src(p[0]) else {
+        panic!(
+            "enumerate should carry a Pair law, got {:?}",
+            plan.src(p[0])
+        );
+    };
+    assert_eq!(**lhs, ElemSrc::Index);
+    assert!(matches!(**rhs, ElemSrc::Load { slot: None, .. }));
+}
+
+/// The cut is the whole safety story: anything the query cannot read is simply
+/// absent, and absent means "materialize and load" — exactly today's behavior.
+#[test]
+fn elem_cuts_on_a_parameter_array() {
+    let (ir, f, p) = elem_fixture(|_fb, a| vec![a]);
+    assert_eq!(ir.elem_plan(f).src(p[0]), None);
+    assert!(ir.elem_plan(f).is_empty());
+}
+
+/// Nesting composes: `zip(iota, zip(iota, a))` resolves both index halves
+/// through the recursion rather than through any per-op special case.
+#[test]
+fn elem_law_composes_through_nesting() {
+    let (ir, f, p) = elem_fixture(|fb, a| {
+        let n = fb.constant(Value::I32(16), L).unwrap();
+        let ix = fb.iota(n, Dest::Fresh(None), L).unwrap();
+        let inner = fb.zip(ix, a, Dest::Fresh(None), L).unwrap();
+        let n2 = fb.constant(Value::I32(16), L).unwrap();
+        let ix2 = fb.iota(n2, Dest::Fresh(None), L).unwrap();
+        vec![fb.zip(ix2, inner, Dest::Fresh(None), L).unwrap()]
+    });
+    let plan = ir.elem_plan(f);
+    let Some(ElemSrc::Pair(lhs, rhs)) = plan.src(p[0]) else {
+        panic!("outer zip should carry a Pair law");
+    };
+    assert_eq!(**lhs, ElemSrc::Index);
+    let ElemSrc::Pair(inner_l, _) = &**rhs else {
+        panic!("the inner zip's law should recurse, got {rhs:?}");
+    };
+    assert_eq!(**inner_l, ElemSrc::Index, "the nested iota resolves too");
 }

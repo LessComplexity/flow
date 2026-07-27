@@ -33,8 +33,8 @@ mod ty;
 mod validate;
 
 pub use algo::{
-    BoundsProof, Checkpoint, EmissionClass, EmissionPlan, LastUsePlan, LoopPlan, LoopScc, PathPlan,
-    Task, TaskId, TaskKind, TileKSplit, TilePlan, TileRead, TileSite, WaitEntry,
+    BoundsProof, Checkpoint, ElemPlan, ElemSrc, EmissionClass, EmissionPlan, LastUsePlan, LoopPlan,
+    LoopScc, PathPlan, Task, TaskId, TaskKind, TileKSplit, TilePlan, TileRead, TileSite, WaitEntry,
 };
 pub use builder::{Dest, FnBuilder, IrBuilder, IrError, LoopHandle};
 pub use graph::{
