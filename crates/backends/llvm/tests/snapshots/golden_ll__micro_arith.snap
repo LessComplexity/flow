@@ -77,31 +77,31 @@ bb23:
   store i32 %t25, ptr %o5
   br label %bb24
 bb24:
-  %t26 = getelementptr { i32, i32 }, ptr %o6, i32 0, i32 0
-  %t27 = load i32, ptr %t26
-  %t28 = getelementptr { i32, i32 }, ptr %o6, i32 0, i32 1
+  %t26 = load i32, ptr %o5
+  %t27 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 0
+  store i32 %t26, ptr %t27
+  %t28 = getelementptr { i32, i32 }, ptr %o6, i32 0, i32 0
   %t29 = load i32, ptr %t28
-  %t30 = icmp eq i32 %t29, 0
-  br i1 %t30, label %bb31, label %bb32
-bb31:
+  %t30 = getelementptr { i32, i32 }, ptr %o6, i32 0, i32 1
+  %t31 = load i32, ptr %t30
+  %t32 = icmp eq i32 %t31, 0
+  br i1 %t32, label %bb33, label %bb34
+bb33:
   call void @mapal_trap(i32 0)
   unreachable
-bb32:
-  %t33 = icmp eq i32 %t29, -1
-  %t34 = icmp eq i32 %t27, -2147483648
-  %t35 = and i1 %t33, %t34
-  br i1 %t35, label %bb36, label %bb37
-bb36:
-  store i32 0, ptr %o7
-  br label %bb38
-bb37:
-  %t39 = srem i32 %t27, %t29
-  store i32 %t39, ptr %o7
-  br label %bb38
+bb34:
+  %t35 = icmp eq i32 %t31, -1
+  %t36 = icmp eq i32 %t29, -2147483648
+  %t37 = and i1 %t35, %t36
+  br i1 %t37, label %bb38, label %bb39
 bb38:
-  %t40 = load i32, ptr %o5
-  %t41 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 0
-  store i32 %t40, ptr %t41
+  store i32 0, ptr %o7
+  br label %bb40
+bb39:
+  %t41 = srem i32 %t29, %t31
+  store i32 %t41, ptr %o7
+  br label %bb40
+bb40:
   %t42 = load i32, ptr %o7
   %t43 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 1
   store i32 %t42, ptr %t43

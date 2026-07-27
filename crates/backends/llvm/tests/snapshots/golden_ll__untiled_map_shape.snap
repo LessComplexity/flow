@@ -2,14 +2,14 @@
 source: crates/backends/llvm/tests/golden_ll.rs
 expression: untiled_fn
 ---
-define internal void @task4(i64 %lo, i64 %hi, ptr %frame) {
+define internal void @task3(i64 %lo, i64 %hi, ptr %frame) {
 entry:
   %s0 = alloca i64
   %s7 = alloca { ptr, ptr, ptr, i32 }
   %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
-  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
-  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
   %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
+  %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
   store i64 %lo, ptr %s0
   br label %bb1
 bb1:
@@ -19,11 +19,11 @@ bb1:
 bb2:
   %t6 = trunc i64 %t4 to i32
   %t8 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s7, i32 0, i32 0
-  store ptr %o5, ptr %t8
+  store ptr %o3, ptr %t8
   %t9 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s7, i32 0, i32 1
-  store ptr %o2, ptr %t9
+  store ptr %o4, ptr %t9
   %t10 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s7, i32 0, i32 2
-  store ptr %o3, ptr %t10
+  store ptr %o5, ptr %t10
   %t11 = getelementptr { ptr, ptr, ptr, i32 }, ptr %s7, i32 0, i32 3
   store i32 %t6, ptr %t11
   %t12 = load { ptr, ptr, ptr, i32 }, ptr %s7

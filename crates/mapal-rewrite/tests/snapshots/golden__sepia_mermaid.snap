@@ -182,13 +182,13 @@ flowchart LR
         f1o28(("(f32, f32)"))
         f1o29(("f32"))
         f1o30(("(f32, f32)"))
-        f1o31(("f32"))
-        f1o32(("(f32, f32)"))
-        f1o33(("f32"))
+        f1o31(("bool"))
+        f1o32(("(f32, f32, bool)"))
+        f1o33(("bounded: f32"))
         f1o34(("(f32, f32)"))
-        f1o35(("f32"))
-        f1o36(("(f32, f32)"))
-        f1o37(("f32"))
+        f1o35(("bool"))
+        f1o36(("(f32, f32, bool)"))
+        f1o37(("nr: f32"))
         f1o38(("(f32, f32)"))
         f1o39(("f32"))
         f1o40(("(f32, f32)"))
@@ -200,29 +200,29 @@ flowchart LR
         f1o46(("(f32, f32)"))
         f1o47(("f32"))
         f1o48(("(f32, f32)"))
-        f1o49(("f32"))
-        f1o50(("(f32, f32)"))
-        f1o51(("bool"))
+        f1o49(("bool"))
+        f1o50(("(f32, f32, bool)"))
+        f1o51(("bounded: f32"))
         f1o52(("(f32, f32)"))
         f1o53(("bool"))
-        f1o54(("(f32, f32)"))
-        f1o55(("bool"))
+        f1o54(("(f32, f32, bool)"))
+        f1o55(("ng: f32"))
         f1o56(("(f32, f32)"))
-        f1o57(("bool"))
+        f1o57(("f32"))
         f1o58(("(f32, f32)"))
-        f1o59(("bool"))
+        f1o59(("f32"))
         f1o60(("(f32, f32)"))
-        f1o61(("bool"))
-        f1o62(("(f32, f32, bool)"))
-        f1o63(("bounded: f32"))
-        f1o64(("(f32, f32, bool)"))
-        f1o65(("bounded: f32"))
-        f1o66(("(f32, f32, bool)"))
-        f1o67(("bounded: f32"))
+        f1o61(("f32"))
+        f1o62(("(f32, f32)"))
+        f1o63(("f32"))
+        f1o64(("(f32, f32)"))
+        f1o65(("f32"))
+        f1o66(("(f32, f32)"))
+        f1o67(("bool"))
         f1o68(("(f32, f32, bool)"))
-        f1o69(("nr: f32"))
-        f1o70(("(f32, f32, bool)"))
-        f1o71(("ng: f32"))
+        f1o69(("bounded: f32"))
+        f1o70(("(f32, f32)"))
+        f1o71(("bool"))
         f1o72(("(f32, f32, bool)"))
         f1o73(("nb: f32"))
         f1o0 -- "Proj 0" --> f1o17
@@ -231,92 +231,92 @@ flowchart LR
         f1o17 -- "Pair 0/2" --> f1o20
         f1o2 -- "Pair 1/2" --> f1o20
         f1o20 -- "Mul" --> f1o21
-        f1o17 -- "Pair 0/2" --> f1o22
-        f1o7 -- "Pair 1/2" --> f1o22
+        f1o18 -- "Pair 0/2" --> f1o22
+        f1o3 -- "Pair 1/2" --> f1o22
         f1o22 -- "Mul" --> f1o23
-        f1o17 -- "Pair 0/2" --> f1o24
-        f1o12 -- "Pair 1/2" --> f1o24
-        f1o24 -- "Mul" --> f1o25
-        f1o18 -- "Pair 0/2" --> f1o26
-        f1o3 -- "Pair 1/2" --> f1o26
+        f1o21 -- "Pair 0/2" --> f1o24
+        f1o23 -- "Pair 1/2" --> f1o24
+        f1o24 -- "Add" --> f1o25
+        f1o19 -- "Pair 0/2" --> f1o26
+        f1o4 -- "Pair 1/2" --> f1o26
         f1o26 -- "Mul" --> f1o27
-        f1o18 -- "Pair 0/2" --> f1o28
-        f1o8 -- "Pair 1/2" --> f1o28
-        f1o28 -- "Mul" --> f1o29
-        f1o18 -- "Pair 0/2" --> f1o30
-        f1o13 -- "Pair 1/2" --> f1o30
-        f1o30 -- "Mul" --> f1o31
-        f1o19 -- "Pair 0/2" --> f1o32
-        f1o4 -- "Pair 1/2" --> f1o32
-        f1o32 -- "Mul" --> f1o33
-        f1o19 -- "Pair 0/2" --> f1o34
-        f1o9 -- "Pair 1/2" --> f1o34
-        f1o34 -- "Mul" --> f1o35
-        f1o19 -- "Pair 0/2" --> f1o36
-        f1o14 -- "Pair 1/2" --> f1o36
-        f1o36 -- "Mul" --> f1o37
-        f1o21 -- "Pair 0/2" --> f1o38
-        f1o27 -- "Pair 1/2" --> f1o38
-        f1o38 -- "Add" --> f1o39
-        f1o23 -- "Pair 0/2" --> f1o40
-        f1o29 -- "Pair 1/2" --> f1o40
-        f1o40 -- "Add" --> f1o41
-        f1o25 -- "Pair 0/2" --> f1o42
-        f1o31 -- "Pair 1/2" --> f1o42
+        f1o25 -- "Pair 0/2" --> f1o28
+        f1o27 -- "Pair 1/2" --> f1o28
+        f1o28 -- "Add" --> f1o29
+        f1o29 -- "Pair 0/2" --> f1o30
+        f1o5 -- "Pair 1/2" --> f1o30
+        f1o30 -- "Lt" --> f1o31
+        f1o5 -- "Pair 0/3" --> f1o32
+        f1o29 -- "Pair 1/3" --> f1o32
+        f1o31 -- "Pair 2/3" --> f1o32
+        f1o32 -- "Phi" --> f1o33
+        f1o29 -- "Pair 0/2" --> f1o34
+        f1o6 -- "Pair 1/2" --> f1o34
+        f1o34 -- "Gt" --> f1o35
+        f1o6 -- "Pair 0/3" --> f1o36
+        f1o33 -- "Pair 1/3" --> f1o36
+        f1o35 -- "Pair 2/3" --> f1o36
+        f1o36 -- "Phi" --> f1o37
+        f1o17 -- "Pair 0/2" --> f1o38
+        f1o7 -- "Pair 1/2" --> f1o38
+        f1o38 -- "Mul" --> f1o39
+        f1o18 -- "Pair 0/2" --> f1o40
+        f1o8 -- "Pair 1/2" --> f1o40
+        f1o40 -- "Mul" --> f1o41
+        f1o39 -- "Pair 0/2" --> f1o42
+        f1o41 -- "Pair 1/2" --> f1o42
         f1o42 -- "Add" --> f1o43
-        f1o39 -- "Pair 0/2" --> f1o44
-        f1o33 -- "Pair 1/2" --> f1o44
-        f1o44 -- "Add" --> f1o45
-        f1o41 -- "Pair 0/2" --> f1o46
-        f1o35 -- "Pair 1/2" --> f1o46
+        f1o19 -- "Pair 0/2" --> f1o44
+        f1o9 -- "Pair 1/2" --> f1o44
+        f1o44 -- "Mul" --> f1o45
+        f1o43 -- "Pair 0/2" --> f1o46
+        f1o45 -- "Pair 1/2" --> f1o46
         f1o46 -- "Add" --> f1o47
-        f1o43 -- "Pair 0/2" --> f1o48
-        f1o37 -- "Pair 1/2" --> f1o48
-        f1o48 -- "Add" --> f1o49
-        f1o45 -- "Pair 0/2" --> f1o50
-        f1o5 -- "Pair 1/2" --> f1o50
-        f1o50 -- "Lt" --> f1o51
-        f1o45 -- "Pair 0/2" --> f1o52
-        f1o6 -- "Pair 1/2" --> f1o52
+        f1o47 -- "Pair 0/2" --> f1o48
+        f1o10 -- "Pair 1/2" --> f1o48
+        f1o48 -- "Lt" --> f1o49
+        f1o10 -- "Pair 0/3" --> f1o50
+        f1o47 -- "Pair 1/3" --> f1o50
+        f1o49 -- "Pair 2/3" --> f1o50
+        f1o50 -- "Phi" --> f1o51
+        f1o47 -- "Pair 0/2" --> f1o52
+        f1o11 -- "Pair 1/2" --> f1o52
         f1o52 -- "Gt" --> f1o53
-        f1o47 -- "Pair 0/2" --> f1o54
-        f1o10 -- "Pair 1/2" --> f1o54
-        f1o54 -- "Lt" --> f1o55
-        f1o47 -- "Pair 0/2" --> f1o56
-        f1o11 -- "Pair 1/2" --> f1o56
-        f1o56 -- "Gt" --> f1o57
-        f1o49 -- "Pair 0/2" --> f1o58
-        f1o15 -- "Pair 1/2" --> f1o58
-        f1o58 -- "Lt" --> f1o59
-        f1o49 -- "Pair 0/2" --> f1o60
-        f1o16 -- "Pair 1/2" --> f1o60
-        f1o60 -- "Gt" --> f1o61
-        f1o5 -- "Pair 0/3" --> f1o62
-        f1o45 -- "Pair 1/3" --> f1o62
-        f1o51 -- "Pair 2/3" --> f1o62
-        f1o62 -- "Phi" --> f1o63
-        f1o10 -- "Pair 0/3" --> f1o64
-        f1o47 -- "Pair 1/3" --> f1o64
-        f1o55 -- "Pair 2/3" --> f1o64
-        f1o64 -- "Phi" --> f1o65
-        f1o15 -- "Pair 0/3" --> f1o66
-        f1o49 -- "Pair 1/3" --> f1o66
-        f1o59 -- "Pair 2/3" --> f1o66
-        f1o66 -- "Phi" --> f1o67
-        f1o6 -- "Pair 0/3" --> f1o68
-        f1o63 -- "Pair 1/3" --> f1o68
-        f1o53 -- "Pair 2/3" --> f1o68
+        f1o11 -- "Pair 0/3" --> f1o54
+        f1o51 -- "Pair 1/3" --> f1o54
+        f1o53 -- "Pair 2/3" --> f1o54
+        f1o54 -- "Phi" --> f1o55
+        f1o17 -- "Pair 0/2" --> f1o56
+        f1o12 -- "Pair 1/2" --> f1o56
+        f1o56 -- "Mul" --> f1o57
+        f1o18 -- "Pair 0/2" --> f1o58
+        f1o13 -- "Pair 1/2" --> f1o58
+        f1o58 -- "Mul" --> f1o59
+        f1o57 -- "Pair 0/2" --> f1o60
+        f1o59 -- "Pair 1/2" --> f1o60
+        f1o60 -- "Add" --> f1o61
+        f1o19 -- "Pair 0/2" --> f1o62
+        f1o14 -- "Pair 1/2" --> f1o62
+        f1o62 -- "Mul" --> f1o63
+        f1o61 -- "Pair 0/2" --> f1o64
+        f1o63 -- "Pair 1/2" --> f1o64
+        f1o64 -- "Add" --> f1o65
+        f1o65 -- "Pair 0/2" --> f1o66
+        f1o15 -- "Pair 1/2" --> f1o66
+        f1o66 -- "Lt" --> f1o67
+        f1o15 -- "Pair 0/3" --> f1o68
+        f1o65 -- "Pair 1/3" --> f1o68
+        f1o67 -- "Pair 2/3" --> f1o68
         f1o68 -- "Phi" --> f1o69
-        f1o11 -- "Pair 0/3" --> f1o70
-        f1o65 -- "Pair 1/3" --> f1o70
-        f1o57 -- "Pair 2/3" --> f1o70
-        f1o70 -- "Phi" --> f1o71
+        f1o65 -- "Pair 0/2" --> f1o70
+        f1o16 -- "Pair 1/2" --> f1o70
+        f1o70 -- "Gt" --> f1o71
         f1o16 -- "Pair 0/3" --> f1o72
-        f1o67 -- "Pair 1/3" --> f1o72
-        f1o61 -- "Pair 2/3" --> f1o72
+        f1o69 -- "Pair 1/3" --> f1o72
+        f1o71 -- "Pair 2/3" --> f1o72
         f1o72 -- "Phi" --> f1o73
-        f1o69 -- "Pair 0/3" --> f1o1
-        f1o71 -- "Pair 1/3" --> f1o1
+        f1o37 -- "Pair 0/3" --> f1o1
+        f1o55 -- "Pair 1/3" --> f1o1
         f1o73 -- "Pair 2/3" --> f1o1
     end
     subgraph f2["fn main::fold@1"]

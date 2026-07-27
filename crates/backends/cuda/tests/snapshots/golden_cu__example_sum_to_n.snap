@@ -112,11 +112,11 @@ static int32_t fn0(int32_t in) {
     o8.f1 = o4;
     o10.f0 = o4;
     o8.f0 = o5;
-    o11 = (int32_t)((uint32_t)o10.f0 + (uint32_t)o10.f1);
-    o9 = (int32_t)((uint32_t)o8.f0 + (uint32_t)o8.f1);
     o13.f1 = o7;
-    o12.f0 = o11;
+    o9 = (int32_t)((uint32_t)o8.f0 + (uint32_t)o8.f1);
     o12.f1 = o9;
+    o11 = (int32_t)((uint32_t)o10.f0 + (uint32_t)o10.f1);
+    o12.f0 = o11;
     o13.f0 = o12;
     o3 = o13.f0;
   }

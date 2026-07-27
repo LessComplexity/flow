@@ -126,8 +126,8 @@ static int32_t* fn0(int32_t in) {
   static const int32_t lit0[4] = { 0, 0, 0, 0 };
   o2 = (int32_t*)(arena0 + 0ULL);
   cu_check(cudaMemcpy(o2, lit0, sizeof(lit0), cudaMemcpyHostToDevice), "cudaMemcpy(literal)");
-  o3.f1 = 0;
   o3.f0 = o2;
+  o3.f1 = 0;
   o4 = o3;
   while (true) {
     o7.f1 = in;
@@ -144,15 +144,15 @@ static int32_t* fn0(int32_t in) {
     o9.f0 = o6;
     o11.f1 = o6;
     o13.f0 = o6;
-    o10 = (int32_t)((uint32_t)o9.f0 * (uint32_t)o9.f1);
-    o14 = (int32_t)((uint32_t)o13.f0 + (uint32_t)o13.f1);
     o16.f1 = o8;
+    o10 = (int32_t)((uint32_t)o9.f0 * (uint32_t)o9.f1);
     o11.f2 = o10;
-    o15.f1 = o14;
     o12 = o5;
     k0_0<<<(unsigned int)((4ULL + 255ULL) / 256ULL), 256>>>(o12, o5, (int64_t)o6, o10, d_trap);
     trap_check_after_launch();
     o15.f0 = o12;
+    o14 = (int32_t)((uint32_t)o13.f0 + (uint32_t)o13.f1);
+    o15.f1 = o14;
     o16.f0 = o15;
     o4 = o16.f0;
   }

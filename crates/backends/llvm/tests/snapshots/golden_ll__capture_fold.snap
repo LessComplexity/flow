@@ -44,10 +44,10 @@ entry:
   store i32 2, ptr %t2
   %t3 = getelementptr [3 x i32], ptr %o2, i64 0, i64 2
   store i32 3, ptr %t3
-  %t4 = getelementptr { i32, [3 x i32] }, ptr %o3, i32 0, i32 0
-  store i32 0, ptr %t4
-  %t5 = getelementptr { i32, [3 x i32] }, ptr %o3, i32 0, i32 1
-  call void @llvm.memcpy.p0.p0.i64(ptr %t5, ptr %o2, i64 ptrtoint (ptr getelementptr ([3 x i32], ptr null, i64 1) to i64), i1 false)
+  %t4 = getelementptr { i32, [3 x i32] }, ptr %o3, i32 0, i32 1
+  call void @llvm.memcpy.p0.p0.i64(ptr %t4, ptr %o2, i64 ptrtoint (ptr getelementptr ([3 x i32], ptr null, i64 1) to i64), i1 false)
+  %t5 = getelementptr { i32, [3 x i32] }, ptr %o3, i32 0, i32 0
+  store i32 0, ptr %t5
   %t6 = getelementptr { i32, [3 x i32] }, ptr %o3, i32 0, i32 0
   %t7 = load i32, ptr %t6
   store i32 %t7, ptr %o4

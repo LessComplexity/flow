@@ -11,16 +11,16 @@ flowchart LR
         f0o4(("2: i32"))
         f0o5(("5: i32"))
         f0o6(("20: i32"))
-        f0o7(("(io, str)"))
-        f0o8(("io"))
-        f0o9(("25: i32"))
+        f0o7(("25: i32"))
+        f0o8(("(io, str)"))
+        f0o9(("io"))
         f0o10(("(io, i32)"))
         f0o11(("io"))
-        f0o0 -- "Pair 0/2" --> f0o7
-        f0o3 -- "Pair 1/2" --> f0o7
-        f0o7 -- "Print" --> f0o8
-        f0o8 -- "Pair 0/2" --> f0o10
-        f0o9 -- "Pair 1/2" --> f0o10
+        f0o0 -- "Pair 0/2" --> f0o8
+        f0o3 -- "Pair 1/2" --> f0o8
+        f0o8 -- "Print" --> f0o9
+        f0o9 -- "Pair 0/2" --> f0o10
+        f0o7 -- "Pair 1/2" --> f0o10
         f0o10 -- "Println" --> f0o11
         f0o11 -- "Output" --> f0o1
     end

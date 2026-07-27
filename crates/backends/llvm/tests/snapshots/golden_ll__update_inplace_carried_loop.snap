@@ -53,10 +53,10 @@ entry:
   store i32 0, ptr %t2
   %t3 = getelementptr [4 x i32], ptr %o2, i64 0, i64 3
   store i32 0, ptr %t3
-  %t4 = getelementptr { [4 x i32], i32 }, ptr %o3, i32 0, i32 1
-  store i32 0, ptr %t4
-  %t5 = getelementptr { [4 x i32], i32 }, ptr %o3, i32 0, i32 0
-  call void @llvm.memcpy.p0.p0.i64(ptr %t5, ptr %o2, i64 ptrtoint (ptr getelementptr ([4 x i32], ptr null, i64 1) to i64), i1 false)
+  %t4 = getelementptr { [4 x i32], i32 }, ptr %o3, i32 0, i32 0
+  call void @llvm.memcpy.p0.p0.i64(ptr %t4, ptr %o2, i64 ptrtoint (ptr getelementptr ([4 x i32], ptr null, i64 1) to i64), i1 false)
+  %t5 = getelementptr { [4 x i32], i32 }, ptr %o3, i32 0, i32 1
+  store i32 0, ptr %t5
   %t6 = load { [4 x i32], i32 }, ptr %o3
   store { [4 x i32], i32 } %t6, ptr %o4
   br label %bb7
@@ -101,44 +101,44 @@ bb8:
   %t34 = load i32, ptr %o6
   %t35 = getelementptr { i32, i32 }, ptr %o13, i32 0, i32 0
   store i32 %t34, ptr %t35
-  %t36 = getelementptr { i32, i32 }, ptr %o9, i32 0, i32 0
-  %t37 = load i32, ptr %t36
-  %t38 = getelementptr { i32, i32 }, ptr %o9, i32 0, i32 1
+  %t36 = load i1, ptr %o8
+  %t37 = getelementptr { { [4 x i32], i32 }, i1 }, ptr %o16, i32 0, i32 1
+  store i1 %t36, ptr %t37
+  %t38 = getelementptr { i32, i32 }, ptr %o9, i32 0, i32 0
   %t39 = load i32, ptr %t38
-  %t40 = add i32 %t37, %t39
-  store i32 %t40, ptr %o10
-  %t41 = getelementptr { i32, i32 }, ptr %o13, i32 0, i32 0
-  %t42 = load i32, ptr %t41
-  %t43 = getelementptr { i32, i32 }, ptr %o13, i32 0, i32 1
-  %t44 = load i32, ptr %t43
-  %t45 = add i32 %t42, %t44
-  store i32 %t45, ptr %o14
-  %t46 = load i1, ptr %o8
-  %t47 = getelementptr { { [4 x i32], i32 }, i1 }, ptr %o16, i32 0, i32 1
-  store i1 %t46, ptr %t47
-  %t48 = load i32, ptr %o10
-  %t49 = getelementptr { ptr, i32, i32 }, ptr %o11, i32 0, i32 2
-  store i32 %t48, ptr %t49
-  %t50 = load i32, ptr %o14
-  %t51 = getelementptr { [4 x i32], i32 }, ptr %o15, i32 0, i32 1
-  store i32 %t50, ptr %t51
-  %t52 = getelementptr { ptr, i32, i32 }, ptr %o11, i32 0, i32 1
-  %t53 = load i32, ptr %t52
-  %t54 = sext i32 %t53 to i64
-  %t55 = icmp slt i64 %t54, 0
-  %t56 = icmp sge i64 %t54, 4
-  %t57 = or i1 %t55, %t56
-  br i1 %t57, label %bb58, label %bb59
-bb58:
+  %t40 = getelementptr { i32, i32 }, ptr %o9, i32 0, i32 1
+  %t41 = load i32, ptr %t40
+  %t42 = add i32 %t39, %t41
+  store i32 %t42, ptr %o10
+  %t43 = load i32, ptr %o10
+  %t44 = getelementptr { ptr, i32, i32 }, ptr %o11, i32 0, i32 2
+  store i32 %t43, ptr %t44
+  %t45 = getelementptr { ptr, i32, i32 }, ptr %o11, i32 0, i32 1
+  %t46 = load i32, ptr %t45
+  %t47 = sext i32 %t46 to i64
+  %t48 = icmp slt i64 %t47, 0
+  %t49 = icmp sge i64 %t47, 4
+  %t50 = or i1 %t48, %t49
+  br i1 %t50, label %bb51, label %bb52
+bb51:
   call void @mapal_trap(i32 1)
   unreachable
-bb59:
-  %t60 = getelementptr [4 x i32], ptr %o5, i64 0, i64 %t54
-  %t61 = getelementptr { ptr, i32, i32 }, ptr %o11, i32 0, i32 2
-  %t62 = load i32, ptr %t61
-  store i32 %t62, ptr %t60
-  %t63 = getelementptr { [4 x i32], i32 }, ptr %o15, i32 0, i32 0
-  call void @llvm.memcpy.p0.p0.i64(ptr %t63, ptr %o5, i64 ptrtoint (ptr getelementptr ([4 x i32], ptr null, i64 1) to i64), i1 false)
+bb52:
+  %t53 = getelementptr [4 x i32], ptr %o5, i64 0, i64 %t47
+  %t54 = getelementptr { ptr, i32, i32 }, ptr %o11, i32 0, i32 2
+  %t55 = load i32, ptr %t54
+  store i32 %t55, ptr %t53
+  %t56 = getelementptr { [4 x i32], i32 }, ptr %o15, i32 0, i32 0
+  call void @llvm.memcpy.p0.p0.i64(ptr %t56, ptr %o5, i64 ptrtoint (ptr getelementptr ([4 x i32], ptr null, i64 1) to i64), i1 false)
+  %t57 = getelementptr { i32, i32 }, ptr %o13, i32 0, i32 0
+  %t58 = load i32, ptr %t57
+  %t59 = getelementptr { i32, i32 }, ptr %o13, i32 0, i32 1
+  %t60 = load i32, ptr %t59
+  %t61 = add i32 %t58, %t60
+  store i32 %t61, ptr %o14
+  %t62 = load i32, ptr %o14
+  %t63 = getelementptr { [4 x i32], i32 }, ptr %o15, i32 0, i32 1
+  store i32 %t62, ptr %t63
   %t64 = load { [4 x i32], i32 }, ptr %o15
   %t65 = getelementptr { { [4 x i32], i32 }, i1 }, ptr %o16, i32 0, i32 0
   store { [4 x i32], i32 } %t64, ptr %t65
@@ -166,10 +166,10 @@ entry:
   %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
   %t0 = call [4 x i32] @fn0(i32 0)
   store [4 x i32] %t0, ptr %o2
-  %t1 = getelementptr { ptr, i32 }, ptr %o3, i32 0, i32 1
-  store i32 2, ptr %t1
-  %t2 = getelementptr { ptr, i32 }, ptr %o3, i32 0, i32 0
-  store ptr %o2, ptr %t2
+  %t1 = getelementptr { ptr, i32 }, ptr %o3, i32 0, i32 0
+  store ptr %o2, ptr %t1
+  %t2 = getelementptr { ptr, i32 }, ptr %o3, i32 0, i32 1
+  store i32 2, ptr %t2
   %t3 = getelementptr { ptr, i32 }, ptr %o3, i32 0, i32 1
   %t4 = load i32, ptr %t3
   %t5 = sext i32 %t4 to i64

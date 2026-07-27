@@ -1,11 +1,76 @@
 # plan-s38 — trap order is source order (approach A, ratified)
 
-Status: **PLANNED — approach ratified by Sapir, implementation deferred to a later session.**
-Built once in S37, measured, and **reverted deliberately**: it works and the differential is green,
-but it churns 19 goldens across three crates and reorders emission for programs that were never
-rewritten. Landing it wants its own session with a perf re-run, not a tail-end of someone else's.
+Status: **SHIPPED (S38, 2026-07-27) — approach A landed; A′ priced and REFUTED.**
+Built once in S37, measured, and reverted; landed in S38 with the perf re-run the plan asked for.
 Component: `ir` (`topo_order`) · fallout in `backend-llvm`, `backend-cuda`, `rewrite`.
 Origin: the S37 `open_inline` counterexample, pinned at `85b2243`.
+
+**What landed** — `crates/mapal-ir/src/algo.rs`: the `topo_order` ready worklist became a
+`BinaryHeap<Reverse<(loc.start, loc.end, insertion index)>>` instead of a FIFO `Vec`; and
+`crates/mapal-rewrite/tests/testgen/mod.rs`: `const L = SourceLoc{0,0}` at 122 sites became a
+per-`build` monotonic counter (4b). Gate **981 passed / 0 failed**, differential **37/37 in 403.93 s**
+at `-O0`/`-O2`, `cargo fmt` clean.
+
+**§7 step 1 answered: A′ costs MORE than A, not less.** Measured over 14 examples / 36 functions /
+778 raw lowered objects: **62.2% of objects (484) change position** under the source-position key,
+only **9 of 36 functions (25%) are already in source order**, and all nine are 3–9 objects; 902
+pairwise inversions. The deviation is systematic, with three causes visible in the dump: an object's
+`loc` is the **operator token**, not the sub-expression extent (in `(x > 0)` the `>` is `483..484`
+and its operand `0` is `485..486`, and lowering creates the constant first), guard/loop result
+objects carry a span that opens before their branch bodies (`abs`'s Phi is `488..543`, created last,
+sorting before the `* -1` at `532`), and Parameter/Return both carry the whole function span. So A′ —
+"make lowering create objects in source order" — means changing both the recursion order *and* what
+`loc` each object carries, across all of lowering, churning every golden in the tree rather than the
+19 A churns. **Do not re-price this.**
+
+**The bug is wider than the plan described, and the wider form is the better demonstration.** §1 is
+about trap *kind*; the same root cause also let a trap **swallow output written before it in source
+order**, because `mapal_par_run_pinned` executes its task body synchronously on the host thread
+(`mapal-rt/src/lib.rs:1080`) and the old order hoisted those runs ahead of the prints. Same program,
+both exit 101:
+
+```
+PRE  (insertion-order tie-break):  mapal trap: div_zero
+POST (source-position tie-break):  111 / 222 / mapal trap: div_zero
+```
+
+Invisible to the 1,280-run sweep by construction: `expect_native` maps `Outcome::Trapped(_)` to
+`(None, 101)` and the stdout assert is guarded by `if let Some(want)`, so trapping runs compare only
+the exit code. Now pinned by `backends/llvm/tests/differential.rs::
+differential_trap_preserves_preceding_output`, verified as a real negative control (PRE fails it).
+That test must pin its expectation as a **literal**: `interp::run` derives `output` from the
+IoToken's accumulated log and only on `Done` (`mapal-interp/src/lib.rs:55`), so interpreted output is
+a *value* that dies with the aborted computation while compiled output is a side effect that
+survives — the two I/O models diverge exactly on the trap path, and `expect_native`'s `None` is
+forced rather than lazy.
+
+**Golden churn: 38 snapshots, all adjudicated** (35 + 25 subagent verifier/refuter pairs across three
+rounds). 37 ordering-only; one real behaviour change (`example_calc`, both backends) signed off by
+Sapir as the intended fix. The observable-effect axis is closed by proof, not inspection: the ordered
+sequence of print/trap/run_pinned/par_check calls is unchanged in 34, and in 3
+(`capture_one_kernel_matmul`, `example_vector_add`, `example_zip_demo`) a PRINT crosses a
+`mapal_par_check` that is **provably a no-op** there — those modules contain zero `mapal_par_trap`
+call sites, and the only production writer of `run.trap` is `mapal_par_trap` (init 0 at
+`mapal-rt/src/lib.rs:586`, CAS at `:1000-1006`; the accesses at `:1271`/`:1278` are inside
+`#[cfg(test)] mod tests`, which starts at `:1111`), so `check_trap`'s `if trap != 0` can never fire.
+
+**Perf (§7 step 5): the pre-registration is refuted — emission order IS performance-relevant.**
+i9-14900F, governor `performance`, 8 P-cores, 3 passes × 101 alternating runs, PRE = `main@d3ca82c`,
+values byte-identical on all 7 shapes every pass. Using medians (saxpy's and gather's *minima* are
+unusable — saxpy's min swung 0.40–0.63 ms between passes while its median held to 4 significant
+figures): **saxpy 1t +5.2% / +5.3% / +5.3%** (three passes, the third a byte-identical rebuild, so it
+is also the noise-floor control), **conv2d 1t −4.6% / −2.8% / −8.2%** (faster) with **par +4.1% /
++7.2% / +3.0%** (slower), **mm1024 1t +2.6% / +2.6% conformance but +0.15% on the FMA face** — the
+regression is face-dependent, which is why the FMA leg was worth running. fir, reduce, transpose and
+gather flat inside the ±1% noise floor. **Mechanism NOT isolated**, and deliberately not chased
+(Sapir): both a `%Frame` member-order change (member order derives from graph object order, which
+`replay.rs:1029` derives from `topo_order`) and a task-interleaving/locality change are consistent
+with the data, and the latter fits conv2d's 1t-faster/par-slower sign flip better. Vector-instruction
+counts are byte-identical pre/post (ymm/zmm 199/199 saxpy, 295/295 mm1024, 583/583 conv2d), so this
+is scheduling, not degraded codegen — S36c's refuted `%Frame` alias-barrier claim stays refuted.
+Incidental finding: `--contract` is a **no-op on 4 of 7 ladder shapes** (saxpy, reduce, transpose,
+gather emit byte-identical IR in both faces) because contraction flags are applied only in tile
+kernels and those four are not tile sites.
 
 ---
 
@@ -121,7 +186,12 @@ Then 4a moves only *rewritten* programs, which is exactly where the bug lives, a
 shrinks to the rewritten goldens. Unscoped: nobody has measured how far lowering deviates. Price it
 before choosing between A and A′.
 
-## 6. Two obligations this creates, whichever variant lands
+## 6. Obligations this creates — STILL OPEN after S38
+
+**A third one was found in S38 and is listed below as (3).** None of the three are closed by the
+landing; all three carry to S39.
+
+
 
 1. **Inlining must stamp spliced morphisms with the call-site position.** A callee's morphisms carry
    the *callee's* locs, which can sort earlier than the call site, so a trap inside an inlined body

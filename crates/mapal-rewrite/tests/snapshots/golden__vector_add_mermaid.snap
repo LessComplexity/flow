@@ -46,25 +46,25 @@ flowchart LR
         f0o39(("0: i32"))
         f0o40(("a: [i32; 16]"))
         f0o41(("b: [i32; 16]"))
-        f0o42(("(io, str)"))
-        f0o43(("io"))
-        f0o44(("([i32; 16], [i32; 16])"))
-        f0o45(("[(i32, i32); 16]"))
-        f0o46(("c: [i32; 16]"))
-        f0o47(("(i32, [i32; 16])"))
-        f0o48(("total: i32"))
-        f0o49(("([i32; 16], i32)"))
-        f0o50(("i32"))
-        f0o51(("([i32; 16], i32)"))
-        f0o52(("i32"))
-        f0o53(("(io, i32)"))
-        f0o54(("io"))
-        f0o55(("(io, str)"))
+        f0o42(("([i32; 16], [i32; 16])"))
+        f0o43(("[(i32, i32); 16]"))
+        f0o44(("c: [i32; 16]"))
+        f0o45(("(io, str)"))
+        f0o46(("io"))
+        f0o47(("([i32; 16], i32)"))
+        f0o48(("i32"))
+        f0o49(("(io, i32)"))
+        f0o50(("io"))
+        f0o51(("(io, str)"))
+        f0o52(("io"))
+        f0o53(("([i32; 16], i32)"))
+        f0o54(("i32"))
+        f0o55(("(io, i32)"))
         f0o56(("io"))
-        f0o57(("(io, i32)"))
+        f0o57(("(io, str)"))
         f0o58(("io"))
-        f0o59(("(io, str)"))
-        f0o60(("io"))
+        f0o59(("(i32, [i32; 16])"))
+        f0o60(("total: i32"))
         f0o61(("(io, i32)"))
         f0o62(("io"))
         f0o2 -- "Pair 0/16" --> f0o40
@@ -99,36 +99,36 @@ flowchart LR
         f0o31 -- "Pair 13/16" --> f0o41
         f0o32 -- "Pair 14/16" --> f0o41
         f0o33 -- "Pair 15/16" --> f0o41
-        f0o0 -- "Pair 0/2" --> f0o42
-        f0o34 -- "Pair 1/2" --> f0o42
-        f0o42 -- "Print" --> f0o43
-        f0o40 -- "Pair 0/2" --> f0o44
-        f0o41 -- "Pair 1/2" --> f0o44
-        f0o44 -- "Zip" --> f0o45
-        f0o45 -- "Map" --> f0o46
-        f0o39 -- "Pair 0/2" --> f0o47
-        f0o46 -- "Pair 1/2" --> f0o47
-        f0o47 -- "Fold" --> f0o48
+        f0o40 -- "Pair 0/2" --> f0o42
+        f0o41 -- "Pair 1/2" --> f0o42
+        f0o42 -- "Zip" --> f0o43
+        f0o43 -- "Map" --> f0o44
+        f0o0 -- "Pair 0/2" --> f0o45
+        f0o34 -- "Pair 1/2" --> f0o45
+        f0o45 -- "Print" --> f0o46
+        f0o44 -- "Pair 0/2" --> f0o47
+        f0o35 -- "Pair 1/2" --> f0o47
+        f0o47 -- "Index" --> f0o48
         f0o46 -- "Pair 0/2" --> f0o49
-        f0o35 -- "Pair 1/2" --> f0o49
-        f0o49 -- "Index" --> f0o50
-        f0o46 -- "Pair 0/2" --> f0o51
-        f0o37 -- "Pair 1/2" --> f0o51
-        f0o51 -- "Index" --> f0o52
-        f0o43 -- "Pair 0/2" --> f0o53
-        f0o50 -- "Pair 1/2" --> f0o53
-        f0o53 -- "Println" --> f0o54
-        f0o54 -- "Pair 0/2" --> f0o55
-        f0o36 -- "Pair 1/2" --> f0o55
-        f0o55 -- "Print" --> f0o56
+        f0o48 -- "Pair 1/2" --> f0o49
+        f0o49 -- "Println" --> f0o50
+        f0o50 -- "Pair 0/2" --> f0o51
+        f0o36 -- "Pair 1/2" --> f0o51
+        f0o51 -- "Print" --> f0o52
+        f0o44 -- "Pair 0/2" --> f0o53
+        f0o37 -- "Pair 1/2" --> f0o53
+        f0o53 -- "Index" --> f0o54
+        f0o52 -- "Pair 0/2" --> f0o55
+        f0o54 -- "Pair 1/2" --> f0o55
+        f0o55 -- "Println" --> f0o56
         f0o56 -- "Pair 0/2" --> f0o57
-        f0o52 -- "Pair 1/2" --> f0o57
-        f0o57 -- "Println" --> f0o58
-        f0o58 -- "Pair 0/2" --> f0o59
-        f0o38 -- "Pair 1/2" --> f0o59
-        f0o59 -- "Print" --> f0o60
-        f0o60 -- "Pair 0/2" --> f0o61
-        f0o48 -- "Pair 1/2" --> f0o61
+        f0o38 -- "Pair 1/2" --> f0o57
+        f0o57 -- "Print" --> f0o58
+        f0o39 -- "Pair 0/2" --> f0o59
+        f0o44 -- "Pair 1/2" --> f0o59
+        f0o59 -- "Fold" --> f0o60
+        f0o58 -- "Pair 0/2" --> f0o61
+        f0o60 -- "Pair 1/2" --> f0o61
         f0o61 -- "Println" --> f0o62
         f0o62 -- "Output" --> f0o1
     end

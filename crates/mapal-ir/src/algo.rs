@@ -5,6 +5,9 @@
 //! explicit work stack, Kahn is a worklist. The §16 deep-graph test (100k-object
 //! chain) exercises the no-stack-overflow guarantee.
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+
 use slotmap::SecondaryMap;
 
 use crate::graph::{CategoryIr, FuncId, MorphismId, ObjectId, ObjectKind, Operation};
@@ -1962,8 +1965,24 @@ impl CategoryIr {
     /// completes when all `arity` slot edges are emitted; a `LoopMerge`
     /// completes on its `LoopEnter` alone (header-first); every other object
     /// completes on its one definer. `LoopExit` edges are ordinary gating edges.
-    /// `LoopBack` is appended after its source completes, never gating. Ties
-    /// break by insertion order (deterministic).
+    /// `LoopBack` is appended after its source completes, never gating.
+    ///
+    /// **Ties break on source position** — `(loc.start, loc.end, insertion
+    /// index)` — never on insertion order alone (plan-s38). The dataflow graph
+    /// does not order two independent trapping operations, yet which of them
+    /// traps first is observable, so the tie-break must be a function of the
+    /// *program*. Insertion order is a function of the compiler: rewriting
+    /// creates and destroys objects, so `Inline` could turn `Trapped(IndexOob)`
+    /// into `Trapped(DivZero)` and break `eval ∘ rewrite = eval`. Source
+    /// position is the only intrinsic key available, and it is the same
+    /// reasoning as S29's clock-read fence at wider scope. The insertion index
+    /// keeps the key total, so the walk stays deterministic when a desugaring
+    /// emits several morphisms from one span.
+    ///
+    /// Note: exact `loc` ties (a Parameter and Return sharing the function
+    /// span, loop objects sharing the loop span) fall back to insertion order.
+    /// None of those objects trap on their own, so the ordering they receive is
+    /// unobservable.
     ///
     /// **`LoopEnter` edges are deferred**: a ready `LoopEnter` is released only
     /// when no other morphism is ready. This guarantees every morphism not
@@ -2002,11 +2021,21 @@ impl CategoryIr {
             remaining.insert(o, count);
         }
 
-        // Objects that are complete and ready to release their out-edges.
-        let mut ready: Vec<ObjectId> = Vec::new();
+        // The tie-break key per object: source position, made total by the
+        // object's insertion index. `nodes` is in insertion order, so the index
+        // is also how we get back from a popped key to its object.
+        let mut pos: SecondaryMap<ObjectId, (u32, u32, u32)> = SecondaryMap::new();
+        for (i, &o) in nodes.iter().enumerate() {
+            let loc = self.objects[o].loc;
+            pos.insert(o, (loc.start, loc.end, i as u32));
+        }
+
+        // Objects that are complete and ready to release their out-edges,
+        // popped in source-position order.
+        let mut ready: BinaryHeap<Reverse<(u32, u32, u32)>> = BinaryHeap::new();
         for &o in &nodes {
             if remaining[o] == 0 {
-                ready.push(o);
+                ready.push(Reverse(pos[o]));
             }
         }
 
@@ -2018,14 +2047,11 @@ impl CategoryIr {
         let mut deferred_enters: Vec<MorphismId> = Vec::new();
         let mut dcursor = 0;
 
-        // Process ready objects in a FIFO worklist; ties broken by the order
-        // objects were discovered, which is insertion order. When the worklist
-        // drains, release the next deferred LoopEnter and continue.
-        let mut cursor = 0;
+        // Process ready objects source-position-first. When the worklist drains,
+        // release the next deferred LoopEnter and continue.
         loop {
-            while cursor < ready.len() {
-                let o = ready[cursor];
-                cursor += 1;
+            while let Some(Reverse(key)) = ready.pop() {
+                let o = nodes[key.2 as usize];
                 if released.get(o).copied().unwrap_or(false) {
                     continue;
                 }
@@ -2054,7 +2080,7 @@ impl CategoryIr {
                         let nr = r - 1;
                         remaining.insert(tgt, nr);
                         if nr == 0 {
-                            ready.push(tgt);
+                            ready.push(Reverse(pos[tgt]));
                         }
                     }
                 }
@@ -2072,7 +2098,7 @@ impl CategoryIr {
                         let nr = r - 1;
                         remaining.insert(tgt, nr);
                         if nr == 0 {
-                            ready.push(tgt);
+                            ready.push(Reverse(pos[tgt]));
                         }
                     }
                 }

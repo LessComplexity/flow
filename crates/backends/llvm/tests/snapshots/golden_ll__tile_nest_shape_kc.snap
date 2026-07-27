@@ -2,7 +2,7 @@
 source: crates/backends/llvm/tests/golden_ll.rs
 expression: tiled_fn
 ---
-define internal void @task8_slice(i64 %lo, i64 %hi, ptr %frame) {
+define internal void @task7_slice(i64 %lo, i64 %hi, ptr %frame) {
 entry:
   %s0 = alloca [64 x float]
   %s1 = alloca [512 x float], align 64
@@ -14,7 +14,7 @@ entry:
   %s13 = alloca i64
   %pack_field0 = getelementptr %Frame, ptr %frame, i32 0, i32 12
   %packed0 = load ptr, ptr %pack_field0
-  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 2
   %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 3
   %o9 = getelementptr %Frame, ptr %frame, i32 0, i32 5
   %t6 = udiv i64 %lo, 32
@@ -56,7 +56,7 @@ bb38:
   br i1 %t42, label %bb40, label %bb39
 bb39:
   %t43 = add i64 %t37, %t41
-  %t44 = getelementptr [2400 x float], ptr %o6, i64 0, i64 %t43
+  %t44 = getelementptr [2400 x float], ptr %o5, i64 0, i64 %t43
   %t45 = load float, ptr %t44
   %t46 = sub i64 %t41, 0
   %t47 = getelementptr [512 x float], ptr %s1, i64 0, i64 %t46
@@ -277,7 +277,7 @@ bb191:
   br i1 %t195, label %bb193, label %bb192
 bb192:
   %t196 = add i64 %t184, %t194
-  %t197 = getelementptr [2400 x float], ptr %o6, i64 0, i64 %t196
+  %t197 = getelementptr [2400 x float], ptr %o5, i64 0, i64 %t196
   %t198 = load float, ptr %t197
   %t199 = sub i64 %t194, 0
   %t200 = getelementptr [512 x float], ptr %s1, i64 0, i64 %t199
@@ -294,7 +294,7 @@ bb202:
   br i1 %t206, label %bb204, label %bb203
 bb203:
   %t207 = add i64 %t186, %t205
-  %t208 = getelementptr [2400 x float], ptr %o6, i64 0, i64 %t207
+  %t208 = getelementptr [2400 x float], ptr %o5, i64 0, i64 %t207
   %t209 = load float, ptr %t208
   %t210 = sub i64 %t205, 0
   %t211 = add i64 %t210, 128
@@ -312,7 +312,7 @@ bb214:
   br i1 %t218, label %bb216, label %bb215
 bb215:
   %t219 = add i64 %t188, %t217
-  %t220 = getelementptr [2400 x float], ptr %o6, i64 0, i64 %t219
+  %t220 = getelementptr [2400 x float], ptr %o5, i64 0, i64 %t219
   %t221 = load float, ptr %t220
   %t222 = sub i64 %t217, 0
   %t223 = add i64 %t222, 256
@@ -330,7 +330,7 @@ bb226:
   br i1 %t230, label %bb228, label %bb227
 bb227:
   %t231 = add i64 %t190, %t229
-  %t232 = getelementptr [2400 x float], ptr %o6, i64 0, i64 %t231
+  %t232 = getelementptr [2400 x float], ptr %o5, i64 0, i64 %t231
   %t233 = load float, ptr %t232
   %t234 = sub i64 %t229, 0
   %t235 = add i64 %t234, 384
@@ -729,7 +729,7 @@ bb533:
   br i1 %t537, label %bb535, label %bb534
 bb534:
   %t538 = add i64 %t532, %t536
-  %t539 = getelementptr [2400 x float], ptr %o6, i64 0, i64 %t538
+  %t539 = getelementptr [2400 x float], ptr %o5, i64 0, i64 %t538
   %t540 = load float, ptr %t539
   %t541 = sub i64 %t536, 0
   %t542 = getelementptr [512 x float], ptr %s1, i64 0, i64 %t541
@@ -959,7 +959,7 @@ bb690:
   br i1 %t694, label %bb692, label %bb691
 bb691:
   %t695 = add i64 %t689, %t693
-  %t696 = getelementptr [2400 x float], ptr %o6, i64 0, i64 %t695
+  %t696 = getelementptr [2400 x float], ptr %o5, i64 0, i64 %t695
   %t697 = load float, ptr %t696
   %t698 = sub i64 %t693, %t672
   %t699 = getelementptr [512 x float], ptr %s1, i64 0, i64 %t698
@@ -1186,7 +1186,7 @@ bb849:
   br i1 %t853, label %bb851, label %bb850
 bb850:
   %t854 = add i64 %t842, %t852
-  %t855 = getelementptr [2400 x float], ptr %o6, i64 0, i64 %t854
+  %t855 = getelementptr [2400 x float], ptr %o5, i64 0, i64 %t854
   %t856 = load float, ptr %t855
   %t857 = sub i64 %t852, %t672
   %t858 = getelementptr [512 x float], ptr %s1, i64 0, i64 %t857
@@ -1203,7 +1203,7 @@ bb860:
   br i1 %t864, label %bb862, label %bb861
 bb861:
   %t865 = add i64 %t844, %t863
-  %t866 = getelementptr [2400 x float], ptr %o6, i64 0, i64 %t865
+  %t866 = getelementptr [2400 x float], ptr %o5, i64 0, i64 %t865
   %t867 = load float, ptr %t866
   %t868 = sub i64 %t863, %t672
   %t869 = add i64 %t868, 128
@@ -1221,7 +1221,7 @@ bb872:
   br i1 %t876, label %bb874, label %bb873
 bb873:
   %t877 = add i64 %t846, %t875
-  %t878 = getelementptr [2400 x float], ptr %o6, i64 0, i64 %t877
+  %t878 = getelementptr [2400 x float], ptr %o5, i64 0, i64 %t877
   %t879 = load float, ptr %t878
   %t880 = sub i64 %t875, %t672
   %t881 = add i64 %t880, 256
@@ -1239,7 +1239,7 @@ bb884:
   br i1 %t888, label %bb886, label %bb885
 bb885:
   %t889 = add i64 %t848, %t887
-  %t890 = getelementptr [2400 x float], ptr %o6, i64 0, i64 %t889
+  %t890 = getelementptr [2400 x float], ptr %o5, i64 0, i64 %t889
   %t891 = load float, ptr %t890
   %t892 = sub i64 %t887, %t672
   %t893 = add i64 %t892, 384
@@ -1655,7 +1655,7 @@ bb1208:
   br i1 %t1212, label %bb1210, label %bb1209
 bb1209:
   %t1213 = add i64 %t1207, %t1211
-  %t1214 = getelementptr [2400 x float], ptr %o6, i64 0, i64 %t1213
+  %t1214 = getelementptr [2400 x float], ptr %o5, i64 0, i64 %t1213
   %t1215 = load float, ptr %t1214
   %t1216 = sub i64 %t1211, %t672
   %t1217 = getelementptr [512 x float], ptr %s1, i64 0, i64 %t1216

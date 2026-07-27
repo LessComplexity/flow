@@ -46,19 +46,18 @@ entry:
   store ptr %t6, ptr %t7
   %t8 = getelementptr { ptr, i32 }, ptr %o2, i32 0, i32 1
   store i32 0, ptr %t8
-  %t9 = getelementptr { ptr, i32 }, ptr %o4, i32 0, i32 1
-  store i32 1, ptr %t9
-  %t10 = getelementptr { ptr, i32 }, ptr %o6, i32 0, i32 1
-  store i32 2, ptr %t10
-  %t11 = getelementptr { ptr, i32 }, ptr %o8, i32 0, i32 1
-  store i32 3, ptr %t11
-  %t12 = load ptr, ptr %o0
-  %t13 = getelementptr { ptr, i32 }, ptr %o2, i32 0, i32 1
-  %t14 = load i32, ptr %t13
-  %t15 = sext i32 %t14 to i64
-  %t16 = getelementptr [4 x double], ptr %t12, i64 0, i64 %t15
-  %t17 = load double, ptr %t16
-  store double %t17, ptr %o3
+  %t9 = load ptr, ptr %o0
+  %t10 = getelementptr { ptr, i32 }, ptr %o2, i32 0, i32 1
+  %t11 = load i32, ptr %t10
+  %t12 = sext i32 %t11 to i64
+  %t13 = getelementptr [4 x double], ptr %t9, i64 0, i64 %t12
+  %t14 = load double, ptr %t13
+  store double %t14, ptr %o3
+  %t15 = load double, ptr %o3
+  %t16 = getelementptr { double, double }, ptr %o10, i32 0, i32 0
+  store double %t15, ptr %t16
+  %t17 = getelementptr { ptr, i32 }, ptr %o4, i32 0, i32 1
+  store i32 1, ptr %t17
   %t18 = load ptr, ptr %o0
   %t19 = getelementptr { ptr, i32 }, ptr %o4, i32 0, i32 1
   %t20 = load i32, ptr %t19
@@ -66,29 +65,30 @@ entry:
   %t22 = getelementptr [4 x double], ptr %t18, i64 0, i64 %t21
   %t23 = load double, ptr %t22
   store double %t23, ptr %o5
-  %t24 = load ptr, ptr %o0
-  %t25 = getelementptr { ptr, i32 }, ptr %o6, i32 0, i32 1
-  %t26 = load i32, ptr %t25
-  %t27 = sext i32 %t26 to i64
-  %t28 = getelementptr [4 x double], ptr %t24, i64 0, i64 %t27
-  %t29 = load double, ptr %t28
-  store double %t29, ptr %o7
-  %t30 = load ptr, ptr %o0
-  %t31 = getelementptr { ptr, i32 }, ptr %o8, i32 0, i32 1
-  %t32 = load i32, ptr %t31
-  %t33 = sext i32 %t32 to i64
-  %t34 = getelementptr [4 x double], ptr %t30, i64 0, i64 %t33
-  %t35 = load double, ptr %t34
-  store double %t35, ptr %o9
-  %t36 = load double, ptr %o3
-  %t37 = getelementptr { double, double }, ptr %o10, i32 0, i32 0
-  store double %t36, ptr %t37
-  %t38 = load double, ptr %o5
-  %t39 = getelementptr { double, double }, ptr %o10, i32 0, i32 1
-  store double %t38, ptr %t39
-  %t40 = load double, ptr %o7
-  %t41 = getelementptr { double, double }, ptr %o12, i32 0, i32 0
-  store double %t40, ptr %t41
+  %t24 = load double, ptr %o5
+  %t25 = getelementptr { double, double }, ptr %o10, i32 0, i32 1
+  store double %t24, ptr %t25
+  %t26 = getelementptr { ptr, i32 }, ptr %o6, i32 0, i32 1
+  store i32 2, ptr %t26
+  %t27 = load ptr, ptr %o0
+  %t28 = getelementptr { ptr, i32 }, ptr %o6, i32 0, i32 1
+  %t29 = load i32, ptr %t28
+  %t30 = sext i32 %t29 to i64
+  %t31 = getelementptr [4 x double], ptr %t27, i64 0, i64 %t30
+  %t32 = load double, ptr %t31
+  store double %t32, ptr %o7
+  %t33 = load double, ptr %o7
+  %t34 = getelementptr { double, double }, ptr %o12, i32 0, i32 0
+  store double %t33, ptr %t34
+  %t35 = getelementptr { ptr, i32 }, ptr %o8, i32 0, i32 1
+  store i32 3, ptr %t35
+  %t36 = load ptr, ptr %o0
+  %t37 = getelementptr { ptr, i32 }, ptr %o8, i32 0, i32 1
+  %t38 = load i32, ptr %t37
+  %t39 = sext i32 %t38 to i64
+  %t40 = getelementptr [4 x double], ptr %t36, i64 0, i64 %t39
+  %t41 = load double, ptr %t40
+  store double %t41, ptr %o9
   %t42 = load double, ptr %o9
   %t43 = getelementptr { double, double }, ptr %o12, i32 0, i32 1
   store double %t42, ptr %t43
@@ -98,15 +98,15 @@ entry:
   %t47 = load double, ptr %t46
   %t48 = fadd double %t45, %t47
   store double %t48, ptr %o11
-  %t49 = getelementptr { double, double }, ptr %o12, i32 0, i32 0
-  %t50 = load double, ptr %t49
-  %t51 = getelementptr { double, double }, ptr %o12, i32 0, i32 1
+  %t49 = load double, ptr %o11
+  %t50 = getelementptr { double, double }, ptr %o14, i32 0, i32 0
+  store double %t49, ptr %t50
+  %t51 = getelementptr { double, double }, ptr %o12, i32 0, i32 0
   %t52 = load double, ptr %t51
-  %t53 = fadd double %t50, %t52
-  store double %t53, ptr %o13
-  %t54 = load double, ptr %o11
-  %t55 = getelementptr { double, double }, ptr %o14, i32 0, i32 0
-  store double %t54, ptr %t55
+  %t53 = getelementptr { double, double }, ptr %o12, i32 0, i32 1
+  %t54 = load double, ptr %t53
+  %t55 = fadd double %t52, %t54
+  store double %t55, ptr %o13
   %t56 = load double, ptr %o13
   %t57 = getelementptr { double, double }, ptr %o14, i32 0, i32 1
   store double %t56, ptr %t57

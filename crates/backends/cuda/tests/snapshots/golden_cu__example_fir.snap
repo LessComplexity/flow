@@ -151,24 +151,22 @@ static float fn0(FlowProd_floatp_floatp in) {
     o9 = o8.f0 < o8.f1;
     o24.f1 = o9;
     if (!o24.f1) { break; }
-    o12.f0 = 4;
-    o20.f1 = 1;
     o14.f0 = o2;
     o10.f0 = o3;
+    o12.f0 = 4;
+    o20.f1 = 1;
     o10.f1 = o6;
     o12.f1 = o6;
     o20.f0 = o6;
     o18.f0 = o7;
+    o23.f1 = o9;
     cu_check(cudaMalloc((void**)&t0, sizeof(float) * 1ULL), "cudaMalloc(t0)");
     k0_0<<<1, 1>>>(t0, o3, (int64_t)o6, d_trap);
     trap_check_after_launch();
     cu_check(cudaMemcpy(&o11, t0, sizeof(float), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
-    o13 = (int32_t)((uint32_t)o12.f0 + (uint32_t)o12.f1);
-    o21 = (int32_t)((uint32_t)o20.f0 + (uint32_t)o20.f1);
-    o23.f1 = o9;
     o16.f0 = o11;
+    o13 = (int32_t)((uint32_t)o12.f0 + (uint32_t)o12.f1);
     o14.f1 = o13;
-    o22.f0 = o21;
     cu_check(cudaMalloc((void**)&t1, sizeof(float) * 1ULL), "cudaMalloc(t1)");
     k0_1<<<1, 1>>>(t1, o2, (int64_t)o13, d_trap);
     trap_check_after_launch();
@@ -178,6 +176,8 @@ static float fn0(FlowProd_floatp_floatp in) {
     o18.f1 = o17;
     o19 = o18.f0 + o18.f1;
     o22.f1 = o19;
+    o21 = (int32_t)((uint32_t)o20.f0 + (uint32_t)o20.f1);
+    o22.f0 = o21;
     o23.f0 = o22;
     o5 = o23.f0;
   }
@@ -198,10 +198,10 @@ static void mapal_main() {
   static const float lit0[8] = { 1e0f, 2e0f, 3e0f, 4e0f, 5e0f, 6e0f, 7e0f, 8e0f };
   o2 = (float*)(arena0 + 0ULL);
   cu_check(cudaMemcpy(o2, lit0, sizeof(lit0), cudaMemcpyHostToDevice), "cudaMemcpy(literal)");
+  o4.f0 = o2;
   static const float lit1[4] = { 5e-1f, 2.5e-1f, 1.25e-1f, 6.25e-2f };
   o3 = (float*)(arena0 + 256ULL);
   cu_check(cudaMemcpy(o3, lit1, sizeof(lit1), cudaMemcpyHostToDevice), "cudaMemcpy(literal)");
-  o4.f0 = o2;
   o4.f1 = o3;
   o5 = fn0(o4);
   o6 = o5;

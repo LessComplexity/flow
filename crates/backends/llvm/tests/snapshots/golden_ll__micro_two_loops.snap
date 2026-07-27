@@ -109,26 +109,26 @@ bb6:
   %t32 = load i32, ptr %o5
   %t33 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 0
   store i32 %t32, ptr %t33
-  %t34 = getelementptr { i32, i32 }, ptr %o10, i32 0, i32 0
-  %t35 = load i32, ptr %t34
-  %t36 = getelementptr { i32, i32 }, ptr %o10, i32 0, i32 1
+  %t34 = load i1, ptr %o7
+  %t35 = getelementptr { { i32, i32 }, i1 }, ptr %o13, i32 0, i32 1
+  store i1 %t34, ptr %t35
+  %t36 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 0
   %t37 = load i32, ptr %t36
-  %t38 = add i32 %t35, %t37
-  store i32 %t38, ptr %o11
-  %t39 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 0
-  %t40 = load i32, ptr %t39
-  %t41 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 1
-  %t42 = load i32, ptr %t41
-  %t43 = add i32 %t40, %t42
-  store i32 %t43, ptr %o9
-  %t44 = load i1, ptr %o7
-  %t45 = getelementptr { { i32, i32 }, i1 }, ptr %o13, i32 0, i32 1
-  store i1 %t44, ptr %t45
-  %t46 = load i32, ptr %o11
-  %t47 = getelementptr { i32, i32 }, ptr %o12, i32 0, i32 0
-  store i32 %t46, ptr %t47
-  %t48 = load i32, ptr %o9
-  %t49 = getelementptr { i32, i32 }, ptr %o12, i32 0, i32 1
+  %t38 = getelementptr { i32, i32 }, ptr %o8, i32 0, i32 1
+  %t39 = load i32, ptr %t38
+  %t40 = add i32 %t37, %t39
+  store i32 %t40, ptr %o9
+  %t41 = load i32, ptr %o9
+  %t42 = getelementptr { i32, i32 }, ptr %o12, i32 0, i32 1
+  store i32 %t41, ptr %t42
+  %t43 = getelementptr { i32, i32 }, ptr %o10, i32 0, i32 0
+  %t44 = load i32, ptr %t43
+  %t45 = getelementptr { i32, i32 }, ptr %o10, i32 0, i32 1
+  %t46 = load i32, ptr %t45
+  %t47 = add i32 %t44, %t46
+  store i32 %t47, ptr %o11
+  %t48 = load i32, ptr %o11
+  %t49 = getelementptr { i32, i32 }, ptr %o12, i32 0, i32 0
   store i32 %t48, ptr %t49
   %t50 = load { i32, i32 }, ptr %o12
   %t51 = getelementptr { { i32, i32 }, i1 }, ptr %o13, i32 0, i32 0
@@ -188,26 +188,26 @@ bb60:
   %t86 = load i32, ptr %o19
   %t87 = getelementptr { i32, i32 }, ptr %o22, i32 0, i32 0
   store i32 %t86, ptr %t87
-  %t88 = getelementptr { i32, i32 }, ptr %o24, i32 0, i32 0
-  %t89 = load i32, ptr %t88
-  %t90 = getelementptr { i32, i32 }, ptr %o24, i32 0, i32 1
+  %t88 = load i1, ptr %o21
+  %t89 = getelementptr { { i32, i32 }, i1 }, ptr %o27, i32 0, i32 1
+  store i1 %t88, ptr %t89
+  %t90 = getelementptr { i32, i32 }, ptr %o22, i32 0, i32 0
   %t91 = load i32, ptr %t90
-  %t92 = add i32 %t89, %t91
-  store i32 %t92, ptr %o25
-  %t93 = getelementptr { i32, i32 }, ptr %o22, i32 0, i32 0
-  %t94 = load i32, ptr %t93
-  %t95 = getelementptr { i32, i32 }, ptr %o22, i32 0, i32 1
-  %t96 = load i32, ptr %t95
-  %t97 = add i32 %t94, %t96
-  store i32 %t97, ptr %o23
-  %t98 = load i1, ptr %o21
-  %t99 = getelementptr { { i32, i32 }, i1 }, ptr %o27, i32 0, i32 1
-  store i1 %t98, ptr %t99
-  %t100 = load i32, ptr %o25
-  %t101 = getelementptr { i32, i32 }, ptr %o26, i32 0, i32 0
-  store i32 %t100, ptr %t101
-  %t102 = load i32, ptr %o23
-  %t103 = getelementptr { i32, i32 }, ptr %o26, i32 0, i32 1
+  %t92 = getelementptr { i32, i32 }, ptr %o22, i32 0, i32 1
+  %t93 = load i32, ptr %t92
+  %t94 = add i32 %t91, %t93
+  store i32 %t94, ptr %o23
+  %t95 = load i32, ptr %o23
+  %t96 = getelementptr { i32, i32 }, ptr %o26, i32 0, i32 1
+  store i32 %t95, ptr %t96
+  %t97 = getelementptr { i32, i32 }, ptr %o24, i32 0, i32 0
+  %t98 = load i32, ptr %t97
+  %t99 = getelementptr { i32, i32 }, ptr %o24, i32 0, i32 1
+  %t100 = load i32, ptr %t99
+  %t101 = add i32 %t98, %t100
+  store i32 %t101, ptr %o25
+  %t102 = load i32, ptr %o25
+  %t103 = getelementptr { i32, i32 }, ptr %o26, i32 0, i32 0
   store i32 %t102, ptr %t103
   %t104 = load { i32, i32 }, ptr %o26
   %t105 = getelementptr { { i32, i32 }, i1 }, ptr %o27, i32 0, i32 0

@@ -27,7 +27,7 @@ declare void @mapal_par_finish(ptr)
 
 %Frame = type { [3 x i32], { i32, ptr }, [3 x i32], { ptr, i32 }, i32, i32 }
 
-@ckpt0_entries = private unnamed_addr constant [1 x i64] [i64 8589934591]
+@ckpt0_entries = private unnamed_addr constant [1 x i64] [i64 12884901887]
 
 define internal void @task0(i64 %lo, i64 %hi, ptr %frame) {
 entry:
@@ -47,24 +47,6 @@ entry:
 }
 
 define internal void @task1(i64 %lo, i64 %hi, ptr %frame) {
-entry:
-  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
-  %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
-  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 4
-  %t0 = getelementptr { ptr, i32 }, ptr %o5, i32 0, i32 1
-  store i32 1, ptr %t0
-  %t1 = getelementptr { ptr, i32 }, ptr %o5, i32 0, i32 0
-  store ptr %o4, ptr %t1
-  %t2 = getelementptr { ptr, i32 }, ptr %o5, i32 0, i32 1
-  %t3 = load i32, ptr %t2
-  %t4 = sext i32 %t3 to i64
-  %t5 = getelementptr [3 x i32], ptr %o4, i64 0, i64 %t4
-  %t6 = load i32, ptr %t5
-  store i32 %t6, ptr %o6
-  ret void
-}
-
-define internal void @task2(i64 %lo, i64 %hi, ptr %frame) {
 entry:
   %s0 = alloca i64
   %s8 = alloca { i32, i32 }
@@ -97,6 +79,24 @@ bb3:
   ret void
 }
 
+define internal void @task2(i64 %lo, i64 %hi, ptr %frame) {
+entry:
+  %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
+  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 4
+  %t0 = getelementptr { ptr, i32 }, ptr %o5, i32 0, i32 0
+  store ptr %o4, ptr %t0
+  %t1 = getelementptr { ptr, i32 }, ptr %o5, i32 0, i32 1
+  store i32 1, ptr %t1
+  %t2 = getelementptr { ptr, i32 }, ptr %o5, i32 0, i32 1
+  %t3 = load i32, ptr %t2
+  %t4 = sext i32 %t3 to i64
+  %t5 = getelementptr [3 x i32], ptr %o4, i64 0, i64 %t4
+  %t6 = load i32, ptr %t5
+  store i32 %t6, ptr %o6
+  ret void
+}
+
 define internal void @mapal_main() {
 entry:
   %frame = alloca %Frame
@@ -108,10 +108,10 @@ entry:
   %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
   %h = call ptr @mapal_par_begin(i32 3)
   call void @mapal_par_task(ptr %h, i32 0, i32 0, ptr @task0, i64 5, i32 5, i64 0, i32 0, i32 0)
-  call void @mapal_par_task(ptr %h, i32 1, i32 0, ptr @task1, i64 3, i32 1, i64 0, i32 0, i32 0)
-  call void @mapal_par_task(ptr %h, i32 2, i32 1, ptr @task2, i64 3, i32 4, i64 0, i32 0, i32 0)
-  call void @mapal_par_dep(ptr %h, i32 2, i32 1)
-  call void @mapal_par_dep(ptr %h, i32 0, i32 2)
+  call void @mapal_par_task(ptr %h, i32 1, i32 1, ptr @task1, i64 3, i32 4, i64 0, i32 0, i32 0)
+  call void @mapal_par_task(ptr %h, i32 2, i32 0, ptr @task2, i64 3, i32 1, i64 0, i32 0, i32 0)
+  call void @mapal_par_dep(ptr %h, i32 0, i32 1)
+  call void @mapal_par_dep(ptr %h, i32 1, i32 2)
   call void @mapal_par_launch(ptr %h, ptr %frame)
   call void @mapal_par_wait(ptr %h, ptr @ckpt0_entries, i32 1)
   call void @mapal_par_check(ptr %h, i64 11)

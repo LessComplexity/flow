@@ -104,26 +104,26 @@ __global__ void k0_0(FlowProd_int32_t_int32_t* out, int32_t* a) {
     out[i].f1 = a[i];
   }
 }
-__global__ void k0_1(int32_t* out, FlowProd_int32_t_int32_t* in) {
-  unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < 16ULL) {
-    out[i] = fn2(in[i]);
-  }
-}
-__global__ void k0_2(int32_t* result, int32_t* arr, int64_t idx) {
-  *result = arr[(unsigned long long)idx];
-}
-__global__ void k0_4(FlowProd_int32_t_int32_t* out, int32_t* a, int32_t* b) {
+__global__ void k0_1(FlowProd_int32_t_int32_t* out, int32_t* a, int32_t* b) {
   unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
   if (i < 16ULL) {
     out[i].f0 = a[i];
     out[i].f1 = b[i];
   }
 }
-__global__ void k0_5(int32_t* out, FlowProd_int32_t_int32_t* in) {
+__global__ void k0_2(int32_t* out, FlowProd_int32_t_int32_t* in) {
   unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
   if (i < 16ULL) {
     out[i] = fn1(in[i]);
+  }
+}
+__global__ void k0_3(int32_t* result, int32_t* arr, int64_t idx) {
+  *result = arr[(unsigned long long)idx];
+}
+__global__ void k0_5(int32_t* out, FlowProd_int32_t_int32_t* in) {
+  unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < 16ULL) {
+    out[i] = fn2(in[i]);
   }
 }
 
@@ -156,44 +156,44 @@ static void mapal_main() {
   static const int32_t lit0[16] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
   o2 = (int32_t*)(arena0 + 0ULL);
   cu_check(cudaMemcpy(o2, lit0, sizeof(lit0), cudaMemcpyHostToDevice), "cudaMemcpy(literal)");
-  static const int32_t lit1[16] = { 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100 };
-  o3 = (int32_t*)(arena0 + 256ULL);
-  cu_check(cudaMemcpy(o3, lit1, sizeof(lit1), cudaMemcpyHostToDevice), "cudaMemcpy(literal)");
-  o22 = (FlowProd_int32_t_int32_t*)(arena0 + 512ULL);
+  o22 = (FlowProd_int32_t_int32_t*)(arena0 + 256ULL);
   k0_0<<<(unsigned int)((16ULL + 255ULL) / 256ULL), 256>>>(o22, o2);
-  mapal_print_str((const uint8_t*)str0, 8, false);
-  o23 = (int32_t*)(arena0 + 768ULL);
-  k0_1<<<(unsigned int)((16ULL + 255ULL) / 256ULL), 256>>>(o23, o22);
+  static const int32_t lit1[16] = { 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100 };
+  o3 = (int32_t*)(arena0 + 512ULL);
+  cu_check(cudaMemcpy(o3, lit1, sizeof(lit1), cudaMemcpyHostToDevice), "cudaMemcpy(literal)");
   o5 = o2;
   o6 = o3;
   o7.f0 = o5;
   o7.f1 = o6;
-  t2 = (int32_t*)(arena0 + 1024ULL);
-  k0_2<<<1, 1>>>(t2, o23, (int64_t)0);
-  cu_check(cudaMemcpy(&o27, t2, sizeof(int32_t), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
-  t3 = (int32_t*)(arena0 + 1280ULL);
-  k0_2<<<1, 1>>>(t3, o23, (int64_t)15);
-  cu_check(cudaMemcpy(&o33, t3, sizeof(int32_t), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
-  o8 = (FlowProd_int32_t_int32_t*)(arena0 + 1536ULL);
-  k0_4<<<(unsigned int)((16ULL + 255ULL) / 256ULL), 256>>>(o8, o5, o6);
-  o28 = o27;
-  o34 = o33;
-  o9 = (int32_t*)(arena0 + 1792ULL);
-  k0_5<<<(unsigned int)((16ULL + 255ULL) / 256ULL), 256>>>(o9, o8);
-  t4 = (int32_t*)(arena0 + 2048ULL);
-  k0_2<<<1, 1>>>(t4, o9, (int64_t)0);
-  cu_check(cudaMemcpy(&o13, t4, sizeof(int32_t), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
-  t5 = (int32_t*)(arena0 + 2304ULL);
-  k0_2<<<1, 1>>>(t5, o9, (int64_t)15);
-  cu_check(cudaMemcpy(&o19, t5, sizeof(int32_t), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
+  o8 = (FlowProd_int32_t_int32_t*)(arena0 + 768ULL);
+  k0_1<<<(unsigned int)((16ULL + 255ULL) / 256ULL), 256>>>(o8, o5, o6);
+  o9 = (int32_t*)(arena0 + 1024ULL);
+  k0_2<<<(unsigned int)((16ULL + 255ULL) / 256ULL), 256>>>(o9, o8);
+  mapal_print_str((const uint8_t*)str0, 8, false);
+  t2 = (int32_t*)(arena0 + 1280ULL);
+  k0_3<<<1, 1>>>(t2, o9, (int64_t)0);
+  cu_check(cudaMemcpy(&o13, t2, sizeof(int32_t), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
   o14 = o13;
-  o20 = o19;
   mapal_print_i32(o14, true);
   mapal_print_str((const uint8_t*)str1, 8, false);
+  t3 = (int32_t*)(arena0 + 1536ULL);
+  k0_3<<<1, 1>>>(t3, o9, (int64_t)15);
+  cu_check(cudaMemcpy(&o19, t3, sizeof(int32_t), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
+  o20 = o19;
   mapal_print_i32(o20, true);
+  o23 = (int32_t*)(arena0 + 1792ULL);
+  k0_5<<<(unsigned int)((16ULL + 255ULL) / 256ULL), 256>>>(o23, o22);
   mapal_print_str((const uint8_t*)str2, 8, false);
+  t4 = (int32_t*)(arena0 + 2048ULL);
+  k0_3<<<1, 1>>>(t4, o23, (int64_t)0);
+  cu_check(cudaMemcpy(&o27, t4, sizeof(int32_t), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
+  o28 = o27;
   mapal_print_i32(o28, true);
   mapal_print_str((const uint8_t*)str3, 8, false);
+  t5 = (int32_t*)(arena0 + 2304ULL);
+  k0_3<<<1, 1>>>(t5, o23, (int64_t)15);
+  cu_check(cudaMemcpy(&o33, t5, sizeof(int32_t), cudaMemcpyDeviceToHost), "cudaMemcpy(index)");
+  o34 = o33;
   mapal_print_i32(o34, true);
   cu_check(cudaFree(arena0), "cudaFree(arena0)");
   return;

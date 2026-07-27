@@ -3703,11 +3703,24 @@ mod tests {
         // The inner arrays upload H→D (each is a scalar literal); the outer
         // is a flat buffer filled by device-to-device copies.
         assert_eq!(cu.matches("cudaMemcpyDeviceToDevice").count(), 2, "{cu}");
-        // The outer buffer is a fn-zone member (#18): after the two inner
-        // literals' slots, at the compile-time offset (ABI 4 B × 4 flat).
-        assert!(cu.contains("o4 = (int32_t*)(arena0 + 512ULL);"), "{cu}");
+        // The outer buffer is a fn-zone member (#18) — arena-resident, not a
+        // per-buffer cudaMalloc. Its OFFSET is deliberately not pinned here:
+        // `arena_plan` assigns 256 B slots walking `topo_order`, and since
+        // plan-s38 that walk breaks ties on source position, so which member
+        // lands at which slot is an ordering fact, not a correctness one (it
+        // moved 512 → 256 when the tie-break changed, with every region still
+        // disjoint). Slot disjointness and alignment are pinned where they
+        // belong, on the plan itself: `arena::tests::
+        // offsets_are_disjoint_aligned_and_topo_ordered`.
+        assert!(cu.contains("o4 = (int32_t*)(arena0 + "), "{cu}");
+        // What IS a correctness property: each inner literal is copied into
+        // the outer flat buffer at its own element offset, two elements wide.
         assert!(
             cu.contains("cudaMemcpy(o4 + 0ULL, o2, sizeof(int32_t) * 2ULL"),
+            "{cu}"
+        );
+        assert!(
+            cu.contains("cudaMemcpy(o4 + 2ULL, o3, sizeof(int32_t) * 2ULL"),
             "{cu}"
         );
     }

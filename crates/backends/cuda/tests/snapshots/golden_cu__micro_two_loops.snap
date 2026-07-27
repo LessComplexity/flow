@@ -129,11 +129,11 @@ static int32_t fn0(int32_t in) {
     o10.f1 = 1;
     o10.f0 = o4;
     o8.f0 = o5;
-    o11 = (int32_t)((uint32_t)o10.f0 + (uint32_t)o10.f1);
-    o9 = (int32_t)((uint32_t)o8.f0 + (uint32_t)o8.f1);
     o13.f1 = o7;
-    o12.f0 = o11;
+    o9 = (int32_t)((uint32_t)o8.f0 + (uint32_t)o8.f1);
     o12.f1 = o9;
+    o11 = (int32_t)((uint32_t)o10.f0 + (uint32_t)o10.f1);
+    o12.f0 = o11;
     o13.f0 = o12;
     o3 = o13.f0;
   }
@@ -152,11 +152,11 @@ static int32_t fn0(int32_t in) {
     o24.f1 = 1;
     o24.f0 = o18;
     o22.f0 = o19;
-    o25 = (int32_t)((uint32_t)o24.f0 + (uint32_t)o24.f1);
-    o23 = (int32_t)((uint32_t)o22.f0 + (uint32_t)o22.f1);
     o27.f1 = o21;
-    o26.f0 = o25;
+    o23 = (int32_t)((uint32_t)o22.f0 + (uint32_t)o22.f1);
     o26.f1 = o23;
+    o25 = (int32_t)((uint32_t)o24.f0 + (uint32_t)o24.f1);
+    o26.f0 = o25;
     o27.f0 = o26;
     o17 = o27.f0;
   }
