@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0ad3de783d5bea45eb132b93fcd2727a9125e3e08d61c0b6692200c0c8b3744a # shrinks to prog = Prog { trap_free: false, open: true, effectful: false, helpers: [[]], map_bodies: [], fold_bodies: [[Bin { op: 38, a: 0, b: 73 }]], map_cap_bodies: [], map_acap_bodies: [], fold_cap_bodies: [], nest_bodies: [], main: [Call { a: 59, helper: 0 }, Iota, Index { arr: 0, idx: 178 }, FoldArr { arr: 0, seed: 0, body: 0 }], prints: [], ret: 0, args: [0] }
