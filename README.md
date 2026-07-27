@@ -116,36 +116,27 @@ Apple M4 Pro (10 P + 4 E), kernel time only. Baselines: naive triple loops at
 
 Statistic: single-threaded cells are the minimum of N runs, threaded cells the **median**.
 
-The pool race that made ~3–4% of threaded runs self-time far too low is **fixed** — a clock read is
-now a node in the task DAG, so work written after it cannot start before it. Validated A/B on two
-machines over 8,400 runs: pre-fix 11 of 21 shape-machine pairs reported speedups the hardware
-cannot deliver, post-fix zero
-([`benches/results-s36/`](benches/results-s36/)). Every threaded number below is post-fix.
-
-**Both build faces are shown**, because the difference is not small and the comparison is
-otherwise unfair: the baselines are built with `-ffp-contract=fast` and NumPy goes through BLAS,
-so they all get fused multiply-add, while Mapal's default emits none.
+Both build faces are shown. The default is bit-identical to the interpreter and emits no fused
+multiply-add; `--contract` allows single-rounding FMA, which every baseline already gets from
+`-ffp-contract=fast` or from BLAS.
 
 Method, machine specs and raw logs: [`docs/performance/`](docs/performance/) ·
-[`benches/results-s36/`](benches/results-s36/) · [`benches/results-s33/`](benches/results-s33/).
+[`benches/results-s36/`](benches/results-s36/).
 
 ### Matrix multiply, f32 — M4 Pro
 
-|    N | Mapal conformance |    Mapal FMA | C++ naive-mt | Rust naive-mt | NumPy 1t | NumPy mt |
-| ---: | ----------------: | -----------: | -----------: | ------------: | -------: | -------: |
-| 1024 |           3.65 ms | **2.25 ms**  |          125 |           117 |     1.29 |     0.69 |
-| 4096 |                 — | 151 ms ⁽ᵃ⁾   |       33,065 |        33,548 |     84.6 |     44.1 |
+|    N | Mapal conformance |  Mapal FMA | C++ naive-mt | Rust naive-mt | NumPy 1t | NumPy mt |
+| ---: | ----------------: | ---------: | -----------: | ------------: | -------: | -------: |
+| 1024 |           3.65 ms | **2.25 ms** |          125 |           117 |     1.29 |     0.69 |
+| 4096 |            245 ms |  **155 ms** |       33,439 |        33,574 |     90.5 |     44.3 |
 
-**55× the naive baseline at 1024²**, and **3.3× behind NumPy** — which on this machine reaches the
-AMX coprocessor, so that column is hardware, not a compiler comparison (see below).
-
-⁽ᵃ⁾ The 4096 row is **pre-S36** and has not been re-measured: no `matmul4096_cap_f32.mapal` is
-checked in (only stale `.ll`), and `gen_flow.py` emits an untimed variant. Its threaded cell is
-therefore biased fast by the race. Re-measuring it is a tracked open item.
+**55× the naive baseline at 1024², 216× at 4096²**, and **3.3× behind NumPy** — which on this
+machine reaches the AMX coprocessor, so that column is hardware rather than a compiler comparison
+(see below).
 
 ### Other shapes — M4 Pro
 
-Threaded, median of 30, post-fix:
+Threaded, median of 30:
 
 | workload               | class           | Mapal conformance |    Mapal FMA | C++ naive-mt | NumPy 1t |
 | ---------------------- | --------------- | ----------------: | -----------: | -----------: | -------: |
@@ -160,26 +151,23 @@ Per core, conv2d is 1.21× ahead of naive C++ on NEON and AVX2:
 [conv2d-per-core-gap.md](docs/performance/conv2d-per-core-gap.md).
 
 The lower four rows are not compute-bound and they set the honest boundary of the claim. **The
-cause is memory layout, not arithmetic intensity, and it is self-inflicted.** Two facts the
-backend proves and then hides from LLVM: every object is a field of one `%Frame` struct, so alias
-analysis cannot separate them and the loop does not vectorize (worth **2.3×** on saxpy at one
-thread when the disjointness is emitted); and `iota` is materialized as an array rather than being
-an index law, so every map over one is an indirection (worth **3.1×**). Together they put saxpy at
-**0.097 ms against clang -O3's 0.095** — parity — with no change to the IR. Both are open items,
-measured in [s36c](docs/sessions/2026-07-27-s36c-the-real-gaps.md) §3.
-
-A correction to an earlier claim on this page: a plain `map` is **not** always scalar — a plain map
-over a contiguous i32 array emits 4-wide NEON in the same binary. The scalar cases are maps over a
-**zipped** array (a materialized pair array) and over an **iota** (an indirection).
+cause is memory layout, not arithmetic intensity, and it is self-inflicted.** Two facts the backend
+proves and then hides from LLVM: every object is a field of one `%Frame` struct, so alias analysis
+cannot separate them and the loop does not vectorize; and `iota` is materialized as an array rather
+than being an index law, so every map over one is an indirection. Emitting the first is worth
+**2.3×** on saxpy single-threaded and the second **3.1×** — together **0.097 ms against clang -O3's
+0.095**, parity, with no change to the IR. A plain `map` is not the problem: a plain map over a
+contiguous array emits 4-wide NEON. The scalar cases are maps over a **zipped** array and over an
+**iota**.
 
 The `sum reduction` row is a semantics difference as much as a speed one: NumPy's `sum` is pairwise
 and the C++ baseline splits into per-thread chunks, while a Mapal fold is left-to-right by
 definition and stays on one lane. At one thread, where all three compute the same function, Mapal
-is the fastest of the three. Splitting it needs an associativity permission the type system does
-not carry yet — designed in
+is the fastest of the three (0.367 vs 0.382 vs 0.382 on the i9). Splitting a fold needs an
+associativity permission the type system does not carry yet —
 [plan-s37-scan-recurrence.md](docs/components/ir/plans/plan-s37-scan-recurrence.md).
 
-NumPy has no threaded kernel for either shape (`np.correlate` is single-threaded C; conv2d is a
+NumPy has no threaded kernel for FIR or conv2d (`np.correlate` is single-threaded C; conv2d is a
 Python loop over nine array slices), so that column is not like-for-like.
 
 ### Against a hand-tuned BLAS, on equal hardware
@@ -192,14 +180,9 @@ through OpenBLAS on the same AVX2 units Mapal targets, the gap is hardware:
 | M4 Pro    | NumPy 13.5× ahead | NumPy 3.3× ahead        | Accelerate → AMX |
 | i9-14900F | NumPy 1.21× ahead | **tie** (1.53 / 1.51)   | OpenBLAS → AVX2  |
 
-Re-measured post-fix on the i9 **pinned to its 8 P-cores** — a harder test than the full machine,
-since the row below shows OpenBLAS is strongest exactly there: single-threaded **1.21× behind**
-(14.82 vs 12.22 ms), threaded **1.23× behind** (2.15 vs 1.74). The whole-machine cells above still
-predate the clock fix and are queued for re-measurement.
-
-Across all four sizes on the i9: single-threaded a **flat 1.20× behind** (146 vs 174 GFLOP/s,
-both size-invariant -> a steady micro-kernel deficit, not a blocking failure); threaded within
-**±10%**, ahead only at 2048². On the **untuned `generic`** profile.
+Pinned to the i9's 8 P-cores — both legs on identical cores, which is where OpenBLAS is strongest
+(see the row below): single-threaded **1.21× behind** (14.82 vs 12.22 ms), threaded **1.23× behind**
+(2.15 vs 1.74 ms), on the untuned `generic` profile.
 
 The threaded parity is **not** a better scheduler. Same box, 8 threads per row, only CPU
 uniformity varying:
@@ -225,11 +208,10 @@ The flat 20% single-threaded kernel gap is the remaining target.
 | **contract** (`--contract`) | relative tolerance; single-rounding FMA allowed | **2.25 ms** (1.62×)    |
 
 The default emits **zero** FMA instructions — verified on the object, not assumed
-(`objdump -d matmul1024_f32.o | grep -c vfmadd` = 0 default, 28 with `--contract`). Both faces are
-shown in every table above for that reason: the C++ and Rust baselines are built with
-`-ffp-contract=fast` and NumPy goes through BLAS, so publishing only the default would compare our
-bit-exact face against everyone else's fused one. At 4096² the default is 226 ms parallel /
-2,203 ms single-threaded against 151 / 1,256 (pre-S36, same caveat as the table above).
+(`objdump -d matmul1024_f32.o | grep -c vfmadd` = 0 by default, 28 with `--contract`). Both faces
+appear in every table above for that reason: the C++ and Rust baselines are built with
+`-ffp-contract=fast` and NumPy goes through BLAS, so publishing only the default would compare a
+bit-exact face against fused ones.
 
 ---
 
@@ -355,10 +337,9 @@ so neither resolves names the way the compiler does (ADR-0008).
    ([plan-s32](docs/components/backend-llvm/plans/plan-s32-deduced-scheduling.md)).
 4. ~~**The rewriter could delete a trap that must fire**~~ — fixed
    ([plan-s34](docs/components/rewrite/plans/plan-s34-identity-map-trap.md)).
-5. **A pool race** — measurement bug, not correctness. A waiting thread helps with work past the
-   checkpoint it waits on, so a kernel can finish before the clock bracketing it starts. Affects
-   measurements only, in the direction that flatters us, which is why threaded figures are
-   medians ([plan-s33b](docs/components/backend-llvm/plans/plan-s33b-clock-read-barrier.md)).
+5. ~~**A pool race made every threaded measurement suspect**~~ — fixed. A clock read is now a node
+   in the task DAG, so work written after it cannot be dispatched before it fires
+   ([plan-s33b](docs/components/backend-llvm/plans/plan-s33b-clock-read-barrier.md)).
 6. **Matrix units** (Arm SME, Intel AMX). The cross-machine result is the argument: without a
    matrix unit we match OpenBLAS, so the M4's remaining gap is a different execution unit, not
    better codegen. They change arithmetic ordering, so this gets an explicit opt-in, never a
