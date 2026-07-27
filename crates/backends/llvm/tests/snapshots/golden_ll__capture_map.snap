@@ -68,8 +68,8 @@ define internal void @task2(i64 %lo, i64 %hi, ptr %frame) {
 entry:
   %s0 = alloca i64
   %s8 = alloca { i32, i32 }
-  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
   %o4 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  %o2 = getelementptr %Frame, ptr %frame, i32 0, i32 0
   %o3 = getelementptr %Frame, ptr %frame, i32 0, i32 1
   store i64 %lo, ptr %s0
   br label %bb1

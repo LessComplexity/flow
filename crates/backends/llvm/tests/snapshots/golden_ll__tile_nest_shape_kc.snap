@@ -12,11 +12,11 @@ entry:
   %s5 = alloca i64
   %s12 = alloca i64
   %s13 = alloca i64
-  %pack_field0 = getelementptr %Frame, ptr %frame, i32 0, i32 14
+  %pack_field0 = getelementptr %Frame, ptr %frame, i32 0, i32 12
   %packed0 = load ptr, ptr %pack_field0
-  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 4
-  %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 5
-  %o9 = getelementptr %Frame, ptr %frame, i32 0, i32 7
+  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  %o7 = getelementptr %Frame, ptr %frame, i32 0, i32 3
+  %o9 = getelementptr %Frame, ptr %frame, i32 0, i32 5
   %t6 = udiv i64 %lo, 32
   %t7 = add i64 %hi, 31
   %t8 = udiv i64 %t7, 32

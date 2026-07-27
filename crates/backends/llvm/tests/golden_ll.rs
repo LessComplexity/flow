@@ -1181,6 +1181,15 @@ fn heap_src(n: u32) -> String {
 /// The n=64 twin is the negative control: below the threshold NOTHING moves,
 /// down to the declaration block — which is what keeps every other golden in
 /// this file byte-identical.
+///
+/// Note (plan-s37-stage-structure step 3b): this program's `iota` is now
+/// ELIDED — its only consumer rebuilds the element from the index — so the
+/// frame holds one array where it used to hold two, and the arena block halved
+/// from 800024 to 400024 bytes. What the test is for is unaffected: 390 KB is
+/// still over `HEAP_MIN_BYTES` (256 KB), so heap lowering still fires, there is
+/// still exactly one arena block and one teardown. Only the pinned literals
+/// moved, and they are pinned precisely so a change like this cannot pass
+/// unnoticed.
 #[test]
 fn golden_heap_lowered_frame() {
     let big = emit(&lower_src(&heap_src(100_000))).unwrap();
@@ -1189,15 +1198,15 @@ fn golden_heap_lowered_frame() {
         "the arena ABI is declared:\n{big}"
     );
     assert!(
-        big.contains("%Frame = type { [100000 x i32], [100000 x i32], { ptr, i32 }, i32, i32 }"),
-        "both arrays are frame fields:\n{big}"
+        big.contains("%Frame = type { [100000 x i32], { ptr, i32 }, i32, i32 }"),
+        "the surviving array is a frame field:\n{big}"
     );
     assert!(
         !big.contains("alloca %Frame"),
-        "a 780 KB frame must not be a stack block:\n{big}"
+        "a 390 KB frame must not be a stack block:\n{big}"
     );
     assert!(
-        big.contains("  %frame = call ptr @mapal_rt_alloc(i64 800024, i64 8)\n"),
+        big.contains("  %frame = call ptr @mapal_rt_alloc(i64 400024, i64 8)\n"),
         "the frame is one arena block at LLVM's own sizeof(%Frame):\n{big}"
     );
     let host = mapal_main(&big);

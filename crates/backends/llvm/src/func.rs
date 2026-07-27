@@ -309,6 +309,11 @@ pub(crate) struct FnEmit<'a> {
     /// plan-s37-stage-structure: the per-element law of each array. Consulted
     /// at elementwise reads; absence means "load it", i.e. today's behavior.
     elem: ElemPlan,
+    /// Arrays whose every consumer builds the element from its law, so the
+    /// buffer is never read and need not exist (step 3b). The producer emits
+    /// no store loop and the object gets no `%Frame` field — the `elided_updates`
+    /// pattern, applied to a producer instead of an in-place `Update`.
+    elided_arrays: SecondaryMap<ObjectId, ()>,
     /// Pack tiled two-dimensional right-hand operands.
     packing: bool,
     /// Product-face FMA contraction, used only by the tiled per-cell chain.
@@ -583,6 +588,7 @@ impl<'a> FnEmit<'a> {
             perf_timing: false,
             tile_plan: tiling.then(|| ir.tile_plan(f)),
             elem: ir.elem_plan(f),
+            elided_arrays: SecondaryMap::new(),
             packing,
             contract,
             kc_nest,
@@ -1379,7 +1385,60 @@ impl<'a> FnEmit<'a> {
                 self.update_aliases.insert(target, source);
             }
         }
+        self.mark_elided_arrays(&fd.morphisms.clone());
         in_llt
+    }
+
+    /// Step 3b: find arrays no one will ever load, because every consumer
+    /// rebuilds the element from its law (`elem_plan`).
+    ///
+    /// Deliberately narrow. An array qualifies only when **every** out-edge is a
+    /// `Map`/`Fold` reading it directly as the mapped/folded array — the
+    /// capture-free shape. A captured consumer reaches its array through a
+    /// `Pair` product, and following that chain is more analysis than the win
+    /// justifies today; those arrays keep their buffer. Conservative in the safe
+    /// direction: a missed elision costs a store pass, a wrong one dereferences
+    /// a field that does not exist.
+    fn mark_elided_arrays(&mut self, morphisms: &[MorphismId]) {
+        for &m in morphisms {
+            let Some(morph) = self.ir.morphism(m) else {
+                continue;
+            };
+            if !matches!(
+                morph.op,
+                Operation::Iota | Operation::Fill | Operation::Zip | Operation::Enumerate
+            ) {
+                continue;
+            }
+            let arr = morph.target;
+            // The law must be one a consumer can actually build. `Apply` is
+            // excluded because THIS backend declines it (see `APPLY_INLINE`)
+            // and a declined `Apply` degrades to loading exactly this array.
+            match self.elem.src(arr) {
+                Some(ElemSrc::Index | ElemSrc::Broadcast { .. } | ElemSrc::Pair(..)) => {}
+                _ => continue,
+            }
+            if self.ir.object(arr).map(|o| o.kind) != Some(ObjectKind::Temporary) {
+                continue;
+            }
+            let consumers = self.ir.out_edges(arr);
+            if consumers.is_empty() {
+                continue;
+            }
+            let all_inline = consumers.iter().all(|&c| {
+                let Some(cm) = self.ir.morphism(c) else {
+                    return false;
+                };
+                match cm.op {
+                    Operation::Map { captures: 0, .. } => cm.source == arr,
+                    Operation::Fold { .. } | Operation::Map { .. } => false,
+                    _ => false,
+                }
+            });
+            if all_inline {
+                self.elided_arrays.insert(arr, ());
+            }
+        }
     }
 
     fn owned_objects(&self) -> Vec<(ObjectId, ObjectKind, Ty)> {
@@ -1406,7 +1465,7 @@ impl<'a> FnEmit<'a> {
             if kind == ObjectKind::Constant {
                 continue;
             }
-            if self.elided_updates.contains_key(id) {
+            if self.elided_updates.contains_key(id) || self.elided_arrays.contains_key(id) {
                 ord += 1;
                 continue;
             }
@@ -1427,7 +1486,11 @@ impl<'a> FnEmit<'a> {
             if kind == ObjectKind::Constant {
                 continue;
             }
-            if self.elided_updates.contains_key(id) {
+            // step 3b: an array nobody loads needs no storage. Dropping the
+            // FIELD is the part DCE cannot do for us — `%Frame` is one object
+            // shared across every task, so an unread member still costs its
+            // bytes in the allocation.
+            if self.elided_updates.contains_key(id) || self.elided_arrays.contains_key(id) {
                 ord += 1;
                 continue;
             }
@@ -1731,6 +1794,23 @@ impl<'a> FnEmit<'a> {
         ));
         for (task_id, task) in plan.tasks.iter().enumerate() {
             let (kind, n) = match &task.kind {
+                // step 3b fallout: `path_plan` cut this task from the GRAPH,
+                // where the producer is a real morphism making a real array.
+                // The backend then decided nothing reads that array and emitted
+                // no body. Registering it `Split` anyway would have the pool
+                // slice a million-element range across every core to run a
+                // function with zero instructions — free at MAPAL_PAR=1, one
+                // dispatch per core plus a join at width. Register it as a
+                // single unsplittable unit instead; the dep edges are untouched,
+                // so dependents still wait on it and nothing renumbers.
+                TaskKind::Split { site, .. }
+                    if host
+                        .ir
+                        .morphism(*site)
+                        .is_some_and(|m| host.elided_arrays.contains_key(m.target)) =>
+                {
+                    (0, 1)
+                }
                 TaskKind::Split { site, n }
                     if host
                         .tile_plan
@@ -2241,6 +2321,12 @@ impl<'a> FnEmit<'a> {
             Operation::Fold { body, captures } => self.emit_fold(source, target, body, captures),
             Operation::Index => self.emit_index(m, source, target),
             Operation::Update => self.emit_update(m, source, target),
+            // step 3b: an array every consumer rebuilds from its law is never
+            // read, so the store loop that fills it is dead. Skipping it here
+            // (rather than trusting DCE) also drops its `%Frame` field, which
+            // DCE cannot do — the frame is one object shared across tasks.
+            Operation::Zip | Operation::Enumerate | Operation::Iota | Operation::Fill
+                if self.elided_arrays.contains_key(target) => {}
             Operation::Zip => self.emit_zip(source, target),
             Operation::Enumerate => self.emit_enumerate(source, target),
             Operation::Iota => self.emit_iota(source, target),
@@ -6585,18 +6671,18 @@ impl<'a> FnEmit<'a> {
         let src_ty = self.obj_ty(source);
         // The mapped array: the bare source (k=0) or the source product's last
         // component (k>0 — ADR-0027: source `(c₁…cₖ, [T; n])`, captures leading).
-        let (arr_ty, arr_ptr) = if captures == 0 {
-            let ptr = self.array_operand_ptr(source, None).expect("map src slot");
-            (src_ty, ptr)
+        // The pointer is taken LAZILY: an elided array (step 3b) has no
+        // `%Frame` field, so asking for its slot would panic — and the whole
+        // point is that this path never needs it.
+        let (arr_ty, arr_slot) = if captures == 0 {
+            (src_ty, None)
         } else {
-            let arr_ty = src_ty.component_ty(captures).cloned().expect("map array");
-            let ptr = self
-                .array_operand_ptr(source, Some(captures))
-                .expect("map array ptr");
-            (arr_ty, ptr)
+            (
+                src_ty.component_ty(captures).cloned().expect("map array"),
+                Some(captures),
+            )
         };
         let (tllt, n) = array_parts(&arr_ty);
-        let src_arr_llt = lower_ty(&arr_ty).expect("map src lowers");
         let tgt_ty = self.obj_ty(target);
         let (ullt, _) = array_parts(&tgt_ty);
         let tgt_arr_llt = lower_ty(&tgt_ty).expect("map tgt lowers");
@@ -6633,6 +6719,10 @@ impl<'a> FnEmit<'a> {
         let e = match inlined {
             Some((_, v)) => v,
             None => {
+                let src_arr_llt = lower_ty(&arr_ty).expect("map src lowers");
+                let arr_ptr = self
+                    .array_operand_ptr(source, arr_slot)
+                    .expect("map src slot");
                 let ep = self.tmp();
                 self.line(format!(
                     "{ep} = getelementptr {src_arr_llt}, ptr {arr_ptr}, i64 0, i64 {iv}"

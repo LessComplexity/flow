@@ -8,9 +8,9 @@ entry:
   %s1 = alloca i64
   %s2 = alloca i64
   %s3 = alloca i64
-  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 4
-  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 3
-  %o8 = getelementptr %Frame, ptr %frame, i32 0, i32 6
+  %o6 = getelementptr %Frame, ptr %frame, i32 0, i32 3
+  %o5 = getelementptr %Frame, ptr %frame, i32 0, i32 2
+  %o8 = getelementptr %Frame, ptr %frame, i32 0, i32 5
   %t4 = udiv i64 %lo, 16
   %t5 = add i64 %hi, 15
   %t6 = udiv i64 %t5, 16
