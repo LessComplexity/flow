@@ -1,202 +1,131 @@
-# Next Session (S37)
+# Next Session (S38)
 
-Written: 2026-07-27 · end of S36d (the S36 block) · by: Claude (orchestrator; category-architect skill)
-Session logs, in order: `sessions/2026-07-27-s36-clock-read-barrier.md` (the fix),
-`-s36b-cross-machine-validation.md` (8,400-run A/B), `-s36c-the-real-gaps.md` (the two corrections
-and the two layout findings), `-s36d-readme-editors-and-the-fma-question.md` (front page, tooling,
-FMA) — **read S36 §10 and S36b §11 before
-republishing any `par` number.** Previous: S35
-(`sessions/2026-07-26-s35-shape-ladder-and-the-ast-question.md`).
+Written: 2026-07-27 · end of S37 · by: Claude (orchestrator; category-architect skill)
+Session log: `sessions/2026-07-27-s37-elem-plan-and-the-dead-array.md`.
+Previous block: S36/S36b/S36c/S36d (`sessions/2026-07-27-s36*.md`).
+
+## READ THIS FIRST
+
+**The work is on a branch, `s37-elem-plan`, 7 commits, NOT pushed and NOT merged to `main`.**
+Sapir's call whether to fast-forward or open a PR. `git log --oneline -8` on that branch.
+
+**The gate is green except one pre-existing failure**, `open_inline` in `mapal-rewrite`. It fails on
+`main` too — it is not from this work. Its seed is committed so it cannot pass on a lucky draw. It is
+S38's first item.
 
 ## Where things stand (≤6 lines)
 
-**S33's last P0 is closed.** A clock read is no longer a bare host-spine checkpoint: `path_plan`
-makes it a **pinned DAG node** with edges both ways, so the work written after a `time` read cannot
-be dispatched until the read fires. fir 65 536 at `MAPAL_PAR=14`: **6/100 readings under 0.01 ms →
-0/100**, values byte-identical, total wall time unchanged. It landed entirely in `mapal-ir` —
-`crates/mapal-rt/` has a zero-line diff and the emitter needed no new code, because the pinned-task
-machinery from S24 already carried it. **Validated A/B on seven shapes and two machines (M4 Pro and
-the i9), 8,400 runs: pre-fix 11 of 21 shape-machine pairs reported speedups the hardware cannot deliver, post-fix
-zero — `benches/results-s36/`.** Every `par` number published before S36 is biased fast; republishing
-them is now P0. Gate: 972 passed; `17e10b3` pushed, CI green.
+**`elem_plan` ships: the compiler now records what `out[i]` IS, as a deduced graph fact.** `iota`
+becomes `trunc i64 %iv`, `zip` becomes two unit-stride loads plus `insertvalue`, `enumerate` falls out
+as `Pair(Index, ·)` with no code of its own. The payoff was not the arithmetic — it was noticing that
+once every consumer rebuilds the element, **the array is write-only**: saxpy's `zip` task wrote 8 MB
+per run that nothing read, *inside* the `time` bracket. **saxpy 1t 0.4769 → 0.0981 ms (4.86×), par
+0.1860 → 0.0833 ms (2.23×); matmul flat at 512/1024/2048/4096.** Separately, the per-push differential
+sweep went **409 s → 15 s** with the cross product intact.
 
-### Previously (S35)
-
-Four non-compute shape classes (saxpy, reduce, transpose, gather) measured and published, losses
-included; the finding is that a plain `map` is not a tile site, so streaming kernels emit **scalar
-loops** — 3.7× behind naive C++ at one thread. Separately: the compiler **does** have an AST and the
-README said it did not; corrected to "the syntax is a serialization of the execution graph."
-
-## FIRST commands (resume checks, in order)
+## FIRST commands
 
 ```sh
-git log --oneline -4                  # HEAD is the S36b close; 896fb3c is the fix
-git status --short                    # expect empty
-gh run list --limit 3                 # expect success on main
+git branch --show-current                  # expect s37-elem-plan
+git log --oneline -8                       # 7 commits since c5f48c9
+git status --short                         # expect empty
+cargo test -q -p mapal-rewrite --release --test inline   # expect open_inline FAILING (pre-existing)
 cargo test --workspace --release --no-fail-fast 2>&1 | grep -E "FAILED|panicked|test result"
-gh auth status                        # `LessComplexity` is now active (the account that can push)
-git worktree list                     # expect TWO stale entries to clean up
+git worktree list                          # one stale entry from S33
 ```
 
-**S36 + S36b are pushed.** `gh`'s active account is now `LessComplexity` (switched in S36b), which
-is the one that can write to the repo — if a push is refused, check `gh auth status` first.
+## S38 focus
 
-**The S36b pre-fix worktree is removed**; its emitted IR and binaries survive in
-`target/tmp/i9pre/` if the A/B needs re-running. One stale worktree remains from S33
-(`…/scratchpad/pre` @ `1daddaa`) and `git worktree prune` does not clear it — it is a live
-directory under `/private/tmp/claude-501/…`, so it needs `git worktree remove --force <path>`.
+### 1. P0 — trap order is source order (approach A)
 
-## S37 focus
+`components/ir/plans/plan-s38-trap-order-is-source-order.md`. **Already built, measured, and
+deliberately reverted** — this is not a design task, it is a landing task.
 
-### 1. P0 — republish the `par` tables
+`Inline` turns `Trapped(IndexOob)` into `Trapped(DivZero)`. `Index` and `Fold` are independent, the
+graph orders them not at all, and `topo_order` breaks the tie on **object insertion order**, which
+rewriting reshuffles. Approach A — tie-break on source position, plus testgen emitting real positions
+instead of `{0,0}` at all 122 sites — makes the counterexample pass, keeps `inline` 15/15, and keeps
+the **1,280-run differential 36/36 green**.
 
-The race is gone and the replacement numbers already exist. `benches/results-s36/` carries seven
-shapes × two machines × pre/post at n=100, plus the published harnesses re-run post-fix
-(`mac_shapes_ab.log`, `mac_ladder2_ab.log`). What remains is the edit: fold them into
-`docs/performance/shape-ladder-v2.md` and the README, and make sure no pre-S36 `par` cell is still
-quoted anywhere. Two consequences, in order:
+It was reverted for cost, not correctness: **19 goldens across three crates**, and it reorders
+emission for programs that were never rewritten (a CUDA test on a *raw* graph had its arena offsets
+move, which proves lowering does not create objects in source order).
 
-- **Every published `par` cell is known to be biased fast.** The kernel used to get a head start
-  before `t0`; it no longer does.
-- **Re-confirm S32's scheduling verdict (1.41–1.43×)** under both min and median. It needs the
-  pre-S32 A/B leg rebuilt — its own campaign, but no longer blocked on a bad statistic.
+- **Price A′ first** (plan §5.1): make lowering create objects in source order, so only *rewritten*
+  programs move. Cheap to answer — compare `loc` order against insertion order per function.
+- **Do not reach for approach B.** Selecting by source position in the interpreter alone is
+  **unsound**: `record_trap` passes `task_site(m)`, the topo index, and the runtime CAS-mins on it,
+  so the parallel backend is already record-and-select keyed on topo. Changing only the oracle makes
+  the two disagree. This was proposed and withdrawn in S37; the reasoning is in the plan §3.1.
+- Second obligation, not closed by A: **inlining must stamp spliced morphisms with the call-site
+  position**, or a trap inside an inlined body can still move. The pinned counterexample has an empty
+  helper so it does not exercise this. Needs its own counterexample.
 
-**Which statistic.** Not "min everywhere" again. S36 measured the residual min/median gap and it
-tracks kernel size — 0.57 at fir 65 536, **0.84** at fir 1 048 576, zero sub-0.01 readings at
-either. That is pool wake-up jitter. Min is trustworthy where the kernel dominates wake-up; small
-cells stay on medians for a reason unrelated to the clock (plan-s33b §7).
+### 2. P1 — the oracle clones captured arrays per fold step
 
-**And say which FACE you measured.** Every table published before S36c compared Mapal's
-conformance face (zero FMA) against baselines built with `-ffp-contract=fast`. Two commands catch
-it: `grep -c "fmul contract"` on the `.ll`, `objdump | grep -c vfmadd` on the `.o`.
+`differential_tiled_matmul_kc_c540` takes **374 s of the LLVM differential suite's 395 s**, and it is
+not compile (0.79 s for all four combos) and not execution (1.54 s). It is `eval.rs:288` —
+`let mut v = caps.clone()` inside the per-step loop, deep-copying a 73,440-element captured array
+293,760 times. Measured, fold steps held constant at 1,000:
 
-**And check the bound, not just the threshold.** S36b's finding: the "under 0.01 ms" counter is
-calibrated to fir and missed a 1494× reading on matmul. Any par cell whose apparent speedup
-(`1t_median / par_min`) exceeds the machine's thread count is a defect, whatever its absolute
-value — `benches/results-s36/run_pinned.sh` reports min/median per cell so this is checkable at a
-glance (plan-s33b §8).
+| captured array | time |
+| ---: | ---: |
+| 1,000 | 0.034 s |
+| 80,000 | 1.697 s |
 
-### 2. P0 — the two layout facts the backend hides from LLVM (S36c §3)
+80× the array, 50× the time — `O(fold_steps × captured_array_size)`. The fix is `Rc` + copy-on-write
+on `RValue::Array` (46 sites, 40 in mapal-interp, 6 in mapal-rewrite). **Plan it first**, and when
+you do: **the prompt must forbid agents writing into the repository** — in S37 the planning workflow
+dropped five `zz_*.rs` probe files under `crates/*/tests/` (one of which did not compile, which would
+have failed a gate for an unrelated reason) and then began migrating `RValue::Array` to `Rc` in the
+live working tree. Killed and reverted; its ground phase had produced 85 grounded facts.
 
-**This replaces "streaming kernels need a vectorization rung".** They do not need a rung; they need
-the emitter to stop hiding two facts it already proves. Both measured with A/B probes:
+### 3. P2 — the headroom `elem_plan` left
 
-- **The `%Frame` struct destroys alias analysis.** `-Rpass-analysis=loop-vectorize` says `unsafe
-  dependent memory operations`; an identical loop with two `ptr` params vectorises and the same
-  arrays as fields of one struct do not. `build_frame_layout` already proves disjointness and
-  `update_aliases` records every sharer — the plan set has no memory-disjointness fact and there
-  are zero `!alias.scope`/`!noalias` in `crates/`. **Worth 2.3× on saxpy 1t** (0.5253 → 0.2262).
-- **`iota` is an array, not an index law.** `emit_iota` materialises `[N × i32]` and `emit_map`
-  loads the index back out, so every map over an iota is an indirection. `tile_iota_size` already
-  proves the range but is private to `tile_site`. **Worth 3.1×** (0.3043 → 0.0972).
+- **Arrays with captured consumers are not elided.** The rule requires every out-edge to be a
+  capture-free `Map`/`Fold`; a captured consumer reaches its array through a `Pair` product. fir and
+  conv2d's `ts`/`kr` iotas are 4 MB each and still materialise.
+- **Captured map bodies round-trip the argument through one reused `alloca`** (`body_call_arg`):
+  gather's loop does two stores and a load into the same stack slot every element, which both
+  serialises it and is why it reports `call instruction cannot be vectorized`.
+- **`Apply` is legal but declined on CPU.** `ElemSrc::Apply` is recorded and gated (trap-free,
+  loop-free, effect-free); `APPLY_INLINE = false` because enabling it cost 0.72× on saxpy —
+  recompute loses to a load when the array is already materialised. A bandwidth-bound target should
+  answer differently, which is the entire reason the decision lives in the backend.
 
-Together: saxpy 1t **0.0972 vs C++ 0.0945** — parity, zero mapal-ir changes. Plan each first.
-**Correction to the S35 framing this inherited:** a plain map is NOT always scalar — a plain map
-over a contiguous i32 array is 4-wide NEON in the same binary. The scalar cases are maps over a
-**zipped** array or over an **iota**, and both layouts are ours.
+### 4. P2 — republish the ladder with the new numbers
 
-### 2b. P1 — `Operation::Fma`, and why `--contract` is not the default
+`docs/performance/shape-ladder-v2.md` and the README's shape rows. saxpy's cells moved 4.86× (1t) and
+2.23× (par). Everything else is unchanged within noise.
 
-Fusing cannot be deduced: it changes the value, so it is a permission on ADR-0032 D1's lattice
-(`exact | contract | tf32-class`) — the same one fold reassociation rides — and `Ty` carries no
-contract dimension. It cannot simply be flipped either: contraction is a *flag* LLVM interprets, so
-`mapal-interp` cannot predict the fusion set and the 1,280-run byte-equality oracle would have to
-weaken to a tolerance. Make it an op (`Operation::Fma`, interp evaluates with `f32::mul_add`, whose
-IEEE single rounding is bit-identical to the instruction) and byte-equality survives a fused build —
-then the default can flip, worth **1.62×** on matmul 1024². Plan: `plan-s37-scan-recurrence.md` §8;
-backlog row: ir suggestion #3.
+## Things that are NOT open any more
 
-**And note for any future baseline comparison: Rust does not contract by default** (0 FMA in both
-matmul baselines with `-O -C target-cpu=native`), C/C++ do, NumPy's comes from hand-written BLAS.
+- **The `%Frame` alias barrier is refuted, not deferred** (`b96a062`). S36c's 2.3× was a synthetic
+  probe. Emitted code does not exhibit the problem: a struct-field control vectorises with no metadata
+  at all, and across 61 tasks in 7 shapes exactly **one** reports `unsafe dependent memory operations`
+  — saxpy's `Zip` task, whose output nothing reads. saxpy's timed loop already vectorises. Do not
+  re-derive this from S36c; re-open only with a named shape whose *timed* loop reports the message.
+- **"Halve the differential cross product" is unnecessary.** The 409 s was macOS code-signature
+  validation on 1,280 freshly-linked binaries, in a system daemon outside the process tree — which is
+  why fanning out made it slower. Batching 32 cases per binary got 27× with the full cross product
+  and the README's "1,280 comparisons" claim intact.
+- **CUDA does not mirror steps 2–3** (Sapir). Its version of this is smem staging and MMA into tensor
+  cores, gated on the LLVM track landing complete. `elem_plan` is available to it and deliberately
+  unconsumed; a backend that ignores the query is correct by construction.
 
-### 3. P1 — the recurrence question (planned, not started)
+## Measurement rules earned in S37 — read before quoting any number
 
-`components/ir/plans/plan-s37-scan-recurrence.md` — Sapir's scan generalisation, worked through:
-one `Scan` object with `window`/`jump`/`carry`, and a **partial** `combine`/`unit` pair that exists
-exactly when the recurrence is splittable. Integers deduce structurally (ADR-0028's exact-op set,
-accepted and never built); floats need the ADR-0032 D1 precision lattice, which `Ty` does not carry.
-The trap to avoid: deducing the slice COUNT from `pool.threads` makes a float answer depend on the
-machine — the Rust baseline has exactly that bug. Steps 1–2 (integer tree reduce) need no new type
-machinery.
-
-### 4. One decision still waiting on Sapir
-
-**Halve the per-push differential cross product.** 1,391 s of a ~1,475 s Ubuntu test step — 94%.
-320 generated programs × {raw, rewritten} × {`-O0`, `-O2`} = 1,280 compile-and-runs per push.
-Running raw@`-O0` and rewritten@`-O2` takes ~12 min off Ubuntu with the full cross product nightly.
-It changes the README's published "1,280 comparisons per run" claim, so it needs a decision plus a
-doc edit, not a silent change.
-
-## Rules that bit S36 / S36b (S36 log §10, S36b log §11)
-
-1. **A fixed threshold is a proxy; a physical bound is a test.** "Under 0.01 ms" missed a 1494×
-   reading because it was calibrated on a shape 300× smaller. "Faster than the thread count allows"
-   needs no calibration.
-2. **Measure the control you already have.** `MAPAL_PAR=1` cannot race, so any spread it shows is
-   the machine — that one comparison separated the i9's 5× powersave ramp from the defect.
-3. **Build the "before" from a worktree, not from memory.** A pre leg compiled at the old commit in
-   `/tmp/s36pre` makes the A/B paired and same-session.
-4. **A benchmark's baseline must build on the measurement machine.** `ladder2_baseline.cpp` did not
-   compile under gcc 16 — found only by running it there.
-5. **Check the emitted artifact, not the intent, when labelling an A/B.**
-   `grep -c 'call void @mapal_par_run_pinned'` is 0 pre and 2 post; the first attempt grepped a
-   string that matched the *declaration* in both.
-6. **Re-measure a baseline before fixing it.** S33 recorded 3–4/100; HEAD measured 6/100. The
-   acceptance criterion is a delta, so the reference has to be current.
-7. **A fix that raises the number can still be the fix.** Wall time unchanged + interval up 12% =
-   the old measurement was excluding work.
-8. **Check whether the machinery exists before designing a mechanism.** The emitter half of S36 was
-   zero lines — S24's pinned tasks already did it.
-9. **Do not promote a watermark wait to a completion wait without asking what it waits for.** The
-   tempting reuse of the checkpoint wait list would have made `t0` wait for the kernel it opens.
-10. Plus S35's six: never pipe a test summary through `head` (`grep -E "FAILED|panicked"` instead);
-   `a && b; c` still runs `c`; a mechanical rename can invalidate a golden without touching its
-   logic; answer architecture questions from the code; price a refactor before arguing about it;
-   pre-register predictions.
-11. Plus S34's eight and S33's eight — pin the CPU; `ref-cycles` not `cycles`; ratios inside one run;
-   `cargo test` does not rebuild `libmapal_rt.a` (`cargo build -p mapal-rt --release` first);
-   `calloc` is not a pre-fault; verify a kill; a test that passes wrongly is worse than none.
-
-## Gotchas / warnings
-
-- **`par` numbers published before S36 are stale in a specific direction: too fast.** Do not compare
-  a post-S36 measurement against a pre-S36 published cell and call it a regression.
-- **A clock read is now a DAG node, so it costs an ordering.** Work written after a `time` read
-  cannot overlap the read. That is deliberate — the overlap is what corrupted the measurement — but
-  it means `time` is not free to sprinkle: each read is a barrier in both directions for the tasks
-  written around it. Total wall time was unchanged on fir; a program with genuinely independent work
-  straddling a read would pay.
-- **The extension is provisional** (ADR-0037 D4). `.mal` is the only other free short option; check
-  Linguist *and* `$VIMRUNTIME/syntax/` before any replacement.
-- **`docs/sessions/`, `ADR-0001…0036`, `docs/performance/` and recorded `results*.csv` still say
-  "Flow" on purpose** (ADR-0037 D3). Do not "fix" them. Lowercase *flow* also remains the name of
-  the language construct — `a -> b;` is a flow statement, and ADR-0005 holds verbatim.
-- **Old bench CSVs use `flow-llvm-*` leg labels; the harness now writes `mapal-llvm-*`.**
-- **`map(id) → id` refuses bodies containing `Widen`/`Iota`/`Fill`.** All three are legal to forward;
-  admitting them is its own change with its own pins.
-- **User-side leftovers outside the repo:** `~/.config/nvim/lua/plugins/flow.lua`,
-  `~/Library/Fonts/FlowIcons.ttf`, and the old `flow-lang` VS Code extension.
-- **The local directory is still `/Volumes/LessComplex/Personal/Flow`.** Renaming it means restarting
-  the session there; git does not care.
-- A stale S33 worktree (`…/scratchpad/pre` @ `1daddaa`) is still registered — `git worktree prune`.
-- **The i9's governor is `powersave` (intel_pstate) and there is no passwordless sudo**, so unpinned
-  numbers there carry a frequency ramp — visible as a 5× spread on the `MAPAL_PAR=1` leg, which
-  cannot race. Pin with `taskset -c 0` (1t) and `-c 0-15` (par, the 8 P-cores; 16–31 are E-cores at
-  4.3 GHz); `benches/results-s36/run_pinned.sh` is the driver.
-- **The Arch i9 is the measurement machine**, key auth, `<perf-box>`. No clang there: cross-compile
-  on the Mac (`-target x86_64-unknown-linux-gnu -march=raptorlake`) and link with gcc. `~/flowbench`
-  and `~/flowbench_pre` are built and left in place under their old directory names.
-- **`reside` pins pages to the touching thread's NUMA node.** Irrelevant single-socket, live on a
-  dual-socket EPYC. A/B it or make `reside` lane-aware before any multi-socket run.
-- **The scheduler advantage is heterogeneity tolerance, not a better scheduler.** On uniform cores
-  OpenBLAS beats us — 41% on 8 P-cores. Do not restate it as a general claim.
-- **VS Code extensions must be installed as a `.vsix`** — a copied or symlinked folder is ignored
-  *silently*.
-- Editor grammars have **opposite precedence** (Vim last-match-wins, TextMate earliest-match-wins).
-  `sh editors/test.sh` after any edit.
-- **Repo is public.** The perf box address is scrubbed to `<perf-box>`; keep it that way.
-- `kc_nest` stays default-OFF; `oversub` is 1 for `Sliding` reads by design; the fma legs are
-  numerically-equal-not-byte-equal BY DESIGN.
+1. **Interleave the two binaries in one pass, or do not report.** The same binary measured 0.5646 ms
+   and 0.4731 ms twenty minutes apart. Three wrong conclusions in S37 traced to this, including a
+   "1.50×" that became 1.00× and a conv2d "regression" that evaporated at 51 runs.
+2. **≥50 alternating runs before claiming a sub-10% difference on a sub-millisecond cell.**
+3. **Absolute ms on both sides, and name the baseline commit** (Sapir). A bare ratio is
+   unfalsifiable and hides baseline drift.
+4. **State which face.** S37 is all conformance — verified 0 `contract` flags, 0 `fmla`.
+5. **A probe reproduces a pattern, not the compiler's output.** Two S36c probe numbers did not
+   survive contact with emitted code.
+6. Plus S36's ten and S35's six — a fixed threshold is a proxy, a physical bound is a test; measure
+   the control you already have; check the emitted artifact, not the intent.
 
 ## Standing direction (Sapir — unchanged)
 
@@ -204,8 +133,13 @@ doc edit, not a silent change.
 - **Parallel-first by construction.**
 - **Backend-genericity contract (ADR-0032):** a rung is either a generic graph fact in a mapal-ir
   query or emitter-local cashing with zero mapal-ir change. mapal-ir never learns machine facts.
+- **Three questions, three owners** (ratified S37): *is it legal* is mapal-ir's, machine-independent
+  value semantics; *store or recompute* and *does it blow the cache/register budget* are the
+  backend's, and they get a different answer per target. Two tables in two places, never one.
+- **Query, not rewrite** (ratified S37): record that something *could* be skipped; never delete it.
+  That is what leaves the decision with the backend and keeps deliberate materialisation expressible.
 - **Type system = precision contracts; backend config = performance tailors.**
 - **Compile time decides the SIZES, runtime decides the ASSIGNMENT.**
 - **Nothing goes in the README that a default build does not deliver.**
-- **Proof over suggestion:** a change arrives with the measurement of what it did, and names the
-  published numbers it moves — the house rule in `CONTRIBUTING.md`.
+- **Proof over suggestion** — a change arrives with the measurement of what it did, and names the
+  published numbers it moves.
