@@ -12,7 +12,9 @@
 
 use slotmap::SecondaryMap;
 
-use mapal_ir::{CategoryIr, MorphismId, ObjectId, ObjectKind, Operation, Value, ty_contains_token};
+use mapal_ir::{
+    CategoryIr, GuardSite, MorphismId, ObjectId, ObjectKind, Operation, Value, ty_contains_token,
+};
 
 use crate::plan::RewritePlan;
 
@@ -22,6 +24,82 @@ use crate::plan::RewritePlan;
 pub fn analyze_const_fold(ir: &CategoryIr) -> RewritePlan {
     let mut plan = RewritePlan::new();
     let scc = scc_membership(ir);
+
+    // plan-s39: resolving a guard's condition decides the arm, so the LOSING
+    // arm's exclusive work is dropped in the same plan. It must happen here,
+    // not be left to DCE: once the `Phi` is aliased away the guard site no
+    // longer exists, and DCE's R4 rule would re-pin the orphaned trapping work
+    // as a root — the resolved guard would still trap.
+    let mut guard_arms: SecondaryMap<MorphismId, (Vec<ObjectId>, Vec<ObjectId>)> =
+        SecondaryMap::new();
+    // plan-s40: a Phi whose arm owns a loop (a LoopEnter handle in its
+    // own-list) is not folded at all — dropping a whole loop unit is replay
+    // surgery this pass has no business doing, and the loop's internals are
+    // not in the own-list to drop anyway.
+    // ponytail: refuse-to-fold; the fixpoint driver refolds after LiftLoops
+    // turns the arm's loop into a droppable Map/Fold.
+    let mut loop_armed: SecondaryMap<MorphismId, ()> = SecondaryMap::new();
+    for (f, _) in ir.funcs() {
+        let sites: Vec<_> = ir
+            .guard_plan(f)
+            .into_iter()
+            .filter(GuardSite::gated)
+            .collect();
+        for site in &sites {
+            // Transitive like `all_work` below: an arm gating a loop-armed
+            // nested site inherits the mark — its transitive drop would reach
+            // the nested handle. Sites arrive in topo order, nested first.
+            let has_loop = site
+                .on_true
+                .own
+                .iter()
+                .chain(site.on_false.own.iter())
+                .any(|&m| {
+                    matches!(ir.morphism(m).expect("own edge").op, Operation::LoopEnter)
+                        || loop_armed.contains_key(m)
+                });
+            if has_loop {
+                loop_armed.insert(site.phi, ());
+            }
+        }
+        // TRANSITIVE work per arm. `guard_plan` gives each site only its DIRECT
+        // work — a nested site's morphisms belong to that site, not to the arm
+        // gating it. Dropping the direct list alone leaves the nested chain
+        // alive, and `calc`'s right-folded 5-arm match then still trapped on
+        // `a % b` after ConstFold resolved the outer arm. Sites arrive in topo
+        // order of their `Phi`, so nested ones are complete first.
+        let mut all_work: SecondaryMap<MorphismId, Vec<MorphismId>> = SecondaryMap::new();
+        for site in &sites {
+            let mut work: Vec<MorphismId> = Vec::new();
+            for &m in site.on_true.own.iter().chain(site.on_false.own.iter()) {
+                work.push(m);
+                if let Some(nested) = all_work.get(m) {
+                    work.extend_from_slice(nested);
+                }
+            }
+            all_work.insert(site.phi, work);
+        }
+        for site in &sites {
+            // Per arm: its own work plus every nested site's, transitively.
+            let arm_work = |own: &[MorphismId]| -> Vec<ObjectId> {
+                let mut out = Vec::new();
+                for &m in own {
+                    let mut chain = vec![m];
+                    if let Some(nested) = all_work.get(m) {
+                        chain.extend_from_slice(nested);
+                    }
+                    for c in chain {
+                        out.push(ir.morphism(c).expect("own edge").target);
+                    }
+                }
+                out
+            };
+            guard_arms.insert(
+                site.phi,
+                (arm_work(&site.on_true.own), arm_work(&site.on_false.own)),
+            );
+        }
+    }
 
     for (o, obj) in ir.objects() {
         // P1: fold only `Temporary` targets. A primitive targeting Return
@@ -40,6 +118,37 @@ pub fn analyze_const_fold(ir: &CategoryIr) -> RewritePlan {
             None => continue, // product / param / const / loop object.
         };
         let morph = ir.morphism(m).expect("op edge");
+        if morph.op == Operation::Phi && loop_armed.contains_key(m) {
+            continue;
+        }
+        if morph.op == Operation::Phi
+            && let Some((t_own, e_own)) = guard_arms.get(m)
+        {
+            let f = slot_feeders(ir, morph.source);
+            if let Some(&Value::Bool(b)) = const_val(ir, f[2]) {
+                // plan-s40 review find [4]: the drop is sound ONLY when the
+                // phi-select alias in `try_fold_object` actually fires —
+                // `forward` refuses an SCC or token winner, and dropping the
+                // arm + triple while the Phi survives makes replay rebuild
+                // the losing boundary `Pair` edge against a dropped feeder
+                // ("feeder is not mapped"). Mirror forward's refusal exactly.
+                let winner = if b { f[0] } else { f[1] };
+                let alias_fires = !scc.contains_key(winner)
+                    && winner != o
+                    && !ty_contains_token(&ir.object(winner).expect("winner").ty);
+                if alias_fires {
+                    for &dead in if b { e_own } else { t_own } {
+                        plan.drop.insert(dead, ());
+                    }
+                    // The triple too. `try_fold_object` aliases this Phi to
+                    // the winning arm, so nothing reads the triple any more —
+                    // and leaving it alive would replay the LOSING arm's
+                    // boundary `Pair` edge, whose feeder is now dropped
+                    // (replay.rs:989 "feeder is not mapped").
+                    plan.drop.insert(morph.source, ());
+                }
+            }
+        }
         try_fold_object(ir, &scc, &mut plan, o, morph.op, morph.source);
     }
 

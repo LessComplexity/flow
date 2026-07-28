@@ -9,10 +9,11 @@
 //   Operation codes (the "menu"):
 //       0 = +     1 = -     2 = *     3 = /     (anything else) = %
 //
-//   calc(op, a, b) dispatches on `op` with a guard block. Guard branches in
-//   Mapal-Core are PURE and lower to a select (Phi), so EVERY arm is evaluated and
-//   one is chosen — which means `a / b` and `a % b` run even when you picked `+`.
-//   Keep b ≠ 0 (a zero divisor traps regardless of the chosen op).
+//   calc(op, a, b) dispatches on `op` with a guard block. Guard arms are PURE,
+//   and the condition GATES them (plan-s39): only the selected arm's work runs,
+//   so `a / b` does not execute when you picked `+`. `calc(0, 20, 0)` is 20, not
+//   a trap. Arms are still compiled — both code paths exist in the binary — but
+//   an arm that is not taken is not computed.
 //
 // Expected output (op-by-op demo over a = 20, b = 6):
 //   20 + 6 = 26

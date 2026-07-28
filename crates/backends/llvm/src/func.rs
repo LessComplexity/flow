@@ -4,8 +4,9 @@
 //! — the piecewise functor application (§8.5).
 
 use mapal_ir::{
-    BoundsProof, CategoryIr, ElemPlan, ElemSrc, FuncId, FuncKind, LastUsePlan, MorphismId,
-    ObjectId, ObjectKind, Operation, PathPlan, TaskKind, TilePlan, TileSite, Ty, Value, WaitEntry,
+    BoundsProof, CategoryIr, ElemPlan, ElemSrc, FuncId, FuncKind, GuardSite, LastUsePlan,
+    MorphismId, ObjectId, ObjectKind, Operation, PathPlan, TaskKind, TilePlan, TileSite, Ty, Value,
+    WaitEntry,
 };
 use slotmap::SecondaryMap;
 
@@ -279,6 +280,14 @@ pub(crate) struct FnEmit<'a> {
     /// `Index` can never fire, so `emit_index` drops its trap guard (just the
     /// GEP+load); everything unproven keeps today's guard byte-identical.
     bp: BoundsProof,
+    /// plan-s39 guard sites keyed by their `Phi`: the condition picks the arm
+    /// and only that arm's work is executed (branch emission).
+    gsites: SecondaryMap<MorphismId, GuardSite>,
+    /// Guard-arm-owned morphisms — emitted only inside their Phi's branches;
+    /// every straight-line walk skips them, and the loop driver's cones skip
+    /// them too (plan-s40 — a nested arm inside a loop body fires from its
+    /// in-cone Phi).
+    pub(crate) gated: SecondaryMap<MorphismId, ()>,
     /// `Update` targets whose whole-array memcpy is elided (rule 4's in-place
     /// write): they share the dead source array's slot, so the entry-block
     /// pass mints no alloca for them; `emit_update` inserts the shared slot.
@@ -562,6 +571,14 @@ impl<'a> FnEmit<'a> {
         kc_nest: bool,
         profile: &'static TargetProfile,
     ) -> Self {
+        let mut gsites = SecondaryMap::new();
+        let mut gated = SecondaryMap::new();
+        for site in ir.guard_plan(f).into_iter().filter(GuardSite::gated) {
+            for &m in site.on_true.own.iter().chain(site.on_false.own.iter()) {
+                gated.insert(m, ());
+            }
+            gsites.insert(site.phi, site);
+        }
         FnEmit {
             ir,
             f,
@@ -576,6 +593,8 @@ impl<'a> FnEmit<'a> {
             ptr_resident: SecondaryMap::new(),
             lup: ir.last_use_plan(f),
             bp: ir.bounds_proof(f),
+            gsites,
+            gated,
             elided_updates: SecondaryMap::new(),
             update_aliases: SecondaryMap::new(),
             frame: None,
@@ -2086,7 +2105,13 @@ impl<'a> FnEmit<'a> {
         for m in self.ir.topo_order(self.f) {
             let morph = self.ir.morphism(m).expect("morphism resolves");
             match morph.op {
-                Operation::LoopEnter => crate::loops::emit_loop(self, morph.target),
+                Operation::LoopEnter => {
+                    if self.gated.contains_key(m) {
+                        // plan-s40: arm-owned loop — its Phi drives it.
+                        continue;
+                    }
+                    crate::loops::emit_loop(self, morph.target)
+                }
                 Operation::LoopBack | Operation::LoopExit => {}
                 _ => {
                     if owned.contains_key(m)
@@ -2094,6 +2119,9 @@ impl<'a> FnEmit<'a> {
                         || in_scc.contains_key(morph.target)
                     {
                         continue; // driver-owned
+                    }
+                    if self.gated.contains_key(m) {
+                        continue; // plan-s39: fired only from its Phi's branch
                     }
                     self.emit_morphism(m);
                 }
@@ -2144,6 +2172,12 @@ impl<'a> FnEmit<'a> {
             let morph = self.ir.morphism(m).expect("morphism resolves");
             match morph.op {
                 Operation::LoopEnter => {
+                    if self.gated.contains_key(m) {
+                        // plan-s40: arm-owned loop — its Phi drives it, and
+                        // path_plan folded it into the Phi's Seq task, so no
+                        // pre-loop checkpoint belongs here either.
+                        continue;
+                    }
                     if let Some(list) = self
                         .host
                         .as_ref()
@@ -2170,6 +2204,9 @@ impl<'a> FnEmit<'a> {
                         || in_scc.contains_key(morph.target)
                     {
                         continue;
+                    }
+                    if self.gated.contains_key(m) {
+                        continue; // plan-s39: fired only from its Phi's branch
                     }
                     self.emit_morphism(m);
                 }
@@ -2294,7 +2331,50 @@ impl<'a> FnEmit<'a> {
                 self.store_obj(target, &tllt, &r);
             }
             Operation::Phi => {
-                if matches!(self.obj_ty(target), Ty::Array { .. }) {
+                if let Some(site) = self.gsites.get(m).cloned() {
+                    // plan-s39: the condition picks the arm and only that
+                    // arm's work runs. The cond's Pair edge (slot 2) is
+                    // unconditional and already fired; each branch emits its
+                    // arm's own-list, then lands the staged value in the
+                    // target's slot.
+                    let (_, c) = self.load_component(source, 2).expect("phi cond");
+                    let bt = self.label();
+                    let bf = self.label();
+                    let bj = self.label();
+                    self.line(format!("br i1 {c}, label %{bt}, label %{bf}"));
+                    for (arm, blk, slot) in
+                        [(&site.on_true, &bt, 0u32), (&site.on_false, &bf, 1u32)]
+                    {
+                        self.label_line(blk);
+                        for &g in &arm.own {
+                            let gm = self.ir.morphism(g).expect("morphism resolves");
+                            if gm.op == Operation::LoopEnter {
+                                // plan-s40: the handle stands for its whole
+                                // loop unit — the driver CFG is emitted inside
+                                // this branch.
+                                crate::loops::emit_loop(self, gm.target);
+                            } else {
+                                self.emit_morphism(g);
+                            }
+                        }
+                        if matches!(self.obj_ty(target), Ty::Array { .. }) {
+                            let p = self
+                                .array_operand_ptr(source, Some(slot))
+                                .expect("phi arm array ptr");
+                            let dst = self.slot(target).expect("phi array target slot");
+                            let llt = lower_ty(&self.obj_ty(target)).expect("phi array lowers");
+                            self.emit_memcpy(&dst, &p, &llt);
+                        } else {
+                            let (tllt, v) =
+                                self.load_component(source, slot).expect("phi arm value");
+                            self.store_obj(target, &tllt, &v);
+                        }
+                        self.line(format!("br label %{bj}"));
+                    }
+                    self.label_line(&bj);
+                } else if matches!(self.obj_ty(target), Ty::Array { .. }) {
+                    // Hand-built (non-builder) triple: strict select over both
+                    // computed arms.
                     let t = self
                         .array_operand_ptr(source, Some(0))
                         .expect("phi then array ptr");

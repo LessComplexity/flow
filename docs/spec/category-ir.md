@@ -503,7 +503,39 @@ flowchart LR
     triple -- phi --> ret(("ret : i32"))
 ```
 
-Observe: both branches are *always computed*. This is fine for pure morphisms (no side effects), is the natural behavior for hardware (both datapaths exist), and matches the branchless-by-default bias for GPU codegen. When a branch has side effects, the lowering changes — see §4.6.
+Observe that both branches are *drawn*. Whether both are **computed** is a
+separate question, and the answer is no: the condition **gates** the arms — an
+arm's exclusive work runs only if the condition selects that arm (plan-s39).
+
+This section previously said both branches are always computed, justified by
+"the natural behavior for hardware (both datapaths exist)" and "the
+branchless-by-default bias for GPU codegen". Both statements are true, and both
+are about **how to realize a guard on a particular machine** — they were
+mistakenly written down as what a guard *means*. In this document's own terms
+that is a `TrnLoc` promoted to a `Trn` (§4.2: a transformation placed twice has
+two placements, and "the two may be different code"). The concrete cost: an
+arm's `7 / 0` trapped on a path the condition never took.
+
+Two things the strict reading got wrong:
+
+- **Pure is not total.** The arm restrictions buy purity, but `Div`, `Mod`,
+  `Index` and `Update` are pure *partial* morphisms. Evaluating both arms
+  implements the copair `[f, g]` only where **both** are defined — a strictly
+  smaller morphism than the guard denotes, so it is the wrong morphism, not a
+  different schedule of the right one.
+- **Compiled is not computed.** Both arms' code exists in the emitted artifact.
+  Only running is conditional.
+
+Realizations differ because locations differ, and each one *realizes* the gate
+rather than waiving it: on the parallel task DAG it is an unsatisfied
+dependency (the task never becomes ready); in scalar straight-line code a
+branch; on a SIMD lane the lane mask; on a GPU thread warp divergence. One
+degenerate case remains, and it is where `select` survives: when an arm's work
+is a small **total** computation, gating and computing are the same work, so
+the backend computes both and merges. `mapal_ir::guard_plan` supplies the
+legality (can this arm trap?) and the cost input; the backend picks.
+
+When a branch has side effects, the lowering changes further — see §4.6.
 
 ### 4.5 Loop — using Trace
 

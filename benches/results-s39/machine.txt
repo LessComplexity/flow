@@ -1,0 +1,8 @@
+machine: Apple M4 Pro
+os: macOS 26.3.1 / Darwin 25.3.0
+cores: 14  perf-cores: 10
+clang: Homebrew clang version 22.1.8
+PRE commit: 8b40442 (= 24f52c9 + a rename-only commit; compiler byte-identical)
+POST: working tree (S39, uncommitted)
+runs: 51 per shape per side, alternating, program's own 'iter ms=' self-timer
+face: --rewrite (contraction off)

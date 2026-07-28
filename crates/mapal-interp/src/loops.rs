@@ -51,8 +51,13 @@ pub(crate) fn run_loop(ctx: &mut EvalCtx, merge: ObjectId, budget: &mut u64) -> 
         }
 
         // Decide/exit cone: build cond + the exit route (incl. exit-feeding
-        // effects). Decrements budget per morphism.
+        // effects). Decrements budget per morphism. Guard-arm-owned morphisms
+        // are skipped here exactly as in the flat walk (plan-s39) — their Phi
+        // fires the chosen arm.
         for &mo in &plan.decide_order {
+            if ctx.gated.contains_key(mo) {
+                continue;
+            }
             eval_morphism(ctx, mo, budget)?;
         }
 
@@ -71,8 +76,12 @@ pub(crate) fn run_loop(ctx: &mut EvalCtx, merge: ObjectId, budget: &mut u64) -> 
             return Ok(());
         }
 
-        // CONTINUE — build the next-state (the inr(U) arm).
+        // CONTINUE — build the next-state (the inr(U) arm). Same guard-arm
+        // skip as the decide cone (plan-s39).
         for &mo in &plan.advance_order {
+            if ctx.gated.contains_key(mo) {
+                continue;
+            }
             eval_morphism(ctx, mo, budget)?;
         }
 

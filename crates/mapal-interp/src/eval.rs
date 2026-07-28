@@ -7,7 +7,9 @@
 
 use slotmap::SecondaryMap;
 
-use mapal_ir::{CategoryIr, FuncId, MorphismId, ObjectId, ObjectKind, Operation, Ty, Value};
+use mapal_ir::{
+    CategoryIr, FuncId, GuardSite, MorphismId, ObjectId, ObjectKind, Operation, Ty, Value,
+};
 
 use crate::value::{Abort, RValue, TrapKind};
 
@@ -21,15 +23,32 @@ pub(crate) struct EvalCtx<'a> {
     pub env: SecondaryMap<ObjectId, RValue>,
     /// Per-product staging buffers: `target → [Option<component>; arity]`.
     pub staging: SecondaryMap<ObjectId, Vec<Option<RValue>>>,
+    /// Guard sites keyed by their `Phi` (plan-s39): the Phi handler evaluates
+    /// the condition, fires the chosen arm's own-list, and selects.
+    pub guards: SecondaryMap<MorphismId, GuardSite>,
+    /// Every guard-arm-owned morphism (the sites' own-lists partition these).
+    /// The flat walk and the loop driver both skip them — an arm's work fires
+    /// only from its Phi, and only when the condition picks that arm.
+    pub gated: SecondaryMap<MorphismId, ()>,
 }
 
 impl<'a> EvalCtx<'a> {
     fn new(ir: &'a CategoryIr, f: FuncId) -> Self {
+        let mut guards = SecondaryMap::new();
+        let mut gated = SecondaryMap::new();
+        for site in ir.guard_plan(f).into_iter().filter(GuardSite::gated) {
+            for &m in site.on_true.own.iter().chain(site.on_false.own.iter()) {
+                gated.insert(m, ());
+            }
+            guards.insert(site.phi, site);
+        }
         EvalCtx {
             ir,
             f,
             env: SecondaryMap::new(),
             staging: SecondaryMap::new(),
+            guards,
+            gated,
         }
     }
 
@@ -103,6 +122,12 @@ pub(crate) fn eval_fn(
         let op = morph.op;
         match op {
             Operation::LoopEnter => {
+                if ctx.gated.contains_key(m) {
+                    // plan-s40: an arm-owned loop — the handle is gated, and
+                    // its Phi invokes the driver iff the condition picks the
+                    // arm.
+                    continue;
+                }
                 // Invoke the driver once per merge (the target LoopMerge).
                 crate::loops::run_loop(&mut ctx, morph.target, budget)?;
             }
@@ -115,6 +140,11 @@ pub(crate) fn eval_fn(
                 if incident || owned.contains_key(m) {
                     // Driver owns every morphism in a loop plan's cones or
                     // incident to an SCC.
+                    continue;
+                }
+                if ctx.gated.contains_key(m) {
+                    // plan-s39: guard-arm work fires only from its Phi, and
+                    // only when the condition picks that arm.
                     continue;
                 }
                 eval_morphism(&mut ctx, m, budget)?;
@@ -215,7 +245,38 @@ pub(crate) fn eval_morphism(
             Ok(())
         }
         Operation::Phi => {
-            // (T, T, Bool): src@2 ? src@0 : src@1.
+            if let Some(site) = ctx.guards.get(m).cloned() {
+                // plan-s39: the condition picks the arm; only that arm's work
+                // fires. The condition is staged at slot 2 (its Pair edge is
+                // unconditional and precedes the Phi in topo); the unchosen
+                // slot never fills, so the triple never finalizes into env —
+                // read components from the staging buffer.
+                let cond = match ctx.staging.get(source).and_then(|b| b[2].clone()) {
+                    Some(RValue::Scalar(Value::Bool(b))) => b,
+                    _ => unreachable!("Phi condition staged before the Phi"),
+                };
+                let arm = if cond { &site.on_true } else { &site.on_false };
+                for &g in &arm.own {
+                    let gm = ctx.morph(g);
+                    if gm.op == Operation::LoopEnter {
+                        // plan-s40: the handle stands for its whole loop unit —
+                        // the driver fires the machinery and cones.
+                        crate::loops::run_loop(ctx, gm.target, budget)?;
+                    } else {
+                        eval_morphism(ctx, g, budget)?;
+                    }
+                }
+                let slot = if cond { 0 } else { 1 };
+                let chosen = ctx
+                    .staging
+                    .get(source)
+                    .and_then(|b| b[slot].clone())
+                    .unwrap_or_else(|| unreachable!("chosen arm staged its slot"));
+                write(ctx, target, chosen);
+                return Ok(());
+            }
+            // Hand-built (non-builder) triple shape: strict select over the
+            // finalized product — both arms were computed in the flat walk.
             let src = read(ctx, source).clone();
             let cond = match component(&src, 2) {
                 RValue::Scalar(Value::Bool(b)) => *b,

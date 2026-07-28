@@ -38,6 +38,28 @@ pub fn analyze_dce(ir: &CategoryIr) -> RewritePlan {
     for (_, def) in ir.funcs() {
         roots.push(def.output);
     }
+
+    // plan-s39: a gated `Phi` whose arm can trap is NOT droppable, even when
+    // its result is dead. `Phi` is in `is_pure`, so DCE would delete it — but
+    // R4 keeps the arm's `Div`, and with the guard gone that `Div` runs
+    // unconditionally: `Done(1)` became `Trapped(DivZero)` (property
+    // `closed_default`). The guard is what decides whether the trap fires, so
+    // it inherits the trap-capability of the arms it gates and is pinned with
+    // them. Dual to the other direction: exempting the ARM from R4 let DCE
+    // delete a trap that must fire (`open_default`), which is why the arm
+    // stays pinned too.
+    // plan-s40 review find [3]/[6]: the pin keys on gated(), not can_trap
+    // alone. An arm owning a trap-free loop is heavy-but-not-trap-capable;
+    // dropping its dead Phi un-gates the loop (the SCC itself is pinned by
+    // RW11 below), and the flat walk then drives it unconditionally — a
+    // non-terminating untaken loop went Done raw, Diverged rewritten.
+    for (f, _) in ir.funcs() {
+        for site in ir.guard_plan(f) {
+            if site.gated() {
+                roots.push(ir.morphism(site.phi).expect("phi").target);
+            }
+        }
+    }
     for (o, obj) in ir.objects() {
         if scc.contains_key(o) {
             roots.push(o); // loop machinery pinned live (RW11 / P2).
@@ -58,10 +80,144 @@ pub fn analyze_dce(ir: &CategoryIr) -> RewritePlan {
         }
         // A non-pure op may trap or diverge; keeping it (and its cone) preserves
         // the run's class even when its result is dead (R4).
+        //
+        // plan-s39: guard-arm work is NOT exempt from this, even though it only
+        // fires when the condition picks its arm. A dead `Phi` is still walked
+        // by the interpreter, so it still fires its chosen arm and can still
+        // trap — exempting gated results let DCE turn `Trapped(DivZero)` into
+        // `Done(0)` (property `open_default`). The orphan case that motivated
+        // the exemption is handled where it belongs: ConstFold drops the losing
+        // arm and the triple in the same plan when it resolves a condition.
         if let Some(m) = op_edge(ir, o)
             && !is_pure(ir.morphism(m).expect("op").op)
         {
             roots.push(o);
+        }
+    }
+
+    // plan-s40 review find [5]: guard verdicts are a function of CONSUMER
+    // SETS, and the interpreter executes dead code — so removing a dead
+    // reader of an arm value changes what the raw program means: a value
+    // with a dead second reader is strict, and with the reader dropped the
+    // site gates, suppressing a trap the raw run fires (`Trapped(DivZero)`
+    // raw, `Done` rewritten — the 1024-case hammer's DCE seed). DCE
+    // therefore preserves every dead cone that can touch a verdict: pin each
+    // dead `Temporary` SINK forward-reachable from the verdict cone (the
+    // backward cone of every Phi triple, widened by the member targets of
+    // any loop unit that cone touches, since unit joinability inspects all
+    // of them — including the sink refusal). Pinning the SINK is what makes
+    // the whole cone survive: replay materializes only read objects, so
+    // pinning an interior product alone does not outlive the rebuild.
+    // Phi-free functions pin nothing and keep byte-identical DCE.
+    'verdict: {
+        let mut cone: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+        let mut stack: Vec<ObjectId> = Vec::new();
+        for (_, morph) in ir.morphisms() {
+            if morph.op == Operation::Phi {
+                stack.push(morph.source);
+            }
+        }
+        if stack.is_empty() {
+            // Phi-free graph: no verdicts to preserve — skip the halo,
+            // forward and taint walks (compile-time A/B gate, S40).
+            break 'verdict;
+        }
+        while let Some(o) = stack.pop() {
+            if cone.insert(o, ()).is_some() {
+                continue;
+            }
+            for &m in ir.in_edges(o) {
+                stack.push(ir.morphism(m).expect("in").source);
+            }
+        }
+        for (f, _) in ir.funcs() {
+            for lscc in ir.loop_structure(f) {
+                if !lscc.objects.iter().any(|o| cone.contains_key(*o)) {
+                    continue;
+                }
+                let objs: SecondaryMap<ObjectId, ()> = {
+                    let mut s = SecondaryMap::new();
+                    for &o in &lscc.objects {
+                        s.insert(o, ());
+                    }
+                    s
+                };
+                for (_, morph) in ir.morphisms() {
+                    if objs.contains_key(morph.source) || objs.contains_key(morph.target) {
+                        stack.push(morph.target);
+                    }
+                }
+                while let Some(o) = stack.pop() {
+                    if cone.insert(o, ()).is_some() {
+                        continue;
+                    }
+                    for &m in ir.in_edges(o) {
+                        stack.push(ir.morphism(m).expect("in").source);
+                    }
+                }
+            }
+        }
+        // Forward closure of the cone, then pin its dead Temporary sinks —
+        // but only TAINTED ones (a sink whose backward cone contains an
+        // impure morphism: a trap, a call, loop machinery). A flip on a
+        // pure-total value's ownership is unobservable — computed or skipped,
+        // nobody can tell — so preserving a pure dead cone would change
+        // surface emissions (sepia kept a dead float pack) for nothing.
+        let mut fwd = cone;
+        let mut stack: Vec<ObjectId> = fwd.iter().map(|(o, ())| o).collect();
+        while let Some(o) = stack.pop() {
+            for &m in ir.out_edges(o) {
+                let t = ir.morphism(m).expect("out").target;
+                if fwd.insert(t, ()).is_none() {
+                    stack.push(t);
+                }
+            }
+        }
+        let tainted: SecondaryMap<ObjectId, ()> = {
+            let mut t: SecondaryMap<ObjectId, ()> = SecondaryMap::new();
+            let mut stack: Vec<ObjectId> = Vec::new();
+            for (_, morph) in ir.morphisms() {
+                // Observable-when-executed: partial ops, bodies/calls that may
+                // hide them, effects, and loop machinery (divergence). NOT
+                // `!is_pure` — that list omits `Pair`, and a staging edge is
+                // not an observation.
+                if matches!(
+                    morph.op,
+                    Operation::Div
+                        | Operation::Mod
+                        | Operation::Index
+                        | Operation::Update
+                        | Operation::Call(_)
+                        | Operation::Map { .. }
+                        | Operation::Fold { .. }
+                        | Operation::Print { .. }
+                        | Operation::TimeMs
+                        | Operation::Output
+                        | Operation::LoopEnter
+                        | Operation::LoopBack
+                        | Operation::LoopExit
+                ) {
+                    stack.push(morph.target);
+                }
+            }
+            while let Some(o) = stack.pop() {
+                if t.insert(o, ()).is_some() {
+                    continue;
+                }
+                for &m in ir.out_edges(o) {
+                    stack.push(ir.morphism(m).expect("out").target);
+                }
+            }
+            t
+        };
+        for (o, obj) in ir.objects() {
+            if obj.kind == ObjectKind::Temporary
+                && ir.out_edges(o).is_empty()
+                && fwd.contains_key(o)
+                && tainted.contains_key(o)
+            {
+                roots.push(o);
+            }
         }
     }
 

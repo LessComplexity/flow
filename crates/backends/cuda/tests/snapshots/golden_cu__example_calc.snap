@@ -96,30 +96,44 @@ static int32_t fn0(FlowProd_int32_t_int32_t_int32_t in) {
   int32_t o4;
   int32_t o20;
   int32_t o22;
+  int32_t o24;
+  int32_t o26;
+  int32_t o28;
   o2 = in.f0;
   o3 = in.f1;
   o4 = in.f2;
-  if (o4 == 0) { mapal_trap(0); }
-  if ((o4 == -1) && (o3 == INT32_MIN)) {
-    o20 = INT32_MIN;
+  if ((o2 == 0)) {
+    o1 = ((int32_t)((uint32_t)o3 + (uint32_t)o4));
   } else {
-    o20 = o3 / o4;
+    if ((o2 == 1)) {
+      o28 = ((int32_t)((uint32_t)o3 - (uint32_t)o4));
+    } else {
+      if ((o2 == 2)) {
+        o26 = ((int32_t)((uint32_t)o3 * (uint32_t)o4));
+      } else {
+        if ((o2 == 3)) {
+          if (o4 == 0) { mapal_trap(0); }
+          if ((o4 == -1) && (o3 == INT32_MIN)) {
+            o20 = INT32_MIN;
+          } else {
+            o20 = o3 / o4;
+          }
+          o24 = o20;
+        } else {
+          if (o4 == 0) { mapal_trap(0); }
+          if ((o4 == -1) && (o3 == INT32_MIN)) {
+            o22 = 0;
+          } else {
+            o22 = o3 % o4;
+          }
+          o24 = o22;
+        }
+        o26 = o24;
+      }
+      o28 = o26;
+    }
+    o1 = o28;
   }
-  if (o4 == 0) { mapal_trap(0); }
-  if ((o4 == -1) && (o3 == INT32_MIN)) {
-    o22 = 0;
-  } else {
-    o22 = o3 % o4;
-  }
-  int32_t t0 = o20;
-  int32_t t1 = o22;
-  int32_t t2 = ((int32_t)((uint32_t)o3 * (uint32_t)o4));
-  int32_t t3 = ((o2 == 3) ? t0 : t1);
-  int32_t t4 = ((int32_t)((uint32_t)o3 - (uint32_t)o4));
-  int32_t t5 = ((o2 == 2) ? t2 : t3);
-  int32_t t6 = ((int32_t)((uint32_t)o3 + (uint32_t)o4));
-  int32_t t7 = ((o2 == 1) ? t4 : t5);
-  o1 = (o2 == 0) ? t6 : t7;
   return o1;
 }
 

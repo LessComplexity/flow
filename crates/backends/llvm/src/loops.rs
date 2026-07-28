@@ -38,8 +38,13 @@ pub(crate) fn emit_loop(fe: &mut FnEmit, merge: ObjectId) {
     fe.label_line(&header);
 
     // Decide/exit cone: the guard cond + exit-route payload, run every iteration
-    // (incl. the exit one — ADR-0016 / countdown prints 0).
+    // (incl. the exit one — ADR-0016 / countdown prints 0). Guard-arm-owned
+    // morphisms are skipped exactly as in the flat walk (plan-s40, interp
+    // parity) — their in-cone Phi fires the chosen arm.
     for &mo in &plan.decide_order {
+        if fe.gated.contains_key(mo) {
+            continue;
+        }
         fe.emit_morphism(mo);
     }
     let cond = fe.load_route_component(plan.exit_route, 1);
@@ -48,6 +53,9 @@ pub(crate) fn emit_loop(fe: &mut FnEmit, merge: ObjectId) {
     // Advance cone: the next-state (unreachable on the exit step — guard-first).
     fe.label_line(&advance);
     for &mo in &plan.advance_order {
+        if fe.gated.contains_key(mo) {
+            continue;
+        }
         fe.emit_morphism(mo);
     }
     fe.copy_component(plan.back_route, 0, plan.merge);

@@ -97,6 +97,20 @@ pub enum Step {
         e: u8,
         c: u8,
     },
+    /// plan-s39: a guard whose arm owns work that can TRAP — a `Div`/`Mod`
+    /// consumed ONLY by one Phi arm. `Step::Phi` cannot produce this: it picks
+    /// both arms from the pool, so an arm never owns its producer, and a census
+    /// over this corpus found 0 of 82 guard sites with a trapping arm. That
+    /// hole is why an untaken `7 / 0` reached production.
+    PhiTrapArm {
+        a: u8,
+        b: u8,
+        c: u8,
+        /// Which arm owns the trapping op.
+        on_true: bool,
+        /// `Mod` instead of `Div`.
+        modulo: bool,
+    },
     PackProj {
         a: u8,
         b: u8,
@@ -254,6 +268,20 @@ fn scalar_step() -> impl Strategy<Value = Step> {
         any::<u8>().prop_map(|a| Step::Not { a }),
         (any::<bool>(), any::<u8>(), any::<u8>()).prop_map(|(or, a, b)| Step::Logic { or, a, b }),
         (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(t, e, c)| Step::Phi { t, e, c }),
+        (
+            any::<u8>(),
+            any::<u8>(),
+            any::<u8>(),
+            any::<bool>(),
+            any::<bool>()
+        )
+            .prop_map(|(a, b, c, on_true, modulo)| Step::PhiTrapArm {
+                a,
+                b,
+                c,
+                on_true,
+                modulo
+            }),
         (any::<u8>(), any::<u8>(), any::<bool>()).prop_map(|(a, b, snd)| Step::PackProj {
             a,
             b,
@@ -936,6 +964,37 @@ fn emit_step(
             };
             pool.i32s
                 .push(fb.phi(x, y, cond, Dest::Fresh(None), L()).unwrap());
+        }
+        Step::PhiTrapArm {
+            a,
+            b,
+            c,
+            on_true,
+            modulo,
+        } => {
+            let (Some(x), Some(mut y), Some(cond)) = (
+                pick(&pool.i32s, a),
+                pick(&pool.i32s, b),
+                pick(&pool.bools, c),
+            ) else {
+                return;
+            };
+            let op = if modulo { Mod } else { Div };
+            if ctx.trap_free {
+                // Same rule as `Step::Bin`: a const non-zero divisor.
+                y = fb.constant(Value::I32((b as i32 % 7) + 1), L()).unwrap();
+            }
+            let risky = fb.binop(op, x, y, Dest::Fresh(None), L()).unwrap();
+            // NOT pushed to the pool: the whole point is that this object's
+            // only consumer is the Phi arm, so the arm exclusively owns it.
+            let other = pick(&pool.i32s, a.wrapping_add(1)).unwrap_or(x);
+            let (t, e) = if on_true {
+                (risky, other)
+            } else {
+                (other, risky)
+            };
+            pool.i32s
+                .push(fb.phi(t, e, cond, Dest::Fresh(None), L()).unwrap());
         }
         Step::PackProj { a, b, snd } => {
             let (Some(x), Some(y)) = (pick(&pool.i32s, a), pick(&pool.i32s, b)) else {

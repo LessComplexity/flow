@@ -2273,7 +2273,17 @@ impl<'a> DevEmit<'a> {
                 self.store_obj(target, &format!("({target_ct})({val})"));
             }
             Operation::Phi => {
-                // BC7 strict select over precomputed temporaries (host rule).
+                // plan-s39: strict select, and MEASURED UNREACHABLE. A guard
+                // inside a map/fold body does not come here — bodies are
+                // emitted as `__host__ __device__` fns by `func.rs`, which
+                // gates them, so `map { x -> (x>100) -> {-true-> x/0; …} }`
+                // already emits a real `if`/`else` on the device. This arm was
+                // probed with a panic across every program in the repo (106
+                // emissions: all examples + bench shapes + matmul, raw and
+                // `--rewrite`) and the whole 163-test CUDA suite, and fired
+                // ZERO times. Left strict rather than gated because there is no
+                // program to verify a change against; if a shape ever reaches
+                // here, gate it the way `func.rs` does.
                 let (tct, t) = self.component_expr(source, 0).expect("phi then");
                 let (_, e) = self.component_expr(source, 1).expect("phi else");
                 let (_, c) = self.component_expr(source, 2).expect("phi cond");

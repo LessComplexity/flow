@@ -91,6 +91,11 @@ pub(crate) struct FnEmit<'a> {
     pub lit_total: SecondaryMap<ObjectId, usize>,
     pub lit_seen: SecondaryMap<ObjectId, usize>,
     pub slots: SecondaryMap<ObjectId, String>,
+    /// plan-s39 guard sites needing gating, keyed by their `Phi`.
+    pub gsites: SecondaryMap<MorphismId, mapal_ir::GuardSite>,
+    /// Guard-arm-owned morphisms — emitted inside their Phi's `if`/`else`,
+    /// skipped by the straight-line walk.
+    pub gated: SecondaryMap<MorphismId, ()>,
     /// Hoisted local declarations (fn top), one per materialized object —
     /// plus the fn-scope readback temps the WP3 `Index`/`Fold` sites hoist
     /// here during the walk (a cone-side temp must be fn-scope so the free
@@ -183,6 +188,50 @@ impl<'a> FnEmit<'a> {
                 force_named.insert(id, ());
             }
         }
+        let mut gsites: SecondaryMap<MorphismId, mapal_ir::GuardSite> = SecondaryMap::new();
+        let mut gated: SecondaryMap<MorphismId, ()> = SecondaryMap::new();
+        // plan-s40: this emitter keeps STRICT semantics for any site touching
+        // loop machinery or in-SCC work — it is being replaced by NVPTX
+        // (Sapir, S39 close), so gated loops are not wired here. Surface Mapal
+        // cannot build these shapes (L1406), so no compiled program is
+        // affected; the shapes exist only in testgen IR, and the CUDA
+        // differential does not run. Emission stays valid either way.
+        let cuda_in_scc: SecondaryMap<mapal_ir::ObjectId, ()> = {
+            let mut s = SecondaryMap::new();
+            for scc in ir.loop_structure(f) {
+                for o in scc.objects {
+                    s.insert(o, ());
+                }
+            }
+            s
+        };
+        for site in ir
+            .guard_plan(f)
+            .into_iter()
+            .filter(mapal_ir::GuardSite::gated)
+        {
+            let touches_loop = site
+                .on_true
+                .own
+                .iter()
+                .chain(site.on_false.own.iter())
+                .any(|&m| {
+                    let morph = ir.morphism(m).expect("own edge");
+                    matches!(morph.op, Operation::LoopEnter)
+                        || cuda_in_scc.contains_key(morph.source)
+                        || cuda_in_scc.contains_key(morph.target)
+                });
+            if touches_loop {
+                continue;
+            }
+            for &m in site.on_true.own.iter().chain(site.on_false.own.iter()) {
+                gated.insert(m, ());
+            }
+            // The result is assigned inside a branch, so it must be a real
+            // local rather than a dissolved expression substituted at its use.
+            force_named.insert(ir.morphism(site.phi).expect("phi").target, ());
+            gsites.insert(site.phi, site);
+        }
         FnEmit {
             ir,
             f,
@@ -195,6 +244,8 @@ impl<'a> FnEmit<'a> {
             lit_total: kernel::literal_pair_counts(ir, f),
             lit_seen: SecondaryMap::new(),
             slots: SecondaryMap::new(),
+            gsites,
+            gated,
             decls: String::new(),
             body: String::new(),
             next: 0,
@@ -726,6 +777,9 @@ impl<'a> FnEmit<'a> {
                     {
                         continue; // driver-owned
                     }
+                    if self.gated.contains_key(m) {
+                        continue; // plan-s39: emitted inside its Phi's branch
+                    }
                     self.emit_morphism(m)?;
                 }
             }
@@ -808,18 +862,41 @@ impl<'a> FnEmit<'a> {
                 self.store_obj(target, &format!("({target_ct})({val})"));
             }
             Operation::Phi => {
-                // BC7 strict select: both arms are already computed (their
-                // producers ran upstream) — the temps pin the llvm `select`
-                // shape; a ternary over the arm *expressions* could skip the
-                // untaken arm's trap.
-                let (tct, t) = self.component_expr(source, 0).expect("phi then");
-                let (_, e) = self.component_expr(source, 1).expect("phi else");
-                let (_, c) = self.component_expr(source, 2).expect("phi cond");
-                let tt = self.tmp();
-                let te = self.tmp();
-                self.line(format!("{tct} {tt} = {t};"));
-                self.line(format!("{tct} {te} = {e};"));
-                self.store_obj(target, &format!("{c} ? {tt} : {te}"));
+                if let Some(site) = self.gsites.get(m).cloned() {
+                    // plan-s39: the condition picks the arm and only that
+                    // arm's work runs. Each arm's own morphisms are emitted
+                    // INSIDE its branch, so a `Div` guard, a launch, or a
+                    // readback in the unchosen arm never executes. The result
+                    // is `force_named`, so the in-branch assignment survives.
+                    let (_, c) = self.component_expr(source, 2).expect("phi cond");
+                    self.line(format!("if ({c}) {{"));
+                    for (arm, slot) in [(&site.on_true, 0u32), (&site.on_false, 1u32)] {
+                        self.indent += 1;
+                        for &g in &arm.own {
+                            self.emit_morphism(g)?;
+                        }
+                        let (_, v) = self.component_expr(source, slot).expect("phi arm");
+                        self.store_obj(target, &v);
+                        self.indent -= 1;
+                        if slot == 0 {
+                            self.line("} else {");
+                        }
+                    }
+                    self.line("}");
+                } else {
+                    // Hand-built (non-builder) triple: strict select over both
+                    // computed arms. The temps pin the llvm `select` shape; a
+                    // ternary over the arm *expressions* would skip the untaken
+                    // arm's trap, which for an ungated site is not the meaning.
+                    let (tct, t) = self.component_expr(source, 0).expect("phi then");
+                    let (_, e) = self.component_expr(source, 1).expect("phi else");
+                    let (_, c) = self.component_expr(source, 2).expect("phi cond");
+                    let tt = self.tmp();
+                    let te = self.tmp();
+                    self.line(format!("{tct} {tt} = {t};"));
+                    self.line(format!("{tct} {te} = {e};"));
+                    self.store_obj(target, &format!("{c} ? {tt} : {te}"));
+                }
             }
             Operation::Call(g) => self.emit_call(source, target, g),
             Operation::Print { newline } => self.emit_print(source, newline),
