@@ -128,3 +128,63 @@ quantum**, and `sme_tile_site` requires `rows % t == 0`, so `n = rows · c` is a
 `t · c`. Therefore every slice boundary is `t`-row aligned, there is no ragged final slice, and no
 16×16 panel can straddle two tasks — so the `lo/c` and `hi/c` divisions in the emitted code are
 exact by construction rather than by luck.
+
+---
+
+# S41b — all four ZA tiles (2×2), profile-derived
+
+The rung above accumulated into **1 of the 4** f32 ZA tiles the profile records. `TargetProfile`
+now derives the arrangement — `sme_block()` returns the most-square factorization of the tile
+count, so 4 ⇒ (2,2) falls out and 1×4 is rejected by arithmetic (it needs 5 operand loads per 4
+MACs where 2×2 needs 4), not by taste. f64 scales off the same recorded `f32_tiles` by element
+width rather than a second constant.
+
+Values identical to both the NEON leg and the 1-tile SME leg at every size, `--no-pack` included.
+
+## Single thread, f32
+
+| N | NEON | SME 1 tile | **SME 2×2** | vs NEON | numpy-1t | numpy ahead: session start → 1 tile → **2×2** |
+| ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1024 | 19.4333 ms | 5.4102 ms | **2.1006 ms** | **9.25×** | 1.2977 | 13.5× → 4.17× → **1.62×** |
+| 4096 | 1286.13 ms | 332.536 ms | **192.005 ms** | 6.70× | 84.617 | 14.8× → 3.93× → **2.27×** |
+
+Distributions disjoint at both sizes.
+
+## Threaded, f32
+
+| N | NEON | **SME 2×2** | vs NEON | numpy-thr | numpy ahead |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 1024 | 2.3064 ms | **0.9383 ms** | 2.46× | 0.6757 | 1.39× |
+| 4096 | 156.2344 ms | **57.4170 ms** | 2.72× | 44.143 | 1.30× |
+
+**Threaded 1024 and 512 gained nothing defensible over the 1-tile rung** — those distributions
+overlap. Only 4096 threaded is a clear gain (79.14 → 57.42 ms). At width the SME leaf stops being
+the bottleneck; **the single-thread result is the finding.**
+
+## Two defects found by review, both fixed
+
+1. **`MAPAL_SLICE` could make the kernel write past the end of the output — reproduced as a
+   SIGSEGV.** The i-loop starts at `lo/c` and steps whole panels with no partial-panel path, so a
+   slice starting mid-panel makes the final panel overrun. Correctness rested entirely on
+   `slice_ranges` cutting on `slice_sizing`'s quantum, and the `MAPAL_SLICE` lever bypasses that
+   (`slice_elems = forced`). Doubling the panel doubled the quantum, so sizes that were aligned
+   before no longer were. **Fixed at root cause**: the lever now rounds up to the task's declared
+   quantum, so it still probes the size — what it exists for — but can no longer produce a start
+   the kernel was never told to expect. This also fixes a **pre-existing** crash at `7732a5f`
+   (`MAPAL_SLICE=4096` segfaulted there too).
+2. **The predicate's doc still claimed a "Sequential" clause that the parallel lift removed**,
+   which is what hid (1). Replaced with the actual obligation.
+
+## Recorded limits
+
+- **The panel quantised.** `rows % (ti·t) == 0` now means 32, not 16, so a 16- or 48-wide matmul
+  that took the rung before falls back to NEON. Pinned deliberately (`ATTN_16`). Predication would
+  recover it; not built.
+- **f64 is derived but unexercised** — `sme_block` returns (2,4) at f64 and a test pins it, but
+  `sme_tile_site` is f32-only, so no f64 kernel is emitted. Derivation tested, emission not.
+- **The derivation is only valid up to 4 f32 tiles**, which is what the architecture has: a review
+  probe found `f32_tiles > 4` generates a module LLVM cannot select, because `mopa.nxv4f32` has no
+  tile 4. Not reachable today (the profile records 4), but the 1..=64 sweep in the test pins
+  arrangements that could not be emitted.
+- **The A scratch doubled** to 128 KB at k=1024; still under `heap_min_bytes`, crossing into the
+  arena at k≥2048.

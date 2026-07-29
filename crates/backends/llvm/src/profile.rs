@@ -89,9 +89,10 @@ pub struct Sme {
     /// f32 tile is `svl_bytes/4` square. **64 on the M4 Pro** (512 bits), which
     /// is what makes `<vscale x 4 x float>` sixteen lanes there.
     pub svl_bytes: u64,
-    /// Architectural f32 ZA tiles (`ZA0.S`…). 4 at f32, 8 at f64. Recorded
-    /// because it is the accumulator-residency budget an unrolled realization
-    /// would spend; the first rung accumulates into one of them.
+    /// Architectural f32 ZA tiles (`ZA0.S`…). 4 at f32, 8 at f64. This is the
+    /// accumulator-residency budget the realization spends — the SME reading of
+    /// the register-file budget [`TargetProfile::tile_i`] derives from, and
+    /// [`TargetProfile::sme_block`] is where it is spent.
     pub f32_tiles: u64,
 }
 
@@ -210,6 +211,34 @@ impl TargetProfile {
     /// per-`Loc` machine fact and must never reach `mapal-ir`.
     pub fn sme_tile_side(&self, elem: &Ty) -> Option<u64> {
         Some(self.sme.as_ref()?.svl_bytes / elem_bytes(elem))
+    }
+
+    /// How many ZA tiles one panel accumulates into, and in what arrangement:
+    /// `(ti, tj)` with `ti · tj` = the architectural tile count at this width,
+    /// so a panel covers `ti·t × tj·t` outputs. `None` without an SME unit.
+    ///
+    /// This is [`TargetProfile::tile_i`]'s question asked of the other
+    /// accumulator file — "how many accumulator blocks stay resident" — and it
+    /// is answered the same way, by arithmetic over a recorded budget rather
+    /// than by a literal in the emitter. ZA holds **one tile per element byte**
+    /// (`ZA0.S`…`ZA3.S` at f32, eight `ZA*.D` at f64), so the f64 count is
+    /// derived from the recorded f32 one instead of being written down twice.
+    ///
+    /// The **shape** is a derivation too, not taste. One panel issues `ti · tj`
+    /// outer products from `ti + tj` operand loads, and `ti + tj` is minimised
+    /// by the most-square factorization: 2×2 feeds 4 MACs from 4 loads, while
+    /// 1×4 would need 5 for the same 4. Measured on this part
+    /// (`benches/sme/mm4.c`, 2×2 vs 1 tile, f32, 1 thread): 423 → 777 GFLOP/s
+    /// at 1024², 237 → 619 at 2048².
+    pub fn sme_block(&self, elem: &Ty) -> Option<(u64, u64)> {
+        let tiles =
+            (self.sme.as_ref()?.f32_tiles * elem_bytes(elem) / elem_bytes(&Ty::f32())).max(1);
+        // The largest divisor no bigger than sqrt(tiles) — the square-most split.
+        let ti = (1..=tiles)
+            .filter(|d| d * d <= tiles && tiles.is_multiple_of(*d))
+            .max()
+            .unwrap_or(1);
+        Some((ti, tiles / ti))
     }
 }
 
@@ -450,6 +479,54 @@ mod tests {
         assert_eq!(APPLE_M4_SME.tile_j(&F32), APPLE_M.tile_j(&F32));
         assert_eq!(APPLE_M4_SME.tile_i(), APPLE_M.tile_i());
         assert_eq!(APPLE_M4_SME.tile_kc(&F32), APPLE_M.tile_kc(&F32));
+    }
+
+    /// The accumulator budget, spent. 4 f32 tiles ⇒ a 2×2 block, which is the
+    /// arrangement `benches/sme/mm4.c` measured at 1.84–2.61× over one tile.
+    /// f64 has twice as many tiles (one per element byte), and the count is
+    /// derived from the recorded f32 one rather than written down again.
+    #[test]
+    fn sme_block_is_the_square_most_split_of_the_tile_count() {
+        assert_eq!(APPLE_M4_SME.sme_block(&F32), Some((2, 2)));
+        assert_eq!(APPLE_M4_SME.sme_block(&F64), Some((2, 4)), "8 tiles at f64");
+        for p in [&GENERIC, &APPLE_M, &ZEN3, &CUDA_ADA] {
+            assert!(p.sme_block(&F32).is_none(), "{} has no ZA", p.name);
+        }
+    }
+
+    /// The derivation's two invariants, over every tile count a part could
+    /// report: the block spends the WHOLE budget, and it is the square-most
+    /// factorization — the one that minimises `ti + tj` operand loads per
+    /// `ti · tj` outer products (1×4 needs 5 loads for the 4 MACs 2×2 gets from
+    /// 4). Pinned as arithmetic so a future SVL/tile count needs no new code.
+    #[test]
+    fn sme_block_spends_every_tile_and_stays_square_most() {
+        for tiles in 1..=64_u64 {
+            let p = TargetProfile {
+                sme: Some(Sme {
+                    svl_bytes: 64,
+                    f32_tiles: tiles,
+                }),
+                ..APPLE_M4_SME
+            };
+            let (ti, tj) = p.sme_block(&F32).expect("has ZA");
+            assert_eq!(ti * tj, tiles, "the block must spend every tile ({tiles})");
+            assert!(ti <= tj, "ti is the smaller factor ({tiles})");
+            let best = (1..=tiles)
+                .filter(|d| tiles.is_multiple_of(*d))
+                .map(|d| d + tiles / d)
+                .min()
+                .expect("a divisor exists");
+            assert_eq!(ti + tj, best, "fewest operand loads at {tiles} tiles");
+        }
+        assert_eq!(
+            (1..=4_u64)
+                .filter(|d| 4_u64.is_multiple_of(*d))
+                .map(|d| d + 4 / d)
+                .min(),
+            Some(4),
+            "2x2 is 4 loads; 1x4 is 5"
+        );
     }
 
     /// The packed-B panel the NEON rung already builds is `tile_j` lanes wide,

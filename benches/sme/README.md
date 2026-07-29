@@ -155,3 +155,34 @@ path, and under AddressSanitizer: **0 differing cells everywhere**.
 **Do not quote a Mapal SME speedup until (2) and (3) are fixed.** The only defensible SME number
 today remains the hand-written ceiling probe above (`mmN.c`, 5.0320 ms at 1024² vs the recorded
 NEON 17.5449 ms), and that is explicitly not compiler output.
+
+## `mm4.c` — the accumulator-occupancy probe (4 ZA tiles vs 1)
+
+`mmN.c` accumulates into **one** ZA tile. `mm4.c` is the same GEMM accumulating into **four**, in
+a 2×2 arrangement — a 32×32 output block per panel. Hand-written, f32, 1 thread, min-of-7, values
+identical (`c[0]=1172.0831` in both):
+
+| N | 1 tile | **4 tiles (2×2)** | gain | numpy 1t | gap: 1 tile → 4 tiles |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 1024 | 423 GFLOP/s | **777 GFLOP/s** | 1.84× | 1655 | 4.1× → **2.1×** |
+| 2048 | 237 GFLOP/s | **619 GFLOP/s** | 2.61× | 1632 | 6.9× → **2.6×** |
+
+```sh
+clang -O3 -march=armv8-a+sme2 -o mm4 mm4.c && ./mm4 1024 7
+```
+
+**Two independent reasons it wins**, and both matter for how the emitter should be written:
+
+1. **Dependency chains.** With one accumulator every `fmopa` depends on the previous one and the
+   loop is latency-bound. Four tiles give four independent chains.
+2. **Operand traffic.** 2×2 feeds 4 MACs from 4 loads (1 load per MAC); one tile feeds 1 MAC from
+   2 loads. That is also why the arrangement should be the **most-square** factorization of the
+   tile count and not a taste call — 1×4 would need 5 loads for the same 4 MACs. It generalizes:
+   8 tiles (f64) ⇒ 2×4.
+
+**The second loss is still visible in this probe and is a different problem:** 777 GFLOP/s at 1024
+decays to 619 at 2048 even with all four tiles. That is cache, not accumulator occupancy — the
+missing k-panel blocking, which `emit_tile_packed_kc` already implements for NEON.
+
+So the two headroom items are independent and both measured: accumulator occupancy is worth
+~1.8–2.6×, and cache blocking is what remains after it.

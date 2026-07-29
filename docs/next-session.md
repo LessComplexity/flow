@@ -33,43 +33,43 @@ git worktree list                        # 3 stale entries, two DIRTY — see §
 
 ## S42 opens on — Sapir's stated order
 
-### 1. SME — SHIPPED and MEASURED. What is left is the two gaps below.
+### 1. SME — SHIPPED, MEASURED, and now using all four ZA tiles.
 
-`docs/performance/s41-sme.md` has the full record. Headline, M4 Pro f32, **matmul1024**, values
-identical between legs and distributions disjoint:
+`docs/performance/s41-sme.md` has the full record (S41 = 1 tile, S41b = 2×2). Headline, M4 Pro
+f32, **single thread**, values identical to the NEON leg, distributions disjoint:
 
-| | NEON | **SME** | SME vs NEON | numpy | numpy ahead: before → after |
-| --- | ---: | ---: | ---: | ---: | --- |
-| 1 thread | 17.9611 ms | **5.4102 ms** | **3.32×** | 1.2977 ms | 13.5× → **4.17×** |
-| threaded | 2.2372 ms | **0.9715 ms** | **2.30×** | 0.6757 ms | 3.3× → **1.44×** |
+| N | NEON | SME 2×2 | vs NEON | numpy-1t | numpy ahead: start → 1 tile → **2×2** |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 1024 | 19.4333 ms | **2.1006 ms** | **9.25×** | 1.2977 | 13.5× → 4.17× → **1.62×** |
+| 4096 | 1286.13 ms | **192.005 ms** | 6.70× | 84.617 | 14.8× → 3.93× → **2.27×** |
 
-The NEON leg reproduces S33's recorded numbers (17.5449 / 2.2281), which is what makes the
-comparison trustworthy. **numpy is still ahead** — this closed the 1t gap by ~3.2×, it did not
-beat Accelerate. The compiler-generated kernel is within **7%** of the hand-written ceiling probe
-(5.4102 vs 5.0320 ms), so the remaining distance is missing *rungs*, not emission quality.
+Threaded: 1024 0.9383 ms (numpy 1.39× ahead), 4096 57.4170 ms (numpy 1.30× ahead). **Threaded
+1024/512 gained nothing defensible over the 1-tile rung — those distributions overlap.** At width
+the SME leaf is not the bottleneck; the 1t result is the finding. Do not quote a threaded 1024
+multi-tile number.
 
-Two settled facts that must not be re-derived: build with **`-march=armv8-a+sme2`**
-(`armv9-a+sme2` compiles and then SIGILLs — SME without SVE), and **`fmopa` fuses**, so SME is a
-**contract-face** realization under ADR-0032 D1/D3.
+Settled, do not re-derive: build with `-march=armv8-a+sme2` (`armv9-a+sme2` compiles then
+SIGILLs — SME without SVE); `fmopa` **fuses**, so SME is a contract-face realization under
+ADR-0032 D1/D3; the kernel uses `aarch64_pstate_sm_body`, not `_sm_enabled`.
 
-**Gap 1 — no executing value check in `cargo test`.** `tests/sme_rung.rs` is `str::contains` only.
-The differential's hand-run evidence (0 differing cells vs NEON *and* the interpreter, over
-non-square shapes, k not a multiple of the tile, non-zero base, transposed A, packed/unpacked,
-arena, ASan) is **not repeatable from the suite**. A review claimed the harness could not cover
-SME because it shells out to bare clang without `-march`; **that claim was tested and is FALSE** —
-plain `clang -O2` compiles, links and runs the SME module correctly, because the emitted function
-carries `"target-features"="+sme,+sme2"` as a per-function attribute. So wiring SME into
-`differential.rs` is easy, not blocked.
+**Remaining SME headroom**, both named by measurement and both blocked on the same thing:
+no B packing of its own (it borrows NEON's only when widths coincide) and no KC blocking, which
+is why threaded 4096 still trails. Those live in other rungs' nests — see §3.
 
-**Gap 2 — CI cannot execute SME on any hosted runner.** Linux runners are x86; GitHub's
-`macos-latest` is M1/M2-class and SME arrived with M4. Layer the check instead:
-IR assertions (any machine) → **compiles + links (any Apple Silicon, including M1 — the assembler
-takes `fmopa` from the function attribute, no hardware needed)** → runs + value-checked (M4+ only,
-skip-with-reason otherwise, the pattern `differential.rs` already uses for absent `nvcc`). Real
-execution coverage needs a self-hosted M4 runner or a pre-merge local run.
+**Still owed**: (a) no executing SME value check in `cargo test` — `tests/sme_rung.rs` is
+`str::contains` only. A review claimed the differential harness cannot cover SME without
+`-march`; **that was tested and is FALSE** — plain `clang -O2` compiles, links and runs the SME
+module, because the target features ride on the function attribute. Easy, not blocked.
+(b) No hosted CI runner has an SME core (Linux runners are x86; `macos-latest` is M1/M2, SME is
+M4+). Layer it: IR assertions anywhere → **compiles+links on any Apple Silicon** → runs+value-checked
+on M4+ with skip-with-reason, the pattern `differential.rs` already uses for absent `nvcc`.
+(c) The panel quantised to 32 rows, so 16/48-wide matmuls fell back to NEON; predication would
+recover them. (d) f64 derives but is not emitted. (e) `f32_tiles > 4` would generate unselectable
+IR — not reachable (the architecture has 4), but the 1..=64 test sweep pins arrangements that
+could not be emitted.
 
-**Still open from plan §2.4:** whether M4's SME and M4's Apple-AMX are the same silicon. It
-decides what the numpy comparison *means* and it is one cheap measurement.
+**Open from plan §2.4:** whether M4's SME and M4's Apple-AMX are the same silicon. It decides what
+the numpy comparison *means* and it is one cheap measurement.
 
 ### 2. P0 — the NVPTX leg, steps 2–5 (no hardware needed)
 
@@ -84,39 +84,95 @@ Sapir's to run; as of 2026-07-29 none is required. Use `compute-sanitizer --tool
 smem kernel and on a barrier-removed negative control — it detects a missing `__syncthreads`
 directly instead of waiting for the differential to get unlucky.
 
-### 3. P0 (recorded by Sapir for a later session) — the `block_plan` reduction
+### 3. The `block_plan` reduction — RUN, and **REFUTED** as posed. One 2-subset survives.
 
-**The gate ADR-0033 D5 set has now fired.** Its words: *"the second consumer is what tells us
-which parts of the llvm nest are schedule (generic) and which are `Loc` constants. Extracting
-first is the premature abstraction FRAMEWORK §5 forbids."* SME is that second consumer, so the
-extraction is no longer premature — it is due.
+ADR-0033 D5's gate fired (SME is the second consumer), so the reduction was run on 2026-07-29
+rather than assumed. FRAMEWORK §3's method: the five nests' morphisms written side by side **with
+their targets**, then check which squares commute. Result: **they do not.**
 
-Sapir's framing at S41, which is suggestion #10 re-derived from first principles: *"if it exists,
-and there is a place that asks this, why do another path that will ask the same question, instead
-of asking it in general, and then dispatching an answer handler based on answer + target profile
-— maybe a correct way is to create an object that answers all the questions (isn't it the queries
-on the graph?) and then an algorithm based on target profiles that consumes all of it at once?"*
+Nests compared: `tile.rs::emit_tiled_map{,_blocked}` · `conv.rs::emit_tiled_map_conv` ·
+`window.rs::emit_tiled_map_blocked_1d` · `packed.rs::emit_tile_packed_{j_outer,kc}` ·
+`sme.rs::emit_tiled_map_sme`.
 
-**The concrete smell:** five rungs each hand-roll their own i/j/k walk —
-`emit_tiled_map_blocked` (tile.rs), `emit_tiled_map_conv` (conv.rs), `emit_tile_window_block`
-(window.rs), `emit_tile_packed_kc` (packed.rs), `emit_tiled_map_sme` (sme.rs). The S41 lift is a
-small instance of the same thing: SME had to be *told* to call `bulk_bounds`, a question four
-other rungs already ask.
+**Identical across all five: exactly three things, and every one sits BELOW the nest** — the
+`bulk_bounds` call, `emit_tile_index` for address synthesis, and flat `out[i·C + j]` addressing.
+The nest itself is shared nowhere.
 
-**Do NOT start by writing the abstraction.** Start with FRAMEWORK §3's reduction, which is cheap
-and can falsify the whole idea: write the five nests' morphisms side by side **with their
-targets**, and check which squares commute. Whatever commutes is `block_plan`; whatever does not
-is a genuine per-`Loc` difference and stays segregated as a partial morphism.
+**Why it cannot collapse** (the list that did the refuting — do not soften it on a re-read):
 
-**What would falsify it** (the reason to do the reduction rather than assume): the nests may
-differ *structurally*, not parametrically — conv fully unrolls its taps, window blocks over lanes
-rather than rows, KC parks partial sums in `out` at panel boundaries, SME's accumulator lives in a
-register file that does not compete with the vector file. If the shared object ends up with a flag
-per rung, that is worse than five honest copies and the reduction should be recorded as refuted.
+1. **Which axes exist is not a parameter.** CONV has no runtime `k` loop (`ConvTileCtx` has no
+   `k_ctr` field; its reduction is unrolled at emission time). WIN has no `i` axis (`rows == 1` by
+   predicate). SME has neither `k` nor `lane` in emitted code — both live inside the callee. A
+   shared nest needs i/j/k/lane each independently optional, which is the bag of per-rung flags
+   this reduction exists to avoid.
+2. **CONV's reduction space is a rhombus, not a product** — the outer index runs over the union of
+   tap-rows, each tap serving a filtered subset with a skewed `kq = kqp − q·r`. No rectangular
+   block plan with per-axis bounds emits that.
+3. **The accumulator has four incompatible FORMS, not four extents** — memory alloca ·
+   `phi <TJ x elem>` · a straight SSA chain with no phi (CONV has no loop to carry one) · ZA state
+   the emitter cannot name. Swapping the first two changes the emitted control-flow graph.
+4. **The leaf's output RANK differs.** FMA yields a 1-D lane run; `fmopa` yields a 2-D `t×t` tile
+   with its own read-out loop. The nest above a rank-2 leaf must hand it a 2-D tile address and
+   step `j` by `tj·t`. **That is the nest changing, not the leaf** — and it is where S41's
+   "SME is a leaf swap" framing breaks down. Correct the framing; do not re-derive it.
+5. **SME's task-range conversion is correct only because of `slice_sizing`.** Four nests do
+   biased-ceil rows plus a signed per-row lane clip; SME does floor/floor with no bias and no clip,
+   valid *only* because the slice quantum is `ti·t·C`. Unifying the conversion either adds dead
+   clip code to SME or silently breaks its alignment argument. This is a **correctness** coupling,
+   not a shape preference.
+6. Also: rung-1 `emit_tiled_map` is a pinned byte-identity control (`tests/tile_sites_pin.rs`,
+   `tests/golden_ll.rs`) and has **no** main/remainder split at all, so it is not even
+   parameter-equal to rung 2 at `TI=1`. If it should go, delete it as a rung and re-bless the
+   goldens — a different and honest decision. Do not "unify" it.
 
-Immediate concrete win if it holds: the SME rung currently has no B packing and no KC blocking
-(`docs/performance/s41-sme.md`), and both already exist for NEON. Sharing the schedule is how SME
-gets them without a fifth copy.
+**Steps 0 and 0b of that merge are DONE and landed** (each proven a no-op, 159/159 emissions
+byte-identical): five copies of the accumulator-lane offset decision became one
+`core.rs::emit_acc_lane`, and the row-window clip — written out three times, character-identical —
+became `core.rs::emit_row_window`. Step 0 also converts the trio merge's `acc_lane` divergence
+from structural to parameterizable, which is why it was done first.
+
+**Steps 1–3 remain**, in this order and one commit each with `benches/emit_sweep_ab.sh` between:
+`i_regions` (~100 lines, cleanest — its only structural deltas are one guarded `emit_tile_kc_apack`
+insert and widening an existing 2-arm `Option` match to a 3-arm enum), then `j_split` (4 call
+sites, one of them `window.rs`), then `trio` (largest and riskiest). **Do not batch them** — with a
+single shared ordinal counter a batched failure gives no bisect signal, only "everything after
+byte N differs".
+
+Three hazards the plan named, all of which must be preserved verbatim rather than "cleaned up":
+the `out_start` hoist sits ~200 instructions apart in the two paths and must branch on nest; the
+remainder `tj` is a 3-instruction clamped `select` in the direct nest and a plain `sub` in KC, and
+the select is **provably dead but emitted and in the goldens**; and `emit_tile_trio_vec` /
+`emit_tile_kc_trio_vec` are completely reordered — do not merge those two.
+
+**Correction to the pairing:** `emit_tile_kc_boundary_row` is NOT the twin of
+`emit_tile_packed_boundary_row` — it sits at a different level of the nest and contains a whole j
+loop the other structurally cannot have. Its real twin is `emit_tile_kc_boundary_tile`.
+
+**The one reduction the evidence DOES support: TILE-blocked + KC.**
+`emit_tile_kc_i_regions` is a line-by-line clone of `emit_tile_i_regions`; likewise
+`_j_split` / `_trio` / `_boundary_row`. Same phases, same order, same labels. The deltas are four
+parameters — `(k_lo, k_hi)`, `first: bool`, a-operand source, `acc_base` — and **three are already
+passed as arguments today**. ≈350 lines of duplication where a shared nest with four arguments is
+strictly smaller.
+
+**A trap the reduction would have re-introduced, recorded so nobody re-proposes it:** a shared
+`tile_i: u64` field would re-merge two quantities S31 deliberately named apart — `tile_i` is *rows
+of vector accumulators bounded by the register file*, `WINDOW_SUBROWS` is *lanes over a memory
+accumulator with no register bound*. They are both 4 today by coincidence, and a shared field
+would make a future retune of one silently retune the other.
+
+**Consequence for SME, which is what prompted this.** "Can SME take advantage of B packing and KC
+blocking?" — **yes to both, and neither needs a shared nest.** The two questions are different and
+S41 conflated them:
+
+- **B packing**: SME declines it today only because the pack width is hardcoded to NEON's
+  `tile_j`. Make the width a parameter of the realization — one change in `sme.rs` — and it packs
+  always instead of on a width coincidence.
+- **KC blocking**: SME gets its own k-panel loop. Note the real cost the analysis surfaced: SME
+  *stores* ZA rather than accumulating into `c` (hence the `seed == 0` precondition), so parking
+  partials at each panel boundary means `read.horiz` out and re-accumulate back in — more
+  expensive than spilling vector registers. A measurable crossover, not a blocker; the KC rung is
+  already default-OFF on `apple-m` for a comparable reason.
 
 ### 4. The seam re-judgement (plan §8.5)
 

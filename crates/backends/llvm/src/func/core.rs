@@ -808,6 +808,94 @@ impl<'a> FnEmit<'a> {
         self.runtime_write = true;
     }
 
+    /// The accumulator's flat offset for one (subrow, lane): `acc_base + r*stride + lane`.
+    ///
+    /// One helper for what were four copies of the same four-armed decision —
+    /// the inline `if r == 0` at the seed and store loops (`acc_base` absent),
+    /// the four-arm match inside `emit_tile_lane_loop`, and the KC nest's own
+    /// `emit_tile_kc_acc_lane` (`acc_base` present). They were character-identical
+    /// per arm, which is why this extraction is a provable no-op on emitted text:
+    /// each arm mints exactly the temporaries it minted before, in the same order.
+    /// That matters more than usual here — `fresh()` is a SINGLE ordinal counter
+    /// feeding `tmp()`, `label()` and `scratch()` alike, so one extra or reordered
+    /// mint renames every subsequent value in the function and rewrites the entry
+    /// block as well.
+    ///
+    /// `None` is the direct nest, whose accumulator starts at 0 and whose `r == 0`
+    /// case needs no arithmetic at all; `Some(base)` is the KC nest, addressing
+    /// into a panel-offset accumulator.
+    pub(super) fn emit_acc_lane(
+        &mut self,
+        lane: &str,
+        acc_base: Option<&str>,
+        r: u64,
+        stride: u64,
+    ) -> String {
+        match (acc_base, r) {
+            (None, 0) => lane.to_owned(),
+            (None, _) => {
+                let offset = self.tmp();
+                self.line(format!("{offset} = add i64 {lane}, {}", r * stride));
+                offset
+            }
+            (Some(base), 0) => {
+                let offset = self.tmp();
+                self.line(format!("{offset} = add i64 {lane}, {base}"));
+                offset
+            }
+            (Some(base), _) => {
+                let based = self.tmp();
+                self.line(format!("{based} = add i64 {base}, {}", r * stride));
+                let offset = self.tmp();
+                self.line(format!("{offset} = add i64 {lane}, {based}"));
+                offset
+            }
+        }
+    }
+
+    /// This row's live column window, clipped to the task's flat range:
+    /// `[max(0, lo - row0), min(C, hi - row0))`.
+    ///
+    /// A task owns a flat `[lo, hi)` over `rows*C` elements, so the first and
+    /// last rows it touches are partial. Both comparisons are **signed** on
+    /// purpose — `lo - row0` is negative for every row after the first, and an
+    /// unsigned compare would read that as enormous and clip to `0` wrongly.
+    ///
+    /// Was written out three times, character-identical, in the boundary row,
+    /// the row-split and the KC boundary row. Extracted rather than left
+    /// duplicated because it always leads its caller and always mints the same
+    /// six temporaries in the same order, so hoisting it cannot move the shared
+    /// ordinal counter that names every subsequent value.
+    pub(super) fn emit_row_window(
+        &mut self,
+        site: &TileSite,
+        lo: &str,
+        hi: &str,
+        row0: &str,
+    ) -> (String, String) {
+        let jw_lo_raw = self.tmp();
+        self.line(format!("{jw_lo_raw} = sub i64 {lo}, {row0}"));
+        let jw_lo_negative = self.tmp();
+        self.line(format!("{jw_lo_negative} = icmp slt i64 {jw_lo_raw}, 0"));
+        let jw_lo = self.tmp();
+        self.line(format!(
+            "{jw_lo} = select i1 {jw_lo_negative}, i64 0, i64 {jw_lo_raw}"
+        ));
+        let jw_hi_raw = self.tmp();
+        self.line(format!("{jw_hi_raw} = sub i64 {hi}, {row0}"));
+        let jw_hi_past_c = self.tmp();
+        self.line(format!(
+            "{jw_hi_past_c} = icmp sgt i64 {jw_hi_raw}, {}",
+            site.c
+        ));
+        let jw_hi = self.tmp();
+        self.line(format!(
+            "{jw_hi} = select i1 {jw_hi_past_c}, i64 {}, i64 {jw_hi_raw}",
+            site.c
+        ));
+        (jw_lo, jw_hi)
+    }
+
     pub(super) fn bulk_bounds(&self, n: u64) -> (String, String) {
         if self.split_range {
             ("%lo".into(), "%hi".into())

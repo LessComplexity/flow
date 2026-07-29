@@ -132,21 +132,21 @@ Threaded:
 
 |    N | Mapal FMA off | Mapal FMA on | Mapal SME    | C++ naive-mt | Rust naive-mt | NumPy 1t | NumPy mt |
 | ---: | ------------: | -----------: | -----------: | -----------: | ------------: | -------: | -------: |
-| 1024 |       3.65 ms |      2.25 ms | **0.97 ms**  |          125 |           117 |     1.29 |     0.69 |
-| 4096 |        245 ms |       155 ms | **79.1 ms**  |       33,439 |        33,574 |     90.5 |     44.3 |
+| 1024 |       3.65 ms |      2.25 ms | **0.94 ms**  |          125 |           117 |     1.29 |     0.69 |
+| 4096 |        245 ms |       155 ms | **57.4 ms**  |       33,439 |        33,574 |     90.5 |     44.3 |
 
 Single-threaded:
 
 |    N | Mapal FMA on | Mapal SME     | NumPy 1t |
 | ---: | -----------: | ------------: | -------: |
 |  512 |      2.21 ms | **0.745 ms**  |    0.160 |
-| 1024 |      17.9 ms | **5.41 ms**   |     1.30 |
+| 1024 |      19.4 ms | **2.10 ms**   |     1.30 |
 | 2048 |       158 ms | **40.4 ms**   |     10.5 |
-| 4096 |      1,244 ms | **333 ms**   |     84.6 |
+| 4096 |      1,286 ms | **192 ms**   |     84.6 |
 
 **55× the naive baseline at 1024², 216× at 4096².** NumPy here reaches the matrix coprocessor
-through Accelerate. SME closes the single-threaded gap from 13.5× to 4.2× at 1024² and from 14.8×
-to 3.9× at 4096²; threaded, from 3.3× to 1.4× at 1024² and 3.4× to 1.8× at 4096².
+through Accelerate. SME closes the single-threaded gap from 13.5× to **1.6×** at 1024² and from 14.8× to 2.3× at
+4096²; threaded, from 3.3× to 1.4× at 1024² and 3.4× to 1.3× at 4096².
 
 ### Other shapes — M4 Pro
 
@@ -191,7 +191,7 @@ does not, so neither machine is the whole story
 
 On the M4, NumPy's matmul runs on the matrix coprocessor. Before Mapal emitted SME it was 3.3×
 ahead threaded and 13.5× at one thread — a different execution unit, not better codegen. With SME
-both sides now use a matrix unit, and it is 1.4× ahead threaded, 4.2× at one thread. On an
+both sides now use a matrix unit, and it is 1.4× ahead threaded, 1.6× at one thread. On an
 i9-14900F, where NumPy goes through OpenBLAS on the same AVX2 units Mapal targets, 1024² f32:
 
 | i9-14900F, 1024² f32     |    Mapal |    NumPy | gap          |
@@ -223,7 +223,7 @@ remaining target.
 | -------------------------------------------------- | ----------------------------------------------- | ---------------------- |
 | **FMA off** (default)                              | bit-identical to the interpreter, always        | 3.65 ms                |
 | **FMA on** (`--contract`)                          | relative tolerance; single-rounding FMA allowed | 2.25 ms (1.62×)        |
-| **SME** (`--contract --target=apple-m4-sme`)       | same as FMA on; needs an SME core (Apple M4+)   | **0.97 ms** (3.76×)    |
+| **SME** (`--contract --target=apple-m4-sme`)       | same as FMA on; needs an SME core (Apple M4+)   | **0.94 ms** (3.88×)    |
 
 The default emits **zero** FMA instructions — verified on the object, not assumed. All appear in
 every table because the comparison is otherwise uneven in both directions: C/C++ fuses by default,

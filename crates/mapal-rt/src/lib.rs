@@ -207,12 +207,25 @@ fn slice_override() -> i64 {
 }
 
 fn slice_ranges(def: TaskDef, threads: usize) -> Vec<(i64, i64)> {
-    // The lever forces an EXACT slice size, bypassing the floor/oversub rule —
-    // that is what makes it a probe of the sizing model rather than of the rule.
+    // The lever forces a slice size, bypassing the floor/oversub rule — that is
+    // what makes it a probe of the sizing model rather than of the rule.
+    //
+    // It may NOT bypass the task's declared QUANTUM, though, and that is a
+    // correctness bound rather than a tuning one. `slice_elems` is the emitter's
+    // statement of the granularity its kernel can start on, and some kernels
+    // depend on it: the SME rung walks whole `ti*t`-row panels from `lo/c` with
+    // no partial-panel path, so a slice starting mid-panel makes the final panel
+    // write past the end of the output. Forcing a misaligned size used to turn
+    // that into a segfault (reproduced: `MAPAL_SLICE=16384` on a matmul1024 SME
+    // build). Round the forced size UP to the declared quantum: the lever still
+    // probes the size — which is what it exists for — and can no longer produce
+    // a start the kernel was never told to expect.
     let forced = slice_override();
     let def = if forced > 0 {
+        let quantum = def.slice_elems.max(1);
+        let aligned = ((forced + quantum - 1) / quantum).saturating_mul(quantum);
         TaskDef {
-            slice_elems: forced,
+            slice_elems: aligned,
             oversub: u32::MAX,
             ..def
         }

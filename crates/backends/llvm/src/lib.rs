@@ -249,12 +249,14 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
 
     out.push_str(&funcs);
     if sme {
-        // The panel side is the profile's, never a literal here: it is
-        // `svl_bytes / sizeof(f32)` and the rung only fires at f32.
-        let t = profile
-            .sme_tile_side(&mapal_ir::Ty::f32())
-            .expect("the SME rung only fires on a profile with an SME unit");
-        out.push_str(&sme_panel(t));
+        // The panel side and the tile-block arrangement are the profile's,
+        // never literals here: `svl_bytes / sizeof(f32)` and the square-most
+        // split of the ZA tile count. The rung only fires at f32.
+        let f32 = mapal_ir::Ty::f32();
+        let expect = "the SME rung only fires on a profile with an SME unit";
+        let t = profile.sme_tile_side(&f32).expect(expect);
+        let (ti, tj) = profile.sme_block(&f32).expect(expect);
+        out.push_str(&sme_panel(t, ti, tj));
     }
     out.push_str(&emit_main_wrapper(ir));
     Ok(out)

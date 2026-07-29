@@ -142,26 +142,7 @@ impl<'a> FnEmit<'a> {
     ) {
         let row0 = self.tmp();
         self.line(format!("{row0} = mul i64 {i}, {}", site.c));
-        let jw_lo_raw = self.tmp();
-        self.line(format!("{jw_lo_raw} = sub i64 {lo}, {row0}"));
-        let jw_lo_negative = self.tmp();
-        self.line(format!("{jw_lo_negative} = icmp slt i64 {jw_lo_raw}, 0"));
-        let jw_lo = self.tmp();
-        self.line(format!(
-            "{jw_lo} = select i1 {jw_lo_negative}, i64 0, i64 {jw_lo_raw}"
-        ));
-        let jw_hi_raw = self.tmp();
-        self.line(format!("{jw_hi_raw} = sub i64 {hi}, {row0}"));
-        let jw_hi_past_c = self.tmp();
-        self.line(format!(
-            "{jw_hi_past_c} = icmp sgt i64 {jw_hi_raw}, {}",
-            site.c
-        ));
-        let jw_hi = self.tmp();
-        self.line(format!(
-            "{jw_hi} = select i1 {jw_hi_past_c}, i64 {}, i64 {jw_hi_raw}",
-            site.c
-        ));
+        let (jw_lo, jw_hi) = self.emit_row_window(site, lo, hi, &row0);
 
         let tile_hi = self.tmp();
         self.line(format!("{tile_hi} = add i64 {j0}, {bound}"));
@@ -225,26 +206,7 @@ impl<'a> FnEmit<'a> {
     ) {
         let row0 = self.tmp();
         self.line(format!("{row0} = mul i64 {i}, {}", site.c));
-        let jw_lo_raw = self.tmp();
-        self.line(format!("{jw_lo_raw} = sub i64 {lo}, {row0}"));
-        let jw_lo_negative = self.tmp();
-        self.line(format!("{jw_lo_negative} = icmp slt i64 {jw_lo_raw}, 0"));
-        let jw_lo = self.tmp();
-        self.line(format!(
-            "{jw_lo} = select i1 {jw_lo_negative}, i64 0, i64 {jw_lo_raw}"
-        ));
-        let jw_hi_raw = self.tmp();
-        self.line(format!("{jw_hi_raw} = sub i64 {hi}, {row0}"));
-        let jw_hi_past_c = self.tmp();
-        self.line(format!(
-            "{jw_hi_past_c} = icmp sgt i64 {jw_hi_raw}, {}",
-            site.c
-        ));
-        let jw_hi = self.tmp();
-        self.line(format!(
-            "{jw_hi} = select i1 {jw_hi_past_c}, i64 {}, i64 {jw_hi_raw}",
-            site.c
-        ));
+        let (jw_lo, jw_hi) = self.emit_row_window(site, lo, hi, &row0);
         let a_row = self.emit_tile_index(
             (site.a.base != 0).then(|| site.a.base.to_string()),
             &[(site.a.ci, i)],
@@ -384,16 +346,7 @@ impl<'a> FnEmit<'a> {
                 "br i1 {seed_done_cond}, label %{seed_done}, label %{seed_body}"
             ));
             self.label_line(&seed_body);
-            let acc_lane = if r == 0 {
-                seed_lane.clone()
-            } else {
-                let offset = self.tmp();
-                self.line(format!(
-                    "{offset} = add i64 {seed_lane}, {}",
-                    r * ctx.tile_j
-                ));
-                offset
-            };
+            let acc_lane = self.emit_acc_lane(&seed_lane, None, r, ctx.tile_j);
             let seed_ptr = self.tmp();
             self.line(format!(
                 "{seed_ptr} = getelementptr {}, ptr {}, i64 0, i64 {acc_lane}",
@@ -537,16 +490,7 @@ impl<'a> FnEmit<'a> {
                 "br i1 {stores_done}, label %{store_done}, label %{store_body}"
             ));
             self.label_line(&store_body);
-            let acc_lane = if r == 0 {
-                store_lane.clone()
-            } else {
-                let offset = self.tmp();
-                self.line(format!(
-                    "{offset} = add i64 {store_lane}, {}",
-                    r * ctx.tile_j
-                ));
-                offset
-            };
+            let acc_lane = self.emit_acc_lane(&store_lane, None, r, ctx.tile_j);
             let final_acc_ptr = self.tmp();
             self.line(format!(
                 "{final_acc_ptr} = getelementptr {}, ptr {}, i64 0, i64 {acc_lane}",
@@ -639,32 +583,7 @@ impl<'a> FnEmit<'a> {
                     "{product} = {}{} {} {mul_lhs}, {mul_rhs}",
                     ctx.mul_op, ctx.contract_flag, ctx.elem_llt
                 ));
-                let acc_lane = match (acc_base, r) {
-                    (None, 0) => lane.clone(),
-                    (None, _) => {
-                        let offset = self.tmp();
-                        self.line(format!(
-                            "{offset} = add i64 {lane}, {}",
-                            r as u64 * acc_row_stride
-                        ));
-                        offset
-                    }
-                    (Some(base), 0) => {
-                        let offset = self.tmp();
-                        self.line(format!("{offset} = add i64 {lane}, {base}"));
-                        offset
-                    }
-                    (Some(base), _) => {
-                        let based = self.tmp();
-                        self.line(format!(
-                            "{based} = add i64 {base}, {}",
-                            r as u64 * acc_row_stride
-                        ));
-                        let offset = self.tmp();
-                        self.line(format!("{offset} = add i64 {lane}, {based}"));
-                        offset
-                    }
-                };
+                let acc_lane = self.emit_acc_lane(&lane, acc_base, r as u64, acc_row_stride);
                 let acc_ptr = self.tmp();
                 self.line(format!(
                     "{acc_ptr} = getelementptr {}, ptr {}, i64 0, i64 {acc_lane}",

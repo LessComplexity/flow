@@ -16,11 +16,10 @@
 use mapal_backend_llvm::{EmitOpts, emit_with_opts};
 use mapal_ir::CategoryIr;
 
-/// The attention shape at 32×32 — two CHAINED matmul-shaped sites, which is
-/// what keeps `main` on the sequential path (the SME rung is scoped to it).
+/// The attention shape at 32×32 — two CHAINED matmul-shaped sites.
 /// `benches/shapes/attn_16.mapal` is the same shape at the oracle size; this
-/// one is 2× the 16-wide panel in both axes, so the emitted grid is 2×2 panels
-/// and a bug that ignores `i0`/`j0` cannot pass.
+/// one is exactly ONE panel of the 2×2 tile block (32 = 2 × 16 in both axes),
+/// which is the smallest shape the rung still takes.
 const ATTN_32: &str = r#"
 fn main() {
     1024 -> iota -> tq;
@@ -65,6 +64,33 @@ fn main() {
     } -> o;
     o[0] -> println;
     o[575] -> println;
+}
+"#;
+
+/// The same shape at 16 — one ZA tile, but only a QUARTER of the 2×2 panel.
+/// It fired before the tile block was derived and it does not now: the price of
+/// spending all four tiles is that the whole-panel clause quantises to `ti·t`,
+/// so 16 joins 24 on the fallback path. Pinned so the trade is recorded rather
+/// than discovered.
+const ATTN_16: &str = r#"
+fn main() {
+    256 -> iota -> tq;
+    tq -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> q;
+    tq -> map { t -> (t * 5 + 29) % 101 - 50 -> widen_f32 } -> kt;
+    tq -> map { t -> (t * 3 + 41) % 101 - 50 -> widen_f32 } -> v;
+    16 -> iota -> kr;
+    tq -> map { t ->
+        t / 16 -> i;
+        t % 16 -> j;
+        (0.0, kr) -> fold { acc, k -> acc + q[i * 16 + k] * kt[k * 16 + j] }
+    } -> s;
+    tq -> map { t ->
+        t / 16 -> i;
+        t % 16 -> j;
+        (0.0, kr) -> fold { acc, k -> acc + s[i * 16 + k] * v[k * 16 + j] }
+    } -> o;
+    o[0] -> println;
+    o[255] -> println;
 }
 "#;
 
@@ -167,13 +193,51 @@ fn sme_rung_emits_the_verified_kernel() {
         2,
         "one call per recognized site"
     );
-    // The A panel staged for one i-panel: `tile side × k` = 16 × 32.
+    // The A panel staged for one i-panel: `ti · t × k` = 32 × 32.
     assert!(
-        ll.contains("alloca [512 x float], align 64"),
-        "the A-panel pack scratch is t*k elements:\n{ll}"
+        ll.contains("alloca [1024 x float], align 64"),
+        "the A-panel pack scratch is ti*t*k elements:\n{ll}"
     );
     // The declarations follow the emitted call, exactly like the arena block.
     assert!(ll.contains("declare void @llvm.aarch64.sme.zero(i32 immarg)"));
+}
+
+/// The defect this test exists to keep fixed: `profile.rs` records **4** f32 ZA
+/// tiles and the emitter must spend all of them. `TargetProfile::sme_block`
+/// derives the 2×2 arrangement; the kernel then issues four `fmopa`s into four
+/// distinct tiles from `ti + tj = 4` loads, and reads all four back.
+///
+/// Measured payoff, `benches/sme/mm4.c` (f32, 1 thread, min-of-7, values
+/// identical): 423 → 777 GFLOP/s at 1024², 237 → 619 at 2048².
+#[test]
+fn sme_kernel_spends_every_za_tile_the_profile_records() {
+    let ll = emit_at(ATTN_32, "apple-m4-sme", true);
+    let kernel = ll
+        .split_once("define internal void @mapal_sme_panel")
+        .expect("the kernel is emitted")
+        .1;
+    for tile in 0..4 {
+        assert!(
+            kernel.contains(&format!("mopa.nxv4f32(i32 {tile},")),
+            "ZA tile {tile} never accumulated — the profile records 4:\n{kernel}"
+        );
+        assert!(
+            kernel.contains(&format!("i32 {tile}, i32 %r32)")),
+            "ZA tile {tile} never read back:\n{kernel}"
+        );
+    }
+    assert_eq!(
+        kernel.matches("mopa.nxv4f32").count(),
+        4,
+        "ti*tj outer products per k"
+    );
+    // 4 operand loads feeding 4 MACs — the square-most split's whole point.
+    // 1x4 would be 5 loads for the same 4 MACs.
+    assert_eq!(
+        kernel.matches("load <vscale x 4 x float>").count(),
+        4,
+        "ti + tj operand loads per k"
+    );
 }
 
 /// The negative that carries the byte-identity claim: no profile that existed
@@ -195,13 +259,14 @@ fn sme_rung_is_a_contract_face_realization() {
 }
 
 /// `apple-m4-sme` is `apple-m` plus one capability, so wherever the rung does
-/// not fire the two profiles must emit the same bytes. Three ways of not
-/// firing, one assertion each: the exact face, a partial panel, and f64.
+/// not fire the two profiles must emit the same bytes. Four ways of not
+/// firing, one assertion each: the exact face, two partial panels, and f64.
 #[test]
 fn sme_profile_is_byte_identical_to_apple_m_wherever_the_rung_declines() {
     for (src, contract, why) in [
         (ATTN_32, false, "exact face"),
-        (ATTN_24, true, "24 is not a whole 16-wide panel"),
+        (ATTN_24, true, "24 is not a whole 32-wide panel"),
+        (ATTN_16, true, "16 is one tile, not the 2x2 block"),
         (ATTN_32_F64, true, "f64 is out of scope"),
     ] {
         let sme = emit_at(src, "apple-m4-sme", contract);

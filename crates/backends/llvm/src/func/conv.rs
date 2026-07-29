@@ -266,13 +266,14 @@ impl<'a> FnEmit<'a> {
         }
         // The quantum must match the PANEL HEIGHT of whichever realization will
         // run, because `mapal-rt`'s `slice_ranges` cuts on exactly this value.
-        // The SME rung's panel is `t` rows tall, not `tile_i`; handing it the
-        // NEON floor would let a slice boundary land mid-panel and a panel
-        // straddle two tasks. With `t · c` and `sme_tile_site`'s `rows % t == 0`
-        // the quantum divides `n` exactly, so every slice is panel-aligned and
-        // there is no ragged tail (see `func/sme.rs::emit_tiled_map_sme`).
-        let rows_per_block = match self.profile.sme_tile_side(&site.elem) {
-            Some(t) if self.sme_tile_site(site) => t,
+        // The SME rung's panel is `ti · t` rows tall — the tile block, not one
+        // tile and not `tile_i`; handing it the NEON floor would let a slice
+        // boundary land mid-panel and a panel straddle two tasks. With
+        // `ti·t · c` and `sme_tile_site`'s `rows % (ti·t) == 0` the quantum
+        // divides `n` exactly, so every slice is panel-aligned and there is no
+        // ragged tail (see `func/sme.rs::emit_tiled_map_sme`).
+        let rows_per_block = match self.sme_panel_rows(site) {
+            Some(rows) if self.sme_tile_site(site) => rows,
             _ => self.profile.tile_i(),
         };
         let floor = rows_per_block.saturating_mul(site.c);
