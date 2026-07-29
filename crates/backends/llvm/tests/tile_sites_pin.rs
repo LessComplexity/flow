@@ -122,3 +122,154 @@ fn tile_sites_recognized_per_bench_source() {
          — re-pin with the measurement that justifies it.\n"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Gate B — record identity (plan-s41 §2.2 rule 1; ADR-0033 D4)
+// ---------------------------------------------------------------------------
+//
+// The counts above pin *that* a site is recognized. This pins *what the record
+// says* — every field a backend realization actually consumes.
+//
+// Why it is a separate obligation. ADR-0033's second risk is "silent CPU
+// capture of mapal-ir": a cache-hierarchy or register-file assumption migrating
+// into a query that calls itself generic, with no gate firing. `tile_plan` takes
+// `(ir, f)` and no target, so today the record cannot depend on a machine — this
+// file is what keeps that true. If anyone gives recognition a target, a profile,
+// or a machine constant, these values move and the diff says exactly which field
+// became machine-dependent.
+//
+// It is also ADR-0033 D4(a) answered in advance: "which TileRead fields did the
+// smem emitter actually consume?" The answer has to be a fixed thing to point
+// at, and per plan-s41 §1.5 composition rule 1 both the CPU and the GPU
+// realization must see *identical* values. Two realizations reading one record
+// is the whole claim; this is where the record is nailed down.
+//
+// The address law, for reading the table below:
+//
+//     addr = base + ci*i + ck*k + clane*lane        (in elements)
+//
+// `ci == 0` means the read does not move with the row — on CPU that licenses row
+// blocking, and on GPU it is precisely the condition for staging into shared
+// memory once per block. `clane` is the coalescing stride: 1 is a contiguous
+// (coalesced) read, >1 is strided and wants a transposed stage. One record,
+// two readings — which is the thing being proven.
+
+/// One line per recognized site: the shape, then the two reads' address laws.
+fn record_rows() -> String {
+    let mut out = String::new();
+    for rel in SOURCES {
+        let ir = mapal_rewrite::rewrite(lower_src(&read_bench(rel))).ir;
+        for (f, _) in ir.funcs() {
+            let plan = ir.tile_plan(f);
+            let mut sites: Vec<_> = plan.sites.iter().collect();
+            // MorphismId order is an emitter-internal detail; sort by the record
+            // itself so the pin cannot move when unrelated allocation changes.
+            sites.sort_by_key(|(_, s)| (s.rows, s.c, s.k, s.a.slot, s.b.slot));
+            for (_, s) in sites {
+                let ks = |r: &mapal_ir::TileRead| match &r.ksplit {
+                    None => "-".to_owned(),
+                    Some(k) => format!("div{} cq{} cr{}", k.div, k.cq, k.cr),
+                };
+                let _ = writeln!(
+                    out,
+                    "{:<41} rows={} c={} k={} mul_a_first={} add_acc_first={}\n\
+                     {:<41}   a: slot={} base={} ci={} ck={} clane={} ksplit={}\n\
+                     {:<41}   b: slot={} base={} ci={} ck={} clane={} ksplit={}",
+                    rel,
+                    s.rows,
+                    s.c,
+                    s.k,
+                    s.mul_a_first,
+                    s.add_acc_first,
+                    "",
+                    s.a.slot,
+                    s.a.base,
+                    s.a.ci,
+                    s.a.ck,
+                    s.a.clane,
+                    ks(&s.a),
+                    "",
+                    s.b.slot,
+                    s.b.base,
+                    s.b.ci,
+                    s.b.ck,
+                    s.b.clane,
+                    ks(&s.b),
+                );
+            }
+        }
+    }
+    out
+}
+
+/// The record's field values, pinned. Snapshot rather than hand-written
+/// literals: the table is long, and a reviewer reading the *diff* is what
+/// catches a field going machine-dependent.
+#[test]
+fn geometry_record_content_is_pinned_and_target_independent() {
+    insta::assert_snapshot!("tile_record_content", record_rows());
+}
+
+/// The record is a pure function of the graph. Taking the plan repeatedly, and
+/// on independently lowered copies of the same source, must give the same
+/// answer — no hidden state, no ordering dependence, nothing ambient.
+///
+/// This is the runtime half of "no target in the signature": a query that began
+/// consulting a machine, a global, or an environment variable would diverge
+/// here even if its type still looked pure.
+#[test]
+fn the_record_is_a_pure_function_of_the_graph() {
+    for rel in SOURCES {
+        let src = read_bench(rel);
+        let a = mapal_rewrite::rewrite(lower_src(&src)).ir;
+        let b = mapal_rewrite::rewrite(lower_src(&src)).ir;
+        for ((fa, _), (fb, _)) in a.funcs().zip(b.funcs()) {
+            let (pa, pb) = (a.tile_plan(fa), b.tile_plan(fb));
+            assert_eq!(
+                pa.sites.len(),
+                pb.sites.len(),
+                "{rel}: site count differs between two lowerings of one source"
+            );
+            // A formatted key rather than a tuple: Rust implements Ord/Debug
+            // only up to 12-element tuples, and the record has 13 fields worth
+            // comparing. The string also makes an assertion failure readable.
+            let key = |p: &mapal_ir::TilePlan| {
+                let mut v: Vec<String> = p
+                    .sites
+                    .iter()
+                    .map(|(_, s)| {
+                        format!(
+                            "rows={} c={} k={} a=({},{},{},{},{}) b=({},{},{},{},{})",
+                            s.rows,
+                            s.c,
+                            s.k,
+                            s.a.slot,
+                            s.a.base,
+                            s.a.ci,
+                            s.a.ck,
+                            s.a.clane,
+                            s.b.slot,
+                            s.b.base,
+                            s.b.ci,
+                            s.b.ck,
+                            s.b.clane,
+                        )
+                    })
+                    .collect();
+                v.sort();
+                v
+            };
+            assert_eq!(
+                key(&pa),
+                key(&pb),
+                "{rel}: the geometry record is not a pure function of the graph"
+            );
+            // and stable under being asked twice
+            assert_eq!(
+                key(&pa),
+                key(&a.tile_plan(fa)),
+                "{rel}: plan is not idempotent"
+            );
+        }
+    }
+}

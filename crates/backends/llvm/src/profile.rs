@@ -14,11 +14,94 @@
 
 use mapal_ir::Ty;
 
+/// Which machine class a profile describes.
+///
+/// This is a **capability discriminator**, not a branch flag (plan-s41 §2.2
+/// rule 2): it selects which *realization* of a tile site fires, and each
+/// realization is one cohesive unit of code. It must never appear as an `if` in
+/// the body of a shared emitter — that is the code-locality failure the rule
+/// exists to prevent, and §9's branch budget is what measures it.
+///
+/// The classes are not different algorithms. Every unit Mapal targets — SIMD
+/// FMA, ARM SME, Intel AMX, NVIDIA tensor cores — does the same thing: stage
+/// operands, issue a multiply-accumulate over a block, accumulate into a
+/// **resident** accumulator, keep it hot across the reduction axis, store once
+/// at the end. What varies is the shape of one issue and how many accumulator
+/// blocks stay resident — and [`TargetProfile::tile_i`] already parameterizes
+/// the second. So the tile nest is shared and only the innermost leaf differs
+/// (Sapir, S41 plan gate).
+///
+/// The one genuinely structural split is **cooperation**: on a CPU core a
+/// single thread owns its whole tile, while on a GPU a block of threads shares
+/// one staged panel and must synchronise before reading it. That is why `Gpu`
+/// carries facts `Cpu` has no analogue for, and why a barrier is a morphism in
+/// the model rather than an idiom (plan-s41 §1.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Machine {
+    /// A CPU core. One thread owns a whole tile; accumulators live in the
+    /// vector register file; no cooperation, no barrier. Every profile that
+    /// existed before S41 is this, which is what keeps their emission
+    /// byte-identical.
+    Cpu,
+    /// A GPU streaming multiprocessor.
+    Gpu(Gpu),
+}
+
+/// The SM facts a GPU profile carries, and only those a CPU profile has no
+/// field for. Everything a CPU profile already expresses (accumulator capacity,
+/// block width, panel depth) stays in [`TargetProfile`] — the point of the
+/// unification above is that those are *the same quantities*, read differently.
+///
+/// **UNMEASURED.** These are read off the ISA and the device query, not swept,
+/// exactly like [`ZEN3`]. No realization consumes them yet; plan-s41 steps 3–4
+/// decide which are actually read, and any fact a GPU realization needs but
+/// cannot find here is an ADR-0033 D4(b) finding to report rather than a value
+/// to invent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Gpu {
+    /// Threads per warp — the cooperation quantum. 32 on every NVIDIA part.
+    pub warp: u64,
+    /// Shared memory addressable by one block, in bytes. The budget the staged
+    /// panel is sized against — the GPU reading of `l2_bytes`.
+    pub smem_bytes: u64,
+    /// The launch-geometry ceiling: threads in one block.
+    pub max_threads_per_block: u64,
+    /// The PTX target architecture, e.g. `sm_89`. Verified against the device
+    /// rather than assumed: the box GPU reports compute capability 8.9.
+    pub arch: &'static str,
+}
+
+/// The ARM SME facts a profile carries, when the part has a streaming matrix
+/// unit. Both are **measured on the part** (`benches/sme/svl.c` on an M4 Pro),
+/// never assumed: SVL is implementation-defined, and every literal the SME
+/// realization emits — the panel side, the ZA row count, the packed A stride —
+/// is derived from `svl_bytes`, so a part with a different SVL emits a
+/// different kernel from the same record.
+///
+/// `Machine` stays `Cpu`: SME is a **unit inside a CPU core**, not a machine
+/// class. One thread owns the whole tile, there is no cooperation and no
+/// barrier — exactly the `Cpu` reading. What differs is only which realization
+/// the leaf takes, which is what `Option` here expresses (plan-s41 §2.2 rule 2:
+/// capability selects realization).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sme {
+    /// Streaming vector length in bytes — ZA is `svl_bytes × svl_bytes`, so one
+    /// f32 tile is `svl_bytes/4` square. **64 on the M4 Pro** (512 bits), which
+    /// is what makes `<vscale x 4 x float>` sixteen lanes there.
+    pub svl_bytes: u64,
+    /// Architectural f32 ZA tiles (`ZA0.S`…). 4 at f32, 8 at f64. Recorded
+    /// because it is the accumulator-residency budget an unrolled realization
+    /// would spend; the first rung accumulates into one of them.
+    pub f32_tiles: u64,
+}
+
 /// One target's machine facts, plus the two policy ratios that are honestly
 /// search space rather than facts (see the field docs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TargetProfile {
     pub name: &'static str,
+    /// The machine class — the capability that selects a realization (S41).
+    pub machine: Machine,
     /// One vector register in bytes: NEON 16, AVX2 32, AVX-512 64.
     pub vec_bytes: u64,
     /// Architectural vector register count: NEON 32, AVX2 16, AVX-512 32.
@@ -38,6 +121,11 @@ pub struct TargetProfile {
     /// Stack ceiling policy: an entry-block block at least this large is placed
     /// in the `mapal_rt_alloc` arena instead of the stack.
     pub heap_min_bytes: u64,
+    /// The streaming matrix unit, when the part has one. `None` for every
+    /// profile that existed before S41 — which is exactly what keeps their
+    /// emission byte-identical: the SME realization cannot be selected without
+    /// a fact only this field carries.
+    pub sme: Option<Sme>,
 }
 
 /// The element width a tile site accumulates at. Tile sites are numeric-gated
@@ -94,6 +182,35 @@ impl TargetProfile {
     pub fn tile_kc(&self, elem: &Ty) -> u64 {
         ((self.l2_bytes / 2) / (self.nc(elem) * elem_bytes(elem))).max(1)
     }
+
+    /// The GPU facts, when this profile describes one. `None` for every CPU
+    /// profile — callers that need a GPU fact must ask for it, so a CPU profile
+    /// reaching a GPU-only path is a `None` at the seam rather than a silently
+    /// wrong constant.
+    pub fn gpu(&self) -> Option<&Gpu> {
+        match &self.machine {
+            Machine::Cpu => None,
+            Machine::Gpu(g) => Some(g),
+        }
+    }
+
+    /// The streaming matrix unit's facts, when this part has one. Same seam
+    /// discipline as [`TargetProfile::gpu`]: a profile without SME reaching an
+    /// SME-only path is a `None`, never a wrong constant.
+    pub fn sme(&self) -> Option<&Sme> {
+        self.sme.as_ref()
+    }
+
+    /// The side of one square ZA tile at this element width — `svl_bytes /
+    /// sizeof(elem)`, i.e. **16 for f32 at SVL 512**. `None` without an SME
+    /// unit.
+    ///
+    /// This is the one number the emitted kernel's every literal comes from
+    /// (the panel side, the ZA row count, the packed-A row stride). It is a
+    /// per-`Loc` machine fact and must never reach `mapal-ir`.
+    pub fn sme_tile_side(&self, elem: &Ty) -> Option<u64> {
+        Some(self.sme.as_ref()?.svl_bytes / elem_bytes(elem))
+    }
 }
 
 /// Today's six literals, exactly: 128-bit vectors, 32 registers, a 512 KB
@@ -102,12 +219,14 @@ impl TargetProfile {
 /// is the default.
 pub const GENERIC: TargetProfile = TargetProfile {
     name: "generic",
+    machine: Machine::Cpu,
     vec_bytes: 16,
     vec_regs: 32,
     acc_vecs_per_row: 4,
     nc_tiles: 32,
     l2_bytes: 512 * 1024,
     heap_min_bytes: 256 * 1024,
+    sme: None,
 };
 
 /// Apple M-series: NEON at 16 B × 32 registers, but a 16 MB shared L2
@@ -132,7 +251,54 @@ pub const ZEN3: TargetProfile = TargetProfile {
     ..GENERIC
 };
 
-const PROFILES: [&TargetProfile; 3] = [&GENERIC, &APPLE_M, &ZEN3];
+/// NVIDIA Ada (`sm_89`) — the box GPU, an RTX 4070 Ti (compute capability 8.9,
+/// driver 610.43.03, 12 GB). plan-s41 step 1.
+///
+/// **No realization consumes this yet.** It exists so the GPU class is
+/// expressible and the resolver knows the name; steps 3–4 build the realization
+/// that reads it. The CPU-shaped fields are inherited from [`GENERIC`] and are
+/// **placeholders, not GPU measurements** — `vec_bytes`/`vec_regs`/`l2_bytes`
+/// describe a vector register file and a cache hierarchy, and their GPU
+/// readings (per-thread registers, shared memory) are the open question S38
+/// already flagged: *"`<TJ x elem>` means SIMD lanes on CPU and per-thread
+/// registers on GPU — one record field, two readings."* Which of them a GPU
+/// realization actually reads, and which need their own value, is ADR-0033
+/// D4(a)/(b) and is answered by building, not here.
+///
+/// `sm_89` has 4th-generation tensor cores but no MXFP block-scale (that is
+/// `sm_100`), so those intrinsics are emittable and not runnable on this part.
+/// Irrelevant to the S41 leg — `mma` is out of scope (plan-s41 §7).
+pub const CUDA_ADA: TargetProfile = TargetProfile {
+    name: "cuda-ada",
+    machine: Machine::Gpu(Gpu {
+        warp: 32,
+        smem_bytes: 48 * 1024,
+        max_threads_per_block: 1024,
+        arch: "sm_89",
+    }),
+    ..GENERIC
+};
+
+/// Apple M4 with the streaming matrix unit enabled: [`APPLE_M`] plus the SME
+/// facts measured on the part (`benches/sme/svl.c` — SVL 64 B, 4 f32 tiles;
+/// `hw.optional.arm.FEAT_SME`/`FEAT_SME2`/`FEAT_SME_F32F32` all set).
+///
+/// It is a **separate name** rather than a field flipped on `apple-m` because
+/// the SME leaf is only bit-equal to the NEON leaf on the contract face
+/// (`fmopa` fuses — measured 92/256 cells differ against separate mul+add,
+/// 0/256 against `fmaf`), so selecting it is a decision about the *program*, not
+/// only about the machine. Naming it keeps `apple-m` byte-identical forever and
+/// keeps a box run reproducible.
+pub const APPLE_M4_SME: TargetProfile = TargetProfile {
+    name: "apple-m4-sme",
+    sme: Some(Sme {
+        svl_bytes: 64,
+        f32_tiles: 4,
+    }),
+    ..APPLE_M
+};
+
+const PROFILES: [&TargetProfile; 5] = [&GENERIC, &APPLE_M, &ZEN3, &CUDA_ADA, &APPLE_M4_SME];
 
 /// Resolve a profile by name. `None` for an unknown name — never a silent
 /// fallback to `generic`, because a typo that quietly emits the default
@@ -208,7 +374,7 @@ mod tests {
 
     /// The KC a-panel is `tile_i x tile_kc x sizeof` = `2 * l2_bytes/nc_tiles`,
     /// so it scales with the profile's L2: 2 KB under `generic`, 64 KB under
-    /// `apple-m`. Pinned because `func.rs`'s heap note used to claim a flat
+    /// `apple-m`. Pinned because `func/mod.rs`'s heap note used to claim a flat
     /// 2 KB, and that number is a stack-sizing claim.
     #[test]
     fn kc_apanel_scales_with_l2() {
@@ -231,7 +397,115 @@ mod tests {
     fn unknown_name_is_not_silently_generic() {
         assert_eq!(resolve("generic"), Some(&GENERIC));
         assert_eq!(resolve("apple-m"), Some(&APPLE_M));
+        assert_eq!(resolve("cuda-ada"), Some(&CUDA_ADA));
+        assert_eq!(resolve("apple-m4-sme"), Some(&APPLE_M4_SME));
         assert!(resolve("apple_m").is_none());
+        assert!(resolve("cuda_ada").is_none());
+        assert!(resolve("apple-m4").is_none());
         assert!(resolve("").is_none());
+    }
+
+    /// Rule 1 for the SME leg: the capability is reachable only through
+    /// `sme()`, and no profile that existed before it can answer. That is the
+    /// whole byte-identity argument — the SME realization's gate cannot open
+    /// without a fact only `apple-m4-sme` carries.
+    #[test]
+    fn sme_is_absent_from_every_pre_sme_profile() {
+        for p in [&GENERIC, &APPLE_M, &ZEN3, &CUDA_ADA] {
+            assert!(p.sme().is_none(), "{} must expose no SME facts", p.name);
+            assert!(
+                p.sme_tile_side(&F32).is_none(),
+                "{} derives no tile",
+                p.name
+            );
+        }
+    }
+
+    /// The measured M4 Pro facts, and the one derivation the emitter reads:
+    /// SVL 512 bits ⇒ a 16×16 f32 tile (`benches/sme/svl.c`, `run16.c`). f64
+    /// halves it, which is why the side is derived rather than written down.
+    #[test]
+    fn apple_m4_sme_derives_the_measured_tile_side() {
+        let sme = APPLE_M4_SME.sme().expect("apple-m4-sme has an SME unit");
+        assert_eq!(sme.svl_bytes, 64, "SVL = 512 bits, measured");
+        assert_eq!(sme.f32_tiles, 4);
+        assert_eq!(APPLE_M4_SME.sme_tile_side(&F32), Some(16));
+        assert_eq!(APPLE_M4_SME.sme_tile_side(&F64), Some(8));
+    }
+
+    /// The SME profile moves EXACTLY one field off `apple-m`. Every derived
+    /// tile factor is unchanged, so a site that falls back to the NEON rung
+    /// under `apple-m4-sme` emits what `apple-m` emits — the negative control
+    /// the golden test pins at the text level.
+    #[test]
+    fn apple_m4_sme_moves_only_the_sme_field() {
+        assert_eq!(
+            APPLE_M4_SME,
+            TargetProfile {
+                name: APPLE_M4_SME.name,
+                sme: APPLE_M4_SME.sme,
+                ..APPLE_M
+            }
+        );
+        assert_eq!(APPLE_M4_SME.tile_j(&F32), APPLE_M.tile_j(&F32));
+        assert_eq!(APPLE_M4_SME.tile_i(), APPLE_M.tile_i());
+        assert_eq!(APPLE_M4_SME.tile_kc(&F32), APPLE_M.tile_kc(&F32));
+    }
+
+    /// The packed-B panel the NEON rung already builds is `tile_j` lanes wide,
+    /// and the SME kernel wants an SVL-wide contiguous row. On this part they
+    /// are the same 16 — which is why the SME rung consumes the existing packed
+    /// buffer instead of minting its own. `func/sme.rs` re-checks this per site
+    /// and falls back when it does not hold, so this is a pin on *why the reuse
+    /// is free here*, not a load-bearing invariant.
+    #[test]
+    fn sme_panel_and_packed_b_panel_coincide_on_this_part() {
+        assert_eq!(
+            APPLE_M4_SME.sme_tile_side(&F32),
+            Some(APPLE_M4_SME.tile_j(&F32))
+        );
+    }
+
+    /// S41 step 1, rule 1: adding the machine class must not move a single CPU
+    /// emission. Every profile that existed before S41 is `Cpu`, so no CPU
+    /// realization can observe the new field — the type system carries the
+    /// byte-identity argument, and the 159-emission A/B sweep confirms it.
+    #[test]
+    fn every_pre_s41_profile_is_cpu() {
+        for p in [&GENERIC, &APPLE_M, &ZEN3] {
+            assert_eq!(p.machine, Machine::Cpu, "{} must stay Cpu", p.name);
+            assert!(p.gpu().is_none(), "{} must expose no GPU facts", p.name);
+        }
+    }
+
+    /// A GPU fact is reachable only through `gpu()`, so a CPU profile on a
+    /// GPU-only path is a `None` at the seam rather than a wrong constant
+    /// (plan-s41 §2.2 rule 2 — capability selects realization).
+    #[test]
+    fn gpu_facts_are_asked_for_never_defaulted() {
+        let g = CUDA_ADA.gpu().expect("cuda-ada is a GPU profile");
+        assert_eq!(g.warp, 32, "cooperation quantum");
+        assert_eq!(g.max_threads_per_block, 1024);
+        assert_eq!(
+            g.arch, "sm_89",
+            "verified against the device: compute capability 8.9 (RTX 4070 Ti)"
+        );
+        assert!(
+            g.smem_bytes < CUDA_ADA.l2_bytes,
+            "smem is the smaller budget"
+        );
+    }
+
+    /// The placeholder honesty pin. `cuda-ada` inherits CPU-shaped constants it
+    /// has no business claiming as GPU measurements; this test states that in
+    /// the suite so nobody reads them as swept. When a GPU realization starts
+    /// consuming one of these, it either gets its own value or this assertion
+    /// changes — either way the change is deliberate and reviewed.
+    #[test]
+    fn cuda_ada_cpu_shaped_fields_are_inherited_placeholders() {
+        assert_eq!(CUDA_ADA.vec_bytes, GENERIC.vec_bytes);
+        assert_eq!(CUDA_ADA.vec_regs, GENERIC.vec_regs);
+        assert_eq!(CUDA_ADA.l2_bytes, GENERIC.l2_bytes);
+        assert_eq!(CUDA_ADA.acc_vecs_per_row, GENERIC.acc_vecs_per_row);
     }
 }

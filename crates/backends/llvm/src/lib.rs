@@ -26,8 +26,8 @@ use slotmap::SecondaryMap;
 
 use crate::func::{FnAttrs, FnEmit, packing_site};
 use crate::module::{
-    HEAP_DECLS, PAR_DECLS, PERF_DECLS, PREFETCH_DECL, RT_DECLS, collect_str_globals,
-    emit_main_wrapper, emit_str_globals,
+    HEAP_DECLS, PAR_DECLS, PERF_DECLS, PREFETCH_DECL, RT_DECLS, SME_DECLS, collect_str_globals,
+    emit_main_wrapper, emit_str_globals, sme_panel,
 };
 
 /// A structured, renderer-free emission error (ADR-0020 §1; C3).
@@ -131,7 +131,7 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
 
     let strings = collect_str_globals(ir);
 
-    // Suggestions #7's attribute-capability pre-pass (func.rs `FnAttrs`):
+    // Suggestions #7's attribute-capability pre-pass (func/mod.rs `FnAttrs`):
     // clean fns get `readonly nounwind` (+ `willreturn`), unclean fns nothing.
     let attrs = FnAttrs::analyze(ir);
 
@@ -231,6 +231,14 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
     if funcs.contains("@mapal_rt_alloc") {
         out.push_str(HEAP_DECLS);
     }
+    // Same rule for the SME leg: the emitted call IS the requirement, so the
+    // three intrinsic declarations and the one streaming panel kernel appear
+    // exactly when some tile site took the SME rung. A module without one is
+    // byte-identical to what it was before the rung existed.
+    let sme = funcs.contains("@mapal_sme_panel(");
+    if sme {
+        out.push_str(SME_DECLS);
+    }
     out.push('\n');
 
     let sg = emit_str_globals(&strings);
@@ -240,6 +248,14 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
     }
 
     out.push_str(&funcs);
+    if sme {
+        // The panel side is the profile's, never a literal here: it is
+        // `svl_bytes / sizeof(f32)` and the rung only fires at f32.
+        let t = profile
+            .sme_tile_side(&mapal_ir::Ty::f32())
+            .expect("the SME rung only fires on a profile with an SME unit");
+        out.push_str(&sme_panel(t));
+    }
     out.push_str(&emit_main_wrapper(ir));
     Ok(out)
 }

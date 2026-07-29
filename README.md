@@ -128,13 +128,25 @@ Method, machine specs and raw logs: [`docs/performance/`](docs/performance/) ·
 
 ### Matrix multiply, f32 — M4 Pro
 
-|    N | Mapal FMA off | Mapal FMA on | C++ naive-mt | Rust naive-mt | NumPy 1t | NumPy mt |
-| ---: | ------------: | -----------: | -----------: | ------------: | -------: | -------: |
-| 1024 |       3.65 ms | **2.25 ms**  |          125 |           117 |     1.29 |     0.69 |
-| 4096 |        245 ms | **155 ms**   |       33,439 |        33,574 |     90.5 |     44.3 |
+Threaded:
 
-**55× the naive baseline at 1024², 216× at 4096²**, and 3.3× behind NumPy, which here reaches the
-AMX coprocessor — hardware, not codegen (see below).
+|    N | Mapal FMA off | Mapal FMA on | Mapal SME    | C++ naive-mt | Rust naive-mt | NumPy 1t | NumPy mt |
+| ---: | ------------: | -----------: | -----------: | -----------: | ------------: | -------: | -------: |
+| 1024 |       3.65 ms |      2.25 ms | **0.97 ms**  |          125 |           117 |     1.29 |     0.69 |
+| 4096 |        245 ms |       155 ms | **79.1 ms**  |       33,439 |        33,574 |     90.5 |     44.3 |
+
+Single-threaded:
+
+|    N | Mapal FMA on | Mapal SME     | NumPy 1t |
+| ---: | -----------: | ------------: | -------: |
+|  512 |      2.21 ms | **0.745 ms**  |    0.160 |
+| 1024 |      17.9 ms | **5.41 ms**   |     1.30 |
+| 2048 |       158 ms | **40.4 ms**   |     10.5 |
+| 4096 |      1,244 ms | **333 ms**   |     84.6 |
+
+**55× the naive baseline at 1024², 216× at 4096².** NumPy here reaches the matrix coprocessor
+through Accelerate. SME closes the single-threaded gap from 13.5× to 4.2× at 1024² and from 14.8×
+to 3.9× at 4096²; threaded, from 3.3× to 1.4× at 1024² and 3.4× to 1.8× at 4096².
 
 ### Other shapes — M4 Pro
 
@@ -177,9 +189,10 @@ does not, so neither machine is the whole story
 
 ### Against a hand-tuned BLAS, on equal hardware
 
-On the M4, NumPy's matmul runs on the AMX coprocessor and is 3.3× ahead threaded — a different
-execution unit, not better codegen. On an i9-14900F, where NumPy goes through OpenBLAS on the same
-AVX2 units Mapal targets, 1024² f32:
+On the M4, NumPy's matmul runs on the matrix coprocessor. Before Mapal emitted SME it was 3.3×
+ahead threaded and 13.5× at one thread — a different execution unit, not better codegen. With SME
+both sides now use a matrix unit, and it is 1.4× ahead threaded, 4.2× at one thread. On an
+i9-14900F, where NumPy goes through OpenBLAS on the same AVX2 units Mapal targets, 1024² f32:
 
 | i9-14900F, 1024² f32     |    Mapal |    NumPy | gap          |
 | ------------------------ | -------: | -------: | ------------ |
@@ -204,14 +217,15 @@ statically, so every panel waits on the slowest thread. Mapal went 5.89 → 3.38
 server ([detail](docs/performance/matmul/s33.md)). The 20% single-threaded kernel gap is the
 remaining target.
 
-### Two builds
+### Three builds
 
-| build                     | guarantee                                       | matmul 1024², threaded |
-| ------------------------- | ----------------------------------------------- | ---------------------- |
-| **FMA off** (default)     | bit-identical to the interpreter, always        | 3.65 ms                |
-| **FMA on** (`--contract`) | relative tolerance; single-rounding FMA allowed | **2.25 ms** (1.62×)    |
+| build                                              | guarantee                                       | matmul 1024², threaded |
+| -------------------------------------------------- | ----------------------------------------------- | ---------------------- |
+| **FMA off** (default)                              | bit-identical to the interpreter, always        | 3.65 ms                |
+| **FMA on** (`--contract`)                          | relative tolerance; single-rounding FMA allowed | 2.25 ms (1.62×)        |
+| **SME** (`--contract --target=apple-m4-sme`)       | same as FMA on; needs an SME core (Apple M4+)   | **0.97 ms** (3.76×)    |
 
-The default emits **zero** FMA instructions — verified on the object, not assumed. Both appear in
+The default emits **zero** FMA instructions — verified on the object, not assumed. All appear in
 every table because the comparison is otherwise uneven in both directions: C/C++ fuses by default,
 Rust never does, NumPy calls hand-written FMA kernels.
 

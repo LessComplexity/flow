@@ -1,0 +1,41 @@
+---
+source: crates/backends/llvm/tests/tile_sites_pin.rs
+assertion_line: 210
+expression: record_rows()
+---
+benches/shapes/fir_1048576.mapal          rows=1 c=1048576 k=64 mul_a_first=true add_acc_first=true
+                                            a: slot=1 base=0 ci=0 ck=1 clane=0 ksplit=-
+                                            b: slot=2 base=0 ci=0 ck=1 clane=1 ksplit=-
+benches/shapes/fir_65536.mapal            rows=1 c=65536 k=64 mul_a_first=true add_acc_first=true
+                                            a: slot=1 base=0 ci=0 ck=1 clane=0 ksplit=-
+                                            b: slot=2 base=0 ci=0 ck=1 clane=1 ksplit=-
+benches/shapes/conv2d_1024.mapal          rows=1024 c=1024 k=9 mul_a_first=true add_acc_first=true
+                                            a: slot=1 base=0 ci=0 ck=1 clane=0 ksplit=-
+                                            b: slot=2 base=0 ci=1026 ck=0 clane=1 ksplit=div3 cq1026 cr1
+benches/shapes/conv2d_512.mapal           rows=512 c=512 k=9 mul_a_first=true add_acc_first=true
+                                            a: slot=1 base=0 ci=0 ck=1 clane=0 ksplit=-
+                                            b: slot=2 base=0 ci=514 ck=0 clane=1 ksplit=div3 cq514 cr1
+benches/shapes/attn_256.mapal             rows=256 c=256 k=256 mul_a_first=true add_acc_first=true
+                                            a: slot=1 base=0 ci=256 ck=1 clane=0 ksplit=-
+                                            b: slot=2 base=0 ci=0 ck=256 clane=1 ksplit=-
+benches/shapes/attn_256.mapal             rows=256 c=256 k=256 mul_a_first=true add_acc_first=true
+                                            a: slot=1 base=0 ci=256 ck=1 clane=0 ksplit=-
+                                            b: slot=2 base=0 ci=0 ck=256 clane=1 ksplit=-
+benches/shapes/attn_256_rowmajor.mapal    rows=256 c=256 k=256 mul_a_first=true add_acc_first=true
+                                            a: slot=1 base=0 ci=256 ck=1 clane=0 ksplit=-
+                                            b: slot=2 base=0 ci=0 ck=256 clane=1 ksplit=-
+benches/matmul/matmul1024_cap_f32.mapal   rows=1024 c=1024 k=1024 mul_a_first=true add_acc_first=true
+                                            a: slot=1 base=0 ci=1024 ck=1 clane=0 ksplit=-
+                                            b: slot=2 base=0 ci=0 ck=1024 clane=1 ksplit=-
+benches/matmul/matmul1024_cap.mapal       rows=1024 c=1024 k=1024 mul_a_first=true add_acc_first=true
+                                            a: slot=1 base=0 ci=1024 ck=1 clane=0 ksplit=-
+                                            b: slot=2 base=0 ci=0 ck=1024 clane=1 ksplit=-
+benches/matmul/matmul512_cap_f32.mapal    rows=512 c=512 k=512 mul_a_first=true add_acc_first=true
+                                            a: slot=1 base=0 ci=512 ck=1 clane=0 ksplit=-
+                                            b: slot=2 base=0 ci=0 ck=512 clane=1 ksplit=-
+benches/matmul/matmul256_cap_f32.mapal    rows=256 c=256 k=256 mul_a_first=true add_acc_first=true
+                                            a: slot=1 base=0 ci=256 ck=1 clane=0 ksplit=-
+                                            b: slot=2 base=0 ci=0 ck=256 clane=1 ksplit=-
+benches/matmul/matmul128_cap_f32.mapal    rows=128 c=128 k=128 mul_a_first=true add_acc_first=true
+                                            a: slot=1 base=0 ci=128 ck=1 clane=0 ksplit=-
+                                            b: slot=2 base=0 ci=0 ck=128 clane=1 ksplit=-

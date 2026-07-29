@@ -47,7 +47,7 @@ declare void @mapal_perf_begin()\n\
 declare void @mapal_perf_end()\n";
 
 /// The heap-lowering arena ABI (plan-s29 emission item 4), emitted only for a
-/// module that actually lowers a block to it (`func.rs:HEAP_MIN_BYTES`) — a
+/// module that actually lowers a block to it (`profile.rs:heap_min_bytes`) — a
 /// program whose every array still fits an `alloca` keeps today's declaration
 /// block byte-for-byte.
 pub(crate) const HEAP_DECLS: &str = "\
@@ -57,6 +57,92 @@ declare void @mapal_rt_free_all()\n";
 /// Packed tiled kernels prefetch their next panel line.
 pub(crate) const PREFETCH_DECL: &str =
     "declare void @llvm.prefetch.p0(ptr, i32 immarg, i32 immarg, i32 immarg)\n";
+
+/// The three ARM SME intrinsics the streaming panel kernel calls, emitted only
+/// for a module that actually contains a call to it. Verified set — nothing
+/// else is needed: predicates are literal `splat (i1 true)` (no `ptrue` call)
+/// and operand loads are plain `load <vscale x 4 x float>` (no SVE load
+/// intrinsic). See `benches/sme/README.md`.
+pub(crate) const SME_DECLS: &str = "\
+declare void @llvm.aarch64.sme.zero(i32 immarg)\n\
+declare void @llvm.aarch64.sme.mopa.nxv4f32(i32 immarg, <vscale x 4 x i1>, <vscale x 4 x i1>, <vscale x 4 x float>, <vscale x 4 x float>)\n\
+declare <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float>, <vscale x 4 x i1>, i32 immarg, i32)\n";
+
+/// The streaming SME panel kernel: `C[0..t][0..t] = Σ_k ap[k][0..t] ⊗ b[k][0..t]`,
+/// accumulated in ZA tile 0 and stored once. `t` is the SVL-derived tile side
+/// (`TargetProfile::sme_tile_side` — 16 for f32 at SVL 512), the only machine
+/// constant in the text.
+///
+/// This is `benches/sme/spec-verified.ll` — hand-written, lowered, linked and
+/// **run** (0/256 cells differ against a fused reference, 0 spill) — with one
+/// change: the single `%N` stride is split into `%bn` (the b row stride) and
+/// `%cn` (the c row stride), because a packed b panel strides by `t` while `c`
+/// strides by the output width. Everything else is byte-for-byte the verified
+/// text.
+///
+/// The attribute set is the load-bearing part and every token in it cost a
+/// SIGILL to learn:
+///
+/// - **`aarch64_pstate_sm_body`, NOT `aarch64_pstate_sm_enabled`.** `_enabled`
+///   means "my caller is already in streaming mode" and pushes the transition
+///   onto every call site; the emitted body then runs before `smstart sm` and
+///   the process dies with `EXC_BAD_INSTRUCTION`. `_body` emits `smstart za` +
+///   `smstart sm` at entry and both `smstop`s at exit, so the kernel is
+///   self-contained and **nothing else in the emitted module needs to know
+///   streaming mode exists**. That is what keeps this a leaf swap rather than
+///   an ABI change.
+/// - `aarch64_new_za` gives the kernel its own ZA state (zeroed at entry,
+///   restored at exit) — the reason a caller on any thread is unaffected.
+/// - `+sme,+sme2` and NOT `+sve`: this part has SME without full SVE, so a
+///   target that implies `+sve` (`-march=armv9-a`) makes LLVM emit
+///   non-streaming SVE in the prologue and the program SIGILLs before
+///   `smstart`. Build the emitted module with `-march=armv8-a+sme2`.
+///
+/// One kernel per module, not one per site: the geometry that varies between
+/// sites (`bn`, `cn`, `K`) is passed, exactly as the verified spec passes it.
+pub(crate) fn sme_panel(t: u64) -> String {
+    format!(
+        "\
+define internal void @mapal_sme_panel(ptr %ap, ptr %b, ptr %c, i64 %bn, i64 %cn, i64 %K) \
+\"aarch64_new_za\" \"aarch64_pstate_sm_body\" vscale_range(1,16) \
+\"target-features\"=\"+sme,+sme2,+neon,+fp-armv8,+v8a\" {{
+entry:
+  call void @llvm.aarch64.sme.zero(i32 255)
+  br label %kloop
+
+kloop:
+  %k = phi i64 [ 0, %entry ], [ %knext, %kloop ]
+  %aoff = mul nuw nsw i64 %k, {t}
+  %apk = getelementptr inbounds float, ptr %ap, i64 %aoff
+  %zn = load <vscale x 4 x float>, ptr %apk, align 4
+  %boff = mul nuw nsw i64 %k, %bn
+  %bk = getelementptr inbounds float, ptr %b, i64 %boff
+  %zm = load <vscale x 4 x float>, ptr %bk, align 4
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %zn, <vscale x 4 x float> %zm)
+  %knext = add nuw nsw i64 %k, 1
+  %done = icmp eq i64 %knext, %K
+  br i1 %done, label %store, label %kloop
+
+store:
+  br label %rows
+
+rows:
+  %r = phi i64 [ 0, %store ], [ %rnext, %rows ]
+  %r32 = trunc i64 %r to i32
+  %row = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> undef, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %r32)
+  %coff = mul nuw nsw i64 %r, %cn
+  %crow = getelementptr inbounds float, ptr %c, i64 %coff
+  store <vscale x 4 x float> %row, ptr %crow, align 4
+  %rnext = add nuw nsw i64 %r, 1
+  %rdone = icmp eq i64 %rnext, {t}
+  br i1 %rdone, label %exit, label %rows
+
+exit:
+  ret void
+}}
+"
+    )
+}
 
 /// The parallel scheduler ABI, emitted only for a parallel `mapal_main`.
 pub(crate) const PAR_DECLS: &str = "\
