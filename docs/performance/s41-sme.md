@@ -145,10 +145,12 @@ Values identical to both the NEON leg and the 1-tile SME leg at every size, `--n
 
 | N | NEON | SME 1 tile | **SME 2×2** | vs NEON | numpy-1t | numpy ahead: session start → 1 tile → **2×2** |
 | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 512 | 2.2515 ms | 0.7451 ms | **0.3465 ms** | 6.50× | 0.1600 | 13.6× → 4.66× → **2.17×** |
 | 1024 | 19.4333 ms | 5.4102 ms | **2.1006 ms** | **9.25×** | 1.2977 | 13.5× → 4.17× → **1.62×** |
+| 2048 | 155.147 ms | 40.448 ms | **17.5630 ms** | 8.83× | 10.529 | 14.4× → 3.84× → **1.67×** |
 | 4096 | 1286.13 ms | 332.536 ms | **192.005 ms** | 6.70× | 84.617 | 14.8× → 3.93× → **2.27×** |
 
-Distributions disjoint at both sizes.
+Distributions disjoint at every size.
 
 ## Threaded, f32 — one campaign, n=21, medians, **every size disjoint**
 
