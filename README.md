@@ -132,8 +132,8 @@ Threaded:
 
 |    N | Mapal FMA off | Mapal FMA on | Mapal SME    | C++ naive-mt | Rust naive-mt | NumPy 1t | NumPy mt |
 | ---: | ------------: | -----------: | -----------: | -----------: | ------------: | -------: | -------: |
-| 1024 |       3.65 ms |      2.25 ms | **0.94 ms**  |          125 |           117 |     1.29 |     0.69 |
-| 4096 |        245 ms |       155 ms | **57.4 ms**  |       33,439 |        33,574 |     90.5 |     44.3 |
+| 1024 |       3.65 ms |      2.26 ms | **0.94 ms**  |          125 |           117 |     1.29 |     0.69 |
+| 4096 |        245 ms |       152 ms | **56.7 ms**  |       33,439 |        33,574 |     90.5 |     44.3 |
 
 Single-threaded:
 
@@ -146,7 +146,7 @@ Single-threaded:
 
 **55× the naive baseline at 1024², 216× at 4096².** NumPy here reaches the matrix coprocessor
 through Accelerate. SME closes the single-threaded gap from 13.5× to **1.6×** at 1024² and from 14.8× to 2.3× at
-4096²; threaded, from 3.3× to 1.4× at 1024² and 3.4× to 1.3× at 4096².
+4096²; threaded, from 3.3× to 1.4× at 1024² and 3.4× to **1.28×** at 4096².
 
 ### Other shapes — M4 Pro
 

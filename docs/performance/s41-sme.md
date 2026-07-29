@@ -150,16 +150,44 @@ Values identical to both the NEON leg and the 1-tile SME leg at every size, `--n
 
 Distributions disjoint at both sizes.
 
-## Threaded, f32
+## Threaded, f32 — one campaign, n=21, medians, **every size disjoint**
 
-| N | NEON | **SME 2×2** | vs NEON | numpy-thr | numpy ahead |
-| ---: | ---: | ---: | ---: | ---: | --- |
-| 1024 | 2.3064 ms | **0.9383 ms** | 2.46× | 0.6757 | 1.39× |
-| 4096 | 156.2344 ms | **57.4170 ms** | 2.72× | 44.143 | 1.30× |
+| N | NEON | SME 1 tile | **SME 2×2** | vs NEON | vs 1 tile | numpy-thr | numpy ahead: before SME → 1 tile → **2×2** |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 512 | 0.5577 | 0.2530 | **0.2229** | 2.50× | 1.14× | 0.1075 | 3.8× → 2.35× → **2.07×** |
+| 1024 | 2.2581 | 0.9715 | **0.9428** | 2.40× | 1.03× | 0.6757 | 3.3× → 1.44× → **1.40×** |
+| 2048 | 18.8745 | 7.6156 | **6.9658** | 2.71× | 1.09× | 5.3045 | 3.5× → 1.44× → **1.31×** |
+| 4096 | 151.5684 | 79.1425 | **56.7021** | 2.67× | **1.40×** | 44.143 | 3.4× → 1.79× → **1.28×** |
 
-**Threaded 1024 and 512 gained nothing defensible over the 1-tile rung** — those distributions
-overlap. Only 4096 threaded is a clear gain (79.14 → 57.42 ms). At width the SME leaf stops being
-the bottleneck; **the single-thread result is the finding.**
+NEON and SME-2×2 measured together; the 1-tile column is this session's earlier campaign with the
+same harness. NumPy's threaded lead **shrinks monotonically with size** — 2.07× → 1.28×.
+
+### The 4096 knee is gone, and it was not what I said it was
+
+| N | NEON | SME 1 tile | **SME 2×2** | numpy |
+| ---: | ---: | ---: | ---: | ---: |
+| 512 | 481 | 1061 | 1204 | 2497 |
+| 1024 | 951 | 2210 | 2278 | 3178 |
+| 2048 | 910 | 2256 | 2466 | 3239 |
+| 4096 | 907 | **1737** | **2424** | 3113 |
+
+GFLOP/s. The 1-tile rung climbed 1061 → 2210 → 2256 and then **fell to 1737 at 4096**, and S41
+recorded that as the missing KC cache-blocking rung. **That reading was wrong.** With all four
+tiles the curve is 1204 → 2278 → 2466 → 2424 — essentially flat, the collapse gone, with no cache
+blocking added.
+
+The cause was **arithmetic intensity, not cache capacity**. A 32×32 panel loads the same B row and
+issues 4× the MACs against it, so bytes-per-flop fell 4× and the kernel stopped being
+memory-bound. Fixing the accumulator fixed the memory problem as a side effect.
+
+**Consequence: KC blocking is a smaller remaining item than S41 claimed, not a larger one.** The
+honest remaining gaps are the 512 row — 2.07× behind, and that is launch/dispatch overhead on a
+0.22 ms kernel rather than the kernel itself — and the ~22% throughput deficit at 2048/4096, which
+is a steady micro-kernel gap in the S33 sense (both curves flat).
+
+**Threaded 1024 and 512 gained little over the 1-tile rung** (1.03× and 1.14×). At those sizes the
+SME leaf is not the bottleneck. The large threaded win is **4096, 1.40×**, and the large win
+overall is single-thread.
 
 ## Two defects found by review, both fixed
 
