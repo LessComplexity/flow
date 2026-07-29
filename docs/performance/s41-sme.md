@@ -218,3 +218,50 @@ overall is single-thread.
   arrangements that could not be emitted.
 - **The A scratch doubled** to 128 KB at k=1024; still under `heap_min_bytes`, crossing into the
   arena at k≥2048.
+
+---
+
+## The matrix unit is SHARED, not per-core — and that reframes every threaded number
+
+Measured, same machine, same threading, same benchmark, 1024² f32:
+
+| leg | 1 thread | threaded | scaling | 1t GF/s | thr GF/s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| NEON | 19.4333 ms | 2.2581 ms | **8.61×** | 111 | 951 |
+| Mapal SME | 2.1006 ms | 0.9428 ms | **2.23×** | 1,022 | 2,278 |
+| NumPy | 1.2977 ms | 0.6757 ms | **1.92×** | 1,655 | 3,178 |
+
+At 4096²: NEON 8.49×, Mapal SME 3.39×, NumPy 1.92×.
+
+**NEON scales ~8.5× across the P-cores. Both SME legs scale ~2×.** The vector units are per-core;
+the matrix unit is not — there are roughly two usable ones on this part, and NumPy hits the same
+wall (1.92× at both sizes) which is what confirms it is the hardware and not our scheduling.
+
+**Consequence: threaded throughput must be read per-unit, not per-core.** Comparing an all-core
+figure against a single-core peak — as an earlier draft of this file's surrounding commentary
+did — is meaningless. The honest comparison:
+
+- **on one SME unit**: NumPy 1,655 GF/s vs Mapal 1,022 ⇒ **we are at 62% of Accelerate**
+- **all units**: NumPy ~3,100 vs Mapal ~2,400 ⇒ 78%
+
+The threaded 1.28× at 4096 is therefore mostly the same per-unit efficiency deficit showing
+through a shared bottleneck, not a separate scheduling problem.
+
+### And the 1-thread curve still decays, which the threaded curve hid
+
+Single-thread GFLOP/s by size — Mapal **774 → 1,022 → 978 → 716**, NumPy **1,678 → 1,655 → 1,632
+→ 1,624**.
+
+So the "4096 knee is gone" finding above is correct **threaded** and wrong if generalised: at one
+thread the decay at 4096 is still there and NumPy's curve is flat through it. **KC blocking still
+matters — at one thread, at large N.** It is a smaller item than S41 claimed and a real one, which
+is not the same as gone.
+
+### What remains, with the mechanism named for each
+
+| gap | where it shows | mechanism |
+| --- | --- | --- |
+| 1,022 vs 1,655 GF/s on one unit | everywhere; the dominant term | **k-loop software pipelining** — overlap iteration k+1's operand loads with k's MACs. Today 4 loads then 4 MACs with nothing hiding the latency |
+| 1,022 → 716 GF/s, 1024 → 4096, 1 thread | large N, one thread | **KC blocking** — one thread walking a 4096² B |
+| 48% of NumPy at 512 | small N only | task dispatch / pool wake-up on a 0.22 ms kernel. Not the kernel, not SME |
+| — | chained matmul (`attn`) | **fusion**, where the ceiling is not NumPy's number: a library called through a fixed signature must materialise the intermediate and call twice; the compiler sees both matmuls |
