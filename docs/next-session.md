@@ -1,15 +1,20 @@
 # Next Session (S42)
 
 Written: 2026-07-29 · end of S41 · by: Claude (orchestrator; category-architect skill)
-Session log: `sessions/2026-07-29-s41-two-gates-and-a-second-unit.md`
+Session logs: `sessions/2026-07-29-s41-two-gates-and-a-second-unit.md` +
+`sessions/2026-07-29-s41b-every-za-tile-and-a-refuted-reduction.md` (**read the second one**)
 Previous: S40b (`sessions/2026-07-29-s40b-the-compiler-is-also-a-program.md`), S40, S39.
 The plan that governs S42: **`components/backend-nvptx/plans/plan-s41-the-nvptx-leg.md` — RATIFIED.**
 
 ## READ THIS FIRST
 
-**THE GATE IS GREEN — 1023 passed, 0 failed — fmt clean — 159/159 emissions byte-identical.**
-Nothing shipped this session moved an emitted byte for any pre-existing profile. The count went
-1006 → 1009 (step 1) → 1015 (the two gates) → 1023 (the SME rung).
+**THE GATE IS GREEN — 1026 passed, 0 failed — fmt clean — 159/159 emissions byte-identical**
+(and 636/636 across generic/apple-m/zen3/cuda-ada). Nothing shipped moved an emitted byte for any
+pre-existing profile. Count: 1006 → 1009 → 1015 → 1023 → 1026.
+
+**`328fbee` IS COMMITTED BUT NOT PUSHED — the network went down mid-session.** First thing:
+`git push`. If it 403s, `gh auth switch --user LessComplexity` (the `sapiritur` account lacks write
+on this repo; both are in the keyring and the active one is restored to `sapiritur`).
 
 **Work is UNCOMMITTED on `main` @ `aaaa5dd`.** Sapir's call on committing. S39+S40+S40b were
 committed by Sapir before this session opened — several docs still said "uncommitted @ `8b40442`"
@@ -33,43 +38,64 @@ git worktree list                        # 3 stale entries, two DIRTY — see §
 
 ## S42 opens on — Sapir's stated order
 
-### 1. SME — SHIPPED, MEASURED, and now using all four ZA tiles.
+### 1. P0 — k-loop software pipelining (Sapir's call for S42)
 
-`docs/performance/s41-sme.md` has the full record (S41 = 1 tile, S41b = 2×2). Headline, M4 Pro
-f32, **single thread**, values identical to the NEON leg, distributions disjoint:
+**This is the dominant remaining term.** Read `docs/performance/s41-sme.md` first; the numbers
+below are its summary.
 
-| N | NEON | SME 2×2 | vs NEON | numpy-1t | numpy ahead: start → 1 tile → **2×2** |
-| ---: | ---: | ---: | ---: | ---: | --- |
-| 1024 | 19.4333 ms | **2.1006 ms** | **9.25×** | 1.2977 | 13.5× → 4.17× → **1.62×** |
-| 4096 | 1286.13 ms | **192.005 ms** | 6.70× | 84.617 | 14.8× → 3.93× → **2.27×** |
+**Where the gap actually is.** The matrix unit is **shared, not per-core** — measured, 1024²:
+NEON scales **8.61×** across the P-cores, Mapal SME **2.23×**, NumPy **1.92×**. Vector units are
+per-core; there are roughly two usable SME units on this part, and NumPy hits the same wall, which
+is what makes it hardware rather than our scheduling. **So read throughput per unit:**
 
-Threaded: 1024 0.9383 ms (numpy 1.39× ahead), 4096 57.4170 ms (numpy 1.30× ahead). **Threaded
-1024/512 gained nothing defensible over the 1-tile rung — those distributions overlap.** At width
-the SME leaf is not the bottleneck; the 1t result is the finding. Do not quote a threaded 1024
-multi-tile number.
+| on ONE SME unit, 1024² | GFLOP/s |
+| --- | ---: |
+| Mapal SME | **1,022** |
+| NumPy (Accelerate) | **1,655** |
+| ⇒ we are at | **62%** |
 
-Settled, do not re-derive: build with `-march=armv8-a+sme2` (`armv9-a+sme2` compiles then
-SIGILLs — SME without SVE); `fmopa` **fuses**, so SME is a contract-face realization under
-ADR-0032 D1/D3; the kernel uses `aarch64_pstate_sm_body`, not `_sm_enabled`.
+The threaded 1.28× at 4096 is mostly this same per-unit deficit showing through a shared
+bottleneck, **not** a separate scheduling problem. Closing 62% → ~100% is what closes both.
 
-**Remaining SME headroom**, both named by measurement and both blocked on the same thing:
-no B packing of its own (it borrows NEON's only when widths coincide) and no KC blocking, which
-is why threaded 4096 still trails. Those live in other rungs' nests — see §3.
+**The mechanism.** Per `k` the kernel emits `ti` A loads + `tj` B loads, then `ti·tj` `fmopa`s,
+with nothing hiding the load latency — the MACs wait on the loads every iteration. Pipelining
+overlaps iteration `k+1`'s loads with iteration `k`'s MACs.
 
-**Still owed**: (a) no executing SME value check in `cargo test` — `tests/sme_rung.rs` is
-`str::contains` only. A review claimed the differential harness cannot cover SME without
-`-march`; **that was tested and is FALSE** — plain `clang -O2` compiles, links and runs the SME
-module, because the target features ride on the function attribute. Easy, not blocked.
-(b) No hosted CI runner has an SME core (Linux runners are x86; `macos-latest` is M1/M2, SME is
-M4+). Layer it: IR assertions anywhere → **compiles+links on any Apple Silicon** → runs+value-checked
-on M4+ with skip-with-reason, the pattern `differential.rs` already uses for absent `nvcc`.
-(c) The panel quantised to 32 rows, so 16/48-wide matmuls fell back to NEON; predication would
-recover them. (d) f64 derives but is not emitted. (e) `f32_tiles > 4` would generate unselectable
-IR — not reachable (the architecture has 4), but the 1..=64 test sweep pins arrangements that
-could not be emitted.
+**STEP 0, BEFORE WRITING ANYTHING: look at the emitted assembly.** LLVM may already be doing
+this, in which case the 38% is somewhere else entirely and a hand-rolled pipeline would be wasted
+work — the same trap S31 hit when it predicted 2.9× from a vector accumulator and measured ~10%
+because LLVM was already promoting it.
 
-**Open from plan §2.4:** whether M4's SME and M4's Apple-AMX are the same silicon. It decides what
-the numpy comparison *means* and it is one cheap measurement.
+```sh
+cargo run -q --release -p mapal-backend-llvm --example emit -- \
+  benches/matmul/matmul1024_cap_f32.mapal - --rewrite --contract --target=apple-m4-sme > /tmp/s.ll
+clang -O2 -march=armv8-a+sme2 -S /tmp/s.ll -o /tmp/s.s
+# the k loop of @mapal_sme_panel: are ld1w and fmopa interleaved, or batched?
+awk '/mapal_sme_panel/,/ret/' /tmp/s.s | grep -nE "ld1w|fmopa|b\.|sub|add" | head -40
+```
+If loads and `fmopa`s are already interleaved across iterations, **stop and re-diagnose** — likely
+candidates then are `fmopa` issue latency (needs more independent chains than 4, i.e. more
+accumulator tiles than the architecture has) or operand-load bandwidth.
+
+**If it is not pipelined**, the emission change is confined to `module.rs::sme_panel`: unroll the
+k loop by 2 and interleave — `load(k)`, `load(k+1)`, `mopa(k)×ti·tj`, `mopa(k+1)×ti·tj` — so the
+scheduler sees independent loads. `emit_tile_vec_k_loop` already unrolls the NEON k loop ×2; read
+it for the idiom before inventing one.
+
+**Acceptance:** values identical to the NEON leg at 512/1024/2048/4096 (`benches/sme/sme_ab.sh`
+gates this before it prints timings), 159/159 emissions unchanged for pre-existing profiles, and
+the 1t GF/s figure moves off 1,022. Report absolute ms with the baseline commit named, ≥21
+alternating runs, and **do not quote a threaded 1024 number** — that distribution overlaps.
+
+**Second item, same file, smaller:** at one thread the throughput still decays with size —
+774 → 1,022 → 978 → **716** GF/s across 512→4096, while NumPy's is flat at ~1,640. That is
+**KC blocking at one thread**, and it is real even though multi-tile removed the *threaded* knee.
+ZA park/reload at a panel boundary costs more than spilling vector registers (`read.horiz` per
+row), so the crossover differs from NEON's — measure, do not assume.
+
+**Settled, do not re-derive:** build with `-march=armv8-a+sme2` (`armv9-a+sme2` compiles then
+SIGILLs — SME without SVE); `fmopa` **fuses**, so SME is contract-face only under ADR-0032 D1/D3;
+the kernel uses `aarch64_pstate_sm_body`, not `_sm_enabled`.
 
 ### 2. P0 — the NVPTX leg, steps 2–5 (no hardware needed)
 
