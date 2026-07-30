@@ -1,6 +1,10 @@
-# SME probes (S41)
+# SME probes (S41 + S42)
 
-Four probes that priced the ARM SME leg before any emitter work, following the S38 method note:
+**S42's finding is `loadcost.c`: the gap is operand cache residency, worth ~1.79×.** Jump to
+"THE FINDING" below, or read `docs/performance/s42-sme-roofline.md` §5e. Everything else in this
+file is the road to it, including several dead ends kept so they are not re-walked.
+
+Four probes (S41) that priced the ARM SME leg before any emitter work, following the S38 method note:
 *"A verdict from a fleet of agents is a hypothesis, not a result."* Each is standalone, runs on an
 Apple M4 Pro, and takes seconds. Recorded here because the findings are load-bearing for
 `docs/components/backend-nvptx/plans/plan-s41-the-nvptx-leg.md` §2.2 and because two of them are
@@ -186,3 +190,108 @@ missing k-panel blocking, which `emit_tile_packed_kc` already implements for NEO
 
 So the two headroom items are independent and both measured: accumulator occupancy is worth
 ~1.8–2.6×, and cache blocking is what remains after it.
+
+---
+
+# S42 probes — the ceiling, two non-payments, and KC sized
+
+Full write-up: **`docs/performance/s42-sme-roofline.md`**. Six files, all f32, 1 thread, M4 Pro.
+
+## READ THIS FIRST — what a standalone probe can and cannot settle
+
+Sapir's bound on every number in this directory:
+
+> *"it is not a good measure — because we don't really know how it will act with ALL optimizations
+> that already exist together. Maybe with the existing optimizations this jumps to more than what
+> you see, and maybe scales better too on a threaded environment — so while this test gives a
+> standalone result, it doesn't fully apply to a fully integrated optimization/pipeline."*
+
+So a standalone **win is a floor**, and a standalone **null is not a refutation**. Settle both in
+the emitter, threaded, at scale. `sme_pack_ab.sh` is the integrated instrument; the `.c` files price
+and diagnose.
+
+| File | Question | Result |
+| --- | --- | --- |
+| `roofline.c` | what is the `fmopa` ceiling with **zero** memory traffic? | **~2000 GFLOP/s** on one unit, reproduced in 4 processes |
+| `units.c` | **how many matrix units does this part have?** | **exactly 2**, ~2000 GF/s each, **~4100 aggregate**. Flat from 3 threads on, `per_thread × n ≈ 4100` throughout |
+| **`loadcost.c`** | **what does a load actually cost?** | **THE FINDING.** 5% when it hits L1; throughput **halves at the first L2 miss**. The load *count* is nearly free ⇒ 1-load-per-`fmopa` is **not** a ceiling |
+| `mm4p.c` | does software-pipelining the k loop help? | **+0.6%** — and one of its two arms **did not survive compilation** |
+| `mv.c` | does folding 4 `ld1w` into 2 (`ld1w x2`) help? | **+1.8%** — now explained: loads were never the bottleneck |
+| `bp.c` | does packing B panel-major help? | 1.885× at 2048 — but the emitter **already packs B** |
+| `pipe2.c` | does unrolling help the **packed** kernel, done properly? | **1.001–1.002×, overlapping**, 1024/2048/4096 |
+| `kc.c` | how much is KC blocking worth at 4096? | 1.448× standalone — **did NOT transfer**: the emitter gets +6.1% at 1 thread, −25.5% threaded, and even the optimum DEPTH differed (512 vs 1024) |
+| `bslice.c` | is the b layout (whole-k slice vs kc repack) the gap? | **1.065×** — no |
+| `smcost.c` | what does the streaming-mode ABI cost per call? | **1.0 ms** over 131072 calls — no |
+| `packcost.c` | does the A pack's memory order break under blocking? | **no** — same loops in C: 8.46 ms unblocked, 8.05 blocked |
+
+## THE FINDING — `loadcost.c`
+
+Compute held exactly constant (four independent `fmopa` into the four f32 ZA tiles, every iteration);
+only the operand source varies:
+
+| operands from | 0 loads | 1 | 2 | 3 | 4 loads |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **32 KB buffer (L1-resident)** | 1956.7 | 1913.7 | 1928.9 | 1910.0 | **1864.2 (95%)** |
+| **64 MB buffer (past L2)** | 1915.5 | 941.8 | 841.8 | 755.3 | **760.8 (40%)** |
+
+| | GFLOP/s |
+| --- | ---: |
+| the emitted kernel today | 1043 |
+| Accelerate, 1 thread | 1655 |
+| **4 loads, operands L1-resident** | **1864** |
+
+**~1.79× is available and it would pass Accelerate.** The gap is *operand cache residency* — not
+instruction count, not scheduling, not the ZA-tile ratio, not silicon. See
+`docs/performance/s42-sme-roofline.md` §5e.
+
+```sh
+clang -O3 -march=armv8-a+sme2 -o roofline roofline.c && ./roofline 1024 9
+clang -O3 -march=armv8-a+sme2 -o pipe2    pipe2.c    && ./pipe2 4096 15
+clang -O3 -march=armv8-a+sme2 -o kc       kc.c       && ./kc 4096 9
+benches/sme/sme_pack_ab.sh                                  # the INTEGRATED A/B (packed vs --no-pack)
+```
+
+## The finding that matters: KC blocking, N=4096, 9 alternating runs
+
+| KC | median ms | GFLOP/s | % ceiling | working set |
+| ---: | ---: | ---: | ---: | ---: |
+| 256 | 162.622 | 845.1 | 42% | 64 KB |
+| **512** | **124.813** | **1101.2** | **55%** | **128 KB** |
+| 1024 | 131.310 | 1046.7 | 52% | 256 KB |
+| 2048 | 155.278 | 885.1 | 44% | 512 KB |
+| 4096 | 180.679 | 760.7 | 38% | 1024 KB ← no blocking |
+
+Unimodal (256 is *worse* than 512, so there is a real optimum), **disjoint** against unblocked, and
+1101.2 at N=4096 lands level with 1089.0 at N=1024 — the size decay is gone. It wins *despite*
+paying the ZA read-modify-write that blocking forces, because the kernel stores ZA rather than
+accumulating into `c`.
+
+## `sme_pack_ab.sh` — B packed vs unpacked, in the real emitter
+
+Same source, target, and face on both legs; the only difference is `--no-pack`. Verified from the
+emitted call: `(bn=t, bj=t·k)` is the packed arm, `(bn=b.ck, bj=t)` is not. `MAPAL_PAR=1`, 21
+alternating runs, values identical before any timing, commit `06ac50a`:
+
+| N | B packed | B unpacked | worth | distributions |
+| ---: | ---: | ---: | ---: | --- |
+| 512 | 775.5 | 862.0 | 0.900× | **overlap — do not quote** |
+| 1024 | 1043.3 | 1024.6 | 1.018× | **overlap — do not quote** |
+| 2048 | **1003.8** | 643.3 | **1.560×** | **disjoint** |
+
+## Two traps these probes cost, recorded so they are paid once
+
+**1. Warm the clock (rule 14).** The same unchanged binary measured the `roofline.c` ceiling at
+**1.852 ms** cold and **1.069 ms** warm — **1.73× on identical code**. Best-of-N does not save you:
+a first run's whole sample set is cold. Every probe from `mv.c` on spins `fmopa` for 300 ms before
+the first timer and interleaves its variants.
+
+**2. Check the transformation survived (rule 15).** `mm4p.c`'s `panel_rotate` wrote "k+1's loads,
+then k's `fmopa`"; LLVM emitted the exact inversion at both `-O2` and `-O3`, putting every load
+immediately before its consumer across the back edge. That arm measured base against base, and its
+null was indistinguishable from a real one. `pipe2.c` keeps only arms verified in `-S` output.
+
+**Method fixed in `pipe2.c`/`kc.c` and missing from the earlier three:** ≥15 alternating runs with
+**medians** and an explicit overlap check (not min-only), `c` zeroed before every timed region so a
+skipped panel cannot inherit the previous variant's correct output, and an **independent scalar
+`fmaf` reference** over 97 cells — so the gate proves `A·B` rather than mutual agreement. `mm4p.c`,
+`mv.c` and `bp.c` predate these and their sub-10% rows are **not results**.
