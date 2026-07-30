@@ -5,6 +5,8 @@
 //! `Outcome` is the public lift at the entry boundary (§7). No `Display` impls
 //! (C3) — a plain [`render`] owns value→string.
 
+use std::rc::Rc;
+
 use mapal_ir::Value;
 
 /// The interpreter's runtime value domain (interp DESIGN §1).
@@ -20,11 +22,25 @@ pub enum RValue {
         fields: Vec<(String, RValue)>,
     },
     /// A fixed-size array; len pinned by the source `Ty`.
-    Array(Vec<RValue>),
+    ///
+    /// `Rc` so that cloning a value *containing* an array is O(1). Evaluation
+    /// clones constantly — capture broadcast per `Map`/`Fold` step (eval.rs
+    /// `caps.clone()`) and `Pair` staging — so a deep copy per clone made every
+    /// array program quadratic in the array length. Writes go through
+    /// `Rc::make_mut` (`Update`), which keeps the copy-on-write semantics
+    /// ADR-0021 already specifies: a fresh array, the original untouched.
+    Array(Rc<Vec<RValue>>),
     /// The world token: the output log accumulated so far (§5).
     Token(String),
     /// The `Unit` witness (mirrors `Ty::Unit`; `Tuple` stays arity ≥ 2).
     Unit,
+}
+
+impl RValue {
+    /// Build an [`RValue::Array`] from its elements.
+    pub fn array(elems: Vec<RValue>) -> Self {
+        RValue::Array(Rc::new(elems))
+    }
 }
 
 /// A defined runtime trap (ADR-0013).

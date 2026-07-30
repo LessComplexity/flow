@@ -72,8 +72,8 @@ fn zip_add_value_contract() {
     let ir = b.seal(f).unwrap();
     assert!(validate(&ir).is_empty(), "{:?}", validate(&ir));
 
-    let a = RValue::Array((0..16).map(scal).collect());
-    let bvec = RValue::Array((0..16).map(|_| scal(100)).collect());
+    let a = RValue::array((0..16).map(scal).collect());
+    let bvec = RValue::array((0..16).map(|_| scal(100)).collect());
     let arg = RValue::Tuple(vec![a, bvec]);
     let out = eval_call(&ir, f, arg, BUDGET);
     let c = match out {
@@ -108,11 +108,11 @@ fn enumerate_indices_contract() {
     let ir = b.seal(f).unwrap();
     assert!(validate(&ir).is_empty(), "{:?}", validate(&ir));
 
-    let arg = RValue::Array(vec![scal(10), scal(20), scal(30), scal(40)]);
+    let arg = RValue::array(vec![scal(10), scal(20), scal(30), scal(40)]);
     let out = eval_call(&ir, f, arg, BUDGET);
     assert_eq!(
         out,
-        Outcome::Done(RValue::Array(vec![
+        Outcome::Done(RValue::array(vec![
             pair(0, 10),
             pair(1, 20),
             pair(2, 30),
@@ -146,7 +146,7 @@ fn enumerate_under_fanout() {
     let ir = b.seal(f).unwrap();
     assert!(validate(&ir).is_empty(), "{:?}", validate(&ir));
 
-    let arg = RValue::Array(vec![scal(10), scal(20), scal(30), scal(40)]);
+    let arg = RValue::array(vec![scal(10), scal(20), scal(30), scal(40)]);
     let out = eval_call(&ir, f, arg, BUDGET);
     assert_eq!(
         out,

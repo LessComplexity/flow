@@ -136,7 +136,7 @@ fn index_of_update_non_const_not_folded() {
 
 /// An i32 array `RValue`.
 fn arr(xs: &[i32]) -> RValue {
-    RValue::Array(xs.iter().map(|&x| RValue::Scalar(Value::I32(x))).collect())
+    RValue::array(xs.iter().map(|&x| RValue::Scalar(Value::I32(x))).collect())
 }
 
 /// F1 (I4 token linearity) — const-fold must NOT alias a token-bearing

@@ -43,7 +43,7 @@ fn scalar(x: i32) -> RValue {
 }
 
 fn arr(xs: &[i32]) -> RValue {
-    RValue::Array(xs.iter().map(|&x| scalar(x)).collect())
+    RValue::array(xs.iter().map(|&x| scalar(x)).collect())
 }
 
 fn arr_ty(size: u64) -> Ty {

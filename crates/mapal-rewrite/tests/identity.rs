@@ -104,7 +104,7 @@ fn update_graph_round_trips_through_rewrite() {
     let ir = b.seal(f).unwrap();
     assert!(validate(&ir).is_empty());
 
-    let arg = mapal_interp::RValue::Array(
+    let arg = mapal_interp::RValue::array(
         (0..4)
             .map(|n| mapal_interp::RValue::Scalar(Value::I32(n)))
             .collect(),
@@ -124,7 +124,7 @@ fn update_graph_round_trips_through_rewrite() {
     // Sanity: the write landed (slot 2 replaced), proving replay rebuilt the op.
     assert_eq!(
         after,
-        mapal_interp::Outcome::Done(mapal_interp::RValue::Array(vec![
+        mapal_interp::Outcome::Done(mapal_interp::RValue::array(vec![
             mapal_interp::RValue::Scalar(Value::I32(0)),
             mapal_interp::RValue::Scalar(Value::I32(1)),
             mapal_interp::RValue::Scalar(Value::I32(99)),

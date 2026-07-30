@@ -67,12 +67,12 @@ fn update_i32_program(n: u64, i: i32, v: i32) -> mapal_ir::CategoryIr {
 fn update_in_bounds_replaces_one_slot() {
     let ir = update_i32_program(4, 2, 99);
     assert!(validate(&ir).is_empty());
-    let arg = RValue::Array(vec![scal(10), scal(20), scal(30), scal(40)]);
+    let arg = RValue::array(vec![scal(10), scal(20), scal(30), scal(40)]);
     let out = eval_call(&ir, f_of(&ir), arg, BUDGET);
     // Only slot 2 changes; the rest are the untouched base (value semantics).
     assert_eq!(
         out,
-        Outcome::Done(RValue::Array(vec![scal(10), scal(20), scal(99), scal(40)]))
+        Outcome::Done(RValue::array(vec![scal(10), scal(20), scal(99), scal(40)]))
     );
 }
 
@@ -80,7 +80,7 @@ fn update_in_bounds_replaces_one_slot() {
 fn update_at_n_traps() {
     // n == 3, i == 3 ⇒ OOB (upper bound, same class as Index).
     let ir = update_i32_program(3, 3, 0);
-    let arg = RValue::Array(vec![scal(1), scal(2), scal(3)]);
+    let arg = RValue::array(vec![scal(1), scal(2), scal(3)]);
     assert_eq!(
         eval_call(&ir, f_of(&ir), arg, BUDGET),
         Outcome::Trapped(TrapKind::IndexOob)
@@ -91,7 +91,7 @@ fn update_at_n_traps() {
 fn update_negative_traps() {
     // i == -1 ⇒ OOB (lower bound).
     let ir = update_i32_program(3, -1, 0);
-    let arg = RValue::Array(vec![scal(1), scal(2), scal(3)]);
+    let arg = RValue::array(vec![scal(1), scal(2), scal(3)]);
     assert_eq!(
         eval_call(&ir, f_of(&ir), arg, BUDGET),
         Outcome::Trapped(TrapKind::IndexOob)
@@ -103,7 +103,7 @@ fn update_u8_index_ge_128_in_bounds() {
     // u8 index 200 zero-extends to +200 (never a negative sign-flip); on a
     // 256-long array it is a legal in-bounds write, not a trap.
     let ir = update_u8_program(256, 200, 7);
-    let arg = RValue::Array((0..256).map(scal).collect());
+    let arg = RValue::array((0..256).map(scal).collect());
     let out = eval_call(&ir, f_of(&ir), arg, BUDGET);
     let c = match out {
         Outcome::Done(RValue::Array(es)) => es,

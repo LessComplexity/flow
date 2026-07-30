@@ -42,7 +42,7 @@ fn iota_value_contract() {
     let out = eval_call(&ir, f, RValue::Unit, BUDGET);
     assert_eq!(
         out,
-        Outcome::Done(RValue::Array(vec![
+        Outcome::Done(RValue::array(vec![
             scal(0),
             scal(1),
             scal(2),
@@ -76,7 +76,7 @@ fn fill_value_contract() {
     let out = eval_call(&ir, f, RValue::Unit, BUDGET);
     assert_eq!(
         out,
-        Outcome::Done(RValue::Array(vec![
+        Outcome::Done(RValue::array(vec![
             RValue::Scalar(Value::F64(2.5)),
             RValue::Scalar(Value::F64(2.5)),
             RValue::Scalar(Value::F64(2.5)),

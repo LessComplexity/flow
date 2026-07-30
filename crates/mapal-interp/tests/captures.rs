@@ -77,12 +77,12 @@ fn map_with_scalar_capture_broadcasts() {
     assert!(validate(&ir).is_empty());
     let arg = RValue::Tuple(vec![
         scal(3),
-        RValue::Array(vec![scal(1), scal(2), scal(3)]),
+        RValue::array(vec![scal(1), scal(2), scal(3)]),
     ]);
     let out = eval_call(&ir, f_of(&ir), arg, BUDGET);
     assert_eq!(
         out,
-        Outcome::Done(RValue::Array(vec![scal(3), scal(6), scal(9)]))
+        Outcome::Done(RValue::array(vec![scal(3), scal(6), scal(9)]))
     );
 }
 
@@ -130,7 +130,7 @@ fn fold_with_capture_accumulates() {
     assert!(validate(&ir).is_empty());
     let arg = RValue::Tuple(vec![
         scal(2),
-        RValue::Array(vec![scal(1), scal(2), scal(3)]),
+        RValue::array(vec![scal(1), scal(2), scal(3)]),
     ]);
     let out = eval_call(&ir, f_of(&ir), arg, BUDGET);
     assert_eq!(out, Outcome::Done(scal(12)));
@@ -176,11 +176,11 @@ fn captured_array_is_indexed_inside_the_body() {
     let ir = b.seal(f).unwrap();
     assert!(validate(&ir).is_empty());
     let arg = RValue::Tuple(vec![
-        RValue::Array(vec![scal(5), scal(7), scal(9)]),
-        RValue::Array(vec![scal(2), scal(3)]),
+        RValue::array(vec![scal(5), scal(7), scal(9)]),
+        RValue::array(vec![scal(2), scal(3)]),
     ]);
     let out = eval_call(&ir, f_of(&ir), arg, BUDGET);
-    assert_eq!(out, Outcome::Done(RValue::Array(vec![scal(14), scal(21)])));
+    assert_eq!(out, Outcome::Done(RValue::array(vec![scal(14), scal(21)])));
 }
 
 use mapal_ir::Operation;

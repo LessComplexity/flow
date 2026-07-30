@@ -5,6 +5,8 @@
 //! walk and the per-op happy path, threading `Result<RValue, Abort>` so `?`
 //! propagates the first abort (Diverged/Trapped).
 
+use std::rc::Rc;
+
 use slotmap::SecondaryMap;
 
 use mapal_ir::{
@@ -308,17 +310,17 @@ pub(crate) fn eval_morphism(
                 _ => unreachable!("Map on non-array"),
             };
             let mut out = Vec::with_capacity(elems.len());
-            for e in elems {
+            for e in elems.iter() {
                 let arg = if k == 0 {
-                    e
+                    e.clone()
                 } else {
                     let mut v = caps.clone();
-                    v.push(e);
+                    v.push(e.clone());
                     RValue::Tuple(v)
                 };
                 out.push(eval_fn(ctx.ir, body, arg, budget)?);
             }
-            write(ctx, target, RValue::Array(out));
+            write(ctx, target, RValue::array(out));
             Ok(())
         }
         Operation::Fold { body, captures } => {
@@ -342,13 +344,13 @@ pub(crate) fn eval_morphism(
                 };
                 (caps, acc, elems)
             };
-            for e in elems {
+            for e in elems.iter() {
                 let pair = if k == 0 {
-                    RValue::Tuple(vec![acc, e])
+                    RValue::Tuple(vec![acc, e.clone()])
                 } else {
                     let mut v = caps.clone();
                     v.push(acc);
-                    v.push(e);
+                    v.push(e.clone());
                     RValue::Tuple(v)
                 };
                 acc = eval_fn(ctx.ir, body, pair, budget)?;
@@ -378,7 +380,7 @@ pub(crate) fn eval_morphism(
                 .zip(b.iter())
                 .map(|(x, y)| RValue::Tuple(vec![x.clone(), y.clone()]))
                 .collect();
-            write(ctx, target, RValue::Array(out));
+            write(ctx, target, RValue::array(out));
             Ok(())
         }
         Operation::Enumerate => {
@@ -390,11 +392,11 @@ pub(crate) fn eval_morphism(
                 _ => unreachable!("Enumerate on non-array"),
             };
             let out = elems
-                .into_iter()
+                .iter()
                 .enumerate()
-                .map(|(i, x)| RValue::Tuple(vec![RValue::Scalar(Value::I32(i as i32)), x]))
+                .map(|(i, x)| RValue::Tuple(vec![RValue::Scalar(Value::I32(i as i32)), x.clone()]))
                 .collect();
-            write(ctx, target, RValue::Array(out));
+            write(ctx, target, RValue::array(out));
             Ok(())
         }
         Operation::Iota => {
@@ -407,7 +409,7 @@ pub(crate) fn eval_morphism(
             let out = (0..n)
                 .map(|i| RValue::Scalar(Value::I32(i as i32)))
                 .collect();
-            write(ctx, target, RValue::Array(out));
+            write(ctx, target, RValue::array(out));
             Ok(())
         }
         Operation::Fill => {
@@ -420,7 +422,7 @@ pub(crate) fn eval_morphism(
                 RValue::Scalar(Value::U8(c)) => *c as usize,
                 _ => unreachable!("Fill on non-integer count"),
             };
-            write(ctx, target, RValue::Array(vec![v; n]));
+            write(ctx, target, RValue::array(vec![v; n]));
             Ok(())
         }
         Operation::Print { newline } => {
@@ -511,7 +513,7 @@ fn stage_pair(ctx: &mut EvalCtx, source: ObjectId, target: ObjectId, slot: u32, 
 fn finalize_product(ty: &Ty, comps: Vec<RValue>) -> RValue {
     match ty {
         Ty::Tuple(_) => RValue::Tuple(comps),
-        Ty::Array { .. } => RValue::Array(comps),
+        Ty::Array { .. } => RValue::array(comps),
         Ty::Struct { name, fields } => {
             let named = fields.iter().map(|(n, _)| n.clone()).zip(comps).collect();
             RValue::Struct {
@@ -669,14 +671,17 @@ fn index(ctx: &EvalCtx, source: ObjectId) -> Result<RValue, Abort> {
 fn update(ctx: &EvalCtx, source: ObjectId) -> Result<RValue, Abort> {
     let triple = read(ctx, source);
     let mut arr = match component(triple, 0) {
-        RValue::Array(es) => es.clone(),
+        RValue::Array(es) => Rc::clone(es),
         _ => unreachable!("Update on a non-array"),
     };
     let i = as_int(scalar(component(triple, 1)));
     if i < 0 || i as u128 >= arr.len() as u128 {
         return Err(Abort::Trapped(TrapKind::IndexOob));
     }
-    arr[i as usize] = component(triple, 2).clone();
+    // `make_mut` is the copy in "a fresh array with slot `i` replaced"
+    // (ADR-0021): the source is still live in `env`, so this copies once here
+    // rather than on every clone of a value that merely *contains* the array.
+    Rc::make_mut(&mut arr)[i as usize] = component(triple, 2).clone();
     Ok(RValue::Array(arr))
 }
 

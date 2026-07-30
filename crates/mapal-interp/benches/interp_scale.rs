@@ -74,7 +74,7 @@ fn build_map(n: u64) -> (CategoryIr, FuncId, RValue) {
         fb.finish().unwrap();
     }
     let ir = ib.seal(f).unwrap();
-    let arg = RValue::Array(
+    let arg = RValue::array(
         (0..n)
             .map(|i| RValue::Scalar(Value::I32(i as i32)))
             .collect(),

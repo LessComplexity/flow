@@ -32,7 +32,7 @@ fn i32_arr(size: u64) -> Ty {
 
 /// An i32 array `RValue`.
 fn arr(xs: &[i32]) -> RValue {
-    RValue::Array(xs.iter().map(|&x| RValue::Scalar(Value::I32(x))).collect())
+    RValue::array(xs.iter().map(|&x| RValue::Scalar(Value::I32(x))).collect())
 }
 
 /// An `(i32, [i32;3])` call argument.

@@ -190,12 +190,12 @@ fn fir4_value_contract() {
     let ir = build(&example("fir"));
     let f = func_named(&ir, "fir4");
     // fir4's input is one Parameter of ty ([f32;8], [f32;4]).
-    let signal = RValue::Array(
+    let signal = RValue::array(
         (1..=8)
             .map(|n| RValue::Scalar(Value::F32(n as f32)))
             .collect(),
     );
-    let coeffs = RValue::Array(vec![
+    let coeffs = RValue::array(vec![
         RValue::Scalar(Value::F32(0.5)),
         RValue::Scalar(Value::F32(0.25)),
         RValue::Scalar(Value::F32(0.125)),
