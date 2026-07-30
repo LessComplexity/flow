@@ -72,11 +72,23 @@ pub struct Gpu {
 }
 
 /// The ARM SME facts a profile carries, when the part has a streaming matrix
-/// unit. Both are **measured on the part** (`benches/sme/svl.c` on an M4 Pro),
-/// never assumed: SVL is implementation-defined, and every literal the SME
-/// realization emits — the panel side, the ZA row count, the packed A stride —
-/// is derived from `svl_bytes`, so a part with a different SVL emits a
-/// different kernel from the same record.
+/// unit — and **only the two that cannot be derived from anything else.**
+///
+/// Both are **read off the part** by [`native`] (`hw.optional.arm.sme_max_svl_b`
+/// and `hw.perflevel0.l1dcachesize`), never assumed: SVL is
+/// implementation-defined and a cache size is a property of the silicon. Every
+/// other SME quantity the realization needs is *derived* from these two —
+/// the panel side (`svl/w`), the tile count (`w`, an ISA rule), the arrangement,
+/// the packed A stride, and the k-panel depth — so a part with a different SVL
+/// or a different L1D emits a different kernel from the same record, with no new
+/// field and no new code. `f32_tiles` used to sit here and was deleted for
+/// exactly that reason: it was derivable, so recording it could only ever make
+/// it wrong (see [`TargetProfile::sme_block`]).
+///
+/// A hand-written value is therefore the *cross-compilation* case — describing a
+/// machine you are not sitting on — and
+/// `native_reproduces_the_hand_written_profile` asserts the two agree on the
+/// machine you are.
 ///
 /// `Machine` stays `Cpu`: SME is a **unit inside a CPU core**, not a machine
 /// class. One thread owns the whole tile, there is no cooperation and no
@@ -89,11 +101,57 @@ pub struct Sme {
     /// f32 tile is `svl_bytes/4` square. **64 on the M4 Pro** (512 bits), which
     /// is what makes `<vscale x 4 x float>` sixteen lanes there.
     pub svl_bytes: u64,
-    /// Architectural f32 ZA tiles (`ZA0.S`…). 4 at f32, 8 at f64. This is the
-    /// accumulator-residency budget the realization spends — the SME reading of
-    /// the register-file budget [`TargetProfile::tile_i`] derives from, and
-    /// [`TargetProfile::sme_block`] is where it is spent.
-    pub f32_tiles: u64,
+    /// **Per-core L1 data cache in bytes** — the budget the SME k-panel is sized
+    /// against ([`TargetProfile::sme_kc`]).
+    ///
+    /// It lives **inside `Sme`**, not beside `l2_bytes`, and that placement is
+    /// the point: a profile cannot declare a matrix unit without declaring the
+    /// working-set budget that unit's panel is cut to. FRAMEWORK §4.5 law 3
+    /// (placement totality) as a type, so the omission is a compile error rather
+    /// than a silent fallback to the NEON core's number.
+    ///
+    /// Why a *second* cache fact rather than reusing `l2_bytes`: `tile_kc` sizes
+    /// the NEON k-panel against half of a 16 MB **shared** L2 and returns 4096
+    /// on this part, which closes its own gate for every K this project runs
+    /// (`apple_m_raises_the_kc_threshold_above_every_k_we_run`). Measured, the
+    /// SME optimum is a **128 KB two-panel window** — L1D, not L2 — and the
+    /// unblocked case loses **1.448×** at K=4096
+    /// (`docs/performance/s42-sme-roofline.md` §5, `benches/sme/kc.c`). One
+    /// deduced depth serving two placements with different budgets is the defect;
+    /// two `TrnLoc`s over one question is the fix.
+    pub l1d_bytes: u64,
+    /// **Policy ratio, honestly search space — NOT a machine fact.** How many
+    /// L1D's worth of operand window one k block may occupy. Same status as
+    /// [`TargetProfile::acc_vecs_per_row`] and `nc_tiles`, and ADR-0034 is the ADR
+    /// that would search it rather than record it.
+    ///
+    /// It exists because the obvious derivation is **wrong, measured**. Sizing the
+    /// window to fit L1D exactly (ratio 1 ⇒ `kc` 512 here) lands on the losing
+    /// side of a sharp curve. Two depth sweeps in the real emitter, N=4096 and
+    /// N=2048, f32, 1 thread, alternating, values identical at every depth:
+    ///
+    /// | working set | N=4096 | N=2048 |
+    /// | ---: | ---: | ---: |
+    /// | 32 KB | — | 0.220× |
+    /// | 64 KB | 0.501× | 0.387× |
+    /// | 128 KB ← ratio 1 | 0.785× | 0.639× |
+    /// | **256 KB ← ratio 2** | **1.064×** | 0.986× |
+    /// | 512 KB | 1.027× | **1.000×** (unblocked) |
+    /// | 1024 KB | 1.000× (unblocked) | — |
+    ///
+    /// **256 KB is the optimum at both sizes, and it is not any machine fact on
+    /// this part** — L1D is 128 KB, L1I 192 KB, the per-core L2 slice ~3.2 MB. So
+    /// it is recorded as a swept ratio rather than dressed up as a derivation.
+    /// Writing `2 * l1d_bytes` into [`TargetProfile::sme_kc`] would be a fitted
+    /// constant wearing a derivation's clothes, which is the exact defect
+    /// `plan-s31-deduced-blocking.md` exists to remove.
+    ///
+    /// Note also what the curve says about getting it wrong: every depth *below*
+    /// the optimum is catastrophic (64 KB costs 2.0–2.6×), so this constant is not
+    /// a mild tuning knob. The first version of `sme_kc` used ratio 1 and that one
+    /// wrong constant is what made KC blocking look like a 1.27× loss for most of
+    /// S42 — see `func/sme.rs`.
+    pub panel_l1d_ratio: u64,
 }
 
 /// One target's machine facts, plus the two policy ratios that are honestly
@@ -219,10 +277,21 @@ impl TargetProfile {
     ///
     /// This is [`TargetProfile::tile_i`]'s question asked of the other
     /// accumulator file — "how many accumulator blocks stay resident" — and it
-    /// is answered the same way, by arithmetic over a recorded budget rather
-    /// than by a literal in the emitter. ZA holds **one tile per element byte**
-    /// (`ZA0.S`…`ZA3.S` at f32, eight `ZA*.D` at f64), so the f64 count is
-    /// derived from the recorded f32 one instead of being written down twice.
+    /// is answered the same way, by arithmetic rather than by a literal.
+    ///
+    /// **The tile count is not a recorded fact; it is an ISA rule.** ZA is
+    /// `svl_bytes × svl_bytes` bytes and one tile at element width `w` is
+    /// `(svl/w)² · w` bytes, so the count is `svl²/((svl/w)²·w) = w` — always
+    /// **exactly the element byte width**, for any SVL: 4 tiles at f32
+    /// (`ZA0.S`…`ZA3.S`), 8 at f64 (`ZA0.D`…`ZA7.D`), 2 at f16, 1 at i8. That is
+    /// the architecture, so it is derived here rather than recorded per part.
+    ///
+    /// This replaced an `f32_tiles: 4` field. Deriving it removes the last
+    /// hardcoded SME number *and* closes the S41b P2 defect that the field
+    /// created: a recorded count could say `7`, for which this function would
+    /// happily return a 1×7 arrangement that no ZA register file can hold and
+    /// no emitted kernel could select. A count that is `elem_bytes` by
+    /// construction cannot be wrong.
     ///
     /// The **shape** is a derivation too, not taste. One panel issues `ti · tj`
     /// outer products from `ti + tj` operand loads, and `ti + tj` is minimised
@@ -231,14 +300,62 @@ impl TargetProfile {
     /// (`benches/sme/mm4.c`, 2×2 vs 1 tile, f32, 1 thread): 423 → 777 GFLOP/s
     /// at 1024², 237 → 619 at 2048².
     pub fn sme_block(&self, elem: &Ty) -> Option<(u64, u64)> {
-        let tiles =
-            (self.sme.as_ref()?.f32_tiles * elem_bytes(elem) / elem_bytes(&Ty::f32())).max(1);
+        self.sme.as_ref()?;
+        let tiles = elem_bytes(elem).max(1);
         // The largest divisor no bigger than sqrt(tiles) — the square-most split.
         let ti = (1..=tiles)
             .filter(|d| d * d <= tiles && tiles.is_multiple_of(*d))
             .max()
             .unwrap_or(1);
         Some((ti, tiles / ti))
+    }
+
+    /// The SME rung's k-panel depth: how deep a k block may be before the two
+    /// packed operand panels stop fitting the unit's working-set budget.
+    /// `None` without an SME unit.
+    ///
+    /// **There is no opt-in.** The moment a profile records a matrix unit, every
+    /// factor that unit's realization needs is *derived* from the facts recorded
+    /// alongside it — the same contract [`TargetProfile::sme_block`] and
+    /// [`TargetProfile::sme_tile_side`] already honour. A gate the caller has to
+    /// remember to open is how `f32_tiles: 4` sat in this file while the emitter
+    /// used one tile (S41b), and the deficit was ~4×.
+    ///
+    /// One k step of a panel streams `ti·t` elements of packed `a` and `tj·t` of
+    /// packed `b`, so the window is `(ti + tj)·t·sizeof` bytes per k, and the
+    /// depth that fits is the budget divided by it. On this part that is
+    /// arithmetic with no free parameter:
+    ///
+    /// ```text
+    /// (ti + tj)·t   = (2 + 2)·16 = 64 elements per k
+    /// 64 · 4 B      = 256 B per k
+    /// 2*131072 / 256 = 1024       <- the depth swept in the emitter
+    /// ```
+    ///
+    /// **1024 is not written down anywhere; it falls out of L1D x the swept ratio.** That is the
+    /// `plan-s31-deduced-blocking.md` discipline — a literal swept once is
+    /// replaced by a derivation that reproduces it on the machine it was swept
+    /// on, and yields a defensible number on a machine nobody has swept. `f64`
+    /// scales off the same fact by element width, so there is no second constant.
+    ///
+    /// Measured (`benches/sme/kc.c`, N=4096, f32, 1 thread, 9 alternating runs,
+    /// medians, every KC gated against an independent scalar reference): 64 KB →
+    /// 845.1, **128 KB → 1101.2**, 256 KB → 1046.7, 512 KB → 885.1, unblocked
+    /// (1 MB) → 760.7 GFLOP/s. Unimodal, so there is a real optimum rather than
+    /// a trend, and the peak puts N=4096 level with N=1024.
+    ///
+    /// The caller gates on `site.k > sme_kc`, so at shallow k the nest disables
+    /// itself by derivation — which is correct, because the probe shows blocking
+    /// is a **loss** at K ≤ 512 where the panel already fits.
+    pub fn sme_kc(&self, elem: &Ty) -> Option<u64> {
+        let sme = self.sme.as_ref()?;
+        // A detected machine fact times a SWEPT policy ratio — see
+        // `Sme::panel_l1d_ratio` for the two depth sweeps that set it, and for why
+        // folding the 2 into this expression would be dishonest.
+        let budget = sme.l1d_bytes * sme.panel_l1d_ratio;
+        let t = self.sme_tile_side(elem)?;
+        let (ti, tj) = self.sme_block(elem)?;
+        Some((budget / (elem_bytes(elem) * (ti + tj) * t)).max(1))
     }
 }
 
@@ -320,9 +437,16 @@ pub const CUDA_ADA: TargetProfile = TargetProfile {
 /// keeps a box run reproducible.
 pub const APPLE_M4_SME: TargetProfile = TargetProfile {
     name: "apple-m4-sme",
+    // Both facts are `hw.optional.arm.sme_max_svl_b` and
+    // `hw.perflevel0.l1dcachesize` on this M4 Pro, and `native` reads both — so
+    // this profile is now the *cross-compilation* spelling of a machine you are
+    // not sitting on, and `native_reproduces_the_hand_written_profile` asserts
+    // detection agrees with it here. The tile count is absent because it is an
+    // ISA rule, derived in `sme_block`.
     sme: Some(Sme {
         svl_bytes: 64,
-        f32_tiles: 4,
+        l1d_bytes: 128 * 1024,
+        panel_l1d_ratio: 2,
     }),
     ..APPLE_M
 };
@@ -332,8 +456,17 @@ const PROFILES: [&TargetProfile; 5] = [&GENERIC, &APPLE_M, &ZEN3, &CUDA_ADA, &AP
 /// Resolve a profile by name. `None` for an unknown name — never a silent
 /// fallback to `generic`, because a typo that quietly emits the default
 /// profile's numbers is the exact failure this table exists to remove.
+///
+/// **A hand-written profile always wins.** The table is checked first, so
+/// `--target=apple-m4-sme` overrides detection; `native` is only ever reached by
+/// asking for it by name. That ordering is the contract: detection removes the
+/// need to hand-write a profile for the machine you are sitting on, and changes
+/// nothing about describing a machine you are not.
 pub fn resolve(name: &str) -> Option<&'static TargetProfile> {
-    PROFILES.into_iter().find(|p| p.name == name)
+    PROFILES
+        .into_iter()
+        .find(|p| p.name == name)
+        .or_else(|| (name == "native").then(native).flatten())
 }
 
 /// The known profile names, for the error message on an unknown one.
@@ -341,8 +474,95 @@ pub fn names() -> String {
     PROFILES
         .iter()
         .map(|p| p.name)
+        .chain(std::iter::once("native"))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// One `sysctl` integer, or `None` if the key does not exist on this host.
+///
+/// Shelling out rather than linking `libc`: this crate has two dependencies and
+/// the emitter is a build-time tool that reads four keys once per run. A binding
+/// for `sysctlbyname` would be a new dependency to save a process spawn that
+/// happens at most once.
+#[cfg(target_os = "macos")]
+fn sysctl_u64(key: &str) -> Option<u64> {
+    let out = std::process::Command::new("/usr/sbin/sysctl")
+        .args(["-n", key])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8(out.stdout).ok()?.trim().parse().ok()
+}
+
+/// The host's own facts, **detected rather than written down**.
+///
+/// Reached as `--target=native`. Named profiles are resolved first (see
+/// [`resolve`]), so this never shadows a hand-written one.
+///
+/// **Every machine fact is detected; nothing about the part is written down.**
+///
+/// | fact | source | |
+/// | --- | --- | --- |
+/// | `l2_bytes` | `hw.perflevel0.l2cachesize` | 16 MB here |
+/// | `l1d_bytes` | `hw.perflevel0.l1dcachesize` | 128 KB here |
+/// | `svl_bytes` | `hw.optional.arm.sme_max_svl_b` | 64 here |
+/// | SME present | `hw.optional.arm.FEAT_SME` | 1 here |
+/// | tile count | **derived** — ISA rule, see [`TargetProfile::sme_block`] | |
+///
+/// **`perflevel0`, not the bare keys.** `hw.l1dcachesize` reports **65536** on
+/// this part and `hw.perflevel0.l1dcachesize` reports **131072**: the bare key
+/// describes the E-cores. Sizing a P-core matrix panel against an E-core cache
+/// would halve the derived k-panel and silently cost throughput, which is the
+/// kind of wrong number that never announces itself.
+///
+/// SVL turned out to be a plain sysctl (`sme_max_svl_b`), so no streaming-mode
+/// probe and no `+sme` build of this emitter is needed — a detected profile is a
+/// **complete** profile, matrix unit included. `FEAT_SME` gates the block, so a
+/// part without the unit yields `sme: None` and the rung falls back exactly as
+/// it does for every pre-S41 profile.
+///
+/// `vec_bytes`/`vec_regs` stay at [`GENERIC`]'s values: they are facts of the
+/// *ISA* that arrive with the target features, not runtime queries (see the
+/// field docs), so there is nothing to detect. `acc_vecs_per_row`/`nc_tiles` are
+/// policy ratios, honestly search space (ADR-0034), not facts to read.
+pub fn native() -> Option<&'static TargetProfile> {
+    static NATIVE: std::sync::OnceLock<Option<TargetProfile>> = std::sync::OnceLock::new();
+    NATIVE.get_or_init(detect).as_ref()
+}
+
+#[cfg(target_os = "macos")]
+fn detect() -> Option<TargetProfile> {
+    // perflevel0 is the performance core cluster; the bare hw.* keys are the
+    // efficiency cores. See the doc comment — this distinction is load-bearing.
+    let l1d_bytes = sysctl_u64("hw.perflevel0.l1dcachesize")?;
+    Some(TargetProfile {
+        name: "native",
+        l2_bytes: sysctl_u64("hw.perflevel0.l2cachesize")?,
+        sme: (sysctl_u64("hw.optional.arm.FEAT_SME") == Some(1))
+            .then(|| {
+                Some(Sme {
+                    svl_bytes: sysctl_u64("hw.optional.arm.sme_max_svl_b")?,
+                    l1d_bytes,
+                    // Detected profiles inherit the swept ratio; it is policy, not
+                    // a property of the silicon, so there is nothing to read.
+                    panel_l1d_ratio: 2,
+                })
+            })
+            .flatten(),
+        ..GENERIC
+    })
+}
+
+/// No detection off macOS yet — Linux would read `sysfs`
+/// (`/sys/devices/system/cpu/cpu0/cache/index*/size`), which is a different
+/// parser, not a different idea. `None` means `--target=native` errors with the
+/// known-name list instead of guessing.
+#[cfg(not(target_os = "macos"))]
+fn detect() -> Option<TargetProfile> {
+    None
 }
 
 #[cfg(test)]
@@ -429,6 +649,138 @@ mod tests {
         assert_eq!(resolve("cuda-ada"), Some(&CUDA_ADA));
         assert_eq!(resolve("apple-m4-sme"), Some(&APPLE_M4_SME));
         assert!(resolve("apple_m").is_none());
+        assert!(
+            names().contains("native"),
+            "the unknown-name error must offer `native`, or detection is undiscoverable"
+        );
+    }
+
+    /// The SME k-panel depth is **derived from L1D**, and the derivation
+    /// reproduces the swept optimum — `plan-s31-deduced-blocking.md`'s rule.
+    /// `512` appears in no source file; it falls out of 128 KB / 256 B.
+    #[test]
+    fn sme_kc_reproduces_the_measured_optimum() {
+        assert_eq!(
+            APPLE_M4_SME.sme_kc(&F32),
+            Some(1024),
+            "2 x 128 KB / ((ti+tj)·t·4 = 256 B) = 1024 — the depth SWEPT in the real \
+             emitter at N=4096 (1.064x, disjoint) and N=2048. Ratio 1 gives 512, \
+             which measured 0.785x — a loss"
+        );
+        // f64 scales off the same recorded fact by element width: t halves to 8,
+        // the tile count doubles to 8 so the block is 2x4, and the window is
+        // (2+4)·8·8 = 384 B per k. No second constant anywhere.
+        assert_eq!(APPLE_M4_SME.sme_kc(&F64), Some(2 * 128 * 1024 / 384));
+        // No matrix unit => no answer, never a wrong one. Same seam as `sme()`.
+        assert_eq!(GENERIC.sme_kc(&F32), None);
+        assert_eq!(APPLE_M.sme_kc(&F32), None);
+    }
+
+    /// The SME budget is L1D and **not** the NEON rung's L2, and the two answers
+    /// differ by 8x — which is the whole reason `sme_kc` exists rather than
+    /// reusing `tile_kc`. If these two ever coincide, one of them is wrong.
+    #[test]
+    fn the_sme_budget_is_not_the_neon_one() {
+        let neon = APPLE_M4_SME.tile_kc(&F32);
+        let sme = APPLE_M4_SME.sme_kc(&F32).unwrap();
+        assert_eq!(neon, 4096, "unchanged: half of 16 MB shared L2 over nc");
+        assert_eq!(sme, 1024);
+        assert!(
+            sme < neon,
+            "the matrix unit's window is smaller than the NEON k-panel's; \
+             a shared derivation would size SME's panel 8x too deep and lose \
+             1.448x at K=4096 (docs/performance/s42-sme-roofline.md §5)"
+        );
+        // And the gate this feeds: at K=4096 the SME nest must OPEN...
+        assert!(4096 > sme, "KC nest must fire at K=4096");
+        // ...while at K=512 it must stay shut, because blocking is a LOSS there.
+        assert!(
+            1024 <= sme,
+            "KC nest must stay off at K=1024 — measured neutral-to-worse there"
+        );
+    }
+
+    /// Detection reads the keys it documents. Not a value assertion — the point
+    /// is that the plumbing works on this host, so "automatic" is not a claim
+    /// resting on an untested code path.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_reads_the_facts_it_claims_to() {
+        let l2 = sysctl_u64("hw.perflevel0.l2cachesize");
+        let l1d = sysctl_u64("hw.perflevel0.l1dcachesize");
+        assert!(l2.is_some_and(|v| v >= 256 * 1024), "L2 detected: {l2:?}");
+        assert!(l1d.is_some_and(|v| v >= 32 * 1024), "L1D detected: {l1d:?}");
+        assert!(sysctl_u64("hw.optional.arm.no.such.key").is_none());
+
+        let native = native().expect("detection must succeed on macOS");
+        assert_eq!(native.name, "native");
+        assert_eq!(Some(native.l2_bytes), l2, "detected, not inherited");
+
+        // The E-core trap: the bare key is a DIFFERENT, smaller cache. If these
+        // two ever agree, this host stopped being big.LITTLE and the guard below
+        // stops proving anything — but on any such part it is also harmless.
+        if let (Some(bare), Some(p0)) = (sysctl_u64("hw.l1dcachesize"), l1d) {
+            assert!(
+                bare <= p0,
+                "hw.l1dcachesize ({bare}) must not exceed the P-core's ({p0}); \
+                 detection reads perflevel0 precisely because the bare key is \
+                 the efficiency cluster"
+            );
+        }
+    }
+
+    /// **The genericity gate.** On this host, detection must reproduce the
+    /// hand-written profile *exactly* — same SVL, same L1D, same derived tile
+    /// side, same derived block, same derived k-panel. If it does not, then one
+    /// of the two is wrong and the hand-written numbers were never facts about
+    /// this machine.
+    ///
+    /// This is what makes `apple-m4-sme` a **cross-compilation** spelling rather
+    /// than the only way to describe the machine under the keyboard: the numbers
+    /// in it are no longer load-bearing here, they are checked against the part.
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn native_reproduces_the_hand_written_profile() {
+        let Some(native) = native() else {
+            panic!("detection must succeed on macOS")
+        };
+        let Some(nsme) = native.sme() else {
+            // A Mac without SME: nothing to compare, and the fallback is the
+            // pre-S41 behaviour. Not a failure.
+            assert_eq!(sysctl_u64("hw.optional.arm.FEAT_SME"), Some(0));
+            return;
+        };
+        let hand = APPLE_M4_SME.sme().expect("hand-written profile has SME");
+        assert_eq!(nsme.svl_bytes, hand.svl_bytes, "SVL: detected vs written");
+        assert_eq!(nsme.l1d_bytes, hand.l1d_bytes, "L1D: detected vs written");
+        assert_eq!(native.l2_bytes, APPLE_M4_SME.l2_bytes, "L2");
+        for elem in [F32, F64] {
+            assert_eq!(
+                native.sme_tile_side(&elem),
+                APPLE_M4_SME.sme_tile_side(&elem)
+            );
+            assert_eq!(native.sme_block(&elem), APPLE_M4_SME.sme_block(&elem));
+            assert_eq!(native.sme_kc(&elem), APPLE_M4_SME.sme_kc(&elem));
+        }
+        // And the number the whole S42 campaign turns on, arrived at with no
+        // constant written anywhere: 131072 / ((2+2)*16*4) = 512.
+        assert_eq!(native.sme_kc(&F32), Some(1024));
+    }
+
+    /// A hand-written profile always wins over detection (Sapir's rule).
+    #[test]
+    fn named_profiles_override_detection() {
+        for p in PROFILES {
+            assert_eq!(
+                resolve(p.name).map(|r| r.name),
+                Some(p.name),
+                "the table is consulted before `native`"
+            );
+        }
+        assert!(
+            resolve("nativ").is_none(),
+            "no fuzzy match, no silent default"
+        );
         assert!(resolve("cuda_ada").is_none());
         assert!(resolve("apple-m4").is_none());
         assert!(resolve("").is_none());
@@ -456,10 +808,12 @@ mod tests {
     #[test]
     fn apple_m4_sme_derives_the_measured_tile_side() {
         let sme = APPLE_M4_SME.sme().expect("apple-m4-sme has an SME unit");
-        assert_eq!(sme.svl_bytes, 64, "SVL = 512 bits, measured");
-        assert_eq!(sme.f32_tiles, 4);
+        assert_eq!(sme.svl_bytes, 64, "SVL = 512 bits, detected");
         assert_eq!(APPLE_M4_SME.sme_tile_side(&F32), Some(16));
         assert_eq!(APPLE_M4_SME.sme_tile_side(&F64), Some(8));
+        // The tile count is an ISA rule, not a field: exactly `elem_bytes`.
+        assert_eq!(APPLE_M4_SME.sme_block(&F32), Some((2, 2)), "4 tiles at f32");
+        assert_eq!(APPLE_M4_SME.sme_block(&F64), Some((2, 4)), "8 tiles at f64");
     }
 
     /// The SME profile moves EXACTLY one field off `apple-m`. Every derived
@@ -494,30 +848,45 @@ mod tests {
         }
     }
 
-    /// The derivation's two invariants, over every tile count a part could
-    /// report: the block spends the WHOLE budget, and it is the square-most
-    /// factorization — the one that minimises `ti + tj` operand loads per
-    /// `ti · tj` outer products (1×4 needs 5 loads for the 4 MACs 2×2 gets from
-    /// 4). Pinned as arithmetic so a future SVL/tile count needs no new code.
+    /// The derivation's two invariants: the block spends the WHOLE tile budget,
+    /// and it is the square-most factorization — the one that minimises `ti + tj`
+    /// operand loads per `ti · tj` outer products (1×4 needs 5 loads for the 4
+    /// MACs 2×2 gets from 4).
+    ///
+    /// **Swept over element WIDTHS, not over a recorded count.** The previous
+    /// version of this test swept `f32_tiles` 1..=64, and S41b logged the defect
+    /// that created: it pinned arrangements for counts like 7 or 64 that no ZA
+    /// register file has and no emitted kernel could select, so the test asserted
+    /// properties of unreachable IR. Now that the count is `elem_bytes` by
+    /// construction there is nothing unreachable left to sweep — every width here
+    /// is a width the architecture actually has.
     #[test]
     fn sme_block_spends_every_tile_and_stays_square_most() {
-        for tiles in 1..=64_u64 {
-            let p = TargetProfile {
-                sme: Some(Sme {
-                    svl_bytes: 64,
-                    f32_tiles: tiles,
-                }),
-                ..APPLE_M4_SME
-            };
-            let (ti, tj) = p.sme_block(&F32).expect("has ZA");
-            assert_eq!(ti * tj, tiles, "the block must spend every tile ({tiles})");
-            assert!(ti <= tj, "ti is the smaller factor ({tiles})");
+        for bits in [8_u8, 16, 32, 64] {
+            let elem = Ty::Float { bits };
+            let tiles = u64::from(bits).div_ceil(8);
+            let (ti, tj) = APPLE_M4_SME.sme_block(&elem).expect("has ZA");
+            assert_eq!(
+                ti * tj,
+                tiles,
+                "the block must spend every tile ({tiles} at f{bits})"
+            );
+            assert!(ti <= tj, "ti is the smaller factor (f{bits})");
             let best = (1..=tiles)
                 .filter(|d| tiles.is_multiple_of(*d))
                 .map(|d| d + tiles / d)
                 .min()
                 .expect("a divisor exists");
-            assert_eq!(ti + tj, best, "fewest operand loads at {tiles} tiles");
+            assert_eq!(ti + tj, best, "fewest operand loads at f{bits}");
+            // Every arrangement must actually fit ZA: `ti·t x tj·t` elements of
+            // `w` bytes is exactly `svl x svl`, the whole array, never more.
+            let t = APPLE_M4_SME.sme_tile_side(&elem).expect("has ZA");
+            let svl = APPLE_M4_SME.sme().unwrap().svl_bytes;
+            assert_eq!(
+                ti * t * tj * t * tiles,
+                svl * svl,
+                "the block must be exactly ZA at f{bits}, not larger"
+            );
         }
         assert_eq!(
             (1..=4_u64)
