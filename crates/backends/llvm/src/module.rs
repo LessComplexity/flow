@@ -111,7 +111,42 @@ declare <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x 
 /// One kernel per module, not one per site: the geometry that varies between
 /// sites (`bn`, `bj`, `cn`, `K`) is passed, exactly as the verified spec passes
 /// it.
-pub(crate) fn sme_panel(t: u64, ti: u64, tj: u64) -> String {
+/// How the panel kernel ends — **the only thing that differs** between the two
+/// emitted kernels. The k loop, the operand staging and the ZA arrangement are
+/// generated once for both; the variation is confined to this one seam
+/// (FRAMEWORK §5, one source of truth for shared structure).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PanelWrite {
+    /// `c = ZA`. The whole k reduction happened inside this call, so the output
+    /// block is this kernel's to own outright. Requires the fold seed to be a
+    /// true zero — which `sme_tile_site` checks.
+    Store,
+    /// `c += ZA`. Only one k **block** happened in this call, so its partial sum
+    /// must join what earlier blocks already left in `c`.
+    ///
+    /// This is the price of KC blocking, and it is why blocking is a measured
+    /// crossover rather than a free win: `read.horiz` out, `fadd`, store back,
+    /// for every row of every tile, once per k block after the first. Measured
+    /// worth it at K=4096 (1.448×, disjoint) and a **loss** at small K, which is
+    /// why the caller gates on `k > sme_kc` rather than always blocking.
+    Accumulate,
+}
+
+impl PanelWrite {
+    /// The emitted symbol. Two names rather than an `i1 %first` parameter: a
+    /// parameter would change the call at every existing SME site for no gain,
+    /// and would put a branch inside the read-out loop. Emitting the second
+    /// function only when the KC nest fires keeps the unblocked path
+    /// byte-identical to what shipped before it existed.
+    pub(crate) fn symbol(self) -> &'static str {
+        match self {
+            Self::Store => "mapal_sme_panel",
+            Self::Accumulate => "mapal_sme_panel_acc",
+        }
+    }
+}
+
+pub(crate) fn sme_panel(t: u64, ti: u64, tj: u64, write: PanelWrite) -> String {
     // Tile `(r, cc)` of the block is ZA tile `r·tj + cc` — the one convention
     // the k loop and the read-out both spell out, and the only thing tying a
     // `zn`/`zm` pair to the rows and columns it lands on.
@@ -188,16 +223,29 @@ pub(crate) fn sme_panel(t: u64, ti: u64, tj: u64) -> String {
                 ));
                 format!("%cst{r}_{cc}")
             };
+            // The one seam. `Store` owns the block; `Accumulate` joins the
+            // partial sums the earlier k blocks already left there.
+            let value = match write {
+                PanelWrite::Store => format!("%row{r}_{cc}"),
+                PanelWrite::Accumulate => {
+                    rbody.push_str(&format!(
+                        "  %old{r}_{cc} = load <vscale x 4 x float>, ptr {dst}, align 4\n\
+                         \x20 %sum{r}_{cc} = fadd <vscale x 4 x float> %old{r}_{cc}, %row{r}_{cc}\n"
+                    ));
+                    format!("%sum{r}_{cc}")
+                }
+            };
             rbody.push_str(&format!(
-                "  store <vscale x 4 x float> %row{r}_{cc}, ptr {dst}, align 4\n"
+                "  store <vscale x 4 x float> {value}, ptr {dst}, align 4\n"
             ));
         }
     }
 
     let ah = ti * t;
+    let sym = write.symbol();
     format!(
         "\
-define internal void @mapal_sme_panel(ptr %ap, ptr %b, ptr %c, i64 %bn, i64 %bj, i64 %cn, i64 %K) \
+define internal void @{sym}(ptr %ap, ptr %b, ptr %c, i64 %bn, i64 %bj, i64 %cn, i64 %K) \
 \"aarch64_new_za\" \"aarch64_pstate_sm_body\" vscale_range(1,16) \
 \"target-features\"=\"+sme,+sme2,+neon,+fp-armv8,+v8a\" {{
 entry:

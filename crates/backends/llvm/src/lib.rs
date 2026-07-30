@@ -26,8 +26,8 @@ use slotmap::SecondaryMap;
 
 use crate::func::{FnAttrs, FnEmit, packing_site};
 use crate::module::{
-    HEAP_DECLS, PAR_DECLS, PERF_DECLS, PREFETCH_DECL, RT_DECLS, SME_DECLS, collect_str_globals,
-    emit_main_wrapper, emit_str_globals, sme_panel,
+    HEAP_DECLS, PAR_DECLS, PERF_DECLS, PREFETCH_DECL, PanelWrite, RT_DECLS, SME_DECLS,
+    collect_str_globals, emit_main_wrapper, emit_str_globals, sme_panel,
 };
 
 /// A structured, renderer-free emission error (ADR-0020 §1; C3).
@@ -57,11 +57,40 @@ pub struct EmitOpts {
     ///
     /// **Default OFF: measured a 3× LOSS** on M4 Pro at 1024 f32 (S29 —
     /// `fma` 59.8 ms on / 19.8 ms off; the parking traffic outweighs the A
-    /// re-read it removes at this size and cache hierarchy). Kept and tested
-    /// because the lever was designed against BOX-scale traffic (16 GB of A
-    /// re-reads at 4096 on zen3) where it has not yet been measured. A pure
-    /// performance tailor in ADR-0032's sense: bit-exact either way, which the
-    /// differential suite enforces.
+    /// re-read it removes at this size and cache hierarchy).
+    ///
+    /// **S42: SWEPT on the box, and it loses at every depth — the last argument
+    /// for this lever is gone.** It was kept because it "was designed against
+    /// BOX-scale traffic (16 GB of A re-reads at 4096 on zen3) where it has not
+    /// yet been measured".
+    ///
+    /// Measured on an i9-14900F (24C/32T, 48 KB L1d, 2 MB per-core L2, 36 MB L3,
+    /// AVX2, governor `performance`), N=4096, values identical to the Mac's at
+    /// every depth. For `zen3` at f32 the chain is `lanes 8 → tile_j 32 → nc
+    /// 1024`, so `tile_kc = l2_bytes / 8192`; the sweep varies `l2_bytes`:
+    ///
+    /// | depth | blocks | 1 thread | threaded (32) |
+    /// | ---: | ---: | ---: | ---: |
+    /// | unblocked | 1 | **926.759 ms** | **112.919 ms** |
+    /// | 4096 | 1 | 0.978× (gate closed ⇒ *is* unblocked) | 1.000× |
+    /// | 2048 | 2 | 0.548× | 0.595× |
+    /// | 1024 | 4 | 0.557× | 0.759× |
+    /// | 512 | 8 | 0.551× | **0.771×** best |
+    /// | 256 | 16 | 0.560× | 0.767× |
+    /// | 64 | 64 | 0.454× | 0.668× |
+    ///
+    /// **A step function, not a curve**: any blocking at all costs ~1.8× at one
+    /// thread and ~1.3× at best threaded, at *every* depth from 2 to 64 blocks.
+    /// Unlike the SME k-panel — where one wrong depth made the technique look
+    /// worthless (`func/sme.rs`) — here there is no optimum to find.
+    ///
+    /// ⇒ **`kc_nest` has now lost on every machine available, swept rather than
+    /// spot-checked.** "Unmeasured on the box" is no longer a reason to keep it.
+    /// Either a machine justifies it in writing, or delete the lever.
+    ///
+    /// A pure performance tailor in ADR-0032's sense: bit-exact either way, which
+    /// the differential suite enforces — and which the cross-machine run
+    /// independently confirmed, ARM and x86 printing identical values.
     pub kc_nest: bool,
     /// The machine facts the emitter tiles against, selected **by name**
     /// (plan-s31-target-profiles): `generic` (the default — today's literals,
@@ -235,7 +264,12 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
     // three intrinsic declarations and the one streaming panel kernel appear
     // exactly when some tile site took the SME rung. A module without one is
     // byte-identical to what it was before the rung existed.
-    let sme = funcs.contains("@mapal_sme_panel(");
+    // Two kernels, detected independently: `@mapal_sme_panel(` cannot match
+    // `@mapal_sme_panel_acc(` because of the paren, so the KC variant appears
+    // only where the KC nest actually called it.
+    let sme_store = funcs.contains("@mapal_sme_panel(");
+    let sme_acc = funcs.contains("@mapal_sme_panel_acc(");
+    let sme = sme_store || sme_acc;
     if sme {
         out.push_str(SME_DECLS);
     }
@@ -256,7 +290,12 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
         let expect = "the SME rung only fires on a profile with an SME unit";
         let t = profile.sme_tile_side(&f32).expect(expect);
         let (ti, tj) = profile.sme_block(&f32).expect(expect);
-        out.push_str(&sme_panel(t, ti, tj));
+        if sme_store {
+            out.push_str(&sme_panel(t, ti, tj, PanelWrite::Store));
+        }
+        if sme_acc {
+            out.push_str(&sme_panel(t, ti, tj, PanelWrite::Accumulate));
+        }
     }
     out.push_str(&emit_main_wrapper(ir));
     Ok(out)
