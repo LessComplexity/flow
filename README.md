@@ -21,13 +21,12 @@
 
 - [The idea](#the-idea)
   - [What the compiler works out for you](#what-the-compiler-works-out-for-you)
-  - [Why category theory](#why-category-theory)
 - [Results](#results)
   - [Matrix multiply, f32 — M4 Pro](#matrix-multiply-f32--m4-pro)
   - [Other shapes — M4 Pro](#other-shapes--m4-pro)
   - [The same shapes on an i9-14900F](#the-same-shapes-on-an-i9-14900f)
   - [Against a hand-tuned BLAS, on equal hardware](#against-a-hand-tuned-blas-on-equal-hardware)
-  - [Two builds](#two-builds)
+  - [Three builds](#three-builds)
 - [Status](#status)
 - [Scope](#scope)
 - [Trying it](#trying-it)
@@ -38,15 +37,13 @@
 
 <!--toc:end-->
 
-**Parallel-first programming language.** The syntax is a serialization of an execution graph:
-the parser's tree is scratch space, the graph is the program. Optimization happens on that
-graph — dataflow-first, not the control-flow-first IRs (GIMPLE, MIR, LLVM IR) everyone else
-optimizes on -> facts a traditional compiler cannot see. Same code -> runs everywhere: CPU,
-GPU, FPGA, ASIC.
+**A programming language that parallelizes your code for you.**
 
-The graph is read once and the facts are deduced from it: what runs concurrently, which reads
-repeat, which axes split, which indices are provably in bounds -> handed to every backend.
-No threads, no locks, no intrinsics, no tuning pragmas in the source.
+You write what you want computed. Mapal works out what can run at the same time, how to split it
+across cores, how to use the vector and matrix hardware, and which bounds checks it can safely
+drop. No threads, no locks, no intrinsics, no tuning pragmas — none of it appears in the source.
+
+The same source runs on CPU and GPU, with FPGA planned.
 
 ```flow
 fn main() {
@@ -62,54 +59,20 @@ That runs across every core of the machine. Nothing in the source says so.
 
 ## The idea
 
-> **The compiler derives several target implementations from one source, while preserving one
-> explicit semantics.**
+Fast code is usually fast because a human wrote machine details into it: tile sizes, thread
+counts, vector widths, memory layouts. Those details are what stop it moving to other hardware.
 
-Fast code is usually fast because a human wrote machine details into the program: tile sizes,
-thread counts, vector widths, memory layouts. Those details do not survive a move to different
-hardware.
-
-Mapal splits the two apart:
-
-|                                                                                                 | Comes from                          | Portable?                                  |
-| ----------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------ |
-| **Geometry** — what depends on what, what can run at once, which reads repeat, which axes split | **deduced from the graph**, exactly | **yes** — a fact about the program         |
-| **Constants** — tile widths, thread counts, cache blocking                                      | facts about the _machine_           | no — and they do not belong in the source  |
-
-Source carries the first kind only. The second lives in a target profile.
+Mapal keeps them out of your source. The program says what depends on what; the machine details
+come from a target profile the compiler picks. Change the machine, keep the source.
 
 ### What the compiler works out for you
 
-| Deduced from the graph        | What it produces                                     | Query          |
-| ----------------------------- | ---------------------------------------------------- | -------------- |
-| what can run at once          | a task DAG on a work-stealing pool                   | `path_plan`    |
-| which loops are matrix-shaped | a register-blocked, cache-blocked, vectorized kernel | `tile_plan`    |
-| which reads repeat            | data packed once instead of re-fetched               | `TileRead`     |
-| which indices are in bounds   | those checks removed, and only those                 | `bounds_proof` |
+- What can run at the same time, and how to spread it across cores
+- Which loops are matrix-shaped, and how to tile them for the cache and the vector registers
+- Which data is read repeatedly, so it gets laid out once instead of re-fetched
+- Which bounds checks are provably unnecessary — and only those
 
-Computed once, available to every backend:
-[`docs/architecture/deduced-queries.md`](docs/architecture/deduced-queries.md).
-
-### Why category theory
-
-The split above is checkable, not arguable. Two places where that pays:
-
-**Two optimizations get proven to be one optimization.** Reads are modeled as morphisms, and
-the compiler asks whether two of them agree. Row blocking for matrix multiply needs a
-row-invariant read (`ci == 0`); convolution needs a sliding one (`ci == cq`). As predicates
-over the recorded read structure those are **one predicate at `q = 0` and `q = 1`**. So conv2d
-row blocking was never written for convolution -> it fell out of the model, cost ~60 lines,
-and gave conv2d **−25% at one thread**. A pattern-matching optimizer needs two passes for that.
-
-**"Good architecture" becomes a check.** The compiler's own design is modeled as data,
-transformations, locations and transmissions, with coherence laws a design either satisfies or
-fails -> a datum read where nothing put it is a _failed law_, not a matter of taste. Those laws
-located a live measurement bug: the timed region carried an undeclared transmission, the OS
-handing over physical pages.
-
-Checkable rules, not machine-checked proof. The model is in
-[`docs/architecture/categorical-model.md`](docs/architecture/categorical-model.md) (ADR-0014),
-and component specs cite the rule they apply.
+How it does that: [`docs/architecture/`](docs/architecture/).
 
 ---
 
@@ -118,52 +81,37 @@ and component specs cite the rule they apply.
 Apple M4 Pro (10 P + 4 E), kernel time only. Baselines: naive triple loops at
 `-O3 -march=native -ffp-contract=fast`, split across threads. NumPy is the expert-tuned column.
 
-Statistic: single-threaded cells are the minimum of N runs, threaded cells the **median**.
+Single-threaded numbers are the fastest of N runs; threaded numbers are the median.
 
-Both builds are shown. **FMA off** is the default and is bit-identical to the interpreter;
-**FMA on** (`--contract`) allows fused multiply-add. C++ and NumPy fuse; Rust does not.
+Where two Mapal columns appear: **FMA off** is the default build and gives bit-identical results to
+the interpreter every time. **FMA on** (`--contract`) lets the hardware fuse multiply and add, which
+is faster and changes the last bit. C++ and NumPy fuse by default; Rust does not.
 
 Method, machine specs and raw logs: [`docs/performance/`](docs/performance/) ·
 [`benches/results-s36/`](benches/results-s36/).
 
 ### Matrix multiply, f32 — M4 Pro
 
-All four sizes, one measurement campaign each, medians of alternating runs, values byte-identical
-across every Mapal build. NumPy reaches the matrix coprocessor through Accelerate; the SME column
-is Mapal reaching the same class of unit.
+Mapal and NumPy run **alternating in the same session**, and both must print the same answer before
+any time is recorded. NumPy on this machine uses Apple's Accelerate, which reaches the same matrix
+hardware Mapal targets — so this is like-for-like, not a naive baseline.
 
-**Threaded:**
+**Threaded** (Mapal's `--target=apple-m4-sme` build):
 
-|    N | Mapal FMA off | Mapal FMA on | **Mapal SME** | C++ naive-mt | Rust naive-mt | NumPy mt | NumPy ahead |
-| ---: | ------------: | -----------: | ------------: | -----------: | ------------: | -------: | ----------: |
-|  512 |             — |      0.558 ms | **0.223 ms** |            — |             — |    0.108 |       2.07× |
-| 1024 |       3.65 ms |      2.26 ms | **0.943 ms**  |          125 |           117 |    0.676 |       1.40× |
-| 2048 |             — |      18.9 ms | **6.97 ms**   |        1,355 |         1,425 |     5.30 |       1.31× |
-| 4096 |        245 ms |       152 ms | **56.7 ms**   |       33,439 |        33,574 |     44.1 |   **1.28×** |
+|    N |    Mapal |    NumPy |                        |
+| ---: | -------: | -------: | ---------------------- |
+| 1024 |  0.81 ms |  0.67 ms | NumPy ahead 1.21×      |
+| 2048 |  5.17 ms |  5.30 ms | tie                    |
+| 4096 | **38.6 ms** | 43.9 ms | **Mapal ahead 1.14×** |
 
-**Single-threaded:**
+At 4096 that is **3,562 GFLOP/s against NumPy's 3,128** — the first size where Mapal is ahead, and
+the distributions do not overlap: Mapal's slowest run beats NumPy's fastest.
 
-|    N | Mapal FMA on | **Mapal SME** | vs FMA on | NumPy 1t | NumPy ahead |
-| ---: | -----------: | ------------: | --------: | -------: | ----------: |
-|  512 |      2.25 ms | **0.347 ms**  |     6.50× |    0.160 |       2.17× |
-| 1024 |      19.4 ms | **2.10 ms**   |     9.25× |     1.30 |   **1.62×** |
-| 2048 |       155 ms | **17.6 ms**   |     8.83× |     10.5 |       1.67× |
-| 4096 |     1,286 ms | **192 ms**    |     6.70× |     84.6 |       2.27× |
+**Single-threaded, NumPy is still about 2× ahead at every size.** That is the open gap, and it is a
+different problem from the threaded one ([why](docs/performance/s43-residency-and-the-thermal-artifact.md)).
 
-Every row above is a disjoint distribution — the slowest SME run beats the fastest NEON run.
-
-**55× the naive baseline at 1024², 216× at 4096².** SME closes the single-threaded NumPy gap from
-**13.5× to 1.62×** at 1024², and the threaded gap from **3.3× to 1.28×** at 4096². It does not beat
-NumPy anywhere.
-
-Throughput, GFLOP/s, which is where the remaining gap is legible:
-
-|    N | Mapal FMA on | **Mapal SME** | NumPy | Mapal as % of NumPy |
-| ---: | -----------: | ------------: | ----: | ------------------: |
-|  512 |          481 |      **1,204** | 2,497 |                 48% |
-| 1024 |          951 |      **2,278** | 3,178 |                 72% |
-| 2048 |          910 |      **2,466** | 3,239 |                 76% |
-| 4096 |          907 |      **2,424** | 3,113 |             **78%** |
+For scale: naive threaded C++ at `-O3 -march=native -ffp-contract=fast` takes **33,439 ms** on the
+4096² case.
 
 ### Other shapes — M4 Pro
 
@@ -206,10 +154,10 @@ does not, so neither machine is the whole story
 
 ### Against a hand-tuned BLAS, on equal hardware
 
-On the M4, NumPy's matmul runs on the matrix coprocessor. Before Mapal emitted SME it was 3.3×
-ahead threaded and 13.5× at one thread — a different execution unit, not better codegen. With SME
-both sides now use a matrix unit, and it is 1.4× ahead threaded, 1.6× at one thread. On an
-i9-14900F, where NumPy goes through OpenBLAS on the same AVX2 units Mapal targets, 1024² f32:
+On the M4, NumPy's matmul runs on the chip's matrix hardware. Before Mapal could use that hardware
+NumPy was 3.3× ahead threaded — a different execution unit, not better code generation. Now both
+sides use it, and the threaded result is above. On an i9-14900F, where NumPy goes through OpenBLAS
+on the same vector units Mapal targets, 1024² f32:
 
 | i9-14900F, 1024² f32     |    Mapal |    NumPy | gap          |
 | ------------------------ | -------: | -------: | ------------ |
@@ -258,13 +206,12 @@ Rust never does, NumPy calls hand-written FMA kernels.
 | GPU backend (CUDA)     | working — 640 compile-and-runs on an RTX 4090, July 2026; **not re-validated on hardware since.** No `time` builtin           |
 | FPGA backend (Verilog) | not started                                                                                                                   |
 | Command-line tool      | **not built** — `mapal` prints "not yet implemented" and exits 1                                                              |
-| Tests                  | ~950; 161 are CUDA's and skip without `nvcc`. Green                                                                           |
+| Tests                  | 1,032; 161 are CUDA's and skip without `nvcc`. Green                                                                           |
 | CI                     | `cargo fmt` + full suite on Linux and macOS, per push. Cannot pass vacuously — a skipped LLVM differential fails the run      |
 
-**What byte-identical covers today:** 10 examples plus 320 generated programs, raw and
-rewritten, at `-O0` and `-O2` against the interpreter -> 1,280 comparisons per run, CPU
-backend. Thread-count variation is pinned on parallel-shaped programs, not the whole corpus.
-CUDA gets the same treatment only when an NVIDIA machine is rented.
+**"Byte-identical" means:** every compiled program is checked to print exactly what the
+interpreter prints — 10 examples plus 320 generated programs, at two optimization levels, 1,280
+comparisons on every run. Changing the thread count does not change the answer.
 
 Per-component state and test counts: [`docs/STATUS.md`](docs/STATUS.md).
 
@@ -281,9 +228,9 @@ already has a fast version of.
 closures, dynamic arrays, modules. Exactly two effects. General-purpose in shape, not yet in
 surface.
 
-**Target: co-execution** -> one program whose parts run on several processors at once, with the
-data movement between them typed and checked instead of hand-managed. Same output, byte for
-byte, however the work was split.
+**Where it is going:** one program whose parts run on several processors at once — CPU and GPU
+together — with the data movement between them handled by the compiler rather than by hand. Same
+answer, byte for byte, however the work gets split.
 
 ---
 
@@ -310,8 +257,8 @@ language, `fir.mapal` for a loop.
 
 ### Editor support
 
-Both editors get highlighting and a file icon. Neither is published to a registry -> load from
-disk.
+Both editors get highlighting and a file icon. Neither is published to a registry, so both load
+from disk.
 
 |                 | Neovim                                     | VS Code                                      |
 | --------------- | ------------------------------------------ | -------------------------------------------- |
@@ -364,20 +311,19 @@ so neither resolves names the way the compiler does (ADR-0008).
 
 1. ~~**Machine profiles**~~ — done. Tuning constants moved out of the compiler into a named
    table of machine facts.
-2. ~~**conv2d row blocking**~~ — done, deduced from the recorded read structure.
-3. ~~**Per-region scheduling**~~ — mostly done and on by default. Remaining: derive the size
-   from the _program_, deduce the width, compose plans across a wide DAG
-   ([plan-s32](docs/components/backend-llvm/plans/plan-s32-deduced-scheduling.md)).
+2. ~~**Faster convolution**~~ — done; the compiler works the blocking out from how the data is read.
+3. ~~**Smarter work splitting**~~ — mostly done and on by default. Still to do: pick the number of
+   threads from the program itself
+   ([plan](docs/components/backend-llvm/plans/plan-s32-deduced-scheduling.md)).
 4. ~~**The rewriter could delete a trap that must fire**~~ — fixed
    ([plan-s34](docs/components/rewrite/plans/plan-s34-identity-map-trap.md)).
-5. ~~**A pool race made every threaded measurement suspect**~~ — fixed. A clock read is now a node
-   in the task DAG, so work written after it cannot be dispatched before it fires
-   ([plan-s33b](docs/components/backend-llvm/plans/plan-s33b-clock-read-barrier.md)).
-6. **Matrix units** (Arm SME, Intel AMX). The cross-machine result is the argument: without a
-   matrix unit we match OpenBLAS, so the M4's remaining gap is a different execution unit, not
-   better codegen. They change arithmetic ordering, so this gets an explicit opt-in, never a
-   silent default.
-7. **Then GPUs in earnest**, then co-execution.
+5. ~~**A timing bug made every threaded measurement suspect**~~ — fixed; work can no longer start
+   before the clock meant to time it
+   ([plan](docs/components/backend-llvm/plans/plan-s33b-clock-read-barrier.md)).
+6. ~~**Matrix units** (Arm SME)~~ — shipping behind an opt-in flag, because they change
+   arithmetic ordering and that should never be silent. Threaded 4096² matmul now beats NumPy.
+7. **Close the single-threaded gap**, where NumPy is still ~2× ahead.
+8. **Intel AMX**, then GPUs in earnest, then running one program across several processors at once.
 
 ---
 
@@ -394,8 +340,8 @@ Everything is written down, including what turned out wrong:
 **Contributing:** [`CONTRIBUTING.md`](CONTRIBUTING.md) — the model-first workflow, the
 measurement rules, and the [open ADRs](docs/decisions/README.md) anyone can pick up (dynamic
 arrays, generics, sum types, an external-backend SDK, co-execution, `scan`). Recursion, modules
-and closures are not in the language yet and have no ADR -> writing one is the contribution that
-unblocks the code. Forks welcome. One house rule: a change arrives with the evidence of what it
+and closures are not in the language yet and have no decision record — writing one is the
+contribution that unblocks the code. Forks welcome. One house rule: a change arrives with the evidence of what it
 did, and names the published numbers it moves.
 
 ---

@@ -1,0 +1,1520 @@
+perflock: acquired (waited 0s lock / 0s quiet) — running: cargo test --workspace --release
+warning: output filename collision at /Volumes/LessComplex/Personal/mapal/.claude/worktrees/agent-a03f9b23183f1440c/target/release/examples/emit
+  |
+  = note: the example target `emit` in package `mapal-backend-llvm v0.0.1 (/Volumes/LessComplex/Personal/mapal/.claude/worktrees/agent-a03f9b23183f1440c/crates/backends/llvm)` has the same output filename as the example target `emit` in package `mapal-backend-cuda v0.0.1 (/Volumes/LessComplex/Personal/mapal/.claude/worktrees/agent-a03f9b23183f1440c/crates/backends/cuda)`
+  = note: this may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>
+  = help: consider changing their names to be unique or compiling them separately
+warning: output filename collision at /Volumes/LessComplex/Personal/mapal/.claude/worktrees/agent-a03f9b23183f1440c/target/release/examples/emit.dSYM
+  |
+  = note: the example target `emit` in package `mapal-backend-llvm v0.0.1 (/Volumes/LessComplex/Personal/mapal/.claude/worktrees/agent-a03f9b23183f1440c/crates/backends/llvm)` has the same output filename as the example target `emit` in package `mapal-backend-cuda v0.0.1 (/Volumes/LessComplex/Personal/mapal/.claude/worktrees/agent-a03f9b23183f1440c/crates/backends/cuda)`
+  = note: this may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>
+  = help: consider changing their names to be unique or compiling them separately
+    Finished `release` profile [optimized] target(s) in 0.06s
+     Running unittests src/lib.rs (target/release/deps/mapal_backend_cuda-a53669eb4d1337d5)
+
+running 118 tests
+test func::tests::allocation_registry_skeleton ... ok
+test arena::tests::scalar_fns_have_no_zone ... ok
+test arena::tests::over_capacity_is_unsupported ... ok
+test func::tests::and_or_are_bitwise_never_short_circuit ... ok
+test arena::tests::at_capacity_emits ... ok
+test arena::tests::product_elements_use_abi_sizes ... ok
+test arena::tests::cone_sites_are_not_zone_members ... ok
+test arena::tests::offsets_are_disjoint_aligned_and_topo_ordered ... ok
+test func::tests::empty_registry_emits_no_frees ... ok
+test func::tests::const_neg_one_divisor_keeps_only_the_min_guard ... ok
+test func::tests::float_literals_round_trip ... ok
+test func::tests::div_mod_guards_host_shape ... ok
+test func::tests::const_zero_divisor_keeps_the_zero_guard ... ok
+test func::tests::float_div_mod_never_had_guards ... ok
+test func::tests::float_arith_is_plain_and_mod_is_fmod ... ok
+test func::tests::in_place_update_borrowed_parameter_source_keeps_full_copy ... ok
+test func::tests::const_divisor_elides_both_guards_host ... ok
+test func::tests::literals_render_at_width ... ok
+test func::tests::float_neg_of_negative_constant_is_parenthesized ... ok
+test func::tests::neg_wraps_via_unsigned_cast ... ok
+test kernel::tests::abi_sizeof_products_follow_c_layout ... ok
+test kernel::tests::abi_sizeof_residual_one_is_the_bare_component ... ok
+test func::tests::const_divisor_elides_guards_in_twin_and_host_device ... ok
+test func::tests::in_place_update_dead_literal_source_writes_in_place ... ok
+test kernel::tests::abi_sizeof_scalars_at_width ... ok
+test kernel::tests::align_up_rounds_to_powers_of_two ... ok
+test func::tests::residual_one_pair_is_bare_no_struct ... ok
+test func::tests::str_print_passes_pointer_and_explicit_len ... ok
+test kernel::tests::buffer_bytes_of_is_flat_base_times_flat_count ... ok
+test func::tests::u8_print_routes_to_flow_print_u8 ... ok
+test func::tests::int_arith_wraps_via_unsigned_casts ... ok
+test func::tests::array_bulk_ops_emit_wp3 ... ok
+test func::tests::residual_two_pair_uses_named_struct_fields ... ok
+test func::tests::phi_is_strict_select_over_temporaries ... ok
+test func::tests::unsigned_div_has_only_the_zero_guard ... ok
+test kernel::tests::capturing_map_threads_capture_through_kernel_launch_and_body_call ... ok
+test func::tests::product_return_with_array_component_guards_free ... ok
+test kernel::tests::capturing_fold_threads_capture_through_kernel_launch_and_body_call ... ok
+test func::tests::phi_selected_array_return_guards_free ... ok
+test kernel::tests::bounds_guard_width_rule_never_size_t ... ok
+test kernel::tests::dead_host_twin_skips_host_definition_and_kernels ... ok
+test func::tests::nested_product_return_guards_free_recursively ... ok
+test kernel::tests::fold_erased_acc_degrades_gracefully ... ok
+test kernel::tests::body_fn_scalar_loop_is_host_device_quartet ... ok
+test kernel::tests::elementwise_kernel_shape_and_grid ... ok
+test kernel::tests::host_device_fn_product_with_array_return_is_unsupported ... ok
+test kernel::tests::fold_kernel_array_acc_stays_on_device ... ok
+test kernel::tests::index_kernel_array_elem_copies_in_kernel ... ok
+test kernel::tests::device_call_trap_check_after_call ... ok
+test kernel::tests::iota_fill_host_kernels_are_64_bit_trap_free_and_deduped ... ok
+test kernel::tests::capturing_map_with_bulk_body_classifies_twin_and_inlines_captures ... ok
+test kernel::tests::host_device_fn_called_from_both_sites ... ok
+test kernel::tests::host_called_twin_keeps_host_definition_and_kernels ... ok
+test kernel::tests::host_device_fn_div_guard_is_ifdef_split ... ok
+test kernel::tests::literal_nested_elements_device_to_device ... ok
+test kernel::tests::qualifier_array_return_body_is_twin_even_without_bulk_ops ... ok
+test kernel::tests::map_body_returning_product_with_array_is_unsupported ... ok
+test kernel::tests::map_body_local_product_with_array_is_unsupported ... ok
+test kernel::tests::proven_index_trims_guard_param_arg_and_check_unproven_keeps ... ok
+test kernel::tests::qualifier_token_bearing_is_host_only ... ok
+test kernel::tests::qualifier_bulk_is_transitive_through_calls ... ok
+test kernel::tests::qualifier_body_reachable_bulk_is_twin ... ok
+test kernel::tests::emission_order_device_before_kernels_before_host ... ok
+test kernel::tests::enumerate_kernel_index_is_thread_index ... ok
+test kernel::tests::fold_kernel_single_thread_oracle_order ... ok
+test kernel::tests::qualifier_pure_scalar_not_body_reachable_is_host_only ... ok
+test kernel::tests::literal_upload_static_const_one_memcpy ... ok
+test kernel::tests::trap_caps_flows_callerward_through_calls ... ok
+test kernel::tests::trap_flag_stores_encode_kind_plus_one ... ok
+test kernel::tests::qualifier_twin_propagates_callerward_through_calls ... ok
+test kernel::tests::trap_caps_int_div_capable_float_div_not ... ok
+test kernel::tests::twin_div_guard_sets_flag_and_returns ... ok
+test kernel::tests::twin_enumerate_erased_source_degrades_gracefully ... ok
+test kernel::tests::twin_float_neg_of_negative_constant_is_parenthesized ... ok
+test kernel::tests::twin_index_guard_sets_flag_and_returns ... ok
+test kernel::tests::qualifier_body_reachable_pure_scalar_is_host_device ... ok
+test kernel::tests::twin_iota_fill_are_local_loops ... ok
+test kernel::tests::twin_signature_array_return_uses_out_param ... ok
+test kernel::tests::twin_body_local_literal_initializer ... ok
+test kernel::tests::trap_free_float_body_trims_kernel_param_arg_and_check ... ok
+test kernel::tests::index_kernel_scalar_readback_d2h ... ok
+test kernel::tests::twin_map_erased_source_degrades_gracefully ... ok
+test kernel::tests::twin_proven_index_elides_guard ... ok
+test module::tests::main_wrapper_erased_return_just_calls ... ok
+test module::tests::main_wrapper_does_not_free_returned_array ... ok
+test kernel::tests::twin_inline_map_is_per_thread_sequential_loop ... ok
+test module::tests::main_wrapper_open_input_value_initializes ... ok
+test kernel::tests::zip_over_nested_arrays_is_unsupported ... ok
+test module::tests::main_wrapper_prints_scalar_return ... ok
+test module::tests::prelude_trap_check_decodes_kind_plus_one ... ok
+test module::tests::prelude_has_rt_decls_and_exit_102_protocol ... ok
+test module::tests::prod_struct_emission_shape ... ok
+test kernel::tests::update_kernel_full_copy_and_guard ... ok
+test kernel::tests::twin_body_loop_is_per_thread_sequential_quartet ... ok
+test module::tests::prod_structs_dedupe_and_first_appearance_order ... ok
+test module::tests::prod_structs_recurse_through_arrays_and_residual_one ... ok
+test module::tests::prod_structs_nested_define_inner_first ... ok
+test module::tests::str_escaping_quotes_backslashes_and_non_printables ... ok
+test kernel::tests::widen_is_trap_free_device_scalar_with_no_kernel_site ... ok
+test ty::tests::arrays_lower_to_device_pointer_text ... ok
+test module::tests::str_globals_collect_and_emit ... ok
+test ty::tests::erased_index_remaps_past_erased_slots ... ok
+test ty::tests::erased_trio_lowers_to_none ... ok
+test ty::tests::nested_arrays_peel_to_flat_base_pointer ... ok
+test ty::tests::products_residual_one_materialize_bare ... ok
+test ty::tests::products_residual_two_plus_get_named_struct ... ok
+test ty::tests::products_residual_zero_erase ... ok
+test ty::tests::residual_arity_counts_survivors ... ok
+test ty::tests::residual_contains_array_predicate ... ok
+test ty::tests::scalars_lower_to_cpp_spellings ... ok
+test ty::tests::signedness_is_honored_and_non_core_floats_erase ... ok
+test ty::tests::tree_contains_product_with_array_predicate ... ok
+test kernel::tests::vector_add_launch_count_and_trap_checks ... ok
+test kernel::tests::literal_computed_elements_plain_local ... ok
+test kernel::tests::product_array_cell_does_not_fire_on_supported_shapes ... ok
+test kernel::tests::emit_twice_byte_equal ... ok
+test kernel::tests::twin_local_array_at_budget_emits_over_is_unsupported ... ok
+test kernel::tests::fold_kernel_acc_at_budget_emits_over_is_unsupported ... ok
+
+test result: ok. 118 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/differential.rs (target/release/deps/differential-777051cf6dc2198a)
+
+running 15 tests
+test local::classify_done_byte_equal ... ok
+test local::classify_exit_102_is_infra_never_a_data_point ... ok
+test local::classify_timeout_and_other_exits ... ok
+test local::classify_trap_classes_never_cross ... ok
+test local::compile_recipe_argv_pinned ... ok
+test local::nvcc_discovery_order ... ok
+test differential_exit_only_payload_emitted_once ... ok
+test differential_examples_raw_and_rewritten ... ok
+test differential_testgen_closed_sweep ... ok
+test differential_iota_fill ... ok
+test differential_traps_exit_101 ... ok
+test differential_widen ... ok
+test differential_float_print_parity ... ok
+test differential_two_sequential_loops ... ok
+test differential_matmul_loop_driven_update ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/gate.rs (target/release/deps/gate-46b7bee1af7c04b1)
+
+running 4 tests
+test nested_loop_is_unsupported ... ok
+test straight_line_passes_gate ... ok
+test canonical_loop_passes_gate ... ok
+test determinism_emit_twice_identical ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/golden_cu.rs (target/release/deps/golden_cu-2e5e850fd10dba8f)
+
+running 26 tests
+test abs_structural_lines ... ok
+test exit_arm_print_emitted_once ... ok
+test iota_fill_are_arena_members ... ok
+test exit_only_payload_emitted_once ... ok
+test golden_one_kernel_matmul ... ok
+test loop_update_borrowed_init_keeps_full_copy ... ok
+test loop_update_structural_lines ... ok
+test perf_timing_instruments_cone_launches_once_created ... ok
+test captured_twin_fold_hoists_invariant_fields ... ok
+test twin_update_dead_source_skips_copy ... ok
+test sum_to_n_structural_lines ... ok
+test map_in_loop_back_edge_frees_outgoing_handle ... ok
+test twin_fold_scalar_result_into_scalar_op_is_named ... ok
+test update_escaping_source_keeps_full_copy ... ok
+test update_source_read_after_write_keeps_full_copy ... ok
+test widen_is_scalar_and_emits_host_c_casts ... ok
+test sepia_structural_lines ... ok
+test arena_gates_plan_section_7 ... ok
+test perf_timing_instruments_launches ... ok
+test arena_emit_twice_byte_equal ... ok
+test determinism_emit_twice_byte_equal ... ok
+test golden_micro_arith ... ok
+test golden_iota_fill ... ok
+test golden_micro_loop_update ... ok
+test golden_micro_two_loops ... ok
+test golden_examples ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/release/deps/mapal_backend_llvm-27594ef87e753992)
+
+running 25 tests
+test profile::tests::apple_m4_sme_derives_the_measured_tile_side ... ok
+test profile::tests::apple_m4_sme_moves_only_the_sme_field ... ok
+test profile::tests::apple_m_raises_the_kc_threshold_above_every_k_we_run ... ok
+test profile::tests::cuda_ada_cpu_shaped_fields_are_inherited_placeholders ... ok
+test profile::tests::every_pre_s41_profile_is_cpu ... ok
+test profile::tests::generic_reproduces_the_six_literals ... ok
+test profile::tests::gpu_facts_are_asked_for_never_defaulted ... ok
+test profile::tests::kc_apanel_scales_with_l2 ... ok
+test profile::tests::named_profiles_override_detection ... ok
+test profile::tests::sme_block_is_the_square_most_split_of_the_tile_count ... ok
+test profile::tests::sme_block_spends_every_tile_and_stays_square_most ... ok
+test profile::tests::sme_is_absent_from_every_pre_sme_profile ... ok
+test profile::tests::sme_kc_reproduces_the_measured_optimum ... ok
+test profile::tests::sme_panel_and_packed_b_panel_coincide_on_this_part ... ok
+test profile::tests::the_sme_budget_is_not_the_neon_one ... ok
+test profile::tests::tile_i_is_the_register_budget_not_a_taste ... ok
+test profile::tests::unknown_name_is_not_silently_generic ... ok
+test profile::tests::zen3_moves_two_constants_at_once ... ok
+test reuse::tests::conv_b_slides_by_one_tap_row ... ok
+test reuse::tests::conv_reuse_is_two_at_ti_four_not_three ... ok
+test reuse::tests::matmul_b_is_invariant_and_a_shares_nothing ... ok
+test reuse::tests::one_dimensional_sites_report_vacuous_invariance ... ok
+test reuse::tests::unaligned_or_oversized_slide_shares_nothing ... ok
+test profile::tests::native_reproduces_the_hand_written_profile ... ok
+test profile::tests::native_reads_the_facts_it_claims_to ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/differential.rs (target/release/deps/differential-ceb9085118a913d1)
+
+running 37 tests
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+test differential_parallel_trap_order ... ok
+test differential_default_rewritten_matmul4_lifts_and_tiles ... ok
+test differential_parallel_run_twice ... ok
+test differential_iota_fill ... ok
+test differential_parallel_env_matrix ... ok
+test differential_parallel_bign ... ok
+test differential_matmul_loop_driven_update ... ok
+test differential_tiled_conv2d ... ok
+test differential_testgen_closed_sweep ... ok
+test differential_heap_lowered_arrays ... ok
+test differential_tiled_conv2d_remainder ... ok
+test differential_tiled_conv2d_split ... ok
+test differential_tiled_fir ... ok
+test differential_tiled_fir_remainder ... ok
+test differential_tiled_fir_split ... ok
+test differential_tiled_matmul ... ok
+test differential_tiled_matmul_kc_32x32x200 ... ok
+test differential_byref_call_args ... ok
+test differential_computed_exit_payloads ... ok
+test differential_tiled_matmul_kc_c540 ... ok
+test differential_tiled_matmul_kc_middle_panel ... ok
+test differential_tiled_matmul_kc_split ... ok
+test differential_captures has been running for over 60 seconds
+test differential_examples_raw_and_rewritten has been running for over 60 seconds
+test differential_time_bracket ... ok
+test differential_trap_preserves_preceding_output ... ok
+test differential_tiled_matmul_loop_carried_pack ... ok
+test differential_tiled_matmul_r5_c20_k7 ... ok
+test differential_two_sequential_loops ... ok
+test differential_tiled_matmul_r6_c32_k5 ... ok
+test differential_u8_index_and_print ... ok
+test differential_tiled_matmul_via_helper_fn ... ok
+test differential_captures ... ok
+test differential_traps_exit_101 ... ok
+test differential_tiled_matmul_kc_f64 ... ok
+test differential_widen ... ok
+test differential_tiled_matmul_r6_c20_k5_f64 ... ok
+test differential_zen3_profile_is_value_invariant ... ok
+test differential_examples_raw_and_rewritten ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 82.77s
+
+     Running tests/golden_ll.rs (target/release/deps/golden_ll-c9e6d9646b4c9521)
+
+running 31 tests
+test exit_only_payload_emitted_once ... ok
+test capture_array_staging_never_loads_whole ... ok
+test golden_heap_lowered_frame ... ok
+test default_opts_are_byte_identical ... ok
+test determinism_emit_twice_byte_equal ... ok
+test golden_capture_one_kernel_matmul ... ok
+test golden_micro_update ... ok
+test golden_micro_arith ... ok
+test golden_capture_map ... ok
+test golden_proven_index_fn_clean_attrs ... ok
+test golden_capture_fold ... ok
+test nested_loop_is_unsupported ... ok
+test golden_proven_index_guard_elision ... ok
+test golden_micro_two_loops ... ok
+test golden_parallel_matmul_cap ... ok
+test golden_tile_map_shape_1d ... ok
+test parallel_scalar_guard_publishes_watermark ... ok
+test golden_tile_map_shape_conv ... ok
+test unknown_profile_is_an_error_not_a_silent_default ... ok
+test widen_emits_conversion_instructions ... ok
+test perf_timing_golden ... ok
+test golden_tile_map_shape_kc ... ok
+test time_inside_a_loop_stays_inside_the_loop ... ok
+test golden_update_memcpy_kept_when_not_dead ... ok
+test golden_update_inplace_carried_loop ... ok
+test time_bracket_fences_the_tasks_it_brackets ... ok
+test parallel_effectful_loop_waits_before_entry ... ok
+test tile_contract_flags_are_opt_in ... ok
+test golden_tile_map_shapes ... ok
+test golden_examples ... ok
+test profile_closes_the_kc_gate_by_derivation ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/perf_baseline.rs (target/release/deps/perf_baseline-d958a120dab827ef)
+
+running 1 test
+test sepia_perf_baseline ... ignored, long-running perf baseline; run with --ignored --nocapture
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/sme_rung.rs (target/release/deps/sme_rung-a8b10d5d9a1365dc)
+
+running 8 tests
+test sme_kernel_spends_every_za_tile_the_profile_records ... ok
+test sme_rung_emits_the_verified_kernel ... ok
+test sme_rung_is_a_contract_face_realization ... ok
+test nc_is_default_off ... ok
+test nc_blocks_the_b_panel_without_touching_the_kernel ... ok
+test an_nc_the_rung_cannot_honour_moves_no_byte ... ok
+test sme_rung_is_unreachable_from_every_other_profile ... ok
+test sme_profile_is_byte_identical_to_apple_m_wherever_the_rung_declines ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/tile_sites_pin.rs (target/release/deps/tile_sites_pin-03fdd19693000eef)
+
+running 3 tests
+test tile_sites_recognized_per_bench_source ... ok
+test the_record_is_a_pure_function_of_the_graph ... ok
+test geometry_record_content_is_pinned_and_target_independent ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/release/deps/mapal_backend_verilog-c5a72f3bd297e311)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/mapal_check-eb53aa035f79cbb2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (target/release/deps/acceptance-14ed8e6fc3d250aa)
+
+running 12 tests
+test cross_pass_order_is_exclusivity_then_effects ... ok
+test determinism_identical_across_runs ... ok
+test accept_abs ... ok
+test accept_pipeline ... ok
+test accept_seq_demo ... ok
+test accept_fanout ... ok
+test accept_sum_to_n ... ok
+test accept_fir ... ok
+test accept_vector_add ... ok
+test accept_calc ... ok
+test accept_zip_demo ... ok
+test accept_sepia ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/effects.rs (target/release/deps/effects-9713b9e1dfc27527)
+
+running 12 tests
+test toplevel_seq_is_clean ... ok
+test fanout_inside_seq_is_t0201 ... ok
+test local_shadowing_is_rejected_by_lower ... ok
+test seq_inside_plain_branch_still_t0201 ... ok
+test prints_in_linear_chain_clean ... ok
+test nested_plain_fanout_inner_print_is_t0201 ... ok
+test print_in_plain_branch_is_t0201_naming_seq ... ok
+test time_in_plain_branch_is_t0201 ... ok
+test pure_fanout_clean ... ok
+test pure_seq_inside_plain_branch_is_clean ... ok
+test effectful_call_in_branch_is_t0201 ... ok
+test loop_and_rebind_inside_seq_in_branch_is_t0201 ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/exclusivity.rs (target/release/deps/exclusivity-03921c457a1ce87e)
+
+running 6 tests
+test single_writer_clean ... ok
+test three_full_value_writers_two_t0101 ... ok
+test slot_form_pair_writers_clean ... ok
+test two_full_value_writers_one_t0101_at_second ... ok
+test clean_under_loops_sum_to_n ... ok
+test clean_under_loops_token_bearing_countdown ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/release/deps/flow-1aa14e486e2a1566)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/mapal_interp-3d0c96f07316753a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (target/release/deps/acceptance-b5dfdfa23cdfd5dc)
+
+running 15 tests
+test sum_to_n_value_contract ... ok
+test golden_pipeline ... ok
+test golden_seq_demo ... ok
+test golden_fanout ... ok
+test golden_sum_to_n ... ok
+test sepia_input_ty_is_named_product ... ok
+test sum_to_n_seq_wrapped_reassign_value_contract ... ok
+test golden_abs ... ok
+test golden_countdown ... ok
+test golden_fir ... ok
+test fir4_value_contract ... ok
+test golden_zip_demo ... ok
+test golden_vector_add ... ok
+test time_brackets_are_monotone_and_finite ... ok
+test golden_sepia ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/captures.rs (target/release/deps/captures-c1cd67e52fd9fb5e)
+
+running 9 tests
+test map_with_scalar_capture_broadcasts ... ok
+test captured_array_is_indexed_inside_the_body ... ok
+test fold_with_capture_accumulates ... ok
+test capturing_map_and_fold_evaluate_through_the_pipeline ... ok
+test loop_local_shadow_does_not_leak_out_of_body_loop ... ok
+test loop_carried_capture_advance_cone_reads_current_iteration ... ok
+test guard_arm_shadow_does_not_leak_into_sibling_arm ... ok
+test loop_carried_capture_decide_cone_reads_current_iteration ... ok
+test capture_reads_the_value_at_the_fanout_site_not_a_later_update ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/determinism.rs (target/release/deps/determinism-798ba7d299106d10)
+
+running 6 tests
+test deterministic_pipeline ... ok
+test deterministic_abs ... ok
+test deterministic_fanout ... ok
+test deterministic_sum_to_n ... ok
+test deterministic_fir ... ok
+test deterministic_sepia ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/divergence.rs (target/release/deps/divergence-005118d84193f795)
+
+running 3 tests
+test constant_true_loop_diverges_and_returns ... ok
+test constant_true_loop_diverges_at_larger_budget_too ... ok
+test sum_to_n_budget_boundary ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/guards.rs (target/release/deps/guards-5680f880c1005ce4)
+
+running 11 tests
+test untaken_arm_division_does_not_trap ... ok
+test taken_arm_division_still_traps ... ok
+test condition_false_picks_false_arm ... ok
+test untaken_arm_map_does_not_fire ... ok
+test untaken_arm_inside_loop_body_does_not_fire ... ok
+test trap_free_guard_value_unchanged ... ok
+test taken_arm_loop_still_runs_and_traps ... ok
+test untaken_arm_loop_does_not_run ... ok
+test nested_guard_gates_correctly ... ok
+test calc_dispatch_selected_division_traps ... ok
+test calc_dispatch_with_zero_divisor_unselected ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/iota_fill.rs (target/release/deps/iota_fill-6be8afed785d30ed)
+
+running 5 tests
+test iota_value_contract ... ok
+test fill_value_contract ... ok
+test iota_feeds_map_contract ... ok
+test fill_annotated_f32_pipeline ... ok
+test iota_fill_pipeline_e2e ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/loop_exit_payload.rs (target/release/deps/loop_exit_payload-65b7413cd0dff111)
+
+running 3 tests
+test computed_exit_payload_runs ... ok
+test exit_arm_effect_fires_once_on_the_exit_step ... ok
+test captured_map_in_exit_arm_runs ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/loop_invariants.rs (target/release/deps/loop_invariants-53c2a8a82205c729)
+
+running 3 tests
+test computed_invariant_in_loop_body_runs ... ok
+test two_sequential_loops_in_one_fn ... ok
+test matmul4_dynamic_indexing_with_computed_invariants ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/traps.rs (target/release/deps/traps-c3fcaf70f3aad05e)
+
+running 8 tests
+test float_div_by_zero_is_done_not_trap ... ok
+test index_in_bounds_is_done ... ok
+test integer_div_by_zero_traps ... ok
+test integer_div_nonzero_is_done ... ok
+test integer_mod_by_zero_traps ... ok
+test index_at_n_traps ... ok
+test index_negative_traps ... ok
+test nan_ordering_is_ieee ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/update.rs (target/release/deps/update-89e51ed2e4908e78)
+
+running 4 tests
+test update_in_bounds_replaces_one_slot ... ok
+test update_at_n_traps ... ok
+test update_negative_traps ... ok
+test update_u8_index_ge_128_in_bounds ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/update_pipeline.rs (target/release/deps/update_pipeline-5337105feb2cbcfb)
+
+running 3 tests
+test runtime_oob_update_traps_through_pipeline ... ok
+test fanout_two_branches_update_same_source_independently ... ok
+test matmul4_loop_driven_builds_result_via_mut_array ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/widen.rs (target/release/deps/widen-576a0a2368c1e940)
+
+running 1 test
+test widen_value_contract ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/zip_enumerate.rs (target/release/deps/zip_enumerate-ad970723e4038996)
+
+running 3 tests
+test enumerate_indices_contract ... ok
+test enumerate_under_fanout ... ok
+test zip_add_value_contract ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/mapal_ir-7c3bd50cda27d2dd)
+
+running 78 tests
+test builder::tests::already_built ... ok
+test builder::tests::arity_mismatch_pack_struct ... ok
+test builder::tests::binop_eq_bool_ok_lt_bool_mismatch ... ok
+test builder::tests::body_kind_mismatch ... ok
+test builder::tests::duplicate_name ... ok
+test builder::tests::call_to_body ... ok
+test builder::tests::empty_product_pack ... ok
+test builder::tests::empty_product_pack_struct ... ok
+test builder::tests::entry_not_named ... ok
+test builder::tests::enumerate_non_array_rejects ... ok
+test builder::tests::enumerate_oversize_rejects ... ok
+test builder::tests::enumerate_builds_and_validates ... ok
+test builder::tests::clean_add_builds_and_validates ... ok
+test builder::tests::fold_captured_seed_mismatch_rejects ... ok
+test builder::tests::fold_captured_unit_capture_rejects ... ok
+test builder::tests::fold_captured_roundtrip_validates ... ok
+test builder::tests::loop_back_outside_scc ... ok
+test builder::tests::loop_without_back ... ok
+test builder::tests::loop_without_exit ... ok
+test builder::tests::map_captured_all_erased_product_capture_rejects ... ok
+test builder::tests::map_captured_capture_type_mismatch_rejects ... ok
+test builder::tests::map_captured_elem_mismatch_rejects ... ok
+test builder::tests::map_captured_empty_delegates_to_map ... ok
+test builder::tests::map_captured_partially_erased_product_capture_still_accepted ... ok
+test builder::tests::map_captured_unit_capture_rejects ... ok
+test builder::tests::no_entry ... ok
+test builder::tests::map_captured_roundtrip_validates ... ok
+test builder::tests::non_core_singleton_tuple_ty ... ok
+test builder::tests::non_core_type_bad_int_width ... ok
+test builder::tests::non_core_zero_field_struct_ty ... ok
+test builder::tests::not_a_product_on_proj ... ok
+test builder::tests::not_binary ... ok
+test builder::tests::not_unary ... ok
+test builder::tests::open_loop ... ok
+test builder::tests::recursive_call ... ok
+test builder::tests::ret_mixed_writers ... ok
+test builder::tests::ret_not_product_slot_on_scalar ... ok
+test builder::tests::ret_slot_conflict ... ok
+test builder::tests::ret_slot_missing ... ok
+test builder::tests::ret_type_mismatch ... ok
+test builder::tests::singleton_tuple ... ok
+test builder::tests::slot_out_of_range_on_proj ... ok
+test builder::tests::str_outside_print ... ok
+test builder::tests::struct_name_conflict ... ok
+test builder::tests::time_ms_builds_and_validates ... ok
+test builder::tests::time_ms_rejects_non_token_source ... ok
+test builder::tests::token_dropped_at_seal ... ok
+test builder::tests::token_dropped_seal_path ... ok
+test builder::tests::token_in_map_body ... ok
+test builder::tests::token_in_phi ... ok
+test builder::tests::ty_too_deep ... ok
+test builder::tests::token_not_escaping ... ok
+test builder::tests::type_mismatch_on_mixed_numeric ... ok
+test builder::tests::unfinished_function ... ok
+test builder::tests::unknown_function_on_build ... ok
+test builder::tests::unknown_object_from_foreign_builder ... ok
+test builder::tests::update_builds_and_validates ... ok
+test builder::tests::update_index_not_int_rejects ... ok
+test builder::tests::update_non_array_rejects ... ok
+test builder::tests::update_value_elem_mismatch_rejects ... ok
+test builder::tests::value_ty_mismatch_is_unreachable_constant_is_sound ... ok
+test builder::tests::wrong_builder_cross_function ... ok
+test builder::tests::zip_builds_and_validates ... ok
+test builder::tests::zip_non_array_rejects ... ok
+test builder::tests::zip_size_mismatch_rejects ... ok
+test builder::tests::zip_result_feeds_map ... ok
+test mermaid::tests::captured_map_fold_labels_show_the_capture_count ... ok
+test ty::tests::depth_guard_accepts_at_limit_rejects_past ... ok
+test ty::tests::labels_match_design_examples ... ok
+test ty::tests::str_predicate_finds_nested_str ... ok
+test ty::tests::token_predicate_finds_deeply_nested_token ... ok
+test ty::tests::value_ty_is_total ... ok
+test validate::enumerate_bound_twin::oversize_enumerate_edge_flagged ... ok
+test validate::iota_count_twin::drifted_fill_count_flagged ... ok
+test validate::iota_count_twin::drifted_iota_count_flagged ... ok
+test validate::erased_capture_twin::erased_capture_component_flagged ... ok
+test validate::widen_twin::invalid_widen_edge_flagged ... ok
+test validate::typing_table_golden::edge_type_ok_matches_design_5_1 ... ok
+
+test result: ok. 78 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/algos.rs (target/release/deps/algos-7ba5f1806f478a99)
+
+running 79 tests
+test elem_enumerate_is_pair_of_index_and_the_source ... ok
+test elem_cuts_on_a_parameter_array ... ok
+test counting_loop_validates_clean ... ok
+test bounds_iota_element_ranged ... ok
+test bounds_constant_index_in_range_proven_out_not ... ok
+test elem_iota_is_the_index ... ok
+test bounds_wrap_and_negative_bail ... ok
+test emission_call_argument_product_and_array_literal_are_named ... ok
+test elem_zip_pairs_a_resolved_half_with_a_cut_half ... ok
+test emission_fanout_has_one_named_split_point ... ok
+test emission_index_guard_classification_uses_bounds_proof ... ok
+test elem_fill_is_a_broadcast ... ok
+test bounds_literal_ramp_elements ... ok
+test elem_law_composes_through_nesting ... ok
+test emission_nested_product_dissolution_is_pair_built_only ... ok
+test bounds_enumerate_affine_proven_when_sized ... ok
+test emission_loop_merge_routes_and_cones_are_named ... ok
+test emission_proj_produced_tuple_fanout_is_named_not_dropped ... ok
+test emission_div_guard_classification_uses_divisor_facts ... ok
+test bounds_determinism_and_totality ... ok
+test guard_plan_arm_owns_a_loop_as_a_unit ... ok
+test guard_plan_owns_the_trapping_arm ... ok
+test guard_plan_shared_value_owns_nothing_but_edges ... ok
+test bounds_enumerate_affine_not_proven_when_undersized ... ok
+test guard_plan_loop_shared_with_outside_stays_unconditional ... ok
+test emission_pure_chain_dissolves_products_and_inlines_values ... ok
+test last_use_borrowed_init_is_never_dead ... ok
+test last_use_chain_death_positions ... ok
+test last_use_diamond_greatest_use_position ... ok
+test last_use_carried_pair_update_result_carried_source_dead ... ok
+test loop_free_graph_has_all_trivial_sccs ... ok
+test last_use_escape_via_pair_field ... ok
+test elem_map_with_a_trapping_body_is_cut ... ok
+test guard_plan_topo_order_and_edge_last ... ok
+test loop_has_exactly_one_nontrivial_scc_with_the_merge ... ok
+test guard_plan_nested_sites_partition_ownership ... ok
+test loopback_edges_are_exactly_the_cycle_breakers ... ok
+test loop_structure_single_loop_is_accept_shape ... ok
+test nested_loops_multi_merge_one_scc_reject_shape ... ok
+test last_use_total_on_alg_suite_graphs ... ok
+test bounds_capture_shape_matmul_proven ... ok
+test last_use_two_sequential_loops_own_carried_sets ... ok
+test bounds_matmul_fold_body_proven_through_captures ... ok
+test guard_plan_gates_arm_inside_loop_body ... ok
+test path_fold_and_independent_map_have_no_edge ... ok
+test path_fold_trap_min_uses_body_capability_at_site ... ok
+test path_diamond_has_independent_maps_and_dataflow_join ... ok
+test path_map_trap_min_uses_body_capability_at_site ... ok
+test path_print_waits_for_value_producer_and_every_earlier_trap ... ok
+test path_time_ms_consumer_cone_stays_on_the_host_spine ... ok
+test path_trap_min_exempts_only_bounds_proven_index ... ok
+test path_time_ms_fences_only_the_tasks_entirely_before_the_read ... ok
+test path_effectful_loop_stays_entirely_on_host_spine ... ok
+test last_use_determinism_run_twice_equal ... ok
+test path_wait_uses_max_threshold_and_data_completion_wins ... ok
+test path_loop_scc_is_one_seq_task ... ok
+test path_trap_capable_calls_pin_direct_and_transitive_tasks ... ok
+test path_time_ms_holds_back_the_work_written_after_it ... ok
+test tile_fir_site_recognized ... ok
+test tile_matmul_site_recognized ... ok
+test path_rank_prefers_heavy_bulk_long_path_to_light_scalar_chain ... ok
+test path_plan_is_deterministic ... ok
+test tile_refuses_conv2d_divisor_mismatch ... ok
+test tile_refuses_dead_call_in_map_body ... ok
+test tile_refuses_non_fma_1d_map ... ok
+test tile_matmul_f32_site_recognized ... ok
+test tile_conv2d_site_recognized ... ok
+test tile_refuses_conv2d_non_rectangular_window ... ok
+test tile_refuses_fir_nonunit_lane_stride ... ok
+test tile_refuses_nonconstant_seed ... ok
+test tile_refuses_conv2d_mixed_raw_and_derived_k ... ok
+test topo_orders_multi_hop_invariants_before_loop_enter ... ok
+test topo_places_header_first_body_before_exit_before_consumer ... ok
+test tile_refuses_postprocessed_fold ... ok
+test tile_refuses_unproven_index ... ok
+test tile_refuses_nonunit_lane_stride ... ok
+test emission_plan_totality_and_laws ... ok
+test deep_chain_100k_no_stack_overflow ... ok
+test last_use_total_on_noncanonical_and_deep_graphs ... ok
+
+test result: ok. 79 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/builder_rejections.rs (target/release/deps/builder_rejections-aa61b60f522b3e19)
+
+running 24 tests
+test array_product_arity_is_untruncated_u64 ... ok
+test binop_eq_bool_ok_but_lt_bool_rejects ... ok
+test iota_non_constant_count_rejects ... ok
+test invalid_widen_rejects ... ok
+test iota_oversize_count_rejects ... ok
+test fill_of_str_rejects ... ok
+test fill_zero_count_rejects ... ok
+test iota_zero_count_rejects ... ok
+test pack_of_str_constant_rejects ... ok
+test pack_singleton_rejects ... ok
+test pack_struct_zero_components_is_empty_product ... ok
+test dangling_final_token_rejects ... ok
+test phi_with_token_branch_rejects ... ok
+test cross_builder_funcid_mixing_is_unsupported_ub ... ok
+test ret_slot_into_oversize_array_rejects ... ok
+test canonical_counting_loop_still_seals ... ok
+test ret_slot_on_scalar_rejects ... ok
+test second_loopback_from_const_with_real_cond_rejects ... ok
+test str_bearing_declared_ty_rejected_at_seal ... ok
+test token_chain_ends_at_return ... ok
+test token_double_consumption_is_unconstructible ... ok
+test two_pixel_decls_with_different_fields_reject_at_seal ... ok
+test two_prints_are_reachability_ordered ... ok
+test zero_field_struct_ty_rejected_at_intake ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/consumer_coverage.rs (target/release/deps/consumer_coverage-fe36074f4d785ecb)
+
+running 4 tests
+test every_backend_directory_is_accounted_for ... ok
+test exemptions_are_still_earned ... ok
+test required_backends_consume_every_geometry_query ... ok
+test the_gate_is_not_vacuous ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/golden_mermaid.rs (target/release/deps/golden_mermaid-ffbb2c291ab1c048)
+
+running 14 tests
+test lint_still_flags_structural_dashes ... ok
+test lint_ignores_dashes_inside_a_str_label ... ok
+test println_renders_println_label ... ok
+test golden_e_struct_composite ... ok
+test golden_f_fanout_no_join ... ok
+test golden_a_add ... ok
+test golden_c_phi ... ok
+test golden_g_two_prints ... ok
+test golden_b_pipeline ... ok
+test golden_f_fanout_join ... ok
+test golden_d_loop_b_eq_u ... ok
+test golden_i_phi_chain ... ok
+test golden_h_print_in_loop ... ok
+test golden_d_loop_b_ne_u ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/proptest_builder.rs (target/release/deps/proptest_builder-2ff8b1313a876cd6)
+
+running 4 tests
+test determinism_same_program_same_output ... ok
+test str_in_declared_ty_seal_implies_valid ... ok
+test positive_chains_seal_and_validate ... ok
+test interleaved_calls_seal_implies_valid ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/release/deps/mapal_lower-91665aa1992d5f98)
+
+running 1 test
+test emit::tests::token_in_body_maps_to_user_facing_l1605_not_internal ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/captures.rs (target/release/deps/captures-d61517f294f12fa0)
+
+running 6 tests
+test write_in_nested_body_reports_exactly_one_l1108 ... ok
+test str_capture_reports_l1206 ... ok
+test capture_map_lowers_with_capture_input_product ... ok
+test capture_in_seq_in_map_body_lowers ... ok
+test capture_fold_lowers_with_capture_input_product ... ok
+test free_var_collection_is_source_order_of_first_use_and_deduped ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/golden.rs (target/release/deps/golden-448188ff3df76574)
+
+running 20 tests
+test fanout_pure_collection_ops_lower_clean ... ok
+test golden_seq_mid_chain ... ok
+test golden_effectful_call ... ok
+test golden_fanout ... ok
+test golden_abs ... ok
+test golden_array_update_straightline ... ok
+test golden_pipeline ... ok
+test golden_fir ... ok
+test golden_seq_explicit_ret ... ok
+test golden_enumerate_builtin ... ok
+test golden_seq_two_printlns ... ok
+test golden_seq_demo ... ok
+test golden_seq_return_tail ... ok
+test golden_sepia ... ok
+test golden_countdown ... ok
+test golden_widen_builtins ... ok
+test golden_sum_to_n ... ok
+test golden_zip_builtin ... ok
+test golden_vector_add ... ok
+test golden_zip_demo ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/proptests.rs (target/release/deps/proptests-ef10975452ddf1f2)
+
+running 2 tests
+test literal_width_never_contradicts ... ok
+test random_programs_never_panic ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rejection.rs (target/release/deps/rejection-2207ad01e737c3ba)
+
+running 120 tests
+test array_update_unbound_is_l1101 ... ok
+test array_update_non_array_target_is_l1204 ... ok
+test atk_10_bare_ret_then_effect_is_l1307 ... ok
+test array_update_non_mut_is_l1104 ... ok
+test array_update_elem_ty_clash_is_l1201 ... ok
+test atk_03_effectful_call_in_phi_arm_rejected ... ok
+test array_update_in_phi_arm_is_l1408 ... ok
+test atk_13_headless_routing_guard_is_l1301 ... ok
+test atk_16_second_effectful_ret_is_l1307 ... ok
+test atk_08_effect_after_consumed_token_is_l1307 ... ok
+test atk_15_bool_guard_arm_bookkeeping ... ok
+test atk_18_zero_param_call_is_l1201 ... ok
+test effectful_seq_in_fanout_join_rejected ... ok
+test empty_seq_lowers_clean ... ok
+test atk_10_statement_level_bare_ret_is_permitted ... ok
+test l1001_no_main ... ok
+test iota_bound_literal_count_lowers ... ok
+test l1003_duplicate_fn ... ok
+test l1002_main_shape ... ok
+test l1004_duplicate_type ... ok
+test l1005_duplicate_field ... ok
+test l1006_duplicate_param ... ok
+test l1007_recursive_type ... ok
+test l1008_recursive_call ... ok
+test atk_14_loop_in_map_body_lowers_clean ... ok
+test l1009_reserved_name ... ok
+test l1009_reserved_collection_builtins ... ok
+test fold_zero_seed_lowers_clean ... ok
+test l1009_reserved_time ... ok
+test l1010_empty_type ... ok
+test indexed_update_of_body_local_in_map_body_lowers_clean ... ok
+test l1101_unknown_name ... ok
+test l1102_unknown_type ... ok
+test atk_07_pure_var_tail_returns ... ok
+test l1103_unknown_field ... ok
+test l1104_assign_immutable ... ok
+test atk_17_unit_effectful_fanout_tail_lowers_clean ... ok
+test l1105_function_as_value ... ok
+test l1106_named_param_application ... ok
+test atk_19_headless_bind_exit_arm_seeds_scrutinee ... ok
+test atk_05_loop_exit_binding_visible_after_loop ... ok
+test l1108_indexed_bind_captures_enclosing_local_in_map_body ... ok
+test l1108_rebind_of_read_capture_names_the_variable ... ok
+test l1107_capture_of_loop_carried_name_after_loop ... ok
+test atk_09_valueless_ret_exit_in_unit_fn_lowers_clean ... ok
+test atk_07_effectful_b_tail_returns ... ok
+test l1107_read_after_loop ... ok
+test l1201_type_mismatch ... ok
+test atk_04_bool_guard_result_ty_recorded ... ok
+test l1202_literal_out_of_range ... ok
+test atk_12_pure_call_result_derives_from_merge ... ok
+test l1203_literal_type_conflict ... ok
+test l1204_not_a_product ... ok
+test l1205_slot_out_of_range ... ok
+test l1206_str_outside_print ... ok
+test l1207_unprintable ... ok
+test atk_11_semicolon_terminated_exit_block_lowers_clean ... ok
+test l1208_empty_array ... ok
+test l1301_headless_chain ... ok
+test l1209_type_too_deep ... ok
+test l1301_unit_as_value ... ok
+test l1302_expr_stage ... ok
+test l1302_time_with_a_wire ... ok
+test l1303_ret_mid_chain ... ok
+test l1304_jump_misplaced ... ok
+test l1306_duplicate_slot ... ok
+test l1305_fanout_no_value ... ok
+test l1306_incomplete_return ... ok
+test l1306_mixed_bare_and_slot ... ok
+test l1307_effectful_return_shape ... ok
+test l1401_guard_arm_missing ... ok
+test l1402_guard_arm_duplicate ... ok
+test l1403_guard_arm_mixed ... ok
+test l1404_effectful_fanout_in_phi_arm ... ok
+test l1404_effectful_seq_in_phi_arm ... ok
+test l1404_guard_arm_effectful ... ok
+test l1405_guard_ret_in_phi_arm ... ok
+test l1406_guard_scrutinee_type ... ok
+test l1407_routing_guard_shape ... ok
+test l1408_assign_in_phi_arm ... ok
+test l1409_routing_guard_arms ... ok
+test l1501_loop_no_exit ... ok
+test l1502_loop_no_state ... ok
+test l1503_non_derived_cond ... ok
+test l1503_non_derived_next_state ... ok
+test l1504_inner_exit_not_ret ... ok
+test l1504_loop_in_effectful_loop ... ok
+test l1601_block_arity ... ok
+test l1504_nested_loop_updates_outer ... ok
+test l1602_map_non_array ... ok
+test l1603_fold_shape ... ok
+test l1604_body_no_value ... ok
+test l1605_body_effectful ... ok
+test l1605_body_time ... ok
+test l1606_zip_non_tuple_arity3 ... ok
+test l1606_zip_non_tuple_scalar ... ok
+test l1607_zip_component_not_array ... ok
+test l1608_zip_size_mismatch ... ok
+test l1609_enumerate_non_array ... ok
+test l1610_enumerate_oversize ... ok
+test l1611_effectful_seq_return_position_no_tail ... ok
+test l1611_seq_continues_no_tail ... ok
+test l1611_seq_return_position_no_tail ... ok
+test l1612_iota_non_literal_count_rejects ... ok
+test l1612_iota_tuple_wire_rejects ... ok
+test l1612_iota_zero_rejects_and_oversize_is_width_owned ... ok
+test l1613_fill_wire_shape_rejects ... ok
+test l1613_fill_zero_rejects_and_oversize_is_width_owned ... ok
+test l1614_invalid_widen_sources_reject ... ok
+test l1614_message_names_the_legal_lattice ... ok
+test lower_1_retk_above_u32_max_rejected ... ok
+test lower_memberidx_typing_trunc_rejected ... ok
+test lower_retk_trunc_noncolliding_rejected ... ok
+test seq_headless_statements_seed_from_input ... ok
+test seq_bindings_escape_to_enclosing_scope ... ok
+test single_branch_fanout_passes_through ... ok
+test lower_2_value_producing_effectful_ret_lowers_clean ... ok
+test lower_2_value_producing_effectful_fn_body_tail_lowers_clean ... ok
+test lone_indexed_update_loop_not_l1502 ... ok
+test seq_return_position_valued_effectful_lowers_clean ... ok
+
+test result: ok. 120 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/structural.rs (target/release/deps/structural-0ce387e71bccbe77)
+
+running 12 tests
+test time_reads_thread_the_io_token ... ok
+test fn_body_tail_returns ... ok
+test sum_to_n_loop_shape ... ok
+test declared_signatures_match_table ... ok
+test fanout_main_print_token_order ... ok
+test array_update_emits_no_token_edges ... ok
+test abs_phi_and_neg_literal ... ok
+test countdown_token_bearing_loop ... ok
+test time_bracket_types_f64 ... ok
+test array_update_loop_carried_rides_merge ... ok
+test atk_02_effectful_call_in_loop_carries_token ... ok
+test sepia_map_fold_kinds ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/mapal_rewrite-e40d53594f8f40f3)
+
+running 3 tests
+test replay::tests::split_capture_source_partitions_caps_and_data ... ok
+test replay::tests::split_capture_source_over_arity_is_loud - should panic ... ok
+test replay::tests::split_capture_source_under_arity_is_loud - should panic ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/captures.rs (target/release/deps/captures-c3d3a75e737c0f5d)
+
+running 8 tests
+test cse_merges_identical_captured_maps ... ok
+test cse_distinguishes_differing_captures ... ok
+test replay_captured_map_preserves_capture_edges ... ok
+test dce_keeps_live_capture_drops_dead_temp ... ok
+test map_fusion_identical_captures_fuses ... ok
+test map_fusion_capture_count_mismatch_skips ... ok
+test map_fusion_differing_captures_skip ... ok
+test rewrite_pipeline_captured_map_and_fold ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/const_fold.rs (target/release/deps/const_fold-972b8ab9f17f001f)
+
+running 7 tests
+test index_of_update_non_const_not_folded ... ok
+test token_proj_pack_not_forwarded ... ok
+test identity_add_into_return_survives ... ok
+test const_add_into_return_survives ... ok
+test index_of_update_oob_not_folded ... ok
+test loop_carried_mul_zero_not_constified ... ok
+test index_of_update_equal_const_in_bounds_folds ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fixpoint.rs (target/release/deps/fixpoint-f93e37690507f423)
+
+running 1 test
+test fixpoint_iota_fill_cse ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/golden.rs (target/release/deps/golden-3ffd2b16fb533355)
+
+running 1 test
+test example_goldens ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/guard_loops.rs (target/release/deps/guard_loops-fb72052299164207)
+
+running 6 tests
+test dce_must_not_change_arm_ownership ... ok
+test unit_with_sink_member_never_joins ... ok
+test dce_keeps_the_dead_phi_of_a_heavy_gated_site ... ok
+test in_body_arm_work_is_not_double_owned ... ok
+test constfold_does_not_drop_what_it_cannot_alias ... ok
+test reclose_drops_the_handle_when_the_units_outputs_leak ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/guard_ownership.rs (target/release/deps/guard_ownership-6cde1f849cf1b8d1)
+
+running 1 test
+test guard_arm_ownership_invariants ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/identity.rs (target/release/deps/identity-5ac8035dd02b7fbf)
+
+running 5 tests
+test multi_merge_nested_loop_is_non_canonical ... ok
+test multi_merge_nested_loop_rewrite_is_identity ... ok
+test update_graph_round_trips_through_rewrite ... ok
+test two_sequential_loops_rewrite_not_skipped ... ok
+test identity_replay_matches_every_example ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/inline.rs (target/release/deps/inline-46905620afc93ce2)
+
+running 15 tests
+test entry_is_never_inlined ... ok
+test call_writing_return_inlines ... ok
+test diamond_shared_callee_inlines_per_site ... ok
+test two_fn_program_inlines_to_one_graph ... ok
+test tuple_returning_callee_inlines ... ok
+test inline_is_deterministic_and_idempotent ... ok
+test loop_bearing_callee_stays_a_call ... ok
+test default_rewrite_inlines_call_inside_map_body ... ok
+test callee_at_the_cap_inlines ... ok
+test oversized_callee_stays_a_call ... ok
+test matmul4_loops_lift_then_callees_inline ... ok
+test closed_inline ... ok
+test closed_inline_trap_free ... ok
+test open_inline_trap_free ... ok
+test open_inline ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/lift.rs (target/release/deps/lift-48b73cc750a6f29d)
+
+running 3 tests
+test canonical_counter_identity_update_lifts_to_captured_map ... ok
+test canonical_counter_acc_lifts_to_captured_fold ... ok
+test rejections_stay_loops ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/micro.rs (target/release/deps/micro-80f2c2924e66e8c5)
+
+running 6 tests
+test map_id_eliminated_when_targeting_temporary ... ok
+test map_id_targeting_return_not_eliminated ... ok
+test map_fusion_skips_shared_intermediate ... ok
+test map_fusion_skips_loop_bearing_body ... ok
+test map_fusion_fuses_and_drops_orphans ... ok
+test map_fusion_through_temporary ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/property.rs (target/release/deps/property-717e8599983f99e1)
+
+running 11 tests
+test float_add_zero_untouched ... ok
+test dead_trapping_div_stays_trapped ... ok
+test two_independent_traps_stay_trapped ... ok
+test identity_map_body_with_dead_trap_stays_trapped ... ok
+test pure_identity_map_is_still_eliminated ... ok
+test divergent_loop_stays_diverged ... ok
+test sequential_generated_lifts_with_intervening_fold ... ok
+test closed_default ... ok
+test closed_trap_free ... ok
+test open_default ... ok
+test open_trap_free ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/testgen_captures.rs (target/release/deps/testgen_captures-9c61e5a7c1c20da0)
+
+running 7 tests
+test map_scalar_capture ... ok
+test fold_scalar_capture ... ok
+test map_array_capture ... ok
+test loop_carried_capture ... ok
+test map_nested_fold_two_level_capture ... ok
+test chained_array_capture_maps_fuse ... ok
+test random_programs_include_captures ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/testgen_widen.rs (target/release/deps/testgen_widen-15ab2c4bc83ab42f)
+
+running 1 test
+test random_programs_cover_widen_lattice ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/widen.rs (target/release/deps/widen-3214f0e530fc4f15)
+
+running 2 tests
+test widen_replay_round_trips ... ok
+test widen_constants_fold_exactly ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/mapal_rt-59a76d265ff396af)
+
+running 21 tests
+test tests::inline_runs_ready_tasks_by_ascending_index ... ok
+test tests::mapal_par_override_wins ... ok
+test tests::parse_cfs_cases ... ok
+test tests::over_decomposition_never_cuts_below_one_block ... ok
+test tests::parse_cpu_max_cases ... ok
+test tests::nested_run_uses_innermost_tls_and_restores_outer ... ok
+test tests::dependent_starts_after_all_slices_complete ... ok
+test tests::pinned_task_runs_inline_and_unlocks_dependents ... ok
+test tests::arena_alloc_is_usable_and_freed ... ok
+test tests::quota_caps_available ... ok
+test tests::sequential_tasks_still_get_exactly_one_range ... ok
+test tests::render_parity ... ok
+test tests::pinned_zero_dep_task_is_never_pool_seeded ... ok
+test tests::slice_counts_are_never_ragged ... ok
+test tests::slices_are_cut_on_the_quantum_and_tile_the_range ... ok
+test tests::trapped_task_completes_and_unlocks_its_dependent ... ok
+test tests::trap_flag_keeps_minimum_topo ... ok
+test tests::split_covers_each_index_once ... ok
+test tests::wait_helps_while_the_background_worker_is_busy ... ok
+test tests::seeded_random_dags_complete_once ... ok
+test tests::watermark_wait_can_finish_before_task_completion ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/lib.rs (target/release/deps/mapal_syntax-e713788076f2ca08)
+
+running 160 tests
+test lexer::tests::error_tokens_overlap_a_diagnostic ... ok
+test lexer::tests::float_basic ... ok
+test lexer::tests::float_needs_digit_after_dot ... ok
+test lexer::tests::guard_max_u64_exact_no_diagnostic ... ok
+test lexer::tests::int_basic ... ok
+test lexer::tests::l0004_category_with_fix ... ok
+test lexer::tests::l0005_lone_eq ... ok
+test lexer::tests::l0006_lone_amp_pipe ... ok
+test lexer::tests::l0007_block_comment_closed ... ok
+test lexer::tests::l0007_block_comment_unterminated ... ok
+test lexer::tests::l0008_guard_discriminant_overflow_no_panic ... ok
+test lexer::tests::l0008_int_overflow_clamps ... ok
+test lexer::tests::line_index_basic ... ok
+test lexer::tests::examples_zero_diagnostics ... ok
+test lexer::tests::line_index_clamps_past_end ... ok
+test lexer::tests::line_index_multibyte ... ok
+test lexer::tests::munch_arrow_vs_minus ... ok
+test lexer::tests::munch_colon_colon ... ok
+test lexer::tests::munch_dotdotdot ... ok
+test lexer::tests::munch_eq_bang_amp_pipe ... ok
+test lexer::tests::munch_gt_variants ... ok
+test lexer::tests::munch_lt_variants ... ok
+test lexer::tests::munch_slash_vs_comments ... ok
+test lexer::tests::s5_guard_at_start_of_input ... ok
+test lexer::tests::s5_guard_int_value_carried ... ok
+test lexer::tests::s5_row10_float_discriminant_not_core ... ok
+test lexer::tests::s5_row1_true_guard_after_brace ... ok
+test lexer::tests::s5_row2_false_guard_after_rbrace ... ok
+test lexer::tests::s5_row3_default_guard_after_semi ... ok
+test lexer::tests::s5_row4_int_guard_after_brace ... ok
+test lexer::tests::s5_row5_spaced_minus_adjacency_fails ... ok
+test lexer::tests::s5_row6_star_context_fails ... ok
+test lexer::tests::s5_row7_ident_context_fails ... ok
+test lexer::tests::s5_row8_interior_space_adjacency_fails ... ok
+test lexer::tests::s5_row9_pattern_not_core_discriminant ... ok
+test lexer::tests::spans_ascending_and_covering ... ok
+test lexer::tests::string_basic ... ok
+test lexer::tests::string_known_escapes ... ok
+test lexer::tests::string_unknown_escape_l0003 ... ok
+test lexer::tests::string_unterminated_eof_l0002 ... ok
+test lexer::tests::string_unterminated_newline_l0002 ... ok
+test lexer::tests::unescape_helper ... ok
+test lexer::tests::w1_tight_negation_after_brace ... ok
+test lexer::tests::w1_tight_negation_after_rbrace ... ok
+test lexer::tests::w1_tight_negation_after_semi ... ok
+test lexer::tests::w2_backarrow_maximal_munch ... ok
+test lexer::tests::w3_five_dot_is_int_dot ... ok
+test lexer::tests::w3_ret_dot_zero_not_float ... ok
+test lexer::tests::w4_double_dot_two_dots ... ok
+test lexer::tests::w4_range_in_expr ... ok
+test lexer::tests::w5_unicode_in_comment_ok ... ok
+test lexer::tests::w5_unicode_in_string_ok ... ok
+test lexer::tests::w5_unicode_outside_strings_is_error ... ok
+test lexer::tests::w6_crlf_is_trivia ... ok
+test lexer::tests::w7_two_hundred_mhz ... ok
+test lexer::tests::w7_underscored_and_hex_and_exp ... ok
+test lexer::tests::w8_coalesced_unknown_run ... ok
+test lexer::tests::w9_empty_input ... ok
+test parser::tests::annotation_p0102_item_kept ... ok
+test parser::tests::arm_after_rbrace_lexer_gate ... ok
+test parser::tests::bare_expr_statement_p0003 ... ok
+test parser::tests::bare_expr_tail_ok ... ok
+test parser::tests::call_expression_p0108 ... ok
+test parser::tests::category_decl_recovery_no_double_report ... ok
+test parser::tests::chained_comparison_p0007_w14 ... ok
+test parser::tests::cmp_chain_cascade_single_p0007 ... ok
+test parser::tests::deep_array_type_p0011_no_panic ... ok
+test parser::tests::demoted_scan_hint_mentions_sigil ... ok
+test parser::tests::determinism ... ok
+test parser::tests::diagnostics_sorted_by_span ... ok
+test parser::tests::empty_block_fanout_zero_p0010 ... ok
+test parser::tests::deep_nesting_p0011_no_panic ... ok
+test parser::tests::deep_tuple_type_p0011_no_panic ... ok
+test parser::tests::empty_braces_struct_w13 ... ok
+test parser::tests::empty_input_no_panic ... ok
+test parser::tests::equality_chain_p0007 ... ok
+test parser::tests::exactly_one_hole_leftmost ... ok
+test parser::tests::fanout_block_each_dropped_stmt_draws_p0117 ... ok
+test parser::tests::fanout_block_unterminated_final_branch_kept ... ok
+test parser::tests::fanout_classification ... ok
+test parser::tests::flow_free_labeled_body_is_struct_w13 ... ok
+test parser::tests::guard_block_classification ... ok
+test parser::tests::i_backarrow_one_p0009 ... ok
+test parser::tests::index_bind_computed_index ... ok
+test parser::tests::index_bind_in_loop_body ... ok
+test parser::tests::index_bind_mut_rejected_p0013 ... ok
+test parser::tests::index_bind_nested_rejected_p0015 ... ok
+test parser::tests::index_bind_top_level ... ok
+test parser::tests::index_bind_type_annotation_rejected_p0014 ... ok
+test parser::tests::index_chain_target_unaffected ... ok
+test parser::tests::int_clamp_no_double_report_c14 ... ok
+test parser::tests::iota_fill_calls_are_p0108_rejected_with_teaching_text ... ok
+test parser::tests::examples_parse_clean ... ok
+test parser::tests::labeled_jump_diag_covers_sigil ... ok
+test parser::tests::labeled_jump_p0110_chain_terminates ... ok
+test parser::tests::labeled_loop_arrows_no_top_level_semi ... ok
+test parser::tests::labeled_loop_p0110 ... ok
+test parser::tests::lex_diags_preserved_j6 ... ok
+test parser::tests::line_index_span_starts ... ok
+test parser::tests::list_map_path_exactly_p0109_chain_continues ... ok
+test parser::tests::loop_in_fanout_block_p0117 ... ok
+test parser::tests::loop_jump_stage ... ok
+test parser::tests::mixing_statement_among_arms_p0006 ... ok
+test parser::tests::mul_binds_tighter_than_add ... ok
+test parser::tests::nested_labeled_blocks_and_jump ... ok
+test parser::tests::not_and_precedence_w15 ... ok
+test parser::tests::op_block_param_no_trailing_comma ... ok
+test parser::tests::op_block_zero_params_p0001 ... ok
+test parser::tests::op_shorthand_cmp_chain_p0007 ... ok
+test parser::tests::op_shorthand_mul_then_add ... ok
+test parser::tests::op_shorthand_simple_form ... ok
+test parser::tests::path_colons_after_arrow_not_a_label ... ok
+test parser::tests::pattern_arm_only_block_p0106_twice ... ok
+test parser::tests::payload_bare_expr ... ok
+test parser::tests::payload_block ... ok
+test parser::tests::payload_chain ... ok
+test parser::tests::payload_headless_chain ... ok
+test parser::tests::payload_nested_guard ... ok
+test parser::tests::question_postfix_p0101 ... ok
+test parser::tests::rebind_in_fanout_block_p0117 ... ok
+test parser::tests::rest_element_exactly_p0107 ... ok
+test parser::tests::ret_as_chain_head_p0001_w20 ... ok
+test parser::tests::ret_plain ... ok
+test parser::tests::ret_projection ... ok
+test parser::tests::s36_a_arrow_b_plus_c_arrow_d ... ok
+test parser::tests::s36_a_plus_b_arrow_c ... ok
+test parser::tests::s36_x_arrow_f_dot_method ... ok
+test parser::tests::seq_arm_mixed_with_stmt_p0006 ... ok
+test parser::tests::seq_block_form_optional_semi ... ok
+test parser::tests::seq_empty ... ok
+test parser::tests::seq_guard_arm_illegal_p0004 ... ok
+test parser::tests::seq_headless_chains_compat ... ok
+test parser::tests::seq_rebind_and_loop_kept ... ok
+test parser::tests::seq_statement_form_headed_chains ... ok
+test parser::tests::seq_with_tail ... ok
+test parser::tests::sigiled_labeled_block_diag_covers_sigil ... ok
+test parser::tests::sigiled_labeled_block_p0110 ... ok
+test parser::tests::spaced_guard_p0005_recovered_as_arm ... ok
+test parser::tests::statement_initial_colon_non_ident_is_generic_error ... ok
+test parser::tests::stray_guard_over_u64_slices_source ... ok
+test parser::tests::stray_guard_p0004 ... ok
+test parser::tests::struct_literal_heads_chain ... ok
+test parser::tests::term_block_final_stage_no_semi ... ok
+test parser::tests::term_block_final_with_semi_w10 ... ok
+test parser::tests::term_block_tail_no_semi ... ok
+test parser::tests::term_missing_semicolon_p0001 ... ok
+test parser::tests::term_semicolon_statement ... ok
+test parser::tests::top_level_statement_p0012 ... ok
+test parser::tests::trailing_comma_array_and_tuple ... ok
+test parser::tests::trailing_comma_params ... ok
+test parser::tests::trailing_comma_struct_decl_and_literal ... ok
+test parser::tests::unary_neg_member_w15 ... ok
+test parser::tests::unary_neg_precedence_w15 ... ok
+test parser::tests::unsigiled_jump_is_plain_var_stage_w25 ... ok
+test parser::tests::w12_op_shorthand_minus_is_subtraction ... ok
+test parser::tests::w17_double_bind_p0008 ... ok
+test parser::tests::w18_mixed_direction_p0001 ... ok
+test parser::tests::w20_loop_in_expr_p0001 ... ok
+test parser::tests::w21_named_param_partial_is_member ... ok
+test parser::tests::w24_all_spaced_guard_block ... ok
+
+test result: ok. 160 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/coverage.rs (target/release/deps/coverage-90d500511749ac5c)
+
+running 3 tests
+test dropped_non_trivia_byte_fails_coverage ... ok
+test dropped_trivia_byte_passes_coverage ... ok
+test trivia_gaps_pass_coverage ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/full_surface.rs (target/release/deps/full_surface-f3b408ec5187f1dc)
+
+running 2 tests
+test full_surface_zero_diagnostics_no_errors ... ok
+test full_surface_snapshot ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/golden_tokens.rs (target/release/deps/golden_tokens-61b9c21a5e3bce50)
+
+running 9 tests
+test golden_pipeline ... ok
+test golden_sum_to_n ... ok
+test golden_abs ... ok
+test golden_fanout ... ok
+test golden_fir ... ok
+test golden_seq_demo ... ok
+test golden_zip_demo ... ok
+test golden_sepia ... ok
+test golden_vector_add ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/golden_trees.rs (target/release/deps/golden_trees-c2dff11e8c83469a)
+
+running 10 tests
+test tree_unit_time_head ... ok
+test tree_pipeline ... ok
+test tree_abs ... ok
+test tree_fanout ... ok
+test tree_fir ... ok
+test tree_seq_demo ... ok
+test tree_zip_demo ... ok
+test tree_vector_add ... ok
+test tree_sum_to_n ... ok
+test tree_sepia ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/lex_errors.rs (target/release/deps/lex_errors-c16cd3f21a898f39)
+
+running 2 tests
+test lex_errors_all_codes_present ... ok
+test lex_errors_snapshot ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/out_of_core.rs (target/release/deps/out_of_core-056ee5f1f2740d07)
+
+running 6 tests
+test full_surface_exact_pcode_multiset ... ok
+test out_of_core_every_p01xx ... ok
+test full_surface_diagnostics_snapshot ... ok
+test full_surface_tree_snapshot ... ok
+test out_of_core_tree_snapshot ... ok
+test out_of_core_diagnostics_snapshot ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/parse_errors.rs (target/release/deps/parse_errors-3afa76ed803e3852)
+
+running 3 tests
+test parse_errors_multi_recovery ... ok
+test parse_errors_diagnostics_snapshot ... ok
+test parse_errors_tree_snapshot ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/proptest_lexer.rs (target/release/deps/proptest_lexer-02cf5815b6cad1c3)
+
+running 3 tests
+test arbitrary_strings_total ... ok
+test arbitrary_unicode_total ... ok
+test flow_soup_deterministic_and_total ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/proptest_parser.rs (target/release/deps/proptest_parser-708fca4afd5275bb)
+
+running 3 tests
+test arbitrary_unicode_total ... ok
+test arbitrary_strings_total ... ok
+test flow_soup_total ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+   Doc-tests mapal_backend_cuda
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mapal_backend_llvm
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mapal_backend_verilog
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mapal_check
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mapal_interp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mapal_ir
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mapal_lower
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mapal_rewrite
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mapal_rt
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mapal_syntax
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+perflock: released (exit 0)
+exit=0

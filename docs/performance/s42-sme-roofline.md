@@ -71,6 +71,13 @@ about the process failure as the result.
 halve throughput when they miss L2, so it is not instruction count, not scheduling, not the ZA-tile
 ratio, and not silicon. Read §5e first.
 
+> **⚠️ S43 CORRECTION — the sizing in that paragraph is wrong on both ends. See
+> `s43-residency-and-the-thermal-artifact.md`.** `1043` is not the N=4096 cell (that is **803**);
+> `1864` is a **thermal artifact** — `loadcost.c`'s own binary re-run reads ~2000; and the real
+> kernel with every operand forced L1-resident reaches **1349**, not 1864. The direction (operand
+> residency) survives and was confirmed in the emitter at 1 thread; **the magnitude, the level, and
+> "would pass Accelerate" do not.** §5e carries the full retraction.
+
 ## 1. The ceiling — ~2000 GFLOP/s, and what that number does and does not prove
 
 `roofline.c` runs `fmopa` with **zero memory traffic**: operands are two registers loaded once
@@ -463,6 +470,29 @@ laptop with a matrix unit is **2.1×** the desktop without one.
 
 ## 5e. Where the gap actually is: **operand cache residency**, sized at ~1.79×
 
+> **⚠️ RETRACTED IN PART BY S43.** Full account: `s43-residency-and-the-thermal-artifact.md`.
+> The **direction is confirmed** — an operand-window instrument in the emitted kernel measured
+> **1.71× at 1 thread** (174.596 → 101.854 ms, disjoint, assembly-verified), and B's reuse distance
+> carries essentially all of it while A's term is ≤1.2%. Everything else below is wrong:
+>
+> 1. **The L1 row of the table is a thermal artifact.** `loadcost.c`'s *own unmodified binary*,
+>    re-run three times, reads **2004.2 / 2000.4 / 1996.1** at 32 KB / 4 loads — not 1864.2. Its
+>    64 MB row still reproduces. The published row's monotone slide 1956.7 → 1864.2, and its
+>    second-pass roofline of 1915.5 against today's 2005, are a machine drifting downward *during
+>    the run* — a rule-14 failure inside the data rule 14 was written from. **"Loads cost 5% when
+>    they hit L1" is not a result; today they cost zero.**
+> 2. **`1043 GF/s` is not the N=4096 cell.** Unblocked N=4096 is 171.179 ms = **803 GF/s**.
+> 3. **There is no L1 cliff and no L2-slice cliff on this part.** `loadlevel.c` swept buffer size at
+>    a fixed 256 B/iteration: flat ~1990 GF/s / 249 GB/s from 32 KB to **8 MB**. The only cliff is
+>    shared-L2 → DRAM, starting between 8 M and 12 M. **An operand in L2 rather than L1 costs
+>    nothing here**; the price appears only at DRAM (~95 GB/s → ~765 GF/s).
+> 4. **"~1.79× would put the rung past Accelerate" is false.** The real kernel with every operand
+>    L1-resident reaches 1349 GF/s, not 1864 — still 1.23× behind Accelerate's 1655 at 1 thread.
+> 5. **Threaded it is worth ≤5%** (54.291 → 51.788 ms), below this machine's 6% noise floor. The
+>    1.71× is a one-thread effect, like KC blocking before it.
+> 6. **The mechanism is confounded** between cache reach and TLB reach (`hw.pagesize`=16384; B spans
+>    4096 pages per i-step, the winning arm windows it to 1). No arm in that design separates them.
+
 `benches/sme/loadcost.c` holds the compute exactly constant — four independent `fmopa` into the four
 f32 ZA tiles, every iteration, in every row — and varies only how many operands come from memory
 rather than from registers loaded once before the loop.
@@ -602,6 +632,13 @@ probe counted 131072 full read-outs as pack cost, and produced two confident wro
 - §5b's E-core measurement — **inconclusive**: `BACKGROUND` matched `USER_INTERACTIVE` per thread
   (1991 vs 1998 GFLOP/s), which by the probe's own stated criterion means the QoS steering did not
   take. Nothing about E-core matrix units is established.
+- **§5e's L1 row (1956.7 → 1864.2) — RETRACTED by S43 as a thermal artifact.** `loadcost.c`'s own
+  binary re-reads ~2000 flat across all load counts. Its 64 MB row stands. Consequently "loads cost
+  5% when they hit L1", the 1864 ceiling, the 1.79× sizing, and "would pass Accelerate" all fall.
+  See the box at §5e and `s43-residency-and-the-thermal-artifact.md`.
+- **§5e's `1043 GF/s` — wrong cell.** Unblocked N=4096 is 803 GF/s (171.179 ms).
+- **§5e's implied L1-vs-L2 price — refuted.** There is no L1 cliff and no L2-slice cliff on this
+  part; the only cliff is shared-L2 → DRAM at 8–12 MB.
 - **`panel_l1d_ratio: 2` is a swept constant, not a derivation**, and it is swept on **one part at
   two sizes**. It should not be assumed to hold on any other machine — and §5d shows the box does not
   even have an optimum to sweep for.

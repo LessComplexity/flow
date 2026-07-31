@@ -1812,3 +1812,81 @@ fn unknown_profile_is_an_error_not_a_silent_default() {
         "{msg}"
     );
 }
+
+/// plan-s43-parallel-bpack: the B pack is dispatched across the pool, exactly
+/// once, and the matmul still waits for it.
+///
+/// THIS IS THE ONLY TEST THAT COVERS THE PACKED PARALLEL WRAPPER. The insta
+/// goldens do not: `parallel_matmul_cap`'s program has no packing site, and
+/// `tile_nest_shape*` snapshot only `@task{n}_slice` — the function this change
+/// deliberately leaves byte-identical. So a regression here moves no snapshot.
+///
+/// The assertion that matters most is `slice_elems != 0`. It is the silent
+/// failure mode: `mapal-rt::slice_ranges` falls back to `min(T, ceil(n/GRAIN))`
+/// with `GRAIN = 4096`, and at a few hundred j-tiles that is ONE slice — the
+/// pack would go back to running serially with every other gate still green.
+#[test]
+fn packed_wrapper_dispatches_the_b_pack_across_the_pool() {
+    let ir = mapal_rewrite::rewrite(lower_src(TILE_MATMUL_SRC)).ir;
+    let ll = emit(&ir).unwrap();
+
+    let pack = regex_lite_find(&ll, "_pack, i64 ")
+        .expect("the packed wrapper must register a parallel pack task (@task{n}_pack)");
+    // `call void @mapal_par_task(ptr %h, i32 0, i32 KIND, ptr @task{n}_pack,
+    //                            i64 TILES, i32 rank, i64 SLICE, i32 OVERSUB, i32 0)`
+    let args: Vec<&str> = pack
+        .rsplit_once('(')
+        .expect("a call")
+        .1
+        .trim_end_matches(further_paren)
+        .split(", ")
+        .collect();
+    assert_eq!(
+        args[2], "i32 1",
+        "the pack must be a SPLIT dispatch:\n{pack}"
+    );
+    let tiles: u64 = args[4]
+        .trim_start_matches("i64 ")
+        .parse()
+        .expect("tile count");
+    let slice_elems: u64 = args[6]
+        .trim_start_matches("i64 ")
+        .parse()
+        .expect("slice_elems");
+    assert!(tiles > 0, "the pack's n is the j-tile count:\n{pack}");
+    assert!(
+        slice_elems > 0 && slice_elems <= tiles,
+        "slice_elems=0 silently collapses the pack to ONE slice (GRAIN=4096):\n{pack}"
+    );
+
+    let wrapper = function_containing(&ll, "_pack, i64 ");
+    assert_eq!(
+        wrapper.matches("@mapal_par_begin(i32 1)").count(),
+        2,
+        "the wrapper opens TWO nested single-task runs — pack, then matmul:\n{wrapper}"
+    );
+    let pack_at = wrapper.find("_pack, i64 ").expect("pack call");
+    let slice_at = wrapper.find("_slice, i64 ").expect("slice call");
+    assert!(
+        pack_at < slice_at,
+        "the pack must be dispatched and finished BEFORE the matmul reads it:\n{wrapper}"
+    );
+    assert!(
+        wrapper[pack_at..slice_at].contains("@mapal_par_finish"),
+        "a finish must separate the two runs — that is the happens-before edge:\n{wrapper}"
+    );
+    // The pack body is a real loop over [%lo, %hi), not the old [0, tiles).
+    assert!(
+        ll.contains("store i64 %lo, ptr") && ll.contains(", %hi\n"),
+        "the pack function must walk the j-tile range it was handed:\n{ll}"
+    );
+}
+
+fn further_paren(c: char) -> bool {
+    c == ')'
+}
+
+/// The first line containing `needle`. Kept local so the test adds no dep.
+fn regex_lite_find<'a>(hay: &'a str, needle: &str) -> Option<&'a str> {
+    hay.lines().find(|l| l.contains(needle))
+}

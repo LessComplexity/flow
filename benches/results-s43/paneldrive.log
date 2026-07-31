@@ -1,0 +1,19 @@
+perflock: acquired (waited 0s lock / 0s quiet) — running: /tmp/paneldrive 9
+value gate: 0/97 cells differ against a scalar fmaf reference
+
+ threads      arm     min ms     median        max       GF/s   slow thr   fast thr
+       1     full    155.553    157.096    162.657      874.9      162.6      155.5
+       1   kernel    144.757    146.068    153.014      940.9      153.0      144.7
+       2     full     82.961     83.052     84.531     1654.9       84.5       82.9
+       2   kernel     77.722     77.979     78.436     1762.5       78.4       77.7
+       4     full     50.939     53.048     55.236     2590.8       55.2       49.2
+       4   kernel     49.705     50.171     53.449     2739.4       53.4       48.8
+       8     full     38.186     38.829     40.961     3539.6       40.9       36.4
+       8   kernel     36.644     37.391     38.510     3675.7       38.4       35.1
+      14     full     35.821     36.028     36.345     3814.8       36.3       32.8
+      14   kernel     34.715     35.306     36.981     3892.8       36.9       32.3
+
+'full' must reproduce the real threaded 54.164 ms at 14 threads or this
+driver is not modelling the shipped path and nothing in it may be read.
+'kernel' skips the A pack (values wrong by construction, timing only).
+perflock: released (exit 0)

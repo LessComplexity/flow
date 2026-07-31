@@ -1,0 +1,26 @@
+perflock: acquired (waited 0s lock / 0s quiet) — running: /tmp/bpack 2048 15 14
+value gate: all 4 arms byte-identical over 16 MB
+
+N=2048, 14 threads where parallel, 15 alternating reps
+             arm     min ms     median        max       GB/s    vs base
+  base (emitted)      1.104      1.726      1.981       19.4     1.000x
+             par      0.295      0.346      0.431       97.0     4.988x
+             blk      0.988      1.043      1.185       32.2     1.655x
+         par+blk      0.299      0.340      0.426       98.7     5.076x
+
+base is the emitted pack. 'par' is the minimal emitter fix (make @task7
+parallel over jt); 'blk' is the loop-order fix alone; 'par+blk' is both.
+perflock: released (exit 0)
+perflock: acquired (waited 0s lock / 0s quiet) — running: /tmp/bpack 4096 15 14
+value gate: all 4 arms byte-identical over 64 MB
+
+N=4096, 14 threads where parallel, 15 alternating reps
+             arm     min ms     median        max       GB/s    vs base
+  base (emitted)     15.722     16.402     16.684        8.2     1.000x
+             par      1.694      1.721      2.370       78.0     9.531x
+             blk      8.098      8.388      8.521       16.0     1.955x
+         par+blk      1.702      1.741      2.337       77.1     9.421x
+
+base is the emitted pack. 'par' is the minimal emitter fix (make @task7
+parallel over jt); 'blk' is the loop-order fix alone; 'par+blk' is both.
+perflock: released (exit 0)

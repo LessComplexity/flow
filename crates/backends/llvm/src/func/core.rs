@@ -519,13 +519,20 @@ impl<'a> FnEmit<'a> {
         let (lane_head, lane_body, lane_done) = (self.label(), self.label(), self.label());
         let (load, pad, store_done) = (self.label(), self.label(), self.label());
 
-        self.line(format!("store i64 0, ptr {jt_ctr}"));
+        // plan-s43-parallel-bpack §2: the j-tile axis is the pack's OWN split
+        // axis. Panels are disjoint by construction (`panel_base = jt·k·tile_j`,
+        // reads shared read-only), so any cut at a whole `jt` is sound. At
+        // `split_range == false` this is character-identical to the `0`/`tiles`
+        // literals it replaces, which is what keeps the sequential inline pack
+        // (`bulk.rs`) byte-for-byte unchanged.
+        let (jt_lo, jt_hi) = self.bulk_bounds(tiles);
+        self.line(format!("store i64 {jt_lo}, ptr {jt_ctr}"));
         self.line(format!("br label %{jt_head}"));
         self.label_line(&jt_head);
         let jt = self.tmp();
         self.line(format!("{jt} = load i64, ptr {jt_ctr}"));
         let all_tiles = self.tmp();
-        self.line(format!("{all_tiles} = icmp uge i64 {jt}, {tiles}"));
+        self.line(format!("{all_tiles} = icmp uge i64 {jt}, {jt_hi}"));
         self.line(format!(
             "br i1 {all_tiles}, label %{jt_done}, label %{jt_body}"
         ));

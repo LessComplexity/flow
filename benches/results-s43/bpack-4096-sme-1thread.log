@@ -1,0 +1,24 @@
+perflock: acquired (waited 0s lock / 0s quiet) — running: benches/sme/bpack_sweep.sh benches/matmul/matmul4096_cap_f32.mapal 12 sme 1 2 8
+== S43 parallel B pack: matmul4096_cap_f32.sme ==
+clang:   Homebrew clang version 22.1.8
+cflags:  -O2 -march=armv8-a+sme2
+leg:     sme --target=apple-m4-sme
+threads: MAPAL_PAR=1
+cycles:  12 round-robin (+1 discarded warm-up)
+commit:  0518e76 +dirty
+  pack dispatch: 1 in 'on', 0 in 'off' (must be 0)
+  pack registration: ptr @task7_pack, i64 256, i32 16777218, i64 1, i32 4
+  slice fn identical off/on: 1 distinct hash(es) — must be 1
+  values identical to 'off' on every arm: 74348 -302529
+  n=12 per arm
+       arm        min     median        max    vs off  distributions
+       ctl   169.0519   170.3670   172.9743    1.006x  OVERLAP
+        on   168.8492   171.6948   175.1491    0.998x  OVERLAP
+     on-o1   168.8956   170.9418   172.6390    1.003x  OVERLAP
+     on-o2   169.6569   170.8195   173.8995    1.004x  OVERLAP
+     on-o8   169.8508   171.8373   173.2814    0.998x  OVERLAP
+       off   169.2773   171.4303   175.3430    1.000x  -
+  (rule 6: under ~6% on this unpinned Mac is noise; byte-identical
+   binaries have measured -5.9%..+1.2% apart.)
+  CONTROL (byte-identical to off): 0.62% from off, own spread 2.3% — within the noise floor, run stands
+perflock: released (exit 0)

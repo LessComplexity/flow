@@ -1,0 +1,26 @@
+perflock: acquired (waited 0s lock / 0s quiet) — running: /tmp/paneldrive2 9
+     N  threads       arm     min ms     median        max       GF/s
+N=1024 value gate: 0/97 cells differ against a scalar reference
+  1024        1     bpack      0.331      0.346      0.434     6206.6
+  1024        1      full      1.940      1.972      1.992     1089.0
+  1024        1    kernel      1.299      1.302      1.308     1649.4
+  1024       14      full      0.692      0.698      0.703     3076.6
+  1024       14    kernel      0.631      0.636      0.648     3376.5
+N=2048 value gate: 0/97 cells differ against a scalar reference
+  2048        1     bpack      2.417      2.429      2.463     7072.8
+  2048        1      full     14.895     15.150     15.345     1134.0
+  2048        1    kernel     11.950     12.218     12.487     1406.1
+  2048       14      full      4.655      4.785      4.793     3590.4
+  2048       14    kernel      4.482      4.489      4.668     3827.1
+N=4096 value gate: 0/97 cells differ against a scalar reference
+  4096        1     bpack     16.219     16.349     16.466     8406.6
+  4096        1      full    153.527    154.396    158.854      890.2
+  4096        1    kernel    142.957    143.331    155.560      958.9
+  4096       14      full     35.273     35.875     36.527     3831.1
+  4096       14    kernel     34.772     34.964     35.669     3930.9
+
+'bpack' is the emitter's SERIAL b pack, verbatim. The shipped path pays it
+inside the timed region on ONE thread; this driver's 'full'/'kernel' arms do
+not. GF/s on the bpack row is meaningless -- read its ms against the shipped
+minus driver gap (~18 ms at N=4096, at BOTH 1 and 14 threads).
+perflock: released (exit 0)

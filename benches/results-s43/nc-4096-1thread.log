@@ -1,0 +1,23 @@
+perflock: acquired (waited 0s lock / 0s quiet) — running: benches/sme/nc_sweep.sh benches/matmul/matmul4096_cap_f32.mapal 13 256 512 768 1024 2048
+== SME nc sweep: matmul4096_cap_f32 ==
+clang:   Homebrew clang version 22.1.8
+cflags:  -O2 -march=armv8-a+sme2
+threads: MAPAL_PAR=1
+runs:    13 round-robin cycles (+1 discarded warm-up)
+commit:  0518e76 +dirty
+  kernel bytes identical across arms: 1 distinct hash(es) — must be 1
+  values identical to the NEON leg on every arm: 74348 -302529
+  n=13 per arm
+       arm        min     median        max    vs off  distributions
+       ctl   168.4007   170.3072   172.5749    1.000x  OVERLAP
+       256   266.6645   267.7507   270.2248    0.636x  disjoint
+       512   180.8069   181.8582   183.6526    0.937x  disjoint
+       768   167.9147   169.8431   173.2869    1.003x  OVERLAP
+      1024   143.4090   144.3291   145.8402    1.180x  disjoint
+      2048   153.4091   156.2960   160.6713    1.090x  disjoint
+       off   168.6059   170.3160   173.2089    1.000x  -
+  (rule 6: under ~6% on this unpinned Mac is noise; byte-identical
+   binaries have measured -5.9%..+1.2% apart.)
+  CONTROL (byte-identical to off): 0.01% from off — within the noise floor, run stands
+perflock: released (exit 0)
+exit=0

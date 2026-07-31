@@ -1,0 +1,21 @@
+perflock: acquired (waited 0s lock / 0s quiet) — running: /tmp/unitload_sz2 20000000 3 0 1
+  rep 1/3 done
+  rep 2/3 done
+  rep 3/3 done
+
+=== 4 loads, PER-THREAD buffer of varying size (ld0 control in parens) ===
+      buffer         1thr                2thr                4thr                8thr               14thr       
+       32 KB      1997.3 ( 1999)      3197.1 ( 3198)      3925.5 ( 3924)      4092.4 ( 3965)      4102.0 ( 4163)
+      128 KB      2002.8 ( 2005)      3195.1 ( 3201)      3932.5 ( 3922)      3867.2 ( 3864)      4156.9 ( 4158)
+      256 KB      1999.7 ( 1999)      3199.0 ( 3201)      3931.8 ( 3918)      3858.2 ( 4073)      4046.8 ( 3834)
+      512 KB      1768.9 ( 1773)      2902.1 ( 2906)      3569.3 ( 3568)      3776.5 ( 3774)      3722.6 ( 3512)
+     1024 KB      1581.4 ( 1582)      2633.5 ( 2645)      3247.1 ( 3250)      3382.2 ( 3241)      3360.6 ( 3197)
+     4096 KB      1461.6 ( 1465)      2477.8 ( 2481)      2804.1 ( 3049)      2896.1 ( 3016)      2206.6 ( 2921)
+
+Reading it: ld0 has NO loads, so its control number CANNOT depend on the buffer
+size. If the ld0 column is not flat, the run is void -- that is drift, not an
+effect. If ld0 is flat and the 4-load number falls as the buffer passes the
+128 KB L1D while the aggregate is still inside the 16 MB L2, the binder is
+shared-L2 refill bandwidth at 14 cores -- the regime the real kernel runs in.
+(sink 20995257948.0)
+perflock: released (exit 0)
