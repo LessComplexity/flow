@@ -337,7 +337,7 @@ matmul dispatch byte-identical. **Run-once is preserved: the outer registration 
 | SME threaded | **53.98** | **39.08** | **1.381×, disjoint** (ctl drift 0.11%) |
 | SME 1 thread | 171.4 | 171.7 | 0.998×, overlap — **no cost** |
 | SME 2048 threaded | 6.899 | 5.157 | 1.338×, disjoint |
-| NEON threaded | 152.1 | 131.9 | ~1.15× disjoint — **VOID**, control spread 6.5–8.5% |
+| NEON threaded | 152.1 | 131.9 | ~1.15× disjoint — **VOID** (control spread 6.5–8.5%) and **NOT PURSUED**: the NEON leg is not the matmul path, matmul ships SME (Sapir) |
 
 **39.08 ms = 3517 GF/s, against Accelerate's threaded 3113.** The oversub sweep {1,2,4,8} is flat
 (1.4%, all overlapping) ⇒ ship 4; nothing to derive.

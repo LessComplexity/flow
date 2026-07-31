@@ -184,15 +184,18 @@ remaining target.
 
 ### Three builds
 
-| build                                              | guarantee                                       | matmul 1024², threaded |
-| -------------------------------------------------- | ----------------------------------------------- | ---------------------- |
-| **FMA off** (default)                              | bit-identical to the interpreter, always        | 3.65 ms                |
-| **FMA on** (`--contract`)                          | relative tolerance; single-rounding FMA allowed | 2.25 ms (1.62×)        |
-| **SME** (`--contract --target=apple-m4-sme`)       | same as FMA on; needs an SME core (Apple M4+)   | **0.94 ms** (3.88×)    |
+| build                                        | what you get                                                    |
+| -------------------------------------------- | --------------------------------------------------------------- |
+| **FMA off** (default)                        | bit-identical to the interpreter, always                        |
+| **FMA on** (`--contract`)                    | lets the hardware fuse multiply and add — faster, last bit moves |
+| **SME** (`--contract --target=apple-m4-sme`) | same as FMA on, plus the matrix unit; needs an Apple M4 or newer |
 
-The default emits **zero** FMA instructions — verified on the object, not assumed. All appear in
-every table because the comparison is otherwise uneven in both directions: C/C++ fuses by default,
-Rust never does, NumPy calls hand-written FMA kernels.
+The default emits **zero** fused instructions — verified on the compiled object, not assumed. All
+three are listed because the comparison is otherwise uneven in both directions: C and C++ fuse by
+default, Rust never does, and NumPy calls hand-written kernels that do.
+
+Matrix multiply uses the SME build; the other two are not the matmul path and are not benchmarked
+against it.
 
 ---
 

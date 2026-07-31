@@ -8,8 +8,8 @@ The performance record that governs S44: **`docs/performance/s43-residency-and-t
 ## READ THIS FIRST
 
 **The headline: Mapal beats numpy/Accelerate at N=4096 f32 threaded — 1.139×, disjoint, values
-identical, measured same-session.** First time on any matmul cell. It is **NOT MERGED**: the change
-lives in an agent worktree (§ live state).
+identical, measured same-session.** First time on any matmul cell. **MERGED and pushed** at
+`555d058`; the gate was re-run on the merged tree (1032 passed / 0 failed, fmt clean).
 
 **Scope it honestly.** 4096 wins 1.139×; 2048 is **parity** (overlapping); 1024 **loses** 1.21×; one
 thread loses ~2× at every size. The claim is "the large-N threaded cell", never "matmul".
@@ -25,12 +25,12 @@ emission — which immediately revealed that **3 of its 159 cells have always fa
 **Every timed run goes through `benches/perflock.sh`.** It is bounded (exit 75 = retry, command did
 not run) and refuses to measure through a busy machine.
 
-## S44 opens on — merging, then the single-thread gap
+## S44 opens on — the single-thread gap
 
-### 1. P0 — merge the parallel B pack
+### 1. What shipped in S43 (context, not work)
 
-Worktree `.claude/worktrees/agent-a718d8faeee0ea4b4`. Three files, +139/−6, `mapal-ir` and `mapal-rt`
-untouched. Plan: `components/backend-llvm/plans/plan-s43-parallel-bpack.md`.
+On `main` at `555d058`. Three files, +139/−6, `mapal-ir` and `mapal-rt` untouched.
+Plan: `components/backend-llvm/plans/plan-s43-parallel-bpack.md`.
 
 - `func/core.rs::emit_pack_copy` — the `jt` loop's bounds become `self.bulk_bounds(tiles)`; at
   `split_range == false` it reproduces the old literals character-identically.
@@ -38,16 +38,16 @@ untouched. Plan: `components/backend-llvm/plans/plan-s43-parallel-bpack.md`.
   wrapper drops the inline pack for a nested `begin(1)/task/launch/finish` ahead of the **unchanged**
   matmul dispatch.
 
-**Expect 48 emissions to MOVE** — only matmul sources, only `rew`/`con`, never `raw`. A 159/159
-identical result would mean the change did nothing. Gate on **values**, not bytes.
+It moved **48 emissions** — only matmul sources, only `rew`/`con`, never `raw`. If you touch this
+path again, remember a 159/159 identical result means your change did nothing: gate on **values**.
 
 **Do not "simplify" it into a `begin(2)` + `mapal_par_dep`.** That was tried and rejected:
 `complete_slice` schedules dep-unlocked tasks `Placement::Local(lane)`, which would put every matmul
 slice on one deque instead of the rank-sorted `Placement::Seed` — silently changing the *matmul's*
 placement. Two sequential nested runs are deliberate.
 
-Also decide `nc` blocking's fate (worktree `a03f9b2318`): built, swept, gates green, **ships OFF**.
-Merge as a documented lever or discard.
+**Still undecided: `nc` blocking** (worktree `a03f9b2318`) — built, swept, gates green, **ships
+OFF** because threaded it is parity at best. Merge as a documented lever or discard.
 
 ### 2. P1 — the single-thread gap, which is now the honest target
 
@@ -70,15 +70,7 @@ So a design that captures it must change the *reuse structure*, not add another 
 Note the asymmetry that makes this hard: at one thread there is no Amdahl problem to fix, and every
 working-set knob has now been swept.
 
-### 3. P1 — the NEON leg is VOID and may be a free win
-
-The parallel pack measured **~1.15× on the NEON leg** — but control spread was 6.5–8.5%, so it is
-**void by our own rule**. It was disjoint in both runs and the two runs agreed within 2.6 points, so
-the direction is probably real. `packing_site` is not SME-specific; the NEON/AVX legs pack through
-the same wrapper. **Re-measure it cleanly** — this could be a win on hardware with no matrix unit at
-all, including the box.
-
-### 4. Measurement rules — S43 added four
+### 3. Measurement rules — S43 added four
 
 > **19. Re-run the baseline binary before trusting a published table.** S42's L1 ceiling was thermal
 > drift *during* the run; the 64 MB row of the same table still reproduces exactly. A table can be
@@ -104,18 +96,17 @@ the cost.**
 ## FIRST commands
 
 ```sh
+cargo test --workspace --release                    # 1032 passed / 0 failed on main
+./benches/perflock.sh ./benches/matmul/numpy_ab.sh target/release/examples/emit 4096 15  # the headline
 git worktree list                                   # 4 agent worktrees + 3 prunable pre-rename
-git -C .claude/worktrees/agent-a718d8faeee0ea4b4 diff --stat   # the parallel pack, 3 files
-./benches/perflock.sh ./benches/matmul/numpy_ab.sh <emit> 4096 15   # reproduce the headline
-cargo test --workspace --release                    # 1031 on main; 1032 with the pack
 ```
 
 ## Live state at S43 close
 
 | Type | Handle | State | Inspect | Cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `0518e76` | **in sync with origin**; 2 modified + 14 untracked, all docs/instruments | `git status -sb` | Sapir's call |
-| worktree | `agent-a718d8faeee0ea4b4` | **the parallel B pack — merge candidate** | `git -C … status -s` | merge or discard |
+| branch | `main` @ `555d058` | **pushed, in sync, clean** (only `oainotes.md` untracked) | `git status -sb` | — |
+| worktree | `agent-a718d8faeee0ea4b4` | parallel B pack — **already merged to `main`** | `git -C … status -s` | discardable |
 | worktree | `agent-a03f9b23183f1440c` | `nc` blocking, ships OFF, gates green | " | merge or discard |
 | worktree ×2 | `agent-a00e8357…`, `agent-a9c8b56e…` | probe-only; sources already copied to `main` | " | discardable |
 | worktree ×3 | `…-Personal-**Flow**/…` | prunable, pre-rename paths | `git worktree list` | `git worktree prune` — **only after the agent worktrees resolve** |
@@ -129,10 +120,8 @@ cargo test --workspace --release                    # 1031 on main; 1032 with th
 
 | Priority | Item | Reference | Next action | Done when |
 | --- | --- | --- | --- | --- |
-| **P0** | **merge the parallel B pack** | §1 | review the 3-file diff, merge, gate the merged tree | on `main`, gate green |
-| P0 | decide `nc` blocking's fate | §1 | merge as a documented lever or discard | resolved |
-| P1 | single thread is ~2× behind numpy | §2 | needs a reuse-structure change, not another blocking level | 1t GF/s moves off ~800 |
-| P1 | NEON leg pack win is VOID | §3 | re-measure cleanly; may be a no-matrix-unit win | a clean number or a retraction |
+| **P0** | **single thread is ~2× behind numpy** | §2 | needs a reuse-structure change, not another blocking level | 1t GF/s moves off ~800 |
+| P1 | decide `nc` blocking's fate | §1 | merge as a documented lever or discard | resolved |
 | P1 | `examples/vector.mapal` does not parse | READ THIS FIRST | 3 of 159 gate cells have always failed | it parses, or leaves the sweep |
 | P1 | delete or justify `kc_nest` | `lib.rs::EmitOpts` | unchanged from S42 | gone, or has a written reason |
 | P1 | executing SME value check in `cargo test` | `benches/sme/README.md` | unchanged from S42 | the suite runs an SME binary |
