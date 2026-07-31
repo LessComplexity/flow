@@ -312,21 +312,15 @@ so neither resolves names the way the compiler does (ADR-0008).
 
 ## What is next
 
-1. ~~**Machine profiles**~~ — done. Tuning constants moved out of the compiler into a named
-   table of machine facts.
-2. ~~**Faster convolution**~~ — done; the compiler works the blocking out from how the data is read.
-3. ~~**Smarter work splitting**~~ — mostly done and on by default. Still to do: pick the number of
-   threads from the program itself
+1. **Close the single-threaded gap**, where NumPy is still ~2× ahead. Threaded is solved; this is a
+   different bottleneck ([what we measured](docs/performance/s43-residency-and-the-thermal-artifact.md)).
+2. **Pick the thread count from the program** instead of defaulting to every core
    ([plan](docs/components/backend-llvm/plans/plan-s32-deduced-scheduling.md)).
-4. ~~**The rewriter could delete a trap that must fire**~~ — fixed
-   ([plan-s34](docs/components/rewrite/plans/plan-s34-identity-map-trap.md)).
-5. ~~**A timing bug made every threaded measurement suspect**~~ — fixed; work can no longer start
-   before the clock meant to time it
-   ([plan](docs/components/backend-llvm/plans/plan-s33b-clock-read-barrier.md)).
-6. ~~**Matrix units** (Arm SME)~~ — shipping behind an opt-in flag, because they change
-   arithmetic ordering and that should never be silent. Threaded 4096² matmul now beats NumPy.
-7. **Close the single-threaded gap**, where NumPy is still ~2× ahead.
-8. **Intel AMX**, then GPUs in earnest, then running one program across several processors at once.
+3. **Intel AMX**, so matrix units are not an Apple-only story.
+4. **GPUs in earnest**, then running one program across several processors at once.
+
+Done so far, and how each turned out, is in
+[`docs/sessions/`](docs/sessions/) — including the things that were tried and did not work.
 
 ---
 
