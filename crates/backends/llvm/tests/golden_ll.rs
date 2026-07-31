@@ -733,6 +733,10 @@ fn golden_tile_map_shape_kc() {
         &ir,
         &EmitOpts {
             kc_nest: true,
+            // S46: the default target now DETECTS the machine, and a detected L2
+            // changes the derived `tile_kc` that decides whether this nest fires.
+            // This golden pins the nest's SHAPE, so it pins the reference profile.
+            target: "generic",
             ..EmitOpts::default()
         },
     )

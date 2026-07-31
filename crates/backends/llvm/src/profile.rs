@@ -772,6 +772,13 @@ pub fn resolve(name: &str) -> Option<&'static TargetProfile> {
         .into_iter()
         .find(|p| p.name == name)
         .or_else(|| (name == "native").then(native).flatten())
+        // S46: `native` is the DEFAULT target, so it must always resolve. When a
+        // fact cannot be read — an unknown OS, a locked-down container, a CPU
+        // whose caches sysfs does not describe — fall back to `generic` rather
+        // than fail the build. `generic` carries no cache geometry, so every
+        // rung that needs it declines: the compiler goes conservative instead of
+        // guessing, which is the same contract as before this became default.
+        .or_else(|| (name == "native").then_some(&GENERIC))
 }
 
 /// The known profile names, for the error message on an unknown one.

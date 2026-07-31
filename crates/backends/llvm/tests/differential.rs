@@ -1272,6 +1272,11 @@ fn emit_kc_and_untiled(ir: &CategoryIr) -> (String, String) {
         ir,
         &mapal_backend_llvm::EmitOpts {
             kc_nest: true,
+            // S46: the default target now DETECTS the machine, and a detected
+            // L2 changes the derived `tile_kc` that decides whether this nest
+            // fires at all. These tests assert the nest's SHAPE, so they pin
+            // the reference profile by name.
+            target: "generic",
             ..mapal_backend_llvm::EmitOpts::default()
         },
     )
@@ -1780,6 +1785,11 @@ fn main() {
         &ir,
         &mapal_backend_llvm::EmitOpts {
             kc_nest: true,
+            // S46: the default target now DETECTS the machine, and a detected
+            // L2 changes the derived `tile_kc` that decides whether this nest
+            // fires at all. These tests assert the nest's SHAPE, so they pin
+            // the reference profile by name.
+            target: "generic",
             ..mapal_backend_llvm::EmitOpts::default()
         },
     )
@@ -1841,6 +1851,11 @@ fn main() {
         &ir,
         &mapal_backend_llvm::EmitOpts {
             kc_nest: true,
+            // S46: the default target now DETECTS the machine, and a detected
+            // L2 changes the derived `tile_kc` that decides whether this nest
+            // fires at all. These tests assert the nest's SHAPE, so they pin
+            // the reference profile by name.
+            target: "generic",
             ..mapal_backend_llvm::EmitOpts::default()
         },
     )
@@ -2010,6 +2025,11 @@ fn main() {
         &ir,
         &mapal_backend_llvm::EmitOpts {
             kc_nest: true,
+            // S46: the default target now DETECTS the machine, and a detected
+            // L2 changes the derived `tile_kc` that decides whether this nest
+            // fires at all. These tests assert the nest's SHAPE, so they pin
+            // the reference profile by name.
+            target: "generic",
             ..mapal_backend_llvm::EmitOpts::default()
         },
     )

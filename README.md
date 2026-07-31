@@ -62,8 +62,9 @@ That runs across every core of the machine. Nothing in the source says so.
 Fast code is usually fast because a human wrote machine details into it: tile sizes, thread
 counts, vector widths, memory layouts. Those details are what stop it moving to other hardware.
 
-Mapal keeps them out of your source. The program says what depends on what; the machine details
-come from a target profile the compiler picks. Change the machine, keep the source.
+Mapal keeps them out of your source. The program says what depends on what; the machine details are
+**read off the machine you are compiling on** — cache sizes, line sizes, vector widths, whether
+there is a matrix unit. Change the machine, keep the source.
 
 ### What the compiler works out for you
 
@@ -131,21 +132,14 @@ Threaded, median of 100, every leg measured in the same pass so the columns are 
 Per core, conv2d is 1.21× ahead of naive C++ on NEON and AVX2:
 [conv2d-per-core-gap.md](docs/performance/conv2d-per-core-gap.md).
 
-**Transpose is the slowest shape here, and the table above understates how fixable that is.**
-Reading down a column makes every access land on the same few cache slots, leaving ~97% of the cache
-unusable — nothing to do with bandwidth. Given a build that knows the machine, the compiler spots
-that from the graph, checks it against the cache geometry it detects, and reorders the visits:
-
-| transpose 1024², threaded | ms |
-| --- | ---: |
-| default build (`generic` — no cache facts, so it declines) | 0.350 |
-| **`--target=native`** | **0.149** — 2.35× |
-
-The same deduction on an Intel i9 picks a different block size and gets 2.2× at one thread. **Nothing
-is configured either way** — the old hand-typed flag is gone
-([detail](docs/performance/s44-conflict-not-capacity.md)). It needs a target that carries cache
-geometry, which `generic` deliberately does not; on the default profile the compiler declines rather
-than guess. The reduction is a semantics difference, not a speed one: NumPy's `sum` is pairwise, a Mapal fold is left-to-right, and splitting
+**Transpose used to be the slowest shape here, and its row above predates the fix.** Reading down a
+column makes every access land on the same few cache slots, leaving ~97% of the cache unusable —
+nothing to do with bandwidth. The compiler spots that from the graph, checks it against the cache
+geometry it reads off the machine, and reorders the visits: **0.350 → 0.149 ms threaded, 2.35×.**
+The same deduction on an Intel i9 measures a different cache layout, derives a different block size,
+and gets 2.2× at one thread. **Nothing is configured** — no flag, and the compiler decides per shape,
+so a matmul and a transpose in one program each get their own treatment
+([detail](docs/performance/s44-conflict-not-capacity.md)). The reduction is a semantics difference, not a speed one: NumPy's `sum` is pairwise, a Mapal fold is left-to-right, and splitting
 one needs an associativity permission the type system does not carry yet
 ([plan](docs/components/ir/plans/plan-s37-scan-recurrence.md)). NumPy has no threaded FIR or conv2d
 kernel, so that column is not like-for-like.
@@ -172,7 +166,7 @@ out differently from the M4's — 64-byte lines, 64 slot-groups — and a 1024-w
 *single* group, worse than the M4's four. Measured **2.2× at one thread, disjoint**, and transpose
 then beats naive C++ single-threaded (1.08 ms vs 2.25) where the table above has them tied. The
 compiler reads this box's cache layout and derives a different block size than it derives on the M4,
-from the same source. The rows above are default (`generic`) builds and do not include it.
+from the same source. The rows above predate the fix.
 
 ### Against a hand-tuned BLAS, on equal hardware
 

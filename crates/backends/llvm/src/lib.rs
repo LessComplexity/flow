@@ -151,7 +151,12 @@ impl Default for EmitOpts {
             contract: false,
             kc_nest: false,
             move_panel: MovePanel::Deduce,
-            target: "generic",
+            // S46 (Sapir): the DEFAULT detects the machine. Every rung that
+            // needs machine facts asks the profile for them, so a default build
+            // now gets the cache-aware ones instead of silently declining.
+            // `native` falls back to `generic` when detection fails, and tests
+            // that must be reproducible across machines pin `generic` by name.
+            target: "native",
         }
     }
 }
