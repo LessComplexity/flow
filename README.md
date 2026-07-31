@@ -125,20 +125,27 @@ Threaded, median of 100, every leg measured in the same pass so the columns are 
 | conv2d 3×3, 1024×1024  | compute         |  **0.114 ms** |     0.115 ms |         0.16 |     1.72 |
 | saxpy, 1M              | streaming       |  **0.115 ms** |     0.116 ms |         0.23 |     0.18 |
 | sum reduction, 1M      | reduction       |      0.582 ms |     0.585 ms |         0.94 | **0.11** |
-| transpose, 1024²       | data movement   |  **0.149 ms** |     0.149 ms |         0.50 |     0.96 |
+| transpose, 1024²       | data movement   |      0.290 ms |     0.308 ms |     **0.26** |     0.83 |
 | gather `x[idx[i]]`, 1M | irregular reads |      0.194 ms |     0.179 ms |     **0.17** |     2.20 |
 
 Per core, conv2d is 1.21× ahead of naive C++ on NEON and AVX2:
 [conv2d-per-core-gap.md](docs/performance/conv2d-per-core-gap.md).
 
-**Transpose moved this session** and is now 3.3× ahead of C++ (its row is a fresh same-session
-measurement; the other rows are from an earlier campaign). It was the slowest shape here by a wide
-margin, for a reason that had nothing to do with bandwidth: reading down a column made every access
-land on the same few cache slots, so the cache was 97% unusable. The compiler now spots that from
-the graph, checks it against the cache geometry it detects, and reorders the visits — 2.35× threaded
-on this machine, 2.5× on an Intel i9, **with nothing to configure**
-([detail](docs/performance/s44-conflict-not-capacity.md)). **Gather is now the only shape that goes
-to C++.** The reduction is a semantics difference, not a speed one: NumPy's `sum` is pairwise, a Mapal fold is left-to-right, and splitting
+**Transpose is the slowest shape here, and the table above understates how fixable that is.**
+Reading down a column makes every access land on the same few cache slots, leaving ~97% of the cache
+unusable — nothing to do with bandwidth. Given a build that knows the machine, the compiler spots
+that from the graph, checks it against the cache geometry it detects, and reorders the visits:
+
+| transpose 1024², threaded | ms |
+| --- | ---: |
+| default build (`generic` — no cache facts, so it declines) | 0.350 |
+| **`--target=native`** | **0.149** — 2.35× |
+
+The same deduction on an Intel i9 picks a different block size and gets 2.2× at one thread. **Nothing
+is configured either way** — the old hand-typed flag is gone
+([detail](docs/performance/s44-conflict-not-capacity.md)). It needs a target that carries cache
+geometry, which `generic` deliberately does not; on the default profile the compiler declines rather
+than guess. The reduction is a semantics difference, not a speed one: NumPy's `sum` is pairwise, a Mapal fold is left-to-right, and splitting
 one needs an associativity permission the type system does not carry yet
 ([plan](docs/components/ir/plans/plan-s37-scan-recurrence.md)). NumPy has no threaded FIR or conv2d
 kernel, so that column is not like-for-like.
@@ -160,12 +167,12 @@ Every row except the reduction. This box takes the streaming and permutation sha
 does not, so neither machine is the whole story
 ([why this box is easy to measure wrong](docs/sessions/2026-07-27-s37b-the-i9-cannot-be-measured-in-ms.md)).
 
-**The transpose fix works here too, and the compiler decides it on its own.** This box's cache is
-laid out differently from the M4's — 64-byte lines, 64 slot-groups — and a 1024-wide row collapses
-onto a *single* group, worse than the M4's four. Measured: **2.2× at one thread, disjoint**, and
-transpose now beats naive C++ single-threaded (1.08 ms vs 2.25) where it used to tie. The compiler
-reads this box's cache layout and picks a different block size than it picks on the M4, from the
-same source.
+**The transpose fix works here too, on a `--target=raptorlake` build.** This box's cache is laid
+out differently from the M4's — 64-byte lines, 64 slot-groups — and a 1024-wide row collapses onto a
+*single* group, worse than the M4's four. Measured **2.2× at one thread, disjoint**, and transpose
+then beats naive C++ single-threaded (1.08 ms vs 2.25) where the table above has them tied. The
+compiler reads this box's cache layout and derives a different block size than it derives on the M4,
+from the same source. The rows above are default (`generic`) builds and do not include it.
 
 ### Against a hand-tuned BLAS, on equal hardware
 
