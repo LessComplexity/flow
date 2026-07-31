@@ -34,8 +34,8 @@ mod validate;
 
 pub use algo::{
     BoundsProof, Checkpoint, ElemPlan, ElemSrc, EmissionClass, EmissionPlan, GuardArm, GuardSite,
-    LastUsePlan, LoopPlan, LoopScc, PathPlan, Task, TaskId, TaskKind, TileKSplit, TilePlan,
-    TileRead, TileSite, WaitEntry,
+    LastUsePlan, LoopPlan, LoopScc, MovePlan, MoveSite, PathPlan, Task, TaskId, TaskKind,
+    TileKSplit, TilePlan, TileRead, TileSite, WaitEntry,
 };
 pub use builder::{Dest, FnBuilder, IrBuilder, IrError, LoopHandle};
 pub use graph::{

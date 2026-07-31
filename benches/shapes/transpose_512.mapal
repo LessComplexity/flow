@@ -1,0 +1,18 @@
+// transpose 512x512 f32 — the LOW-PRESSURE sibling of transpose_1024.mapal, and a
+// predictive test of the S44 rule rather than a re-measurement of it.
+// The row stride is 512*4 = 2048 B = 32 lines, and 32 mod 64 sets = 32, so the walk
+// reaches TWO sets, not one: 24 slots on a 12-way P-core L1D against 512 lines live
+// -> pressure 21.3, a quarter of side 1024's 85.3. The rule predicts the same sign
+// and a SMALLER win here. If 512 wins as hard as 1024 the rule is not doing work.
+fn main() {
+    262144 -> iota -> ia;
+    ia -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    262144 -> iota -> ib;
+    () -> time -> t0;
+    ib -> map { t -> a[(t % 512) * 512 + t / 512] } -> b;
+    () -> time -> t1;
+    b[0] -> println;
+    b[262143] -> println;
+    "iter ms=" -> print;
+    t1 - t0 -> println;
+}

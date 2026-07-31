@@ -30,10 +30,25 @@ impl<'a> FnEmit<'a> {
     /// geometry both ways. A panel that does not tile the space would need a
     /// remainder arm, and the honest answer at that point is that this rung has
     /// nothing to say about that shape.
-    fn move_panel_index(&mut self, iv: &str, n: u64) -> String {
-        let Some((w, b)) = self.move_panel else {
-            return iv.to_owned();
-        };
+    /// **Whether this map gets the move panel, and with what block** — the join
+    /// of the two records, and the whole of S45's answer to "delete the flag".
+    ///
+    /// The graph half is `mapal_ir::MoveSite` (a fold-less map whose read
+    /// address is affine in `(t÷C, t%C)`), the machine half is the profile's
+    /// L1D geometry, and neither crate may hold both (ADR-0032). `Force` keeps
+    /// S44's behaviour for the B-sweep; `Off` is the A/B's OFF arm.
+    fn move_panel_of(&self, m: MorphismId) -> Option<(u64, u64)> {
+        match self.move_panel {
+            MovePanel::Off => None,
+            MovePanel::Force(w, b) => Some((w, b)),
+            MovePanel::Deduce => {
+                let site = self.move_sites.sites.get(m)?;
+                Some((site.width, self.profile.move_block(site)?))
+            }
+        }
+    }
+
+    fn move_panel_index(&mut self, iv: &str, n: u64, w: u64, b: u64) -> String {
         if w == 0 || b == 0 || n % w != 0 {
             return iv.to_owned();
         }
@@ -138,10 +153,13 @@ impl<'a> FnEmit<'a> {
         self.line(format!("{done} = icmp uge i64 {iv}, {hi}"));
         self.line(format!("br i1 {done}, label %{ld}, label %{lb}"));
         self.label_line(&lb);
-        // S44: the index this trip stands for. `move_panel` off (the default) or
-        // declining returns `iv` itself, so the text below is character-identical
-        // to what it has always been.
-        let ix = self.move_panel_index(&iv, n);
+        // S44/S45: the index this trip stands for. A declined site — no record,
+        // or a profile that prices it as no win — returns `iv` itself, so the
+        // text below is character-identical to what it has always been.
+        let ix = match self.move_panel_of(m) {
+            Some((w, b)) => self.move_panel_index(&iv, n, w, b),
+            None => iv.clone(),
+        };
         // plan-s37-stage-structure: if `elem_plan` knows what `arr[i]` IS, build
         // it here instead of reading it back out of memory. The intermediate
         // array is still emitted — this is the query, not a rewrite; whether the

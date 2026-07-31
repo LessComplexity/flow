@@ -12,7 +12,66 @@
 //! arithmetic, and the arithmetic reproduces those literals for the default
 //! profile — that is the correctness gate for this change.
 
-use mapal_ir::Ty;
+use mapal_ir::{MoveSite, Ty};
+
+/// **The L1 data cache's geometry (S45) — three facts, and the fourth that is
+/// arithmetic.**
+///
+/// `ways` is never recorded: for a set-associative cache
+/// `ways = bytes / (line · sets)` is a definition, not an estimate, so recording
+/// it could only ever make it wrong (the [`TargetProfile::sme_block`] precedent
+/// — that is why `f32_tiles` was deleted).
+///
+/// `sets` **is** recorded, because each host has a different best source for it
+/// and only the detector knows which:
+///
+/// | host | source for `sets` | status |
+/// | --- | --- | --- |
+/// | Linux | `/sys/…/index0/number_of_sets` | **read** — the truth, exposed |
+/// | macOS | `hw.pagesize / hw.cachelinesize` | **derived** — `sysctl` exposes no set or way count |
+///
+/// The macOS derivation is the VIPT no-alias bound: an L1 indexed beyond the
+/// page offset would alias, so `sets · line ≤ page`, and these parts sit at the
+/// limit. **It is a checked heuristic, not a law**, and it is stated as one:
+/// it reads the *configured* page rather than the architectural minimum, and
+/// there are real parts it gets wrong — a PIPT L1 bigger than its page reach
+/// (Cortex-A53, 32 KB 4-way: truth 128 sets, this says 64) and alias-handling
+/// VIPT designs (AMD K8, 64 KB 2-way: truth 512, this says 64). It is used only
+/// where nothing better is readable, and where it is used it is checked:
+///
+/// | part | line | sets | `ways()` | against the machine |
+/// | --- | ---: | ---: | ---: | --- |
+/// | M4 Pro P-core | 128 | 128 (16384/128) | **8** | matches the S44-verified 128-set / 8-way reading |
+/// | i9-14900F P-core | 64 | 64 (read) | **12** | `ways_of_associativity` = **12** ✓ |
+/// | i9-14900F E-core | 64 | 64 (read) | **8** | `ways_of_associativity` = **8** ✓ |
+///
+/// And the blast radius if the split is ever wrong is bounded by construction:
+/// `sets · ways ≡ bytes / line` however the split falls, so a mis-split can only
+/// mis-scale the gcd collapse in [`TargetProfile::move_block`], never the total
+/// capacity. A factor-two error moves `slots` by two; the nearest measured
+/// margin the decision turns on is pressure **21.3 against 1**.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct L1d {
+    /// Per-core L1 data cache in bytes.
+    pub bytes: u64,
+    /// Cache line in bytes — `hw.cachelinesize` / `coherency_line_size`.
+    pub line_bytes: u64,
+    /// Sets. Read where the host exposes it, derived from the page otherwise —
+    /// see the type doc for which host does which, and for the two families of
+    /// part where the derivation is wrong.
+    pub sets: u64,
+}
+
+impl L1d {
+    /// Ways, from capacity — `bytes / (line · sets)`, a definition.
+    pub fn ways(&self) -> u64 {
+        (self.bytes / (self.line_bytes * self.sets.max(1))).max(1)
+    }
+}
+
+fn gcd(a: u64, b: u64) -> u64 {
+    if b == 0 { a } else { gcd(b, a % b) }
+}
 
 /// Which machine class a profile describes.
 ///
@@ -175,8 +234,27 @@ pub struct TargetProfile {
     /// Policy ratio: j-tiles per KC-rung j-block. Same status as
     /// `acc_vecs_per_row`.
     pub nc_tiles: u64,
-    /// Per-core L2 in bytes — the budget the KC rung's k-panel is sized against.
+    /// L2 in bytes, **as reported for one L2 instance** — the budget the KC
+    /// rung's k-panel is sized against. Divide by [`Self::l2_cores`] for the
+    /// per-core share; see that field for why the distinction is load-bearing.
     pub l2_bytes: u64,
+    /// **How many physical cores share one `l2_bytes`.** This field exists
+    /// because the old doc comment on `l2_bytes` said "per-core" while
+    /// [`APPLE_M`] set it to the 16 MB **shared** P-cluster L2 — a two-word
+    /// ambiguity that no consumer had noticed because `tile_kc` only ever wanted
+    /// an order of magnitude.
+    ///
+    /// [`TargetProfile::move_block`]'s cost term divides by it, and there the
+    /// difference is the whole answer: 16 MB says a 4 MB array is resident and
+    /// the rung should decline, 16 MB / **5** = 3.36 MB says it is not and the
+    /// rung should fire — and the M4's measured 1.578× says fire. Detected
+    /// (`hw.perflevel0.cpusperl2`, `shared_cpu_list`), never assumed.
+    ///
+    /// Budgeting **per core** rather than per chip is the right conservatism for
+    /// a compiler that emits one binary for both thread counts: S44 §5 measured
+    /// that this walk's pressure does not dilute with thread count, so at full
+    /// occupancy every core really does get its share and no more.
+    pub l2_cores: u64,
     /// Stack ceiling policy: an entry-block block at least this large is placed
     /// in the `mapal_rt_alloc` arena instead of the stack.
     pub heap_min_bytes: u64,
@@ -185,6 +263,18 @@ pub struct TargetProfile {
     /// emission byte-identical: the SME realization cannot be selected without
     /// a fact only this field carries.
     pub sme: Option<Sme>,
+    /// The L1D geometry the move-panel decision needs (S45). `None` for
+    /// [`GENERIC`] and every profile that predates S45 — the same seam
+    /// discipline as [`Self::sme`] and [`Self::gpu`], and it is what keeps the
+    /// **default** profile's emission byte-identical: the rung cannot fire
+    /// without a fact only this field carries, so `--target=generic` emits today's
+    /// text for every one of the 171 swept cells.
+    ///
+    /// ponytail: [`Sme::l1d_bytes`] is the same number for parts that carry
+    /// both, pinned equal by `l1d_and_sme_agree_on_the_l1d`. Merging them routes
+    /// `sme_kc` through a new `Option` for a field rename, and a working SME leg
+    /// is not worth that; the test makes the duplication unable to drift.
+    pub l1d: Option<L1d>,
 }
 
 /// The element width a tile site accumulates at. Tile sites are numeric-gated
@@ -213,7 +303,7 @@ impl TargetProfile {
     }
 
     /// Rows per register block (was `TILE_I`, on the matmul rung only — the FIR
-    /// window rung's `4` is [`crate::func::WINDOW_SUBROWS`], a different
+    /// window rung reads this same budget via `crate::func::window_subrows`, over a different
     /// quantity over a memory accumulator).
     ///
     /// The `2 ×` is the headroom policy: spend at most HALF the vector file on
@@ -240,6 +330,162 @@ impl TargetProfile {
     /// verdict, deduced).
     pub fn tile_kc(&self, elem: &Ty) -> u64 {
         ((self.l2_bytes / 2) / (self.nc(elem) * elem_bytes(elem))).max(1)
+    }
+
+    /// The L2 budget **one core** actually gets. See [`Self::l2_cores`].
+    pub fn l2_per_core(&self) -> u64 {
+        self.l2_bytes / self.l2_cores.max(1)
+    }
+
+    /// **The S45 move-panel decision, in one function: fire or not, and with
+    /// what block.** `None` declines — the emitter then emits today's flat loop
+    /// character-identically.
+    ///
+    /// This is the join ADR-0032 puts here and nowhere else: [`MoveSite`] is
+    /// pure program geometry, [`L1d`] is pure machine fact, and neither crate
+    /// may hold both. It replaces `--move-panel=W:B`, where a human held both in
+    /// their head and typed the answer.
+    ///
+    /// ```text
+    /// S            = cr · sizeof(elem)                       -- the walk's byte stride
+    /// sets_touched = line | S ? sets / gcd((S/line) mod sets, sets) : sets
+    /// slots        = sets_touched · ways                     -- lines the walk can reach
+    /// lines_live   = min(width, width · S / line)            -- lines it needs at once
+    /// FIRE iff  lines_live > slots  AND  read_bytes > l2_per_core
+    /// ```
+    ///
+    /// **Two terms, because one is provably not enough.** `lines_live > slots`
+    /// is S44's `pressure > 1` written as what it means — the sweep needs more
+    /// lines than it can reach — with no threshold to fit. But pressure predicts
+    /// how OFTEN the L1 is defeated and says nothing about what a defeat COSTS:
+    /// the i9 at side 512 scores 21.3 and **loses 0.901×** (replicated 0.907×).
+    /// A defeat costs real money only when the array being re-swept does not fit
+    /// the private level below L1; otherwise the miss is an L2 hit the
+    /// out-of-order engine hides. The **read** array is the quantity, not the
+    /// whole working set — the conflict is on `a`'s lines, the writes stream —
+    /// which also keeps the discriminating case off a knife edge (1 MB against
+    /// 2 MB, rather than 2 MB against 2 MB).
+    ///
+    /// Both terms were tested predictively rather than fitted. M4 side 512 has
+    /// pressure 8 and a 1 MB read array: the cost term declines it, S44's
+    /// standalone probe claimed **2.09×** there, and the emitted pipeline
+    /// measured **every arm overlapping OFF, min-to-min 1.02×** — the term's
+    /// prediction, on the machine where it was most at risk
+    /// (`benches/results-s45/deduced-move-panel.md` §3).
+    ///
+    /// | case | pressure | read vs L2/core | verdict | measured |
+    /// | --- | ---: | --- | --- | --- |
+    /// | M4 1024 | 32 | 4 MB > 3.36 MB | **fire, B=16** | 1.578× 1t / 1.993× threaded |
+    /// | M4 2048 | 128 | 16 MB > 3.36 MB | **fire, B=8** | 3.19× (probe) |
+    /// | M4 128 | 0.5 | — | decline (pressure) | 1.000× |
+    /// | M4 512 | 8 | 1 MB < 3.36 MB | decline (cost) | overlapping, 1.02× min-to-min |
+    /// | i9 1024 | 85.3 | 4 MB > 2 MB | **fire, B=8** | 2.646× 1t, disjoint |
+    /// | i9 2048 | 170.7 | 16 MB > 2 MB | **fire, B=8** | 3.021× 1t, disjoint |
+    /// | i9 512 | 21.3 | 1 MB < 2 MB | decline (cost) | **0.901× LOSS** |
+    ///
+    /// **The block: the geometric mean of two opposing costs, both measured.**
+    ///
+    /// ```text
+    /// floor   = line / sizeof(elem)   -- a block row shorter than a line refetches it
+    /// ceiling = slots / 2             -- the block's read lines share the reachable
+    ///                                    sets with its write stream
+    /// B       = largest divisor of gcd(width, rows) <= sqrt(floor * ceiling)
+    /// ```
+    ///
+    /// Both costs are 1 inside `[floor, ceiling]`; the window is normally EMPTY
+    /// (the bounds pull apart), and the product of two opposing multipliers is
+    /// minimised at their geometric mean. The divisibility clause is not
+    /// rounding — the permutation needs the panel to tile the geometry both ways
+    /// or it would need a remainder arm.
+    ///
+    /// Each bound is a measurement, not an argument. **Floor:** B=8 on the i9
+    /// covers 8 of the 16 f32 in a line and measures **15% slower than B=16** at
+    /// side 1024, 24% at 2048. **Ceiling:** B=`slots` on the M4 measures **29%
+    /// (S44) and 34% (S45) slower threaded** than B=16 at side 1024, and 56% at
+    /// side 2048.
+    ///
+    /// It reproduces the M4's swept optimum at **both** sides — 16 at side 1024
+    /// (floor 32, ceiling 16, mean 22) and 16 at side 2048 (floor 32, ceiling 8,
+    /// mean 16) — which the previous ceiling-only rule did not: it returned 8 at
+    /// side 2048 and measured **15.7% off**.
+    ///
+    /// **What it does NOT reproduce, and why no version of it could.** The i9's
+    /// measured optimum is **128**, and this returns 8. That gap was priced with
+    /// counters rather than argued (`benches/results-s45`, side 1024, P-core):
+    ///
+    /// | arm | ms | cycles | L1-dcache-load-misses | dTLB misses | LLC misses |
+    /// | --- | ---: | ---: | ---: | ---: | ---: |
+    /// | off | 2.526 | 16.2 M | **1 053 802** | 289 | 683 |
+    /// | B=8 | 1.072 | 9.75 M | 206 414 | 291 | 259 |
+    /// | B=16 | 0.940 | 9.14 M | 499 456 | 282 | 316 |
+    /// | B=128 | 0.929 | 8.83 M | **1 053 618** | 287 | 253 |
+    ///
+    /// **`off` and B=128 miss L1 the same number of times — 1 053 802 against
+    /// 1 053 618 — and B=128 is 2.7x faster.** B=8 misses **five times less**
+    /// and is *slower* than both. TLB misses are flat at ~290 across every arm,
+    /// and LLC misses are ~0 (the 4 MB array fits a 36 MB L3). Instruction
+    /// counts are identical across the blocked arms (33.03 M), so the ordering
+    /// is pure memory behaviour and IPC rises monotonically with B
+    /// (3.39 → 3.61 → 3.74).
+    ///
+    /// So on that machine **L1 residency is not the binding resource at the
+    /// optimum**, and neither is the TLB or the LLC: what B=128 buys is
+    /// memory-level parallelism — more independent misses in flight, absorbed by
+    /// a 512-entry reorder buffer against 12 ways. No quantity in [`L1d`] prices
+    /// that, so this derivation cannot produce 128 and does not pretend to. The
+    /// residual is **14% of the win at side 1024 and 21% at 2048**, and it is
+    /// carried as a known gap rather than closed with a per-machine table.
+    pub fn move_block(&self, site: &MoveSite) -> Option<u64> {
+        let l1 = self.l1d.as_ref()?;
+        let (line, sets, ways) = (l1.line_bytes, l1.sets.max(1), l1.ways());
+        let w = elem_bytes(&site.elem);
+        let stride = site.cr.checked_mul(w)?;
+        // The slow axis must stay inside a line, or there is no line reuse for a
+        // block to preserve and this rung has nothing to say about the shape.
+        if stride == 0 || site.cq * w >= line {
+            return None;
+        }
+        let touched = if stride.is_multiple_of(line) {
+            sets / gcd((stride / line) % sets, sets).max(1)
+        } else {
+            sets
+        };
+        // CONFLICT, not capacity — S44's headline, as the gate it always was.
+        // A walk that reaches every set is limited by capacity, and capacity is
+        // measured FREE on these parts (S43: flat 32 KB → 8 MB). Measured
+        // witness: side 1025 has `gcd(4100/128 …)` = no collapse, runs **2.12×
+        // FASTER unblocked than side 1024**, and blocking it costs 0.623×. It
+        // also scores pressure 1.0009, so without this term it would fire — this
+        // is the clause that keeps `lines_live > slots` from being a threshold
+        // fitted at its own boundary.
+        let slots = touched * ways;
+        let lines_live = (site.width * stride / line).min(site.width);
+        if touched >= sets || lines_live <= slots || site.len.checked_mul(w)? <= self.l2_per_core()
+        {
+            return None;
+        }
+        // The block balances TWO opposing costs, both of them measured.
+        //
+        //   traffic  T(B) = max(1, (line/w) / B)   -- a block row shorter than a
+        //     line fetches that line once per block-row it is split across. At
+        //     B=8 on the i9 (16 f32 per line) it doubles the L1<-L2 traffic, and
+        //     it measures 15% slower than B=16 at side 1024, 24% at 2048.
+        //   conflict C(B) = max(1, B / (slots/2))  -- the block's read lines and
+        //     its write stream compete for the sets the walk can reach. At
+        //     B=slots on the M4 it measures 29-56% slower threaded than B=16.
+        //
+        // Both are 1 inside `[line/w, slots/2]`; when that window is EMPTY —
+        // which is the normal case, because the two bounds pull apart — the
+        // product `T·C` is minimised at their geometric mean. That is the whole
+        // derivation: no threshold, no per-machine number, and it reproduces the
+        // M4's swept optimum at BOTH sides (16 at side 1024 and at 2048).
+        let floor = (line / w).max(1);
+        let ceiling = (slots / 2).max(1);
+        let target = (floor * ceiling).isqrt().max(2);
+        let tile = gcd(site.width, site.rows);
+        (2..=target.min(tile))
+            .rev()
+            .find(|b| tile.is_multiple_of(*b))
     }
 
     /// The GPU facts, when this profile describes one. `None` for every CPU
@@ -371,16 +617,23 @@ pub const GENERIC: TargetProfile = TargetProfile {
     acc_vecs_per_row: 4,
     nc_tiles: 32,
     l2_bytes: 512 * 1024,
+    l2_cores: 1,
     heap_min_bytes: 256 * 1024,
     sme: None,
+    // No L1D geometry ⇒ the S45 move rung cannot fire under the DEFAULT
+    // profile, so `--target=generic` stays byte-identical for all 171 swept
+    // cells. Firing needs a profile that describes a real part.
+    l1d: None,
 };
 
-/// Apple M-series: NEON at 16 B × 32 registers, but a 16 MB shared L2
-/// (`hw.perflevel0.l2cachesize` on this M4 Pro). Same tile widths as `generic`;
-/// the L2 is what differs, and it closes the KC gate by derivation.
+/// Apple M-series: NEON at 16 B × 32 registers, but a 16 MB L2 **shared by five
+/// P-cores** (`hw.perflevel0.l2cachesize` / `hw.perflevel0.cpusperl2` on this M4
+/// Pro). Same tile widths as `generic`; the L2 is what differs, and it closes the
+/// KC gate by derivation.
 pub const APPLE_M: TargetProfile = TargetProfile {
     name: "apple-m",
     l2_bytes: 16 * 1024 * 1024,
+    l2_cores: 5,
     ..GENERIC
 };
 
@@ -394,6 +647,43 @@ pub const ZEN3: TargetProfile = TargetProfile {
     name: "zen3",
     vec_bytes: 32,
     vec_regs: 16,
+    ..GENERIC
+};
+
+/// Intel Raptor Lake — the i9-14900F box (24C/32T, 8 P + 16 E, governor
+/// `performance`). **The cross-compilation case, and the reason named profiles
+/// still exist:** the box has gcc and no clang, so every leg is emitted on the
+/// Mac, where nothing about the i9 can be detected. Every number here was read
+/// off `/sys/devices/system/cpu/cpu0/cache/` on the box itself and is recorded
+/// with its source:
+///
+/// | field | source | value |
+/// | --- | --- | --- |
+/// | `l1d.bytes` | `index0/size` | 48K (P-core; the E-core is 32K) |
+/// | `l1d.line_bytes` | `index0/coherency_line_size` | 64 |
+/// | `l1d.page_bytes` | `getconf PAGESIZE` | 4096 |
+/// | `l2_bytes` | `index2/size` | 2048K |
+/// | `l2_cores` | `index2/shared_cpu_list` = `0-1` | **1** physical core (two SMT threads) |
+///
+/// `sets`/`ways` are **not** recorded: `page/line = 64` and
+/// `48K/(64·64) = 12` reproduce `number_of_sets=64` and
+/// `ways_of_associativity=12` exactly (`l1d_derivation_reproduces_the_i9`).
+///
+/// It describes the **P-core**, which is what the 1-thread legs are pinned to
+/// (`taskset -c 4`). The E-core's 32K/8-way L1D derives 8 ways from the same
+/// rule and would give the same block here; the P-core is the conservative and
+/// the measured one.
+pub const RAPTORLAKE: TargetProfile = TargetProfile {
+    name: "raptorlake",
+    vec_bytes: 32,
+    vec_regs: 16,
+    l2_bytes: 2 * 1024 * 1024,
+    l2_cores: 1,
+    l1d: Some(L1d {
+        bytes: 48 * 1024,
+        line_bytes: 64,
+        sets: 64,
+    }),
     ..GENERIC
 };
 
@@ -448,10 +738,25 @@ pub const APPLE_M4_SME: TargetProfile = TargetProfile {
         l1d_bytes: 128 * 1024,
         panel_l1d_ratio: 2,
     }),
+    // S45: the same L1D, plus the two facts the move rung needs and the SME rung
+    // does not. `hw.cachelinesize` = 128 and `hw.pagesize` = 16384 on this part;
+    // 128 sets and 8 ways follow (`L1d`), so no associativity is written down.
+    l1d: Some(L1d {
+        bytes: 128 * 1024,
+        line_bytes: 128,
+        sets: 128,
+    }),
     ..APPLE_M
 };
 
-const PROFILES: [&TargetProfile; 5] = [&GENERIC, &APPLE_M, &ZEN3, &CUDA_ADA, &APPLE_M4_SME];
+const PROFILES: [&TargetProfile; 6] = [
+    &GENERIC,
+    &APPLE_M,
+    &ZEN3,
+    &CUDA_ADA,
+    &APPLE_M4_SME,
+    &RAPTORLAKE,
+];
 
 /// Resolve a profile by name. `None` for an unknown name — never a silent
 /// fallback to `generic`, because a typo that quietly emits the default
@@ -538,9 +843,13 @@ fn detect() -> Option<TargetProfile> {
     // perflevel0 is the performance core cluster; the bare hw.* keys are the
     // efficiency cores. See the doc comment — this distinction is load-bearing.
     let l1d_bytes = sysctl_u64("hw.perflevel0.l1dcachesize")?;
+    let line = sysctl_u64("hw.cachelinesize")?;
     Some(TargetProfile {
         name: "native",
         l2_bytes: sysctl_u64("hw.perflevel0.l2cachesize")?,
+        // 5 on this M4 Pro: the 16 MB is a CLUSTER L2, not a per-core one, and
+        // `move_block`'s cost term is wrong by 4.8x without this.
+        l2_cores: sysctl_u64("hw.perflevel0.cpusperl2")?.max(1),
         sme: (sysctl_u64("hw.optional.arm.FEAT_SME") == Some(1))
             .then(|| {
                 Some(Sme {
@@ -552,15 +861,87 @@ fn detect() -> Option<TargetProfile> {
                 })
             })
             .flatten(),
+        // S45: line and page are plain sysctls; sets and ways are derived from
+        // them, so a detected profile is a COMPLETE one for this rung too.
+        // Line is a plain sysctl; SETS is the one fact macOS does not expose,
+        // so it comes from the page bound — see `L1d` for why that is a checked
+        // heuristic and what it gets wrong. On this part it yields 128, which is
+        // the value S44 verified by a stride probe.
+        l1d: Some(L1d {
+            bytes: l1d_bytes,
+            line_bytes: line,
+            sets: (sysctl_u64("hw.pagesize")? / line).max(1),
+        }),
         ..GENERIC
     })
 }
 
-/// No detection off macOS yet — Linux would read `sysfs`
-/// (`/sys/devices/system/cpu/cpu0/cache/index*/size`), which is a different
-/// parser, not a different idea. `None` means `--target=native` errors with the
+/// One `sysfs` file parsed as a `u64`, tolerating the `48K` / `2048K` spelling
+/// the cache nodes use for sizes.
+#[cfg(target_os = "linux")]
+fn sysfs_u64(path: &str) -> Option<u64> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let t = raw.trim();
+    match t.strip_suffix('K') {
+        Some(k) => Some(k.parse::<u64>().ok()? * 1024),
+        None => t.parse().ok(),
+    }
+}
+
+/// The same facts on Linux — a different parser, not a different idea.
+///
+/// `index0` is the L1 data cache and `index2` the unified L2 on every part this
+/// runs on; `shared_cpu_list` is what makes `l2_cores` a measurement rather than
+/// an assumption (`0-1` on the i9 is two SMT threads of ONE physical core, so
+/// the answer is 1 core, not 2). SMT siblings are collapsed via
+/// `topology/thread_siblings_list`, because a hyperthread is not a core to
+/// budget for.
+///
+/// No SME on x86, so `sme` stays `None` and the SME realization cannot be
+/// selected — the same seam as every pre-S41 profile.
+#[cfg(target_os = "linux")]
+fn detect() -> Option<TargetProfile> {
+    let l1 = "/sys/devices/system/cpu/cpu0/cache/index0";
+    let l2 = "/sys/devices/system/cpu/cpu0/cache/index2";
+    let count = |path: &str| -> u64 {
+        // "0-1" -> 2, "0,4" -> 2, "0" -> 1.
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|s| {
+                s.trim()
+                    .split(',')
+                    .map(|part| match part.split_once('-') {
+                        Some((a, b)) => match (a.parse::<u64>(), b.parse::<u64>()) {
+                            (Ok(a), Ok(b)) if b >= a => b - a + 1,
+                            _ => 1,
+                        },
+                        None => 1,
+                    })
+                    .sum()
+            })
+            .unwrap_or(1)
+            .max(1)
+    };
+    let smt = count("/sys/devices/system/cpu/cpu0/topology/thread_siblings_list");
+    Some(TargetProfile {
+        name: "native",
+        l2_bytes: sysfs_u64(&format!("{l2}/size"))?,
+        l2_cores: (count(&format!("{l2}/shared_cpu_list")) / smt).max(1),
+        // Linux EXPOSES the set count, so it is read rather than derived —
+        // the macOS page heuristic is a fallback for a host that hides it, and
+        // must never shadow a readable truth (`L1d`).
+        l1d: Some(L1d {
+            bytes: sysfs_u64(&format!("{l1}/size"))?,
+            line_bytes: sysfs_u64(&format!("{l1}/coherency_line_size"))?,
+            sets: sysfs_u64(&format!("{l1}/number_of_sets"))?,
+        }),
+        ..GENERIC
+    })
+}
+
+/// No detection on other hosts. `None` means `--target=native` errors with the
 /// known-name list instead of guessing.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn detect() -> Option<TargetProfile> {
     None
 }
@@ -767,6 +1148,195 @@ mod tests {
         assert_eq!(native.sme_kc(&F32), Some(1024));
     }
 
+    /// One `MoveSite` for a square `side x side` f32 transpose — the shape every
+    /// measured point in `move_block`'s table is.
+    fn transpose(side: u64) -> MoveSite {
+        MoveSite {
+            width: side,
+            rows: side,
+            cq: 1,
+            cr: side,
+            elem: F32,
+            len: side * side,
+        }
+    }
+
+    /// **The whole S45 decision, scored against every measured point on two
+    /// machines.** Each row is a measurement, not a preference; the comment
+    /// beside it is what the emitted pipeline actually did.
+    #[test]
+    fn move_block_reproduces_both_machines() {
+        // M4 Pro: fires at 1024 with the block S44 SWEPT to (16), fires at 2048,
+        // declines at 128 on pressure and at 512 on cost.
+        // BOTH M4 sides land on the block the machine measured fastest — 1024
+        // has floor 32 / ceiling 16 and 2048 has floor 32 / ceiling 8, and the
+        // geometric mean is 22 and 16, so the largest divisor is 16 either way.
+        assert_eq!(APPLE_M4_SME.move_block(&transpose(1024)), Some(16));
+        assert_eq!(APPLE_M4_SME.move_block(&transpose(2048)), Some(16));
+        assert_eq!(
+            APPLE_M4_SME.move_block(&transpose(128)),
+            None,
+            "pressure 0.5: 128 lines live into 32 sets x 8 ways = 256 slots — measured 1.000x"
+        );
+        assert_eq!(
+            APPLE_M4_SME.move_block(&transpose(512)),
+            None,
+            "pressure 8 but the 1 MB read array sits inside 16 MB / 5 = 3.36 MB — measured \
+             overlapping, 1.02x min-to-min"
+        );
+        // i9: fires at 1024 and 2048, and DECLINES at 512 — the discriminating
+        // case, where pressure alone would fire and the machine measured 0.901x.
+        // The i9's 12 reachable slots put the ceiling at 6 against a floor of
+        // 16, so the mean is 9 and the block is 8. Its measured optimum is 128,
+        // which no L1-derived rule can reach — see `move_block`'s note and the
+        // counter evidence in benches/results-s45.
+        assert_eq!(RAPTORLAKE.move_block(&transpose(1024)), Some(8));
+        assert_eq!(RAPTORLAKE.move_block(&transpose(2048)), Some(8));
+        assert_eq!(
+            RAPTORLAKE.move_block(&transpose(512)),
+            None,
+            "pressure 21.3 — ABOVE the M4's 8 at the same side — but the 1 MB read array fits \
+             the 2 MB private L2, and it measured a 0.901x LOSS (replicated 0.907x). This is \
+             the case pressure alone gets wrong, and the reason the cost term exists"
+        );
+        // Odd sides never collapse the set index, so there is nothing to win:
+        // S44 measured side 1025 running 2.12x faster UNBLOCKED than 1024, and
+        // blocking it at 0.623x. Note this one scores pressure **1.0009** — it
+        // is the witness for the conflict clause, not the pressure clause, and
+        // without that clause the deduction would fire on a measured LOSS.
+        assert_eq!(APPLE_M4_SME.move_block(&transpose(1025)), None);
+        // And a profile with no L1D geometry cannot answer at all.
+        for p in [&GENERIC, &APPLE_M, &ZEN3, &CUDA_ADA] {
+            assert_eq!(p.move_block(&transpose(1024)), None, "{}", p.name);
+        }
+    }
+
+    /// The pressure term is `lines_live > slots` — the literal statement that the
+    /// sweep needs more lines than it can reach — so the set collapse, not the
+    /// power of two, is what it turns on. S44's two load-bearing nulls (side 128
+    /// at pressure 0.5, side 544 at 0.53) are both collapses that stay under 1.
+    #[test]
+    fn pressure_counts_lines_not_powers_of_two() {
+        let g = APPLE_M4_SME.l1d.expect("apple-m4-sme has L1D geometry");
+        assert_eq!((g.sets, g.ways()), (128, 8));
+        // side 128: stride 512 B = 4 lines, gcd(4, 128) = 4 => 32 sets, 256 slots
+        // against 128 lines live. A REAL collapse (32 of 128 sets) that still
+        // must not fire — "it is not 'a collapse is bad', it is pressure".
+        assert_eq!(APPLE_M4_SME.move_block(&transpose(128)), None);
+        // side 544: gcd(17, 128) = 1 => all 128 sets, 1024 slots, 544 live.
+        assert_eq!(APPLE_M4_SME.move_block(&transpose(544)), None);
+    }
+
+    /// `ways` is arithmetic, `sets` is read where the host exposes it — and the
+    /// two i9 geometries are where the truth IS exposed, so they are the check
+    /// on the whole scheme. Both reproduce `ways_of_associativity` exactly.
+    #[test]
+    fn l1d_ways_reproduce_the_readable_truth() {
+        let i9_p = RAPTORLAKE.l1d.expect("raptorlake has L1D geometry");
+        assert_eq!(i9_p.ways(), 12, "sysfs: ways_of_associativity = 12");
+        let i9_e = L1d {
+            bytes: 32 * 1024,
+            line_bytes: 64,
+            sets: 64,
+        };
+        assert_eq!(i9_e.ways(), 8, "sysfs: the E-core is 8-way");
+        // The M4's set count is the one macOS hides; the page bound gives 128,
+        // which is the value S44 verified with a stride probe, and 8 ways falls
+        // out of capacity.
+        let m4 = APPLE_M4_SME.l1d.expect("apple-m4-sme has L1D geometry");
+        assert_eq!((16384 / m4.line_bytes, m4.sets), (128, 128));
+        assert_eq!(m4.ways(), 8);
+        // Whatever the split, capacity is exact — the bound on being wrong.
+        for g in [i9_p, i9_e, m4] {
+            assert_eq!(g.sets * g.ways(), g.bytes / g.line_bytes);
+        }
+    }
+
+    /// The L2 sharing fact, which is the cost term's divisor and the field this
+    /// session added because the old doc comment said "per-core" while `apple-m`
+    /// recorded a SHARED cluster cache. Getting it wrong by 5x is the difference
+    /// between firing and declining at M4 side 1024.
+    #[test]
+    fn l2_per_core_is_not_l2_bytes() {
+        assert_eq!(APPLE_M.l2_per_core(), 16 * 1024 * 1024 / 5);
+        assert!(
+            4 * 1024 * 1024 > APPLE_M.l2_per_core(),
+            "a 4 MB read array must OVERFLOW the M4's share (it measured 1.578x)"
+        );
+        assert!(
+            4 * 1024 * 1024 < APPLE_M.l2_bytes,
+            "...while fitting the cluster L2 whole, which is why the distinction is the answer"
+        );
+        assert_eq!(
+            RAPTORLAKE.l2_per_core(),
+            2 * 1024 * 1024,
+            "private per P-core"
+        );
+        assert_eq!(GENERIC.l2_per_core(), GENERIC.l2_bytes, "l2_cores = 1");
+    }
+
+    /// The duplicated L1D size cannot drift: `Sme::l1d_bytes` and `L1d::bytes`
+    /// are the same machine fact reached by two rungs. See `TargetProfile::l1d`
+    /// for why the merge was not done here.
+    #[test]
+    fn l1d_and_sme_agree_on_the_l1d() {
+        for p in PROFILES {
+            if let (Some(sme), Some(l1d)) = (p.sme(), p.l1d) {
+                assert_eq!(sme.l1d_bytes, l1d.bytes, "{} disagrees with itself", p.name);
+            }
+        }
+    }
+
+    /// **The genericity gate, extended to S45's facts.** Detection on this host
+    /// must reproduce the hand-written L1D geometry and L2 sharing *exactly*,
+    /// and therefore reach the same fire/decline verdict and the same block. If
+    /// it does not, one of the two is wrong and the hand-written numbers were
+    /// never facts about this machine.
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn native_reproduces_the_hand_written_move_geometry() {
+        let native = native().expect("detection must succeed on macOS");
+        assert_eq!(
+            native.l1d, APPLE_M4_SME.l1d,
+            "detected L1D geometry vs written"
+        );
+        assert_eq!(native.l2_cores, APPLE_M4_SME.l2_cores, "cores sharing L2");
+        assert_eq!(native.l2_per_core(), APPLE_M4_SME.l2_per_core());
+        for side in [128_u64, 512, 1024, 1025, 2048] {
+            assert_eq!(
+                native.move_block(&transpose(side)),
+                APPLE_M4_SME.move_block(&transpose(side)),
+                "detected and written must decide side {side} the same way"
+            );
+        }
+        // And the number the whole session turns on, detected rather than typed.
+        assert_eq!(native.move_block(&transpose(1024)), Some(16));
+    }
+
+    /// `apple-m` gained `l2_cores` and nothing else — no derivation reads it, so
+    /// its emission cannot have moved. The negative control for the profile edit.
+    #[test]
+    fn apple_m_gained_only_the_sharing_fact() {
+        assert_eq!(
+            APPLE_M,
+            TargetProfile {
+                l2_cores: APPLE_M.l2_cores,
+                name: APPLE_M.name,
+                l2_bytes: APPLE_M.l2_bytes,
+                ..GENERIC
+            }
+        );
+        assert_eq!(
+            APPLE_M.tile_kc(&F32),
+            4096,
+            "unchanged: the KC gate is where it was"
+        );
+        assert!(
+            APPLE_M.l1d.is_none(),
+            "no L1D geometry ⇒ the move rung cannot fire"
+        );
+    }
+
     /// A hand-written profile always wins over detection (Sapir's rule).
     #[test]
     fn named_profiles_override_detection() {
@@ -822,11 +1392,14 @@ mod tests {
     /// the golden test pins at the text level.
     #[test]
     fn apple_m4_sme_moves_only_the_sme_field() {
+        // S45 adds `l1d` alongside `sme`: the same part, one more capability
+        // declared. Every DERIVED tile factor below must still be `apple-m`'s.
         assert_eq!(
             APPLE_M4_SME,
             TargetProfile {
                 name: APPLE_M4_SME.name,
                 sme: APPLE_M4_SME.sme,
+                l1d: APPLE_M4_SME.l1d,
                 ..APPLE_M
             }
         );

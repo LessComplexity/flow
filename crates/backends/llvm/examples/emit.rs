@@ -27,23 +27,30 @@ fn main() -> ExitCode {
             "--kc" => opts.kc_nest = true,
             "--contract" => opts.contract = true,
             "--rewrite" => rewrite = true,
-            // S44's move-panel traversal, `--move-panel=<W>:<B>`. W is program
-            // geometry supplied BY HAND — the emitter cannot derive it, because
-            // `TileSite` recognition requires a fold in the map body and a
-            // transpose-shaped map has none. B is swept policy. See
-            // `EmitOpts::move_panel`. Default off; a malformed value is an error
-            // rather than a silent no-op, for the same reason `--target=` is.
+            // The move-panel traversal. **Deduced by default (S45)** — the
+            // geometry comes from `mapal_ir::MoveSite` and the machine facts
+            // from the target profile, so there is nothing to pass. This flag
+            // survives only as a MEASUREMENT override: `off` is an A/B's OFF
+            // arm, `<W>:<B>` forces S44's hand-typed behaviour for a block
+            // sweep. A malformed value is an error rather than a silent no-op,
+            // for the same reason `--target=` is.
             _ if a.starts_with("--move-panel=") => {
                 let spec = &a["--move-panel=".len()..];
-                let parsed = spec
-                    .split_once(':')
-                    .and_then(|(w, b)| Some((w.parse().ok()?, b.parse().ok()?)))
-                    .filter(|&(w, b): &(u64, u64)| w > 0 && b > 0);
-                let Some(wb) = parsed else {
-                    eprintln!("--move-panel expects <W>:<B> with both positive, got `{spec}`");
+                let parsed = if spec == "off" {
+                    Some(mapal_backend_llvm::MovePanel::Off)
+                } else {
+                    spec.split_once(':')
+                        .and_then(|(w, b)| Some((w.parse::<u64>().ok()?, b.parse::<u64>().ok()?)))
+                        .filter(|&(w, b)| w > 0 && b > 0)
+                        .map(|(w, b)| mapal_backend_llvm::MovePanel::Force(w, b))
+                };
+                let Some(mp) = parsed else {
+                    eprintln!(
+                        "--move-panel expects `off` or <W>:<B> with both positive, got `{spec}`"
+                    );
                     return ExitCode::from(2);
                 };
-                opts.move_panel = Some(wb);
+                opts.move_panel = mp;
             }
             // Machine facts by name (plan-s31-target-profiles): `generic` is
             // the default and reproduces today's literals; `apple-m` and

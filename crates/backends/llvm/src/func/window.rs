@@ -40,6 +40,7 @@ impl<'a> FnEmit<'a> {
         let mul_op = if is_float(&site.elem) { "fmul" } else { "mul" };
         let add_op = if is_float(&site.elem) { "fadd" } else { "add" };
         let tile_j = self.profile.tile_j(&site.elem);
+        let subrows = window_subrows(self.profile);
 
         let a_ptr = self
             .array_operand_ptr(source, Some(site.a.slot))
@@ -48,7 +49,7 @@ impl<'a> FnEmit<'a> {
             .array_operand_ptr(source, Some(site.b.slot))
             .expect("tile b ptr");
         let out_ptr = self.slot(target).expect("tile output slot");
-        let acc_llt = format!("[{} x {elem_llt}]", WINDOW_SUBROWS * tile_j);
+        let acc_llt = format!("[{} x {elem_llt}]", subrows * tile_j);
         let acc = self.scratch(&acc_llt);
         let j_ctr = self.scratch("i64");
         let k_ctr = self.scratch("i64");
@@ -69,8 +70,8 @@ impl<'a> FnEmit<'a> {
             k_ctr,
             lane_ctr,
             tile_j,
-            // The window rung blocks LANES, not rows (see `WINDOW_SUBROWS`).
-            tile_i: WINDOW_SUBROWS,
+            // The window rung blocks LANES, not rows (see `window_subrows`).
+            tile_i: subrows,
             tile_kc: self.profile.tile_kc(&site.elem),
             packed: None,
             contract_flag: if self.contract && is_float(&site.elem) {
@@ -89,10 +90,7 @@ impl<'a> FnEmit<'a> {
         let jb = self.tmp();
         self.line(format!("{jb} = load i64, ptr {j_ctr}"));
         let jb_end = self.tmp();
-        self.line(format!(
-            "{jb_end} = add i64 {jb}, {}",
-            WINDOW_SUBROWS * tile_j
-        ));
+        self.line(format!("{jb_end} = add i64 {jb}, {}", subrows * tile_j));
         let block_fits = self.tmp();
         self.line(format!("{block_fits} = icmp ule i64 {jb_end}, {hi}"));
         self.line(format!(

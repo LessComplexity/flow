@@ -15,7 +15,7 @@
 //! value-identity argument rests on. It is checked against the formula the
 //! emitter writes, at the sizes the emitter would use.
 
-use mapal_backend_llvm::{EmitOpts, emit_with_opts};
+use mapal_backend_llvm::{EmitOpts, MovePanel, emit_with_opts};
 use mapal_ir::CategoryIr;
 
 /// The ladder's transpose shape at 16x16: a `map` with a captured array read,
@@ -58,7 +58,7 @@ fn lower_src(src: &str) -> CategoryIr {
     mapal_lower::lower(src, &po.program).unwrap_or_else(|d| panic!("lower: {d:?}"))
 }
 
-fn emit_with(src: &str, move_panel: Option<(u64, u64)>) -> String {
+fn emit_with(src: &str, move_panel: MovePanel) -> String {
     let ir = mapal_rewrite::rewrite(lower_src(src)).ir;
     emit_with_opts(
         &ir,
@@ -74,8 +74,8 @@ fn emit_with(src: &str, move_panel: Option<(u64, u64)>) -> String {
 /// this, every negative below could pass because the rung never works at all.
 #[test]
 fn the_rung_fires_when_the_panel_tiles_the_geometry() {
-    let off = emit_with(TRANSPOSE_16, None);
-    let on = emit_with(TRANSPOSE_16, Some((16, 4)));
+    let off = emit_with(TRANSPOSE_16, MovePanel::Off);
+    let on = emit_with(TRANSPOSE_16, MovePanel::Force(16, 4));
     assert_ne!(off, on, "16x16 with a 4-panel must emit the permutation");
     // 16 rows / 4 = 4 column blocks: the decomposition's one non-trivial
     // constant, and the only place `col_blocks` is visible in the text.
@@ -94,8 +94,9 @@ fn default_off_is_character_identical() {
     let default = emit_with_opts(&ir, &EmitOpts::default()).expect("emits");
     assert_eq!(
         default,
-        emit_with(TRANSPOSE_16, None),
-        "the default profile must be exactly the `move_panel: None` emission"
+        emit_with(TRANSPOSE_16, MovePanel::Off),
+        "under `generic` the DEDUCED default must be exactly the OFF emission: \
+         the profile carries no L1D geometry, so the rung cannot fire"
     );
 }
 
@@ -104,7 +105,7 @@ fn default_off_is_character_identical() {
 /// nothing to say about that shape — so it must emit today's text exactly.
 #[test]
 fn a_panel_that_does_not_tile_the_geometry_declines_silently() {
-    let off = emit_with(TRANSPOSE_16, None);
+    let off = emit_with(TRANSPOSE_16, MovePanel::Off);
     for (w, b, why) in [
         (16, 3, "3 does not divide 16 rows"),
         (16, 5, "5 divides neither axis"),
@@ -115,7 +116,7 @@ fn a_panel_that_does_not_tile_the_geometry_declines_silently() {
     ] {
         assert_eq!(
             off,
-            emit_with(TRANSPOSE_16, Some((w, b))),
+            emit_with(TRANSPOSE_16, MovePanel::Force(w, b)),
             "--move-panel={w}:{b} must decline byte-identically ({why})"
         );
     }
@@ -139,7 +140,7 @@ fn a_panel_that_does_not_tile_the_geometry_declines_silently() {
 #[test]
 fn the_flag_cannot_reach_a_recognized_tile_site() {
     let urems = |ll: &str| ll.matches("urem i64").count();
-    let emit_tiling = |tiling: bool, move_panel| {
+    let emit_tiling = |tiling: bool, move_panel: MovePanel| {
         let ir = mapal_rewrite::rewrite(lower_src(MATMUL_16)).ir;
         emit_with_opts(
             &ir,
@@ -151,9 +152,9 @@ fn the_flag_cannot_reach_a_recognized_tile_site() {
         )
         .expect("emits")
     };
-    let panel = Some((16, 4));
-    let tiled = urems(&emit_tiling(true, panel)) - urems(&emit_tiling(true, None));
-    let untiled = urems(&emit_tiling(false, panel)) - urems(&emit_tiling(false, None));
+    let panel = MovePanel::Force(16, 4);
+    let tiled = urems(&emit_tiling(true, panel)) - urems(&emit_tiling(true, MovePanel::Off));
+    let untiled = urems(&emit_tiling(false, panel)) - urems(&emit_tiling(false, MovePanel::Off));
     assert!(
         untiled > tiled,
         "with tiling off the site joins the generic path and the flag must reach \
@@ -189,4 +190,123 @@ fn move_panel_is_a_bijection_of_the_iteration_space() {
             "w={w} b={b}: not every index visited"
         );
     }
+}
+
+/// A 1024-wide transpose — the shape both machines measured. Sized so the read
+/// array (4 MB) overflows the M4's per-core L2 share, which is what the cost
+/// term turns on; the 16x16 sibling above is the same program one thousandth the
+/// size and must NOT fire.
+const TRANSPOSE_1024: &str = r#"
+fn main() {
+    1048576 -> iota -> ia;
+    ia -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    1048576 -> iota -> ib;
+    ib -> map { t -> a[(t % 1024) * 1024 + t / 1024] } -> b;
+    b[0] -> println;
+    b[1048575] -> println;
+}
+"#;
+
+/// **The graph half of the deduction, at the record level.** S44 could not do
+/// this at all — `tile_site` requires a fold in the map body — and `W` had to be
+/// typed on a flag. The record must carry the geometry and NOTHING about a
+/// machine (ADR-0032).
+#[test]
+fn a_transpose_is_recognized_as_a_fold_less_move_site() {
+    let ir = mapal_rewrite::rewrite(lower_src(TRANSPOSE_1024)).ir;
+    let plan = ir.move_plan(ir.entry());
+    let site = plan
+        .sites
+        .values()
+        .next()
+        .expect("the transpose map is a move site");
+    assert_eq!(site.width, 1024, "W, deduced — S44 typed this on the flag");
+    assert_eq!(site.rows, 1024);
+    assert_eq!(site.cr, 1024, "the fast axis' stride, in elements");
+    assert_eq!(site.cq, 1, "the slow axis is contiguous");
+    assert_eq!(site.len, 1048576, "the read array's extent");
+    assert_eq!(
+        plan.sites.len(),
+        1,
+        "the GENERATOR map must not be a move site"
+    );
+}
+
+/// The two recognizers are disjoint by construction: a fold in the body means
+/// `tile_site`, no fold means `move_site`. Without this, a matmul could be
+/// permuted by a rung that knows nothing about its reduction.
+#[test]
+fn a_fold_bodied_map_is_never_a_move_site() {
+    let ir = mapal_rewrite::rewrite(lower_src(MATMUL_16)).ir;
+    assert!(
+        ir.move_plan(ir.entry()).sites.is_empty(),
+        "a map whose body folds belongs to the tile rung, not this one"
+    );
+    assert!(
+        !ir.tile_plan(ir.entry()).sites.is_empty(),
+        "...and the tile rung must still claim it, or this test proves nothing"
+    );
+}
+
+/// **The whole point of the session, end to end: no flag.** Under a profile that
+/// describes a real machine the deduction fires at the shape both machines
+/// measured a win on, and declines at the shape they measured nothing on — from
+/// the same default `EmitOpts`, with no number supplied by anyone.
+#[test]
+fn the_deduction_fires_without_a_flag_and_declines_without_a_reason() {
+    let emit_target = |src: &str, target: &'static str| {
+        let ir = mapal_rewrite::rewrite(lower_src(src)).ir;
+        emit_with_opts(
+            &ir,
+            &EmitOpts {
+                target,
+                ..EmitOpts::default()
+            },
+        )
+        .expect("emits")
+    };
+    // The M4: fires at 1024, and the block it derives is 16 — the value S44
+    // SWEPT to on this machine. `udiv i64 %x, 16` is that number in the text.
+    let m4 = emit_target(TRANSPOSE_1024, "apple-m4-sme");
+    assert!(
+        m4.contains("urem i64") && m4.contains(", 16\n"),
+        "apple-m4-sme must fire with the derived B=16"
+    );
+    // The i9, cross-compiled: fires with ITS geometry's block, 8 — a different
+    // answer from the same program, which is the deduction doing its job.
+    let i9 = emit_target(TRANSPOSE_1024, "raptorlake");
+    assert!(i9.contains("urem i64"), "raptorlake must fire");
+    assert_ne!(m4, i9, "two machines, two blocks, one source");
+    // Pressure 0.0x: the same program, small. Byte-identical to OFF.
+    let small = emit_target(TRANSPOSE_16, "apple-m4-sme");
+    let ir = mapal_rewrite::rewrite(lower_src(TRANSPOSE_16)).ir;
+    let off = emit_with_opts(
+        &ir,
+        &EmitOpts {
+            target: "apple-m4-sme",
+            move_panel: MovePanel::Off,
+            ..EmitOpts::default()
+        },
+    )
+    .expect("emits");
+    assert_eq!(
+        small, off,
+        "a shape with nothing to win must emit today's text"
+    );
+    // And the DEFAULT target cannot fire at all — rule 1, at the type level.
+    assert_eq!(
+        emit_target(TRANSPOSE_1024, "generic"),
+        {
+            let ir = mapal_rewrite::rewrite(lower_src(TRANSPOSE_1024)).ir;
+            emit_with_opts(
+                &ir,
+                &EmitOpts {
+                    move_panel: MovePanel::Off,
+                    ..EmitOpts::default()
+                },
+            )
+            .expect("emits")
+        },
+        "`generic` carries no L1D geometry, so its emission is unchanged"
+    );
 }

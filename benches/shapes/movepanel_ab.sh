@@ -26,6 +26,10 @@ SHAPE="${SHAPE:-transpose}"
 SIDE="${SIDE:-1024}"
 N="${N:-1048576}"
 BLOCKS="${BLOCKS:-8 16 24 32 64 128}"
+# S45: machine facts arrive by TARGET, not by hand. Both arms are emitted under
+# the SAME profile on purpose — using `generic` as the OFF arm would move
+# `tile_kc` and every other profile-derived constant in the same diff.
+TARGET="${TARGET:-native}"
 RT="$ROOT/target/release/libmapal_rt.a"
 export MAPAL_PAR="${MAPAL_PAR:-1}"
 
@@ -41,20 +45,29 @@ esac
 emit() { # <out.ll> [flags...]
     local out="$1"; shift
     (cd "$ROOT" && cargo run -q --release -p mapal-backend-llvm --example emit -- \
-        "$SRC" - --rewrite "$@") > "$out"
+        "$SRC" - --rewrite "--target=$TARGET" "$@") > "$out"
 }
 build() { clang -O2 -march=armv8-a+sme2 "$1" "$RT" -o "$2" -lpthread -ldl -lm 2>/dev/null; }
 
-echo "== move-panel A/B: $SHAPE side=$SIDE W=$W MAPAL_PAR=$MAPAL_PAR cycles=$CYCLES =="
+echo "== move-panel A/B: $SHAPE side=$SIDE W=$W target=$TARGET MAPAL_PAR=$MAPAL_PAR cycles=$CYCLES =="
 arms=(off)
-emit "$TMP/mp_off.ll"; build "$TMP/mp_off.ll" "$TMP/mp_off"
+emit "$TMP/mp_off.ll" --move-panel=off; build "$TMP/mp_off.ll" "$TMP/mp_off"
+# The DEDUCED arm: no flag at all. Whether it fires, and with what block, is the
+# whole result — so it is reported, never asserted.
+emit "$TMP/mp_deduce.ll"; build "$TMP/mp_deduce.ll" "$TMP/mp_deduce"
+arms+=(deduce)
+if cmp -s "$TMP/mp_off.ll" "$TMP/mp_deduce.ll"; then
+    echo "deduced: DECLINED under $TARGET (emission byte-identical to OFF)"
+else
+    echo "deduced: FIRED under $TARGET with B=$(grep -m1 'urem i64' "$TMP/mp_deduce.ll" | sed 's/.*, //')"
+fi
 for b in $BLOCKS $W; do
     emit "$TMP/mp_$b.ll" "--move-panel=$W:$b"; build "$TMP/mp_$b.ll" "$TMP/mp_$b"
     arms+=("$b")
 done
-emit "$TMP/ctl.ll"   # the null control is a different program entirely
+# the null control is a different program entirely
 (cd "$ROOT" && cargo run -q --release -p mapal-backend-llvm --example emit -- \
-    "$ROOT/benches/shapes/saxpy_1048576.mapal" - --rewrite) > "$TMP/ctl.ll"
+    "$ROOT/benches/shapes/saxpy_1048576.mapal" - --rewrite "--target=$TARGET") > "$TMP/ctl.ll"
 build "$TMP/ctl.ll" "$TMP/ctl"
 
 # --- GATE 1: values, before any timing.
@@ -70,6 +83,7 @@ echo "values: identical to OFF at every arm ($(tr '\n' ' ' < "$TMP/mp_off.val"))
 # declined gate being reported as a treatment — the failure mode that would make
 # every "no effect" reading meaningless.
 for a in "${arms[@]:1}"; do
+    [ "$a" = deduce ] && continue   # a decline IS its answer, reported above
     if cmp -s "$TMP/mp_off.ll" "$TMP/mp_$a.ll"; then
         echo "VOID: B=$a emitted the same text as OFF — the rung declined, it did not fire" >&2
         exit 1

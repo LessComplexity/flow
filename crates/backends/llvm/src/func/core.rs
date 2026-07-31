@@ -15,7 +15,7 @@ impl<'a> FnEmit<'a> {
         packing: bool,
         contract: bool,
         kc_nest: bool,
-        move_panel: Option<(u64, u64)>,
+        move_panel: MovePanel,
         profile: &'static TargetProfile,
     ) -> Self {
         let mut gsites = SecondaryMap::new();
@@ -53,6 +53,11 @@ impl<'a> FnEmit<'a> {
             runtime_write: false,
             perf_timing: false,
             tile_plan: tiling.then(|| ir.tile_plan(f)),
+            // Only `Deduce` consults it, so `Off` and `Force` do not pay for
+            // the scan — and `Off` is provably the same work it was before S45.
+            move_sites: matches!(move_panel, MovePanel::Deduce)
+                .then(|| ir.move_plan(f))
+                .unwrap_or_default(),
             elem: ir.elem_plan(f),
             elided_arrays: SecondaryMap::new(),
             packing,

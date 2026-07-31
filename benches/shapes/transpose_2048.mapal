@@ -1,0 +1,19 @@
+// transpose 2048x2048 f32 — the SCALED-UP sibling of transpose_1024.mapal.
+// Two jobs. (1) S37b found this i9 cannot be measured in ms below ~5 ms; at side
+// 2048 the 1-thread kernel clears that, so the headline comparison stops depending
+// on the boost clock. (2) It is a second point on the S44 pressure curve for the
+// SAME machine: the row stride is 2048*4 = 8192 B = 128 lines, and 128 mod 64 sets
+// = 0, so every read still lands on one set, with 2048 lines live against 12 ways
+// -> pressure 170.7 against side 1024's 85.3.
+fn main() {
+    4194304 -> iota -> ia;
+    ia -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    4194304 -> iota -> ib;
+    () -> time -> t0;
+    ib -> map { t -> a[(t % 2048) * 2048 + t / 2048] } -> b;
+    () -> time -> t1;
+    b[0] -> println;
+    b[4194303] -> println;
+    "iter ms=" -> print;
+    t1 - t0 -> println;
+}

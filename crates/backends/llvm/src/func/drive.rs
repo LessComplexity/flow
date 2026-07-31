@@ -98,7 +98,7 @@ impl<'a> FnEmit<'a> {
         packing: bool,
         contract: bool,
         kc_nest: bool,
-        move_panel: Option<(u64, u64)>,
+        move_panel: MovePanel,
         profile: &'static TargetProfile,
     ) -> String {
         let mut host = FnEmit::new(
@@ -405,7 +405,7 @@ impl<'a> FnEmit<'a> {
         packing: bool,
         contract: bool,
         kc_nest: bool,
-        move_panel: Option<(u64, u64)>,
+        move_panel: MovePanel,
         profile: &'static TargetProfile,
     ) -> String {
         if let TaskKind::Split { site: m, n } = &task.kind

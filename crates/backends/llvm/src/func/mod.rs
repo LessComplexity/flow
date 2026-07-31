@@ -5,11 +5,12 @@
 
 use mapal_ir::{
     BoundsProof, CategoryIr, ElemPlan, ElemSrc, FuncId, FuncKind, GuardSite, LastUsePlan,
-    MorphismId, ObjectId, ObjectKind, Operation, PathPlan, TaskKind, TilePlan, TileSite, Ty, Value,
-    WaitEntry,
+    MorphismId, MovePlan, ObjectId, ObjectKind, Operation, PathPlan, TaskKind, TilePlan, TileSite,
+    Ty, Value, WaitEntry,
 };
 use slotmap::SecondaryMap;
 
+use crate::MovePanel;
 use crate::module::StrGlobal;
 use crate::profile::TargetProfile;
 use crate::ty::{
@@ -330,11 +331,12 @@ pub(crate) struct FnEmit<'a> {
     /// Split deep packed sites into k-panels (the KC nest). Default OFF — a
     /// measured 3x loss locally at 1024 f32 (S29); see `EmitOpts::kc_nest`.
     kc_nest: bool,
-    /// S44's move-panel traversal: `Some((w, b))` permutes a bulk `map`'s
-    /// loop counter into `b x b` tiles of a `w`-wide 2-D geometry. `None`
-    /// (the default) emits today's flat loop character-identically. See
-    /// `EmitOpts::move_panel` for what each number is and is not.
-    move_panel: Option<(u64, u64)>,
+    /// How the move-panel traversal is decided: deduced from the records (the
+    /// default), forced, or off. See `EmitOpts::move_panel`.
+    move_panel: MovePanel,
+    /// Fold-less move sites recognized once for this function — the graph half
+    /// of the move-panel decision, joined with the profile half in `emit_map`.
+    move_sites: MovePlan,
     /// The machine facts every tile factor derives from (plan-s31-target-
     /// profiles): vector width and register count, L2 budget, stack ceiling.
     /// Geometry comes from the record, constants come from here — mapal-ir never
@@ -380,18 +382,30 @@ pub(crate) fn conv_site(site: &TileSite) -> bool {
 }
 
 /// The FIR window rung's lane-block multiplier: full blocks step
-/// `WINDOW_SUBROWS × TJ` lanes, subrow `r` living at accumulator offset
-/// `r · TJ`.
+/// `subrows × TJ` lanes, subrow `r` living at accumulator offset `r · TJ`.
 ///
-/// **This is NOT `TargetProfile::tile_i`, despite sharing its value today.**
-/// That one counts rows of `phi <TJ x elem>` accumulators and is bounded by the
-/// vector register file. This one multiplies a `[TI·TJ x elem]` **memory**
-/// accumulator (`emit_tile_trio_vec` is unreachable from
-/// `emit_tile_window_block`), so no register budget binds it, and deriving it
-/// from one would be deriving it from a constraint that does not apply here.
-/// Unjustified at 4 — swept once alongside the matmul rung and never
-/// separately (plan-s31-target-profiles work item 2; ADR-0034 would search it).
-const WINDOW_SUBROWS: u64 = 4;
+/// **S45: this is `TargetProfile::tile_i` after all, and a measurement settled
+/// it.** The previous doc argued the opposite — that the accumulator is a
+/// `[TI·TJ x elem]` *memory* array, so no register budget binds it — and
+/// recorded the value as "unjustified at 4, swept once alongside the matmul rung
+/// and never separately". Both halves turned out to matter the moment a profile
+/// with a **16**-register file (AVX2) reached this rung:
+///
+/// The block is `subrows · TJ` lanes and one `<TJ x elem>` accumulator legalizes
+/// to `acc_vecs_per_row` machine registers, so the block costs
+/// `subrows · acc_vecs_per_row` of them. At 4 that is 16 of NEON's 32 — half the
+/// file, which is why 4 was never wrong on the machine it was swept on — and 16
+/// of AVX2's **16**, the entire file with nothing left for the window operands.
+/// Measured on the i9-14900F: fir went **1.6671 → 1.9546 ms, a 17% regression**,
+/// the moment `raptorlake` described the box honestly.
+///
+/// `tile_i` is that budget, already derived and already documenting this exact
+/// failure ("8 spills: 128 accumulators ≫ 32 NEON regs"). It is **4 on every
+/// profile that existed before S45**, so every emission is byte-identical, and
+/// 2 on a 16-register file.
+fn window_subrows(profile: &TargetProfile) -> u64 {
+    profile.tile_i()
+}
 
 /// The vector accumulator type of one j-tile: `<TJ x elem>`, deliberately the
 /// FULL tile width rather than the target's vector width — LLVM legalizes it
@@ -529,7 +543,7 @@ struct TileCtx {
     tile_j: u64,
     /// The rung's block factor. Matmul: `TargetProfile::tile_i` — rows of
     /// vector accumulators, bounded by the register file. FIR window rung:
-    /// [`WINDOW_SUBROWS`] — a lane-block multiplier over a memory accumulator.
+    /// [`window_subrows`] — a lane-block multiplier over a memory accumulator.
     /// Same number today, different quantities; each is set at its own source.
     tile_i: u64,
     /// The KC rung's k-panel depth (`TargetProfile::tile_kc`), sized against

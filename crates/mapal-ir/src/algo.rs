@@ -287,6 +287,49 @@ impl TileAffine {
     }
 }
 
+/// **A fold-less move site (S45): a `map` that only MOVES data.** Its body is a
+/// single proven `Index` whose address is affine in the derived axes
+/// `(t÷C, t%C)` — a transpose, a gather-by-formula, any permutation-shaped read.
+///
+/// It is the arm [`CategoryIr::tile_site`] cannot take. That recognizer requires
+/// a fold in the map body (`let fold_id = fold_id?`), because it exists to find
+/// reductions; a permutation has none, so before this record no fact about a
+/// transpose's 2-D geometry existed anywhere in the graph, and S44 had to accept
+/// the width **typed in by hand on a flag**. The affine machinery it needs was
+/// already here one level up: `tile_split` binds the same `Div`/`Mod` pair and
+/// [`TileKSplit`] records the same decomposition for a fold's counted axis.
+///
+/// **Geometry only, and that is a boundary, not an omission (ADR-0032).** Every
+/// field is a property of the program: how wide the iteration space is, how far
+/// apart consecutive reads land, what the element is. Whether that stride
+/// collides in some cache, and what to do about it, needs a line size and an
+/// associativity — machine facts this crate must never learn. The backend joins
+/// the two (`TargetProfile::move_block`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MoveSite {
+    /// `C` — the width of the 2-D iteration space, i.e. the divisor the body
+    /// itself decomposes the counter by.
+    pub width: u64,
+    /// `extent / width`, ≥ 2.
+    pub rows: u64,
+    /// Address coefficient on `t÷C` (the slow axis).
+    pub cq: u64,
+    /// Address coefficient on `t%C` (the fast axis) — **the walk's stride, in
+    /// elements**. Multiplied by the element width it is the byte stride whose
+    /// set-index behaviour decides everything downstream.
+    pub cr: u64,
+    /// The read array's element type. A width in bytes, not a machine fact.
+    pub elem: Ty,
+    /// The read array's length in elements.
+    pub len: u64,
+}
+
+/// Fold-less [`MoveSite`]s recognized in one function — the peer of [`TilePlan`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MovePlan {
+    pub sites: SecondaryMap<MorphismId, MoveSite>,
+}
+
 /// Everything a backend needs to emit one recognized tiled map site.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TileSite {
@@ -750,6 +793,157 @@ impl CategoryIr {
             }
         }
         TilePlan { sites }
+    }
+
+    /// Recognize fold-less [`MoveSite`]s — maps that only move data, whose read
+    /// address is affine in `(t÷C, t%C)`. The peer of [`Self::tile_plan`], and
+    /// disjoint from it by construction: this arm requires the body to hold **no**
+    /// fold, that one requires exactly one.
+    pub fn move_plan(&self, f: FuncId) -> MovePlan {
+        let mut sites = SecondaryMap::new();
+        let Some(fd) = self.func(f) else {
+            return MovePlan { sites };
+        };
+        for &m in &fd.morphisms {
+            if let Some(site) = self.move_site(m) {
+                sites.insert(m, site);
+            }
+        }
+        MovePlan { sites }
+    }
+
+    fn move_site(&self, site: MorphismId) -> Option<MoveSite> {
+        let map = self.morphisms.get(site)?;
+        let Operation::Map { body, captures } = map.op else {
+            return None;
+        };
+        // captures == 0 is a generator map: no array is read, so no address
+        // exists to be affine in anything.
+        if captures == 0 {
+            return None;
+        }
+        let mapped = self.pair_slot_source(map.source, captures)?;
+        let extent = self.tile_iota_size(mapped)?;
+        let Ty::Array {
+            size: target_size, ..
+        } = &self.objects.get(map.target)?.ty
+        else {
+            return None;
+        };
+        if *target_size != extent || extent == 0 {
+            return None;
+        }
+
+        let body_def = self.func(body)?;
+        // THE arm condition: no fold. A body with one is a reduction and belongs
+        // to `tile_site`; the two recognizers must never both answer for a site.
+        if body_def.morphisms.iter().any(|&m| {
+            matches!(
+                self.morphisms.get(m).map(|x| x.op),
+                Some(Operation::Fold { .. })
+            )
+        }) {
+            return None;
+        }
+        // `(t÷C, t%C)` — the identical `tile_split` call `tile_site` makes on a
+        // map body, one level up.
+        let (q, c) = body_def
+            .morphisms
+            .iter()
+            .find_map(|&m| self.tile_split(m, body_def.input, captures, Operation::Div))?;
+        let (r, cm) = body_def
+            .morphisms
+            .iter()
+            .find_map(|&m| self.tile_split(m, body_def.input, captures, Operation::Mod))?;
+        if cm != c || c < 2 || extent % c != 0 {
+            return None;
+        }
+        let rows = extent / c;
+        if rows < 2 {
+            return None;
+        }
+
+        // The body IS one read of a captured array: nothing else to emit, so the
+        // permutation cannot reorder any other observable.
+        let index = self.tile_definer(body_def.output, Operation::Index)?;
+        let array = self.pair_slot_source(index.source, 0)?;
+        let address = self.pair_slot_source(index.source, 1)?;
+        if self.tile_input_proj_index(array, body_def.input)? >= captures {
+            return None;
+        }
+        let Ty::Array { elem, size: len } = &self.objects.get(array)?.ty else {
+            return None;
+        };
+        let aff = self.move_affine(address, q, r, 0)?;
+        // Last, because it is the only expensive clause: the permutation
+        // reorders visits, so a body that can trap could trap at a different
+        // element. `tile_trap_free` is the predicate the tiled path already
+        // trusts, and for the shapes we run it costs nothing — their `Index` is
+        // already `bounds_proof`-proven.
+        if !self.tile_trap_free(body, &self.bounds_proof(body), None) {
+            return None;
+        }
+        Some(MoveSite {
+            width: c,
+            rows,
+            cq: aff.cq,
+            cr: aff.cr,
+            elem: (**elem).clone(),
+            len: *len,
+        })
+    }
+
+    /// The map-body analog of [`Self::tile_affine`]: an address as
+    /// `base + cq·(t÷C) + cr·(t%C)`, over Add / Mul-by-literal / literal. The
+    /// coefficient fields are [`TileAffine`]'s own `cq`/`cr` — the same two
+    /// derived axes it already carries for a fold's `k÷div`/`k%div`.
+    fn move_affine(
+        &self,
+        object: ObjectId,
+        q: ObjectId,
+        r: ObjectId,
+        depth: u32,
+    ) -> Option<TileAffine> {
+        if depth >= 16 {
+            return None;
+        }
+        if object == q {
+            return Some(TileAffine {
+                cq: 1,
+                ..TileAffine::default()
+            });
+        }
+        if object == r {
+            return Some(TileAffine {
+                cr: 1,
+                ..TileAffine::default()
+            });
+        }
+        if let Some(base) = self.tile_literal_u64(object) {
+            return Some(TileAffine {
+                base,
+                ..TileAffine::default()
+            });
+        }
+        let [m] = self.in_edges(object) else {
+            return None;
+        };
+        let morph = self.morphisms.get(*m)?;
+        let lhs = self.pair_slot_source(morph.source, 0)?;
+        let rhs = self.pair_slot_source(morph.source, 1)?;
+        match morph.op {
+            Operation::Add => self
+                .move_affine(lhs, q, r, depth + 1)?
+                .add(self.move_affine(rhs, q, r, depth + 1)?),
+            Operation::Mul => {
+                let (scale, value) = match self.tile_literal_u64(lhs) {
+                    Some(scale) => (scale, rhs),
+                    None => (self.tile_literal_u64(rhs)?, lhs),
+                };
+                self.move_affine(value, q, r, depth + 1)?.scale(scale)
+            }
+            _ => None,
+        }
     }
 
     fn tile_site(&self, site: MorphismId) -> Option<TileSite> {
