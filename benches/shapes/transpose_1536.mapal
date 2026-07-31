@@ -1,0 +1,19 @@
+// transpose 1536x1536 f32 — the NON-POWER-OF-TWO side (S47).
+// 1536 = 2^9 * 3, so gcd(w, rows) has divisors that are not powers of two
+// (3, 6, 12, 24, 48, 96, 192, 384, 768) and the block sweep can see whether the
+// optimum tracks a power-of-two artifact of the shift-lowered urem/udiv or a
+// real machine quantity. Row stride 1536*4 = 6144 B: on the i9 that is 96 lines,
+// 96 mod 64 sets = 32, gcd(32,64) = 32 -> 2 sets reachable, 24 slots; on the M4
+// 48 lines, 48 mod 128 = 48, gcd(48,128) = 16 -> 8 sets, 64 slots. Both fire.
+fn main() {
+    2359296 -> iota -> ia;
+    ia -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> a;
+    2359296 -> iota -> ib;
+    () -> time -> t0;
+    ib -> map { t -> a[(t % 1536) * 1536 + t / 1536] } -> b;
+    () -> time -> t1;
+    b[0] -> println;
+    b[2359295] -> println;
+    "iter ms=" -> print;
+    t1 - t0 -> println;
+}

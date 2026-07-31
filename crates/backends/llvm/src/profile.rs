@@ -429,12 +429,59 @@ impl TargetProfile {
     /// (3.39 → 3.61 → 3.74).
     ///
     /// So on that machine **L1 residency is not the binding resource at the
-    /// optimum**, and neither is the TLB or the LLC: what B=128 buys is
-    /// memory-level parallelism — more independent misses in flight, absorbed by
-    /// a 512-entry reorder buffer against 12 ways. No quantity in [`L1d`] prices
-    /// that, so this derivation cannot produce 128 and does not pretend to. The
-    /// residual is **14% of the win at side 1024 and 21% at 2048**, and it is
-    /// carried as a known gap rather than closed with a per-machine table.
+    /// optimum**, and neither is the TLB nor the LLC.
+    ///
+    /// **S47 swept every legal divisor at four sides on both machines and priced
+    /// what IS binding. The answer is not memory-level parallelism**, which was
+    /// the standing hypothesis here and is now measured false: at the i9 optimum
+    /// `l1d_pend_miss.fb_full` is **3.0% of cycles** and MLP
+    /// (`pending / pending_cycles`) is **2.23 — the LOWEST of any arm**. The slow
+    /// arms have MORE misses in flight (B=8: 4.00; B=32: 3.66), and the fill
+    /// buffers only bind on arms nobody would ship (`off`: 47% fb_full, MLP 5.95).
+    /// The binding quantity is **L2 residency**: order the side-2048 arms by
+    /// `mem_load_retired.l2_miss` and the ms order falls out with no inversion
+    /// across eight arms. Behind it is the L2 prefetcher — a block gives each
+    /// column stream a run of `B·w/line` consecutive lines, and below two lines
+    /// the streamer has nothing to lock on to.
+    ///
+    /// **And that is a prefetcher property, which is why no rule here can be
+    /// right on both parts.** S47's sweep: the M4's optimum is **16 at every side
+    /// that wins**, the i9's is **64–128** — the i9 wants a block 4–8x LARGER
+    /// while every fact [`L1d`] and [`TargetProfile`] can read is LARGER on the
+    /// M4 (`bytes` 2.67x, `line_bytes` 2x, `sets` 2x, `l2_per_core` 1.68x). Only
+    /// `ways` is bigger on the i9, by 1.5x, against an 8x difference in the
+    /// answer. **No monotone function of the readable facts orders these two
+    /// parts the way the measurement does**, and the quantity that does — how far
+    /// a prefetcher reaches on a strided walk — is in no sysctl, no sysfs node
+    /// and no ISA rule. The witness is the unblocked arms: the same instruction
+    /// stream over the same geometry costs **0.796 ns/element on the M4 and 2.325
+    /// on the i9**.
+    ///
+    /// Both terms above are real on the machine they were measured on and false
+    /// on the other. The floor (`line/w`) holds on the i9 and fails on the M4,
+    /// where B=16 covers half of a 128 B line — the same half-line case the floor
+    /// forbids — and is the optimum, beating B=32 by 15% at side 2048. The
+    /// ceiling (`slots/2`) holds on the M4 and fails on the i9, where it is 6 and
+    /// every B from 16 to 256 beats B=8. Their geometric mean lands **exactly on
+    /// the M4's optimum at both sides** and below the left edge of the i9's
+    /// plateau. The residual is **1.15–1.27x of the i9's win**, and it is carried
+    /// as a known gap: a per-profile scalar that fixed it would have to be 1 on
+    /// the M4 and 4–8 on the i9, i.e. carry the whole answer and derive nothing,
+    /// which is the hand-typed flag with extra steps.
+    ///
+    /// **Open defect S47 found and did not fix (`benches/results-s47`).** At side
+    /// **1536 on the M4 this rung fires with B=32 and LOSES 1.75x (1t) / 1.41x
+    /// (threaded)** — larger than any i9 shortfall above. It is a fire/decline
+    /// defect, not a block one: no block wins there. Both terms vote to fire and
+    /// both look right (pressure 24x, a 9.44 MB read array against a 3.36 MB
+    /// share); what they cannot see is that the M4's unblocked walk at that width
+    /// already costs only 0.594 ns/element — better than side 1024's — so there
+    /// is no miss cost to recover, while a non-power-of-two width costs the
+    /// permutation two magic-multiply divisions per element that a power-of-two
+    /// width gets as shifts (+20–25% instructions, measured). Deciding that trade
+    /// needs the price of an unblocked miss on the part, which is the same
+    /// unreadable quantity. Sides 512, 1024 and 2048 are unaffected on both
+    /// machines.
     pub fn move_block(&self, site: &MoveSite) -> Option<u64> {
         let l1 = self.l1d.as_ref()?;
         let (line, sets, ways) = (l1.line_bytes, l1.sets.max(1), l1.ways());
@@ -462,6 +509,33 @@ impl TargetProfile {
         let lines_live = (site.width * stride / line).min(site.width);
         if touched >= sets || lines_live <= slots || site.len.checked_mul(w)? <= self.l2_per_core()
         {
+            return None;
+        }
+        // COST, not benefit — the one half of this trade that IS derivable (S47).
+        //
+        // `move_panel_index` divides the counter by `b` four times and by `w/b`
+        // twice. When `w` is a power of two every divisor of `gcd(w, rows)` is
+        // one too, so `b` and `w/b` both are, and `-O2` lowers all six to shifts.
+        // When `w` is NOT a power of two, `b` and `w/b` cannot both be, so at
+        // least one magic-multiply sequence lands on every element — **measured
+        // at +20 to +25% instructions** on the i9 at width 1536 (185.4 M at
+        // B=16 and B=32 against 223.2 M at B=12 and B=24, same loop, same data).
+        //
+        // The benefit is the unreadable quantity this whole function's note ends
+        // on; the cost is not. Firing when a large known cost meets an
+        // unpredictable benefit is a bet, and it is one this rung was measured
+        // LOSING: at width 1536 on the M4 the fired arm runs **1.75x slower than
+        // not blocking at all** (1t; 1.41x threaded), because that part's
+        // unblocked walk already costs only 0.594 ns/element — better than its
+        // own width-1024 walk — so there is nothing for the permutation to buy.
+        //
+        // The price of this clause is stated rather than hidden: it forgoes the
+        // i9's win at the same width, which the shipped block measured at
+        // **1.060x (1t) / 1.044x (threaded)**. Forgoing 6% beats shipping 1.75x.
+        // Revisit only if the benefit ever becomes predictable — the plateau
+        // there is B = 16..256 and reaching it needs a fact §4 of
+        // `benches/results-s47/block-size.md` shows is not readable.
+        if !site.width.is_power_of_two() {
             return None;
         }
         // The block balances TWO opposing costs, both of them measured.
@@ -1242,6 +1316,30 @@ mod tests {
         // is the witness for the conflict clause, not the pressure clause, and
         // without that clause the deduction would fire on a measured LOSS.
         assert_eq!(APPLE_M4_SME.move_block(&transpose(1025)), None);
+        // S47: width 1536 passes EVERY term above on both machines — the set
+        // index collapses (8 sets on the M4, 2 on the i9), pressure is 24x and
+        // 64x, and the 9.44 MB read array is past both private-L2 shares — and
+        // firing it measured a **1.75x LOSS** on the M4 (1t; 1.41x threaded).
+        // A width that is not a power of two cannot give both `b` and `w/b` a
+        // shift lowering, so the permutation costs +20-25% instructions there
+        // and the benefit is unpredictable. This is the only measured cell where
+        // the rung was a net loss, and it is the only one this clause changes.
+        assert_eq!(
+            APPLE_M4_SME.move_block(&transpose(1536)),
+            None,
+            "measured 1.75x SLOWER than unblocked at 1 thread, 1.41x threaded"
+        );
+        assert_eq!(
+            RAPTORLAKE.move_block(&transpose(1536)),
+            None,
+            "forgoes a 1.060x/1.044x win to avoid the M4's 1.75x loss at the same width"
+        );
+        // Powers of two are untouched by that clause — the four cells the rung
+        // actually earns its keep on are all above.
+        for side in [1024, 2048] {
+            assert!(APPLE_M4_SME.move_block(&transpose(side)).is_some());
+            assert!(RAPTORLAKE.move_block(&transpose(side)).is_some());
+        }
         // And a profile with no L1D geometry cannot answer at all.
         for p in [&GENERIC, &APPLE_M, &ZEN3, &CUDA_ADA] {
             assert_eq!(p.move_block(&transpose(1024)), None, "{}", p.name);
