@@ -22,10 +22,10 @@
 - [The idea](#the-idea)
   - [What the compiler works out for you](#what-the-compiler-works-out-for-you)
 - [Results](#results)
-  - [Matrix multiply, f32 — M4 Pro](#matrix-multiply-f32--m4-pro)
-  - [Other shapes — M4 Pro](#other-shapes--m4-pro)
-  - [The same shapes on an i9-14900F](#the-same-shapes-on-an-i9-14900f)
-  - [Against a hand-tuned BLAS, on equal hardware](#against-a-hand-tuned-blas-on-equal-hardware)
+  - [Matrix multiply, f32 — M4 Pro, threaded](#matrix-multiply-f32--m4-pro-threaded)
+  - [Other shapes — M4 Pro, threaded](#other-shapes--m4-pro-threaded)
+  - [The same shapes on an i9-14900F, threaded](#the-same-shapes-on-an-i9-14900f-threaded)
+  - [matmul vs OpenBLAS on an i9-14900F, 1024² f32](#matmul-vs-openblas-on-an-i9-14900f-1024-f32)
   - [Three builds](#three-builds)
 - [Status](#status)
 - [Scope](#scope)
@@ -81,139 +81,69 @@ How it does that: [`docs/architecture/`](docs/architecture/).
 
 ## Results
 
-Apple M4 Pro (10 P + 4 E), kernel time only. Baselines: naive triple loops at
-`-O3 -march=native -ffp-contract=fast`, split across threads. NumPy is the expert-tuned column.
+Method, machine specs, raw logs: [`docs/performance/`](docs/performance/).
 
-Single-threaded numbers are the fastest of N runs; threaded numbers are the median.
+### Matrix multiply, f32 — M4 Pro, threaded
 
-Where two Mapal columns appear: **FMA off** is the default build and gives bit-identical results to
-the interpreter every time. **FMA on** (`--contract`) lets the hardware fuse multiply and add, which
-is faster and changes the last bit. C++ and NumPy fuse by default; Rust does not.
+|    N |       Mapal |    NumPy |                       |
+| ---: | ----------: | -------: | --------------------- |
+| 1024 |     0.81 ms |  0.67 ms | NumPy 1.21×           |
+| 2048 |     5.17 ms |  5.30 ms | tie                   |
+| 4096 | **38.6 ms** |  43.9 ms | **Mapal 1.14×**       |
 
-Method, machine specs and raw logs: [`docs/performance/`](docs/performance/) ·
-[`benches/results-s36/`](benches/results-s36/).
+3,562 GFLOP/s vs 3,128 at 4096, disjoint. Naive threaded C++: 33,439 ms.
+Single-threaded NumPy is ~2× ahead
+([why](docs/performance/s43-residency-and-the-thermal-artifact.md)).
 
-### Matrix multiply, f32 — M4 Pro
-
-Mapal and NumPy run **alternating in the same session**, and both must print the same answer before
-any time is recorded. NumPy on this machine uses Apple's Accelerate, which reaches the same matrix
-hardware Mapal targets — so this is like-for-like, not a naive baseline.
-
-**Threaded** (Mapal's `--target=apple-m4-sme` build):
-
-|    N |    Mapal |    NumPy |                        |
-| ---: | -------: | -------: | ---------------------- |
-| 1024 |  0.81 ms |  0.67 ms | NumPy ahead 1.21×      |
-| 2048 |  5.17 ms |  5.30 ms | tie                    |
-| 4096 | **38.6 ms** | 43.9 ms | **Mapal ahead 1.14×** |
-
-At 4096 that is **3,562 GFLOP/s against NumPy's 3,128** — the first size where Mapal is ahead, and
-the distributions do not overlap: Mapal's slowest run beats NumPy's fastest.
-
-**Single-threaded, NumPy is still about 2× ahead at every size.** That is the open gap, and it is a
-different problem from the threaded one ([why](docs/performance/s43-residency-and-the-thermal-artifact.md)).
-
-For scale: naive threaded C++ at `-O3 -march=native -ffp-contract=fast` takes **33,439 ms** on the
-4096² case.
-
-### Other shapes — M4 Pro
-
-Threaded, every leg measured in the same pass so the columns are comparable. The bottom four rows
-are a fresh 15-run pass on a machine-detecting build; FIR and conv2d are from an earlier campaign
-and have a second column because `--contract` changes them (it does not touch the others).
-
-| workload               | class           | Mapal FMA off | Mapal FMA on | C++ naive-mt | NumPy 1t |
-| ---------------------- | --------------- | ------------: | -----------: | -----------: | -------: |
-| FIR filter, 1M samples | compute         |      0.372 ms | **0.292 ms** |         1.50 |     6.35 |
-| conv2d 3×3, 1024×1024  | compute         |  **0.114 ms** |     0.115 ms |         0.16 |     1.72 |
-| saxpy, 1M              | streaming       |  **0.085 ms** |            — |         0.12 |     0.18 |
-| sum reduction, 1M      | reduction       |      0.564 ms |            — |         0.92 | **0.11** |
-| transpose, 1024²       | data movement   |  **0.162 ms** |            — |         0.26 |     0.86 |
-| gather `x[idx[i]]`, 1M | irregular reads |      0.167 ms |            — |     **0.16** |     2.19 |
-
-Per core, conv2d is 1.21× ahead of naive C++ on NEON and AVX2:
-[conv2d-per-core-gap.md](docs/performance/conv2d-per-core-gap.md).
-
-**Transpose used to be the slowest shape here, and its row above predates the fix.** Reading down a
-column makes every access land on the same few cache slots, leaving ~97% of the cache unusable —
-nothing to do with bandwidth. The compiler spots that from the graph, checks it against the cache
-geometry it reads off the machine, and reorders the visits: **0.350 → 0.149 ms threaded, 2.35×.**
-The same deduction on an Intel i9 measures a different cache layout, derives a different block size,
-and gets 2.2× at one thread. **Nothing is configured** — no flag, and the compiler decides per shape,
-so a matmul and a transpose in one program each get their own treatment
-([detail](docs/performance/s44-conflict-not-capacity.md)). The reduction is a semantics difference, not a speed one: NumPy's `sum` is pairwise, a Mapal fold is left-to-right, and splitting
-one needs an associativity permission the type system does not carry yet
-([plan](docs/components/ir/plans/plan-s37-scan-recurrence.md)). NumPy has no threaded FIR or conv2d
-kernel, so that column is not like-for-like.
-
-### The same shapes on an i9-14900F
-
-Median of 25 interleaved cycles, `performance` governor, every leg in one pass, values checked
-identical first. 1-thread legs pinned to one P-core; threaded to all 32.
+### Other shapes — M4 Pro, threaded
 
 | workload               | Mapal FMA off | Mapal FMA on | C++ naive-mt | NumPy 1t |
 | ---------------------- | ------------: | -----------: | -----------: | -------: |
-| FIR filter, 1M samples |      0.225 ms | **0.187 ms** |         1.24 |     5.44 |
-| conv2d 3×3, 1024×1024  |      0.118 ms | **0.084 ms** |         0.41 |     2.85 |
+| FIR filter, 1M         |      0.372 ms | **0.292 ms** |         1.50 |     6.35 |
+| conv2d 3×3, 1024²      |  **0.114 ms** |     0.115 ms |         0.16 |     1.72 |
+| saxpy, 1M              |  **0.085 ms** |            — |         0.12 |     0.18 |
+| sum reduction, 1M      |      0.564 ms |            — |         0.92 | **0.11** |
+| transpose, 1024²       |  **0.162 ms** |            — |         0.26 |     0.86 |
+| gather `x[idx[i]]`, 1M |      0.167 ms |            — |     **0.16** |     2.19 |
+
+### The same shapes on an i9-14900F, threaded
+
+| workload               | Mapal FMA off | Mapal FMA on | C++ naive-mt | NumPy 1t |
+| ---------------------- | ------------: | -----------: | -----------: | -------: |
+| FIR filter, 1M         |      0.225 ms | **0.187 ms** |         1.24 |     5.44 |
+| conv2d 3×3, 1024²      |      0.118 ms | **0.084 ms** |         0.41 |     2.85 |
 | saxpy, 1M              |      0.137 ms | **0.130 ms** |         0.42 |     0.47 |
 | sum reduction, 1M      |  **0.394 ms** |     0.391 ms |         7.32 | **0.14** |
 | transpose, 1024²       |      0.200 ms | **0.176 ms** |         0.47 |     2.22 |
 | gather `x[idx[i]]`, 1M |      0.236 ms | **0.203 ms** |         0.48 |     1.33 |
 
-Every row except the reduction. This box takes the streaming and permutation shapes the M4 Pro
-does not, so neither machine is the whole story
-([why this box is easy to measure wrong](docs/sessions/2026-07-27-s37b-the-i9-cannot-be-measured-in-ms.md)).
+Transpose single-threaded on this box: 2.42 → 1.09 ms, −55%, disjoint
+([what changed](docs/performance/s44-conflict-not-capacity.md)).
 
-**The transpose fix works here too, with nothing passed.** This box's cache is laid out differently
-from the M4's — 64-byte lines, 64 slot-groups — and a 1024-wide row collapses onto a *single* group,
-worse than the M4's four. The compiler reads that off `/sys`, derives a different block size than it
-derives on the M4, and single-threaded transpose goes **2.42 → 1.09 ms, −55%, disjoint** — now
-beating both naive C++ (2.31) and NumPy (2.22), where it used to lose to both.
+### matmul vs OpenBLAS on an i9-14900F, 1024² f32
 
-### Against a hand-tuned BLAS, on equal hardware
+|                     |    Mapal |    NumPy |          |
+| ------------------- | -------: | -------: | -------- |
+| single-threaded     | 14.88 ms | 12.21 ms | 1.22×    |
+| threaded, 8 P-cores |  2.09 ms |  1.74 ms | 1.20×    |
+| threaded, whole box |  1.52 ms |  1.50 ms | **tie**  |
 
-On the M4, NumPy's matmul runs on the chip's matrix hardware. Before Mapal could use that hardware
-NumPy was 3.3× ahead threaded — a different execution unit, not better code generation. Now both
-sides use it, and the threaded result is above. On an i9-14900F, where NumPy goes through OpenBLAS
-on the same vector units Mapal targets, 1024² f32:
+The whole-box tie is heterogeneity tolerance, not a better kernel — same box,
+8 threads per row ([detail](docs/performance/matmul/s33.md)):
 
-| i9-14900F, 1024² f32     |    Mapal |    NumPy | gap          |
-| ------------------------ | -------: | -------: | ------------ |
-| single-threaded          | 14.88 ms | 12.21 ms | 1.22× behind |
-| threaded, 8 P-cores      |  2.09 ms |  1.74 ms | 1.20× behind |
-| threaded, whole box      |  1.52 ms |  1.50 ms | **tie**      |
-
-The whole-machine tie is not a better kernel; it is the row below.
-
-The threaded parity is **not** a better scheduler. Same box, 8 threads per row, only CPU
-uniformity varying:
-
-| 8 threads on…       |   Mapal | NumPy | winner           |
+| 8 threads on…       |   Mapal | NumPy |                  |
 | ------------------- | ------: | ----: | ---------------- |
-| 8 E-cores (uniform) | 5.89 ms |  5.59 | NumPy by 5%      |
-| 8 P-cores (uniform) | 2.44 ms |  1.72 | **NumPy by 41%** |
-| 4 P + 4 E (mixed)   | 3.38 ms |  5.57 | **Mapal by 65%** |
-
-Swapping four E-cores for four faster ones bought OpenBLAS nothing (5.59 → 5.57) — it partitions
-statically, so every panel waits on the slowest thread. Mapal went 5.89 → 3.38. That is
-**heterogeneity tolerance**: it matters on consumer CPUs and claims nothing about a homogeneous
-server ([detail](docs/performance/matmul/s33.md)). The 20% single-threaded kernel gap is the
-remaining target.
+| 8 E-cores (uniform) | 5.89 ms |  5.59 | NumPy 5%         |
+| 8 P-cores (uniform) | 2.44 ms |  1.72 | **NumPy 41%**    |
+| 4 P + 4 E (mixed)   | 3.38 ms |  5.57 | **Mapal 65%**    |
 
 ### Three builds
 
-| build                                        | what you get                                                    |
-| -------------------------------------------- | --------------------------------------------------------------- |
+| build                                        | what you get                                                     |
+| -------------------------------------------- | ---------------------------------------------------------------- |
 | **FMA off** (default)                        | bit-identical to the interpreter, always                        |
 | **FMA on** (`--contract`)                    | lets the hardware fuse multiply and add — faster, last bit moves |
 | **SME** (`--contract --target=apple-m4-sme`) | same as FMA on, plus the matrix unit; needs an Apple M4 or newer |
-
-The default emits **zero** fused instructions — verified on the compiled object, not assumed. All
-three are listed because the comparison is otherwise uneven in both directions: C and C++ fuse by
-default, Rust never does, and NumPy calls hand-written kernels that do.
-
-Matrix multiply uses the SME build; the other two are not the matmul path and are not benchmarked
-against it.
 
 ---
 
