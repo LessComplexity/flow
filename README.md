@@ -148,27 +148,27 @@ kernel, so that column is not like-for-like.
 
 ### The same shapes on an i9-14900F
 
-Median of 100, pinned to the 8 P-cores, `performance` governor, every leg in one pass:
+Median of 25 interleaved cycles, `performance` governor, every leg in one pass, values checked
+identical first. 1-thread legs pinned to one P-core; threaded to all 32.
 
 | workload               | Mapal FMA off | Mapal FMA on | C++ naive-mt | NumPy 1t |
 | ---------------------- | ------------: | -----------: | -----------: | -------: |
-| FIR filter, 1M samples |      0.224 ms | **0.192 ms** |         1.93 |     5.16 |
-| conv2d 3×3, 1024×1024  |  **0.104 ms** |     0.106 ms |         0.28 |     2.67 |
-| saxpy, 1M              |  **0.118 ms** |     0.122 ms |         0.28 |     0.47 |
-| sum reduction, 1M      |      0.394 ms |     0.393 ms |         5.09 | **0.12** |
-| transpose, 1024²       |  **0.346 ms** |     0.346 ms |         0.40 |     2.33 |
-| gather `x[idx[i]]`, 1M |  **0.221 ms** |     0.223 ms |         0.29 |     1.17 |
+| FIR filter, 1M samples |      0.225 ms | **0.187 ms** |         1.24 |     5.44 |
+| conv2d 3×3, 1024×1024  |      0.118 ms | **0.084 ms** |         0.41 |     2.85 |
+| saxpy, 1M              |      0.137 ms | **0.130 ms** |         0.42 |     0.47 |
+| sum reduction, 1M      |  **0.394 ms** |     0.391 ms |         7.32 | **0.14** |
+| transpose, 1024²       |      0.200 ms | **0.176 ms** |         0.47 |     2.22 |
+| gather `x[idx[i]]`, 1M |      0.236 ms | **0.203 ms** |         0.48 |     1.33 |
 
 Every row except the reduction. This box takes the streaming and permutation shapes the M4 Pro
 does not, so neither machine is the whole story
 ([why this box is easy to measure wrong](docs/sessions/2026-07-27-s37b-the-i9-cannot-be-measured-in-ms.md)).
 
-**The transpose fix works here too, on a `--target=raptorlake` build.** This box's cache is laid
-out differently from the M4's — 64-byte lines, 64 slot-groups — and a 1024-wide row collapses onto a
-*single* group, worse than the M4's four. Measured **2.2× at one thread, disjoint**, and transpose
-then beats naive C++ single-threaded (1.08 ms vs 2.25) where the table above has them tied. The
-compiler reads this box's cache layout and derives a different block size than it derives on the M4,
-from the same source. The rows above predate the fix.
+**The transpose fix works here too, with nothing passed.** This box's cache is laid out differently
+from the M4's — 64-byte lines, 64 slot-groups — and a 1024-wide row collapses onto a *single* group,
+worse than the M4's four. The compiler reads that off `/sys`, derives a different block size than it
+derives on the M4, and single-threaded transpose goes **2.42 → 1.09 ms, −55%, disjoint** — now
+beating both naive C++ (2.31) and NumPy (2.22), where it used to lose to both.
 
 ### Against a hand-tuned BLAS, on equal hardware
 

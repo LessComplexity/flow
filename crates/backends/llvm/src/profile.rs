@@ -836,10 +836,36 @@ fn sysctl_u64(key: &str) -> Option<u64> {
 /// part without the unit yields `sme: None` and the rung falls back exactly as
 /// it does for every pre-S41 profile.
 ///
-/// `vec_bytes`/`vec_regs` stay at [`GENERIC`]'s values: they are facts of the
-/// *ISA* that arrive with the target features, not runtime queries (see the
-/// field docs), so there is nothing to detect. `acc_vecs_per_row`/`nc_tiles` are
+/// `vec_bytes`/`vec_regs` come from [`vec_geometry`]. They ARE ISA facts rather
+/// than sysfs entries, but `native` is now the DEFAULT target (S46), so leaving
+/// them at [`GENERIC`]'s NEON values silently tiled an AVX2 part to a 16-byte
+/// vector — measured at +8.8% on conv2d before this was read. `acc_vecs_per_row`/`nc_tiles` are
 /// policy ratios, honestly search space (ADR-0034), not facts to read.
+/// The host's vector geometry, read at runtime.
+///
+/// `native` means "this machine", and on x86 the vector width is not one value:
+/// an AVX-512 part, an AVX2 part and an SSE-only part want 64, 32 and 16 bytes
+/// with 32, 16 and 16 architectural registers. Detecting the caches but assuming
+/// the ISA is how a default build tiled an AVX2 box to NEON's 16 bytes.
+/// aarch64 keeps `GENERIC`'s 16/32, which is NEON and correct; SVE would be a
+/// separate rung, not a wider `vec_bytes`.
+fn vec_geometry() -> (u64, u64) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("avx512f") {
+            return (64, 32);
+        }
+        if std::arch::is_x86_feature_detected!("avx2") {
+            return (32, 16);
+        }
+        return (16, 16);
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        (GENERIC.vec_bytes, GENERIC.vec_regs)
+    }
+}
+
 pub fn native() -> Option<&'static TargetProfile> {
     static NATIVE: std::sync::OnceLock<Option<TargetProfile>> = std::sync::OnceLock::new();
     NATIVE.get_or_init(detect).as_ref()
@@ -879,6 +905,8 @@ fn detect() -> Option<TargetProfile> {
             line_bytes: line,
             sets: (sysctl_u64("hw.pagesize")? / line).max(1),
         }),
+        vec_bytes: vec_geometry().0,
+        vec_regs: vec_geometry().1,
         ..GENERIC
     })
 }
@@ -942,6 +970,8 @@ fn detect() -> Option<TargetProfile> {
             line_bytes: sysfs_u64(&format!("{l1}/coherency_line_size"))?,
             sets: sysfs_u64(&format!("{l1}/number_of_sets"))?,
         }),
+        vec_bytes: vec_geometry().0,
+        vec_regs: vec_geometry().1,
         ..GENERIC
     })
 }
