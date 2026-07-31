@@ -118,16 +118,18 @@ For scale: naive threaded C++ at `-O3 -march=native -ffp-contract=fast` takes **
 
 ### Other shapes — M4 Pro
 
-Threaded, median of 100, every leg measured in the same pass so the columns are comparable:
+Threaded, every leg measured in the same pass so the columns are comparable. The bottom four rows
+are a fresh 15-run pass on a machine-detecting build; FIR and conv2d are from an earlier campaign
+and have a second column because `--contract` changes them (it does not touch the others).
 
 | workload               | class           | Mapal FMA off | Mapal FMA on | C++ naive-mt | NumPy 1t |
 | ---------------------- | --------------- | ------------: | -----------: | -----------: | -------: |
 | FIR filter, 1M samples | compute         |      0.372 ms | **0.292 ms** |         1.50 |     6.35 |
 | conv2d 3×3, 1024×1024  | compute         |  **0.114 ms** |     0.115 ms |         0.16 |     1.72 |
-| saxpy, 1M              | streaming       |  **0.115 ms** |     0.116 ms |         0.23 |     0.18 |
-| sum reduction, 1M      | reduction       |      0.582 ms |     0.585 ms |         0.94 | **0.11** |
-| transpose, 1024²       | data movement   |      0.290 ms |     0.308 ms |     **0.26** |     0.83 |
-| gather `x[idx[i]]`, 1M | irregular reads |      0.194 ms |     0.179 ms |     **0.17** |     2.20 |
+| saxpy, 1M              | streaming       |  **0.085 ms** |            — |         0.12 |     0.18 |
+| sum reduction, 1M      | reduction       |      0.564 ms |            — |         0.92 | **0.11** |
+| transpose, 1024²       | data movement   |  **0.162 ms** |            — |         0.26 |     0.86 |
+| gather `x[idx[i]]`, 1M | irregular reads |      0.167 ms |            — |     **0.16** |     2.19 |
 
 Per core, conv2d is 1.21× ahead of naive C++ on NEON and AVX2:
 [conv2d-per-core-gap.md](docs/performance/conv2d-per-core-gap.md).
