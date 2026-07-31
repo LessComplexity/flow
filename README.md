@@ -123,14 +123,17 @@ Threaded, median of 100, every leg measured in the same pass so the columns are 
 | conv2d 3×3, 1024×1024  | compute         |  **0.114 ms** |     0.115 ms |         0.16 |     1.72 |
 | saxpy, 1M              | streaming       |  **0.115 ms** |     0.116 ms |         0.23 |     0.18 |
 | sum reduction, 1M      | reduction       |      0.582 ms |     0.585 ms |         0.94 | **0.11** |
-| transpose, 1024²       | data movement   |      0.290 ms |     0.308 ms |     **0.26** |     0.83 |
+| transpose, 1024²       | data movement   |  **0.141 ms** |     0.141 ms |         0.50 |     0.96 |
 | gather `x[idx[i]]`, 1M | irregular reads |      0.194 ms |     0.179 ms |     **0.17** |     2.20 |
 
 Per core, conv2d is 1.21× ahead of naive C++ on NEON and AVX2:
 [conv2d-per-core-gap.md](docs/performance/conv2d-per-core-gap.md).
 
-Transpose and gather still go to C++ — the boundary of the claim. The reduction is a semantics
-difference, not a speed one: NumPy's `sum` is pairwise, a Mapal fold is left-to-right, and splitting
+**Transpose moved this session** and is now 3.5× ahead of C++ (its row is a fresh same-session
+measurement; the other rows are from an earlier campaign). It was the slowest shape here by a wide
+margin, for a reason that had nothing to do with bandwidth — see
+[conflict, not capacity](docs/performance/s44-conflict-not-capacity.md). **Gather is now the only
+shape that goes to C++.** The reduction is a semantics difference, not a speed one: NumPy's `sum` is pairwise, a Mapal fold is left-to-right, and splitting
 one needs an associativity permission the type system does not carry yet
 ([plan](docs/components/ir/plans/plan-s37-scan-recurrence.md)). NumPy has no threaded FIR or conv2d
 kernel, so that column is not like-for-like.
@@ -151,6 +154,13 @@ Median of 100, pinned to the 8 P-cores, `performance` governor, every leg in one
 Every row except the reduction. This box takes the streaming and permutation shapes the M4 Pro
 does not, so neither machine is the whole story
 ([why this box is easy to measure wrong](docs/sessions/2026-07-27-s37b-the-i9-cannot-be-measured-in-ms.md)).
+
+**The transpose fix has not been measured here yet, and the theory says it should help MORE.** This
+box's L1 is 48 KB / 12-way / 64-byte lines = 64 sets, so a 1024-wide f32 row (4,096 bytes) advances
+exactly 64 lines and lands every read on **one single set** — 12 usable slots out of 768, against
+the M4's 32. Its transpose row moves 8 MB in 0.346 ms = 23 GB/s, far under what this box's memory
+can do, which is the same symptom the M4 had. **Predicted, not measured** — and the block size would
+have to come from the machine profile, since the current flag is hand-fed.
 
 ### Against a hand-tuned BLAS, on equal hardware
 
@@ -316,8 +326,10 @@ so neither resolves names the way the compiler does (ADR-0008).
    different bottleneck ([what we measured](docs/performance/s43-residency-and-the-thermal-artifact.md)).
 2. **Pick the thread count from the program** instead of defaulting to every core
    ([plan](docs/components/backend-llvm/plans/plan-s32-deduced-scheduling.md)).
-3. **Intel AMX**, so matrix units are not an Apple-only story.
-4. **GPUs in earnest**, then running one program across several processors at once.
+3. **Derive the transpose block size from the machine profile**, so the fix that made transpose 3.5×
+   faster works on hardware other than the M4 — the i9 arithmetic predicts a bigger win there.
+4. **Intel AMX**, so matrix units are not an Apple-only story.
+5. **GPUs in earnest**, then running one program across several processors at once.
 
 Done so far, and how each turned out, is in
 [`docs/sessions/`](docs/sessions/) — including the things that were tried and did not work.

@@ -92,6 +92,41 @@ pub struct EmitOpts {
     /// the differential suite enforces — and which the cross-machine run
     /// independently confirmed, ARM and x86 printing identical values.
     pub kc_nest: bool,
+    /// **S44 — the move-panel traversal.** `Some((w, b))` visits a bulk `map`'s
+    /// iteration space in `b × b` tiles of a `w`-wide 2-D geometry instead of in
+    /// linear order. Default `None`, which emits today's flat loop
+    /// character-identically.
+    ///
+    /// **Both numbers are honest about what they are, in the type
+    /// ([`crate::profile::Sme::panel_l1d_ratio`] is the precedent):**
+    ///
+    /// - `w` is **program geometry supplied by hand** — an instrument's
+    ///   concession, not a design. The emitter cannot derive it: `TileSite`
+    ///   recognition hard-requires a fold in the map body
+    ///   (`mapal_ir::algo::tile_site`), and a transpose-shaped map has none, so
+    ///   no record carries its 2-D width. Deriving it properly means a fold-less
+    ///   move-site record in `mapal-ir`; that is reported as an open question,
+    ///   not built here (ADR-0032: the emitter must not re-derive graph
+    ///   analysis, and `mapal-ir` must not learn machine facts).
+    /// - `b` is **swept policy, never derived.** Note that the two obvious
+    ///   derivations coincide at f32 and so cannot be told apart: L1D capacity
+    ///   over a 4 KB row gives `131072/4096 = 32`, and line width over element
+    ///   width gives `128/4 = 32`. Neither is claimed.
+    ///
+    /// **Measured, S44** (`benches/shapes/tblock.c`, standalone, 1 thread, values
+    /// identical every arm, null control flat to 1.6%): a 1024² f32 transpose
+    /// runs 0.820 ms unblocked and 0.303 ms at `b`=24 — **2.71×, disjoint** — and
+    /// 3.19× at side 2048. **But the mechanism is set-index CONFLICT, not
+    /// working-set size:** widening the read array's row stride by one element,
+    /// with the traversal left completely unblocked, recovers 2.59× of that
+    /// 2.71×, and the two levers do not compose (`{b=16, pad=16}` is worse than
+    /// either alone). The winning block is 32 rows × 128 B = **4 KB, 1/32 of
+    /// L1D**, which is why no capacity derivation reproduces it.
+    ///
+    /// A pure ADR-0032 D4 performance tailor: the transform is a **permutation of
+    /// the loop counter**, so every element is still visited exactly once and
+    /// values are bit-identical, which the differential suite enforces.
+    pub move_panel: Option<(u64, u64)>,
     /// The machine facts the emitter tiles against, selected **by name**
     /// (plan-s31-target-profiles): `generic` (the default — today's literals,
     /// byte-identical), `apple-m`, `zen3`. Nothing probes the host; a box run
@@ -112,6 +147,7 @@ impl Default for EmitOpts {
             packing: true,
             contract: false,
             kc_nest: false,
+            move_panel: None,
             target: "generic",
         }
     }
@@ -215,6 +251,7 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
                 opts.packing,
                 opts.contract,
                 opts.kc_nest,
+                opts.move_panel,
                 profile,
             ));
         } else {
@@ -228,6 +265,7 @@ pub fn emit_with_opts(ir: &CategoryIr, opts: &EmitOpts) -> Result<String, EmitEr
                 opts.packing,
                 opts.contract,
                 opts.kc_nest,
+                opts.move_panel,
                 profile,
             );
             if id == entry {

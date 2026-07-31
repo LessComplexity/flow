@@ -1,0 +1,25 @@
+// S44 predictor test, arm B: conv2d 3x3 with a **1026-wide** image row stride —
+// the stride the shipped `conv2d_1024.mapal` actually uses (1024 + a 2-pixel
+// halo). out[i,j] = Σₖ w[k]·img[(i + k/3)·1026 + j + k%3], 1022x1022 out.
+//
+// Paired with conv2d_s1024.mapal. See that file for the predictor being tested;
+// this is the arm the predictor says does NOT collapse (4104 B tap-row stride,
+// not a multiple of the 128 B line, so all 128 L1D sets are reachable).
+fn main() {
+    1052676 -> iota -> ti;
+    ti -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> img;
+    9 -> iota -> kr;
+    kr -> map { t -> (t * 5 + 3) % 31 - 15 -> widen_f32 } -> w;
+    1044484 -> iota -> ts;
+    () -> time -> t0;
+    ts -> map { t ->
+        t / 1022 -> i;
+        t % 1022 -> j;
+        (0.0, kr) -> fold { acc, k -> acc + w[k] * img[(i + k / 3) * 1026 + j + k % 3] }
+    } -> y;
+    () -> time -> t1;
+    y[0] -> println;
+    y[1044483] -> println;
+    "iter ms=" -> print;
+    t1 - t0 -> println;
+}

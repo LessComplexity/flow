@@ -5,6 +5,69 @@
 use super::*;
 
 impl<'a> FnEmit<'a> {
+    /// S44's **move-panel traversal**: permute a bulk `map`'s loop counter so the
+    /// iteration space is visited in `b × b` tiles of a `w`-wide 2-D geometry
+    /// instead of in linear order. Returns the index to *use* on this trip; the
+    /// loop counter, its bounds and its trip count are untouched.
+    ///
+    /// **A permutation of the counter, not a loop nest** — and that is the whole
+    /// correctness argument. `perm` is a bijection of `[0, n)`, the parallel
+    /// slices partition the counter, so the images of those slices still
+    /// partition the outputs: every element is visited exactly once, by exactly
+    /// one worker, and the values are bit-identical. It also means `%lo`/`%hi`
+    /// need no special handling — a blocked *nest* would have to grow a head and
+    /// a tail for the partial rows at a slice boundary, and this does not.
+    ///
+    /// ```text
+    /// p  = ((rb·CB + cb)·B + dr)·B + dc      -- the counter, decomposed
+    /// t  = (rb·B + dr)·W + cb·B + dc         -- the index it stands for
+    /// ```
+    ///
+    /// Every divisor is a compile-time constant, so `-O2` turns the `udiv`/`urem`
+    /// pair into shifts when `b` is a power of two.
+    ///
+    /// Declines — returning the counter unchanged — unless the panel divides the
+    /// geometry both ways. A panel that does not tile the space would need a
+    /// remainder arm, and the honest answer at that point is that this rung has
+    /// nothing to say about that shape.
+    fn move_panel_index(&mut self, iv: &str, n: u64) -> String {
+        let Some((w, b)) = self.move_panel else {
+            return iv.to_owned();
+        };
+        if w == 0 || b == 0 || n % w != 0 {
+            return iv.to_owned();
+        }
+        let rows = n / w;
+        if rows < 2 || !w.is_multiple_of(b) || !rows.is_multiple_of(b) {
+            return iv.to_owned();
+        }
+        let col_blocks = w / b;
+        let op = |emit: &mut Self, code: &str, lhs: &str, rhs: u64| {
+            let t = emit.tmp();
+            emit.line(format!("{t} = {code} i64 {lhs}, {rhs}"));
+            t
+        };
+        let dc = op(self, "urem", iv, b);
+        let q = op(self, "udiv", iv, b);
+        let dr = op(self, "urem", &q, b);
+        let q2 = op(self, "udiv", &q, b);
+        let cb = op(self, "urem", &q2, col_blocks);
+        let rb = op(self, "udiv", &q2, col_blocks);
+        let row = op(self, "mul", &rb, b);
+        let row = {
+            let t = self.tmp();
+            self.line(format!("{t} = add i64 {row}, {dr}"));
+            t
+        };
+        let row = op(self, "mul", &row, w);
+        let col = op(self, "mul", &cb, b);
+        let idx = self.tmp();
+        self.line(format!("{idx} = add i64 {row}, {col}"));
+        let out = self.tmp();
+        self.line(format!("{out} = add i64 {idx}, {dc}"));
+        out
+    }
+
     pub(super) fn emit_map(
         &mut self,
         m: MorphismId,
@@ -75,6 +138,10 @@ impl<'a> FnEmit<'a> {
         self.line(format!("{done} = icmp uge i64 {iv}, {hi}"));
         self.line(format!("br i1 {done}, label %{ld}, label %{lb}"));
         self.label_line(&lb);
+        // S44: the index this trip stands for. `move_panel` off (the default) or
+        // declining returns `iv` itself, so the text below is character-identical
+        // to what it has always been.
+        let ix = self.move_panel_index(&iv, n);
         // plan-s37-stage-structure: if `elem_plan` knows what `arr[i]` IS, build
         // it here instead of reading it back out of memory. The intermediate
         // array is still emitted — this is the query, not a rewrite; whether the
@@ -89,7 +156,7 @@ impl<'a> FnEmit<'a> {
         let inlined = law
             .filter(|l| !matches!(l, ElemSrc::Load { .. }))
             .zip(arr_ty.component_ty(0).cloned())
-            .and_then(|(l, elem_ty)| self.emit_elem(&l, &elem_ty, &iv));
+            .and_then(|(l, elem_ty)| self.emit_elem(&l, &elem_ty, &ix));
         let e = match inlined {
             Some((_, v)) => v,
             None => {
@@ -99,7 +166,7 @@ impl<'a> FnEmit<'a> {
                     .expect("map src slot");
                 let ep = self.tmp();
                 self.line(format!(
-                    "{ep} = getelementptr {src_arr_llt}, ptr {arr_ptr}, i64 0, i64 {iv}"
+                    "{ep} = getelementptr {src_arr_llt}, ptr {arr_ptr}, i64 0, i64 {ix}"
                 ));
                 let e = self.tmp();
                 self.line(format!("{e} = load {tllt}, ptr {ep}"));
@@ -120,7 +187,7 @@ impl<'a> FnEmit<'a> {
         self.line(format!("{r} = call {ullt} @{callee}({arg})"));
         let dp = self.tmp();
         self.line(format!(
-            "{dp} = getelementptr {tgt_arr_llt}, ptr {tgt_slot}, i64 0, i64 {iv}"
+            "{dp} = getelementptr {tgt_arr_llt}, ptr {tgt_slot}, i64 0, i64 {ix}"
         ));
         self.line(format!("store {ullt} {r}, ptr {dp}"));
         let iv1 = self.tmp();

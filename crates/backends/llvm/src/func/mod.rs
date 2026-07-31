@@ -330,6 +330,11 @@ pub(crate) struct FnEmit<'a> {
     /// Split deep packed sites into k-panels (the KC nest). Default OFF — a
     /// measured 3x loss locally at 1024 f32 (S29); see `EmitOpts::kc_nest`.
     kc_nest: bool,
+    /// S44's move-panel traversal: `Some((w, b))` permutes a bulk `map`'s
+    /// loop counter into `b x b` tiles of a `w`-wide 2-D geometry. `None`
+    /// (the default) emits today's flat loop character-identically. See
+    /// `EmitOpts::move_panel` for what each number is and is not.
+    move_panel: Option<(u64, u64)>,
     /// The machine facts every tile factor derives from (plan-s31-target-
     /// profiles): vector width and register count, L2 budget, stack ceiling.
     /// Geometry comes from the record, constants come from here — mapal-ir never

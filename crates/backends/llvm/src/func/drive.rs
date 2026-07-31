@@ -98,10 +98,11 @@ impl<'a> FnEmit<'a> {
         packing: bool,
         contract: bool,
         kc_nest: bool,
+        move_panel: Option<(u64, u64)>,
         profile: &'static TargetProfile,
     ) -> String {
         let mut host = FnEmit::new(
-            ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, profile,
+            ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, move_panel, profile,
         );
         host.perf_timing = perf_timing;
         // The host runs once per program, so its blocks may go to the arena.
@@ -374,7 +375,7 @@ impl<'a> FnEmit<'a> {
         for (task_id, task) in plan.tasks.iter().enumerate() {
             out.push_str(&Self::emit_task(
                 ir, f, fnames, strings, attrs, &frame, task_id, task, tiling, packing, contract,
-                kc_nest, profile,
+                kc_nest, move_panel, profile,
             ));
             out.push('\n');
         }
@@ -404,6 +405,7 @@ impl<'a> FnEmit<'a> {
         packing: bool,
         contract: bool,
         kc_nest: bool,
+        move_panel: Option<(u64, u64)>,
         profile: &'static TargetProfile,
     ) -> String {
         if let TaskKind::Split { site: m, n } = &task.kind
@@ -414,7 +416,8 @@ impl<'a> FnEmit<'a> {
             && packing_site(&site)
         {
             let mut slice = FnEmit::new(
-                ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, profile,
+                ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, move_panel,
+                profile,
             );
             slice.guard_flavor = GuardFlavor::Task;
             slice.split_range = true;
@@ -436,7 +439,8 @@ impl<'a> FnEmit<'a> {
             // wall — 30.2%, thread-count-independent, pure Amdahl.
             let source = ir.morphism(*m).expect("tile map resolves").source;
             let mut pack = FnEmit::new(
-                ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, profile,
+                ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, move_panel,
+                profile,
             );
             pack.guard_flavor = GuardFlavor::Task;
             pack.split_range = true;
@@ -451,7 +455,8 @@ impl<'a> FnEmit<'a> {
             );
 
             let mut emit = FnEmit::new(
-                ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, profile,
+                ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, move_panel,
+                profile,
             );
             emit.guard_flavor = GuardFlavor::Task;
             emit.prepare_storage();
@@ -511,7 +516,7 @@ impl<'a> FnEmit<'a> {
         }
 
         let mut emit = FnEmit::new(
-            ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, profile,
+            ir, f, fnames, strings, attrs, tiling, packing, contract, kc_nest, move_panel, profile,
         );
         emit.guard_flavor = GuardFlavor::Task;
         emit.split_range = matches!(task.kind, TaskKind::Split { .. });

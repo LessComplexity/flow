@@ -1,0 +1,30 @@
+// S44 predictor test, arm A: conv2d 3x3 with a **1024-wide** image row stride.
+// out[i,j] = Σₖ w[k]·img[(i + k/3)·1024 + j + k%3] over a 1024x1024 image,
+// 1022x1022 out.
+//
+// Paired with conv2d_s1026.mapal, which is IDENTICAL in every respect except the
+// image row stride (1026). Same output count, same 9 taps, same generation law —
+// so the only thing that moves between the two is the tap-row byte stride:
+//   1024 * 4 = 4096 B  = 32 * 128 -> set index steps 32 -> gcd(32,128)=32
+//                                 -> only 4 distinct L1D sets
+//   1026 * 4 = 4104 B  -> 128 does NOT divide it -> all 128 sets
+// The S44 predictor says arm A collapses and arm B does not. It is a PREDICTION:
+// written down before either was run.
+fn main() {
+    1048576 -> iota -> ti;
+    ti -> map { t -> (t * 7 + 13) % 101 - 50 -> widen_f32 } -> img;
+    9 -> iota -> kr;
+    kr -> map { t -> (t * 5 + 3) % 31 - 15 -> widen_f32 } -> w;
+    1044484 -> iota -> ts;
+    () -> time -> t0;
+    ts -> map { t ->
+        t / 1022 -> i;
+        t % 1022 -> j;
+        (0.0, kr) -> fold { acc, k -> acc + w[k] * img[(i + k / 3) * 1024 + j + k % 3] }
+    } -> y;
+    () -> time -> t1;
+    y[0] -> println;
+    y[1044483] -> println;
+    "iter ms=" -> print;
+    t1 - t0 -> println;
+}

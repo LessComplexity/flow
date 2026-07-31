@@ -15,6 +15,7 @@ impl<'a> FnEmit<'a> {
         packing: bool,
         contract: bool,
         kc_nest: bool,
+        move_panel: Option<(u64, u64)>,
         profile: &'static TargetProfile,
     ) -> Self {
         let mut gsites = SecondaryMap::new();
@@ -57,6 +58,7 @@ impl<'a> FnEmit<'a> {
             packing,
             contract,
             kc_nest,
+            move_panel,
             profile,
             heap_ok: false,
             heap_used: false,
