@@ -15,11 +15,17 @@ this project has passed numpy/Accelerate on a matmul cell. Along the way S42's p
 ceiling was retracted as a thermal artifact, and the repo's byte-identity gate was found capable of
 reporting a clean pass while measuring nothing.
 
-Next step: **decide what merges.** Four agent worktrees hold uncommitted work; `main` holds only docs
-and instruments. See §5 P0.
+**Sapir's call at close: merge and push.** The parallel B pack is on `main` at `555d058`, gate
+re-run on the merged tree (**1032 passed / 0 failed**, fmt clean), README rewritten front-facing.
+`nc` blocking was left undecided in its worktree.
 
-Resume command/check: `git worktree list`, then read
+Next step: **the single-thread gap** — numpy is still ~2× ahead there and every blocking-level knob
+has been swept and refuted. See §5 P0.
+
+Resume command/check: `cargo test --workspace --release`, then read
 `docs/performance/s43-residency-and-the-thermal-artifact.md` §4c and §4e.
+
+*(§4 and §5 below were finalized at `end`, after the merge; §§1–3 and 6–9 are as drafted.)*
 
 ## 1. Work completed
 
@@ -89,12 +95,12 @@ nested run ahead of the matmul. **N=4096 threaded 1.381×; 1 thread 0.998× (no 
 
 | Type | Handle | State | Inspect | Cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `0518e76` | **in sync with origin**; 2 modified + 14 untracked, all docs/instruments | `git status -sb` | Sapir's call |
-| worktree | `agent-a718d8faeee0ea4b4` | **the parallel B pack — the one that matters** | `git -C … status -s` | merge or discard |
-| worktree | `agent-a03f9b23183f1440c` | `nc` blocking, ships OFF, gates green | " | merge or discard |
+| branch | `main` @ `aff5bde` | **pushed, in sync, clean** — only `oainotes.md` untracked | `git status -sb` | — |
+| worktree | `agent-a718d8faeee0ea4b4` | parallel B pack — **merged to `main`** in `555d058` | `git -C … status -s` | discardable |
+| worktree | `agent-a03f9b23183f1440c` | `nc` blocking, ships OFF, gates green — **still undecided** | " | merge or discard |
 | worktree | `agent-a00e835791cc868c5` | threaded-ceiling probes | " | probes already copied to main |
 | worktree | `agent-a9c8b56e24b5dee89` | cache-vs-TLB probes | " | probes already copied to main |
-| worktree ×3 | `…-Personal-**Flow**/…` | **still prunable** (pre-rename paths) | `git worktree list` | `git worktree prune` — **only after the four agent worktrees are resolved** |
+| worktree ×3 | `…-Personal-**Flow**/…` | **still prunable** (pre-rename paths) | `git worktree list` | `git worktree prune` — safe once the `nc` worktree is resolved |
 | machine | Arch box `100.81.226.103` | up, no SME | `ssh … nproc` | owned box |
 | artifact | box `~/mapal-s42/` | **107 MB, still there** | `ssh … 'du -sh ~/mapal-s42'` | delete when done |
 | file | `oainotes.md` | untracked, deliberately uncommitted | — | Sapir's call |
@@ -105,10 +111,10 @@ nested run ahead of the matmul. **N=4096 threaded 1.381×; 1 thread 0.998× (no 
 
 | Priority | Item | Reference | Next action | Done when |
 | --- | --- | --- | --- | --- |
-| **P0** | **Merge the parallel B pack** | worktree `a718d8faee` | review the 3-file diff, merge, re-run the gate on the merged tree | on `main`, gate green |
-| P0 | decide `nc` blocking's fate | worktree `a03f9b2318` | ships OFF; merge as a documented lever or discard | merged or dropped |
-| P1 | the NEON leg's pack win is **VOID** | §4d | re-measure (control spread was 6.5–8.5%); it looked ~1.15× | a clean number or a retraction |
-| P1 | one thread is ~2× behind numpy | §4b/§4e | the operand-residency 1.71× is real and unclaimed; needs a design that is not `kc` | 1t GF/s moves off ~800 |
+| ~~P0~~ | ~~merge the parallel B pack~~ | — | **DONE** — `555d058`, gate 1032/0 on the merged tree | ✅ |
+| **P0** | **single thread is ~2× behind numpy** | §4b/§4e of the perf doc | needs a reuse-structure change, not another blocking level | 1t GF/s moves off ~800 |
+| P1 | decide `nc` blocking's fate | worktree `a03f9b2318` | ships OFF; merge as a documented lever or discard | merged or dropped |
+| ~~P1~~ | ~~re-measure the NEON leg~~ | §4d | **DROPPED** (Sapir) — NEON is not the matmul path; matmul ships SME | ✅ |
 | P1 | `examples/vector.mapal` does not parse | §4d | 3 of 159 gate cells have always failed | it parses, or it leaves the sweep |
 | P1 | delete or justify `kc_nest` | `lib.rs::EmitOpts` | unchanged from S42; lost on every machine | gone, or has a written reason |
 | P1 | executing SME value check in `cargo test` | `benches/sme/README.md` | unchanged from S42 | the suite runs an SME binary |
