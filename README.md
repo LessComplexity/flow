@@ -157,7 +157,7 @@ The whole-box tie is heterogeneity tolerance, not a better kernel - same box,
 | GPU backend (CUDA)     | working - 640 compile-and-runs on an RTX 4090, July 2026; **not re-validated on hardware since.** No `time` builtin           |
 | FPGA backend (Verilog) | not started                                                                                                                   |
 | Command-line tool      | **not built** - `mapal` prints "not yet implemented" and exits 1                                                              |
-| Tests                  | 1,032; 161 are CUDA's and skip without `nvcc`. Green                                                                          |
+| Tests                  | 1,047; 161 are CUDA's and skip without `nvcc`. Green                                                                          |
 | CI                     | `cargo fmt` + full suite on Linux and macOS, per push. Cannot pass vacuously - a skipped LLVM differential fails the run      |
 
 **"Byte-identical" means:** every compiled program is checked to print exactly what the

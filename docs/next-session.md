@@ -1,59 +1,38 @@
-# Next Session (S44)
+# Next Session (S48)
 
-Written: 2026-07-31 · end of S43 · by: Claude (orchestrator; category-architect skill)
-Session log: `sessions/2026-07-31-s43-the-pack-was-serial.md` — **read it**
-Previous: S42 (`sessions/2026-07-31-s42-the-constant-that-cost-a-session.md`), S41b, S41.
-The performance record that governs S44: **`docs/performance/s43-residency-and-the-thermal-artifact.md`**.
+Written: 2026-07-31 · end of S44–S47 · by: Claude (orchestrator; category-architect skill)
+Session log: `sessions/2026-07-31-s44-s47-conflict-not-capacity.md` — **read it**
+Previous: S43 (`sessions/2026-07-31-s43-the-pack-was-serial.md`).
+Records that govern S48: **`docs/performance/s44-conflict-not-capacity.md`** and
+`docs/performance/s43-residency-and-the-thermal-artifact.md`.
 
 ## READ THIS FIRST
 
-**The headline: Mapal beats numpy/Accelerate at N=4096 f32 threaded — 1.139×, disjoint, values
-identical, measured same-session.** First time on any matmul cell. **MERGED and pushed** at
-`555d058`; the gate was re-run on the merged tree (1032 passed / 0 failed, fmt clean).
+**`main` @ `0f40ce0`, pushed, clean. Gate 1047 passed / 0 failed, fmt clean.** Everything from
+S44–S47 is merged; nothing is waiting in a worktree except `nc` blocking (below).
 
-**Scope it honestly.** 4096 wins 1.139×; 2048 is **parity** (overlapping); 1024 **loses** 1.21×; one
-thread loses ~2× at every size. The claim is "the large-N threaded cell", never "matmul".
+**The compiler detects the machine by default.** `EmitOpts::default().target` is `"native"`;
+`resolve("native")` falls back to `GENERIC` when a fact cannot be read. Consequence: **emission is
+now machine-dependent.** Anything that needs reproducible *emitted text* across machines must pin
+`target: "generic"` by name — six tests already do, and they say why at the site.
 
-**S42's `1864` L1 ceiling is RETRACTED** — a thermal artifact; the same binary reads ~2000 today.
-So is `1043 GF/s` as the N=4096 figure (it is 803). Anything downstream of those is suspect.
+**Two published numbers were retracted in S43 and stay retracted:** the `1864` GF/s L1 ceiling
+(thermal drift) and `1043 GF/s` as the N=4096 cell (it is 803).
 
-**Before trusting `benches/emit_sweep_ab.sh`, note it was silently broken until S43.** Under bash it
-passed no flags and exited 0 with a clean "159/159". It is fixed and now hard-errors on a failed
-emission — which immediately revealed that **3 of its 159 cells have always failed**
-(`examples/vector.mapal` does not parse). Every historical "159/159" was 156 real cells + 3 vacuous.
+**`benches/emit_sweep_ab.sh` has had THREE silent-pass paths, all closed.** A zsh shebang that
+passed no flags and exited 0; a failed emission hashing empty output so two broken runs "matched";
+and pointing at the wrong `emit` binary (cuda and llvm both build one, and the cuda one rejects
+`--contract`). It now preflights the binary and hard-errors on failures. **3 of 159 cells always
+fail** — `examples/vector.mapal` does not parse.
 
-**Every timed run goes through `benches/perflock.sh`.** It is bounded (exit 75 = retry, command did
-not run) and refuses to measure through a busy machine.
+**Every timed run goes through `benches/perflock.sh`** (exit 75 = retry, command did not run).
 
-## S44 opens on — the single-thread gap
+## S48 opens on — the single-thread matmul gap
 
-### 1. What shipped in S43 (context, not work)
+### 1. P0 — one thread is ~2× behind numpy, and every blocking knob is spent
 
-On `main` at `555d058`. Three files, +139/−6, `mapal-ir` and `mapal-rt` untouched.
-Plan: `components/backend-llvm/plans/plan-s43-parallel-bpack.md`.
-
-- `func/core.rs::emit_pack_copy` — the `jt` loop's bounds become `self.bulk_bounds(tiles)`; at
-  `split_range == false` it reproduces the old literals character-identically.
-- `func/drive.rs::emit_task` (packed branch) — a third function `@task{id}_pack(lo, hi, frame)`; the
-  wrapper drops the inline pack for a nested `begin(1)/task/launch/finish` ahead of the **unchanged**
-  matmul dispatch.
-
-It moved **48 emissions** — only matmul sources, only `rew`/`con`, never `raw`. If you touch this
-path again, remember a 159/159 identical result means your change did nothing: gate on **values**.
-
-**Do not "simplify" it into a `begin(2)` + `mapal_par_dep`.** That was tried and rejected:
-`complete_slice` schedules dep-unlocked tasks `Placement::Local(lane)`, which would put every matmul
-slice on one deque instead of the rank-sorted `Placement::Seed` — silently changing the *matmul's*
-placement. Two sequential nested runs are deliberate.
-
-**Still undecided: `nc` blocking** (worktree `a03f9b2318`) — built, swept, gates green, **ships
-OFF** because threaded it is parity at best. Merge as a documented lever or discard.
-
-### 2. P1 — the single-thread gap, which is now the honest target
-
-One thread we are ~800 GF/s against numpy's ~1640. **The 1.71× operand-residency win is real,
-assembly-verified, and unclaimed** — but `kc`, `nc` and the L1 cascade have all been measured and
-refuted as ways to get it:
+~800 GF/s against numpy's ~1640 at N=4096. The 1.71× operand-residency win is real and
+assembly-verified but **unclaimed**, and the three obvious levers are measured and refuted:
 
 | lever | 1 thread | threaded |
 | --- | ---: | ---: |
@@ -61,73 +40,75 @@ refuted as ways to get it:
 | operand residency (window instrument) | **+71%** | +5% |
 | `nc` blocking | +18.7% | parity |
 
-What the machine actually charges for (§4b/§4c of the perf doc): **nothing** for L1-vs-L2; a real
-price for falling out of the **16 MB shared L2**; and a **1.571× penalty for crossing ~2k–4k pages**
-of TLB reach. The 1.71× is confounded between those last two and **no arm in the design separates
-them** — an in-kernel arm was refuted on arithmetic (`inbounds` bounds it to ≤32 pages).
+What this machine actually charges for: **nothing** for L1-vs-L2; a real price for falling out of the
+16 MB shared L2; a **1.571×** penalty for crossing ~2k–4k pages of TLB reach; and — new in S44 —
+a large price for **set-index conflict**, which is a different axis from all of the above.
 
-So a design that captures it must change the *reuse structure*, not add another blocking level.
-Note the asymmetry that makes this hard: at one thread there is no Amdahl problem to fix, and every
-working-set knob has now been swept.
+The 1.71× is confounded between capacity and TLB reach and **no in-kernel arm can separate them**
+(`inbounds` bounds the offsets to ≤32 pages, refuted on arithmetic). So a design that captures it
+must change the **reuse structure**, not add a blocking level. At one thread there is no Amdahl term
+to remove, which is what makes this harder than the threaded problem S43 solved.
 
-### 3. Measurement rules — S43 added four
+### 2. P1 — the queue
 
-> **19. Re-run the baseline binary before trusting a published table.** S42's L1 ceiling was thermal
-> drift *during* the run; the 64 MB row of the same table still reproduces exactly. A table can be
-> half-valid. A number never re-taken has never been checked.
+- **`nc` blocking** is built, swept, gated green and ships OFF, still in worktree
+  `agent-a03f9b23183f1440c`. Merge as a documented lever or discard it.
+- **`B` leaves 1.15–1.27× on the i9.** S47 proved it is not derivable from readable facts: the i9
+  wants a block 4–8× larger while every readable fact is larger on the M4. Revisit only if the
+  benefit becomes predictable. The ceiling is documented at `move_block`.
+- **Width 1536 declines** rather than winning, costing the i9 5.7%/4.2% there. Same unreadable
+  quantity.
+- `examples/vector.mapal` does not parse · delete or justify `kc_nest` · executing SME value check in
+  `cargo test` — all three unchanged since S42.
 
-> **21. Name every mechanism that predicts your table, not just the one you were testing.** Cache
-> reach and TLB reach predicted the residency arms identically. An experiment that cannot distinguish
-> two mechanisms has established neither.
+### 3. Measurement rules — S44–S47 added one, and amended it
 
-> **22. A sweep needs a control arm that should NOT move.** A zero-load arm tracked the 4-load arm
-> exactly down a fake cliff — drift on the swept axis. **Rep-outer interleaving is not sufficient**:
-> every rep walks the axis in the same order, so a within-rep droop survives best-of-N. Measure the
-> null arm back-to-back inside each cell and read the ratio.
+> **24. Classify what an optimization removes and its thread-count behaviour follows.** A serial
+> fraction does nothing at 1 thread and a lot threaded. A shared bottleneck is big at 1 thread and
+> gone threaded. A per-core resource conflict grows with cores. **Amendment (S46): the third holds
+> only while the per-core resource still binds** — the same rung shrank 2.646× → 1.547× across 32
+> i9 cores because the fixed arm hits a shared ceiling the slow arm never reaches.
 
-> **23. A gate that cannot fail is not a gate.** Verify the instrument reports a failure you
-> *injected* before trusting its pass. Two independent silent-pass paths lived in this repo's
-> byte-identity gate; one was live.
-
-And rule 4 (sweep, never one point) earned it twice: both cache walls prescribed `nc` ≤ 512, and
-`nc`=512 **lost** at both widths while 1024 won by 18.7%. **Walls size the benefit; re-sweeps size
-the cost.**
+Rules 19–23 from S43 stand. The one that earned the most in S44–S47 is **4 — sweep, never one
+point**: both cache walls prescribed `nc` ≤ 512 and 512 lost while 1024 won by 18.7%; the predicted
+block size was wrong by 4–8× on the i9; and a single-point test at either would have shipped a loss.
 
 ## FIRST commands
 
 ```sh
-cargo test --workspace --release                    # 1032 passed / 0 failed on main
-./benches/perflock.sh ./benches/matmul/numpy_ab.sh target/release/examples/emit 4096 15  # the headline
-git worktree list                                   # 4 agent worktrees + 3 prunable pre-rename
+cargo test --workspace --release                       # 1047 passed / 0 failed
+./benches/perflock.sh ./benches/matmul/numpy_ab.sh target/release/examples/emit 4096 15
+git worktree list                                      # 9 agent + 3 pre-rename, all prunable
+ssh 100.81.226.103 'du -sh ~/mapal-s4*'                # 1.02 GB of scratch to delete
 ```
 
-## Live state at S43 close
+## Live state at close
 
 | Type | Handle | State | Inspect | Cleanup |
 | --- | --- | --- | --- | --- |
-| branch | `main` @ `555d058` | **pushed, in sync, clean** (only `oainotes.md` untracked) | `git status -sb` | — |
-| worktree | `agent-a718d8faeee0ea4b4` | parallel B pack — **already merged to `main`** | `git -C … status -s` | discardable |
-| worktree | `agent-a03f9b23183f1440c` | `nc` blocking, ships OFF, gates green | " | merge or discard |
-| worktree ×2 | `agent-a00e8357…`, `agent-a9c8b56e…` | probe-only; sources already copied to `main` | " | discardable |
-| worktree ×3 | `…-Personal-**Flow**/…` | prunable, pre-rename paths | `git worktree list` | `git worktree prune` — **only after the agent worktrees resolve** |
-| machine | Arch box `100.81.226.103` | up, i9-14900F, **no SME** | `ssh … nproc` | owned box |
-| artifact | box `~/mapal-s42/` | **107 MB, still there** | `ssh … 'du -sh ~/mapal-s42'` | delete when done |
+| branch | `main` @ `0f40ce0` | **pushed, in sync, clean** — only `oainotes.md` untracked | `git status -sb` | — |
+| worktree ×9 | `.claude/worktrees/agent-*` | merged or probe-only; sources all in `main` | `git worktree list` | discardable |
+| worktree ×3 | `…-Personal-**Flow**/…` | prunable, pre-rename paths | " | `git worktree prune` |
+| machine | Arch box `100.81.226.103` | up, i9-14900F, **has cargo/rustc 1.90** — emission can run on the box, which detection requires | `ssh … nproc` | owned box |
+| artifact | box `~/mapal-s42,44,45,46,47` | **1.02 GB** | `ssh … 'du -sh ~/mapal-s4*'` | **delete — nothing depends on them** |
 | file | `oainotes.md` | untracked, deliberately uncommitted | — | Sapir's call |
 
-**Nothing is running.** No background job, no server, no port.
+**Nothing is running.** No background job, no server, no port. Measurement mutex free.
 
 ## Open items
 
 | Priority | Item | Reference | Next action | Done when |
 | --- | --- | --- | --- | --- |
-| **P0** | **single thread is ~2× behind numpy** | §2 | needs a reuse-structure change, not another blocking level | 1t GF/s moves off ~800 |
-| P1 | decide `nc` blocking's fate | §1 | merge as a documented lever or discard | resolved |
-| P1 | `examples/vector.mapal` does not parse | READ THIS FIRST | 3 of 159 gate cells have always failed | it parses, or leaves the sweep |
-| P1 | delete or justify `kc_nest` | `lib.rs::EmitOpts` | unchanged from S42 | gone, or has a written reason |
-| P1 | executing SME value check in `cargo test` | `benches/sme/README.md` | unchanged from S42 | the suite runs an SME binary |
-| P2 | box scratch `~/mapal-s42` (107 MB) | live state | delete when box work is done | gone |
-| P2 | 3 prunable pre-rename worktrees | live state | prune after agent worktrees resolve | only `main` listed |
-| P2 | f16/bf16 rung (2× MAC density) | S42 §5e | plan first; it is a new face | `svmopa_za32_f16_m` emitted |
+| **P0** | **single-thread matmul ~2× behind numpy** | §1 | a reuse-structure change, not another blocking level | 1t GF/s moves off ~800 |
+| P1 | decide `nc` blocking's fate | §2 | merge as a documented lever or discard | resolved |
+| P1 | `B` short by 1.15–1.27× on the i9 | §2 | not derivable; revisit if the benefit becomes predictable | derived == optimum, or closed |
+| P1 | width 1536 declines | §2 | costs the i9 5.7%/4.2% | fires safely at non-pow2 widths |
+| P1 | `examples/vector.mapal` does not parse | READ THIS FIRST | 3 of 159 gate cells always fail | it parses, or leaves the sweep |
+| P1 | delete or justify `kc_nest` | `lib.rs::EmitOpts` | unchanged since S42 | gone, or has a written reason |
+| P1 | executing SME value check in `cargo test` | `benches/sme/README.md` | unchanged since S42 | the suite runs an SME binary |
+| P2 | box scratch, 1.02 GB across five dirs | live state | delete | gone |
+| P2 | 12 worktrees | live state | remove agent ones, then `git worktree prune` | only `main` listed |
+| P2 | f16/bf16 rung (2× MAC density) | S42 §5e | plan first | `svmopa_za32_f16_m` emitted |
 
 ## Standing direction (Sapir — unchanged)
 
@@ -139,4 +120,5 @@ git worktree list                                   # 4 agent worktrees + 3 prun
 - Compile time decides the SIZES, runtime decides the ASSIGNMENT.
 - Nothing goes in the README that a default build does not deliver.
 - Proof over suggestion — a change arrives with the measurement of what it did.
+- **The README is results, not method.** Tables and a pointer; explanations live in `docs/`.
 - Speak simply, base claims on empirical results. **Give absolute ms, not only ratios.**
