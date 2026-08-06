@@ -12,9 +12,22 @@ Records that govern S48: **`docs/performance/s44-conflict-not-capacity.md`** and
 S44–S47 is merged; nothing is waiting in a worktree except `nc` blocking (below).
 
 **The compiler detects the machine by default.** `EmitOpts::default().target` is `"native"`;
-`resolve("native")` falls back to `GENERIC` when a fact cannot be read. Consequence: **emission is
-now machine-dependent.** Anything that needs reproducible *emitted text* across machines must pin
-`target: "generic"` by name — six tests already do, and they say why at the site.
+`resolve("native")` falls back to `GENERIC` when a fact cannot be read. Anything that needs
+reproducible *emitted text* across machines must pin `target: "generic"` by name — six tests already
+do, and they say why at the site.
+
+**Two different things are called "byte-identical" here, and only one is a language guarantee.**
+
+| | what it means | status |
+| --- | --- | --- |
+| **results** | a compiled program prints exactly what the interpreter prints, at any thread count and optimization level | **the guarantee.** Untouched, gated by the 1,280-run differential every push |
+| **emission** | two compiler builds produce the same `.ll` text | **a test instrument only.** Now deliberately machine-dependent |
+
+Sapir's ruling when detect-by-default was decided: **performance and cross-machine portability
+outweigh identical emitted text.** The six tests that broke were all the second kind; no answer
+changed anywhere. Do not treat emission drift as a correctness signal — pin `generic` and move on.
+The project already ships a face that changes the last bit on purpose (`--contract`), so the
+position is *differ deliberately, never by accident, and say which*.
 
 **Two published numbers were retracted in S43 and stay retracted:** the `1864` GF/s L1 ceiling
 (thermal drift) and `1043 GF/s` as the N=4096 cell (it is 803).
